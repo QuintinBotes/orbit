@@ -110,6 +110,36 @@ describe('readReviewDepth', () => {
     expect(readReviewDepth({ provider: 'codex', workerDir: empty })).toEqual({ toolCalls: null, reasoningTokens: null });
     expect(readReviewDepth({ provider: 'codex', workerDir: join(empty, 'missing') })).toEqual({ toolCalls: null, reasoningTokens: null });
   });
+
+  it('chooses the parser by provider family: a Codex alias is read as Codex, a Claude alias as Claude, any other family stays unknown', () => {
+    const codex = workerDirWith([
+      { type: 'item.completed', item: { type: 'command_execution', command: 'rg foo' } },
+      { type: 'item.completed', item: { type: 'command_execution', command: 'sed -n 1,40p a.ts' } },
+      { type: 'item.completed', item: { type: 'agent_message', text: '{}' } },
+      { type: 'turn.completed', usage: { output_tokens: 900, reasoning_output_tokens: 640 } },
+    ]);
+    expect(readReviewDepth({ provider: 'codex-review', workerDir: codex })).toEqual({ toolCalls: 2, reasoningTokens: 640 });
+    expect(readReviewDepth({ provider: 'codex_second', workerDir: codex })).toEqual({ toolCalls: 2, reasoningTokens: 640 });
+    const claude = workerDirWith([{ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'a', name: 'Read' }] } }]);
+    expect(readReviewDepth({ provider: 'claude-review', workerDir: claude })).toEqual({ toolCalls: 1, reasoningTokens: null });
+    expect(readReviewDepth({ provider: 'claude_alt', workerDir: claude })).toEqual({ toolCalls: 1, reasoningTokens: null });
+    // Not a known family: never parsed as Claude (which would count zero tool calls), so never flagged.
+    expect(readReviewDepth({ provider: 'gemini', workerDir: codex })).toEqual({ toolCalls: null, reasoningTokens: null });
+    expect(readReviewDepth({ provider: 'codexy', workerDir: codex })).toEqual({ toolCalls: null, reasoningTokens: null });
+  });
+
+  it('records the depth of a review by a Codex alias from its Codex transcript, without the no-tool-call flag', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const workerDir = workerDirWith([
+      { type: 'item.completed', item: { type: 'command_execution', command: 'rg foo' } },
+      { type: 'item.completed', item: { type: 'agent_message', text: '{}' } },
+      { type: 'turn.completed', usage: { output_tokens: 90, reasoning_output_tokens: 40 } },
+    ]);
+    recordReviewDepth(lab.ctx(), { id: 'wrk-2', provider: 'codex-review', model: 'gpt-6.1-sol', workerDir }, 'rev-wrk-2');
+    const recorded = listDecisions(lab.db, lab.runId, { kind: REVIEW_DEPTH_KIND });
+    expect(recorded[0]!.data).toMatchObject({ provider: 'codex-review', tool_calls: 1, reasoning_tokens: 40 });
+    expect(recorded[0]!.summary).not.toContain('NO TOOL CALLS');
+  });
 });
 
 describe('describeDepth', () => {

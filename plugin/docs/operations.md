@@ -225,8 +225,11 @@ Its review table says, for each review session, who reviewed (an independent
 review, or a same-provider one marked NOT independent with the reason), the
 verdict, the number of findings, and how deep the session went: the tool calls
 it made and the reasoning tokens it used, read from the provider's transcript
-when it ends (`review.depth` decisions; `tool_calls` and `reasoning_tokens` in
-`reviews` of `final.json`, null when the transcript could not be read). A review
+when it ends by the parser of the provider's family (`claude`, `claude-*` and
+`claude_*` as Claude; `codex`, `codex-*` and `codex_*` as Codex), as
+`review.depth` decisions (`tool_calls` and `reasoning_tokens` in `reviews` of
+`final.json`, null when the transcript could not be read or its provider is of
+neither family, never zero). A review
 that made no tool calls is flagged `NO TOOL CALLS` and listed under residual
 risks: it judged from the packet alone. The gate and the transition to delivery
 say the same of a same-provider review (`independent_review gate: review
@@ -420,9 +423,16 @@ Files on disk:
 - `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`: worker checkouts, outside
   the repository on purpose. A run that ends `SUCCEEDED`, `CANCELLED`,
   `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees (a `worktrees.released`
-  event records it); one that is `BLOCKED` or paused keeps them until it
-  is resumed to an end or cancelled (`orbit cancel <run-id>`); `orbit gc` does
-  not remove them.
+  event records what was removed, where each unfinished edit was pinned, and
+  each checkout kept with why). The unfinished edits of every implementer
+  checkout are pinned first: the run's worktree as a candidate, a parallel
+  unit's under `refs/orbit/<run>/unsaved/<worker>` (`git checkout <ref>` to
+  continue from it). A checkout whose edits could not be pinned is kept, and so
+  is one a worker may still be writing in (its stop was not confirmed), until a
+  later controller start confirms it stopped; `orbit gc` skips such a run
+  meanwhile. The report's next action names both. A run that is `BLOCKED` or
+  paused keeps its worktrees until it is resumed to an end or cancelled
+  (`orbit cancel <run-id>`); `orbit gc` does not remove them.
 
 `<repo>` is the working tree Orbit was started in. Inside a linked worktree
 (`git worktree add`) that is the worktree, not the main working tree: its

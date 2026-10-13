@@ -393,7 +393,7 @@ function defaultProvider(id: string, eligible: boolean): ProviderConfig {
 }
 
 /** The provider family an id names: `claude`, `codex`, or an id starting with one of them (`codex-review`); null for any other. */
-function providerFamily(id: string): 'claude' | 'codex' | null {
+export function providerFamily(id: string): 'claude' | 'codex' | null {
   for (const family of ['claude', 'codex'] as const) {
     if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
   }

@@ -20,7 +20,9 @@ import { appendEvent } from './events.ts';
  * CANCELLED. A BLOCKED run is never pruned, whatever its age, because it can
  * be resumed and its evidence is what the person resolving it reads. A run
  * still holding an unexpired lease (its controller is writing the report or
- * learning from it) waits for the next pass. Nothing outside the two
+ * learning from it) waits for the next pass, and so does a run with a worker
+ * still PLANNED or RUNNING (its stop was never confirmed, so it may still be
+ * writing in its checkout). Nothing outside the two
  * locations above is ever removed: a run whose recorded paths point anywhere
  * else is skipped and reported.
  */
@@ -105,6 +107,12 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
     const lease = db.get<{ expires_at: number }>('SELECT expires_at FROM leases WHERE run_id = ?', row.id);
     if (lease && lease.expires_at > now) {
       result.skipped.push({ runId: row.id, reason: 'a controller still holds its lease' });
+      continue;
+    }
+    // A worker whose stop was never confirmed may still be writing in its checkout: nothing is removed beneath it.
+    const live = db.all<{ id: string; state: string }>("SELECT id, state FROM workers WHERE run_id = ? AND state IN ('PLANNED', 'RUNNING') ORDER BY created_at, rowid", row.id);
+    if (live.length > 0) {
+      result.skipped.push({ runId: row.id, reason: `${live.map((w) => `worker ${w.id} (${w.state})`).join(', ')} may still be running: its termination is not confirmed (the next controller start stops it)` });
       continue;
     }
     const runDir = join(runsRoot, row.id);

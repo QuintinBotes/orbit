@@ -22,7 +22,7 @@ import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
 import type { Logger } from '../core/log.ts';
-import { releaseExhaustedRunWorktrees } from './release.ts';
+import { releaseAwaitsTermination, releaseEndedRunWorktrees } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
 import { groupOwnership, processOwnership } from './identity.ts';
@@ -181,7 +181,11 @@ export interface ReconcileOptions {
   fallbackRecoveries?: number;
   /** Output schema to validate a worker's result against; default by role (adapters/prompt ROLE_OUTPUT_KIND). */
   outputSchemaFor?: (worker: WorkerRecord) => object;
-  /** The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees released; without it they are kept. */
+  /**
+   * The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees released, and
+   * a finished run's checkout kept for a worker that might still be writing is released once the worker is confirmed
+   * stopped; without it they are kept.
+   */
   orbitHome?: string;
   log?: Logger;
 }
@@ -359,7 +363,10 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
     });
   }
   // Workers and checks are stopped by now; the run's result lives in its candidate refs, so its checkouts go (finishRun does the same).
-  if (ctx.exhausted.has(run.id)) await releaseExhaustedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
+  // A checkout an earlier release kept for a worker that might still be writing goes too, once that worker is confirmed stopped.
+  if (ctx.exhausted.has(run.id) || (isRunTerminal(run.state) && releaseAwaitsTermination(db, run.id))) {
+    await releaseEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
+  }
   return rep;
 }
 
@@ -459,6 +466,14 @@ async function reconcileWorker(ctx: Ctx, run: RunRecord, w: WorkerRecord, stop: 
         break;
       }
       await cancelShim(obs.handle!, ctx.graceMs);
+      // Only a confirmed end finishes the row: one recorded CANCELLED while its process runs on would let its checkout
+      // be released beneath it (cancelShim signals nothing it cannot identify).
+      if (stillRunning(obs.handle!)) {
+        rep.observation = 'running';
+        rep.detail = `its process could not be stopped or verified as stopped (${why}); left ${cur.state} for a later pass`;
+        note(ctx, w.runId, 'recovery.stop-unconfirmed', { worker_id: w.id, reason: why });
+        break;
+      }
       const result = await collect(ctx, cur, obs.handle!);
       finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: `process group terminated: ${why}` });
       rep.observation = 'orphan-terminated';
@@ -559,6 +574,14 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
   if (handle && obs.task?.state === 'lost' && obs.task.orphans) {
     // The shim died but its provider still runs: stop it before anything else may start in the worktree.
     await cancelShim(handle, ctx.graceMs);
+    if (stillRunning(handle)) {
+      // Neither a restart beside it nor a finished row (which would let its checkout be released) while it may still write.
+      rep.state = w.state;
+      rep.restartRefused = 'archive-failed';
+      rep.detail = `the shim was gone and its provider process could not be stopped or verified as stopped; left ${w.state} for a later pass`;
+      note(ctx, w.runId, 'recovery.restart-refused', { worker_id: w.id, reason: 'unverified-process' });
+      return;
+    }
     rep.detail = 'the shim was gone but its provider process was still running; its group was stopped';
   }
 
@@ -661,6 +684,12 @@ export async function stopRowProcess(graceMs: number, w: WorkerRecord): Promise<
   return state() === 'gone' ? 'stopped' : 'unknown';
 }
 
+/** Whether the worker's shim or provider may still run after a cancel: alive, or gone with a process of its group left. */
+function stillRunning(handle: TaskHandle): boolean {
+  const after = taskState(handle);
+  return after.state === 'running' || (after.state === 'lost' && after.orphans);
+}
+
 /**
  * Stop one worker on request (the watchdog abandoning a step, a controller
  * cancelling): terminate its process group, record a result when the adapter
@@ -680,8 +709,7 @@ export async function stopWorker(
     await cancelShim(handle, graceMs);
     // cancelShim signals nothing it cannot identify. A worker recorded CANCELLED while its process still runs would let the
     // next attempt start beside it, so a process that survived is an error for the caller, and the row stays active.
-    const after = taskState(handle);
-    if (after.state === 'running' || (after.state === 'lost' && after.orphans)) {
+    if (stillRunning(handle)) {
       throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} could not be stopped (its process could not be verified or did not exit); it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
     }
     try {

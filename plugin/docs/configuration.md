@@ -954,8 +954,9 @@ Codex providers only; `providers.claude.review_reasoning_effort` is rejected
 with a config error. A config without the key (an older snapshot) reviews at
 the effort it was selected with. The report's review table shows what each
 review session did (tool calls made and reasoning tokens, read from the
-provider's transcript) and flags a review that made no tool calls, so a reviewer
-that judged from the packet alone is visible; see
+provider's transcript by the parser of its family, so `codex-review` is read as
+Codex) and flags a review that made no tool calls, so a reviewer that judged
+from the packet alone is visible; see
 [operations](operations.md#the-final-report).
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit
@@ -1062,10 +1063,16 @@ Worktrees are separate from retention. A run that ends `SUCCEEDED`,
 `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own worktrees when it ends,
 since its result is the branch and the candidate refs
 (`refs/orbit/<run>/candidates/<n>`), not the checkout, and none of these states
-has a way back (an unsaved edit in the implementer's worktree is first saved as
-a candidate, so nothing is lost; if that fails the worktree is kept). The final
+has a way back. Nothing is lost: every implementer checkout first has its
+unfinished edits (tracked changes and untracked files the repository does not
+ignore) pinned in a ref, the run's worktree as a candidate and each parallel
+unit's worktree under `refs/orbit/<run>/unsaved/<worker>`; a checkout whose
+edits could not be pinned is kept. A checkout a worker may still be writing in
+(stopping it was not confirmed) is kept too, until a later controller start
+confirms the worker stopped, and `orbit gc` skips the run until then. The final
 report of an `EXHAUSTED` run therefore sends a person to the latest candidate
-ref and the evidence under `.orbit/runs/<id>`, not to a worktree. A run that
+ref and the evidence under `.orbit/runs/<id>`, not to a worktree, and its next
+action names every pinned ref and every kept checkout with why. A run that
 stops `BLOCKED`, or is paused, keeps its worktrees, because it may resume from
 them; those stay until the run is resumed to an end or cancelled.
 

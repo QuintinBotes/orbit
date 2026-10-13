@@ -68,11 +68,18 @@ Worktrees live outside the repository at `~/.orbit/worktrees/<repo-hash>/<run-id
 so a worker's filesystem allowlist never includes `.orbit/` or the main
 checkout. Mutable data never lives in the installed plugin directory. A run that
 ends `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees
-(`controller/worktree-cleanup.ts`; an unsaved edit is first saved as a candidate;
-a run the recovery budget ends `EXHAUSTED` is released by `recovery/release.ts`).
-Its result is the branch and the candidate refs, not the checkout. `BLOCKED` and
-paused runs keep them, since they may resume, until the run is resumed to an end
-or cancelled (`orbit cancel <run-id>`); `orbit gc` never touches them.
+(`controller/worktree-cleanup.ts`; a run the recovery budget ends `EXHAUSTED` is
+released by `recovery/release.ts`). Its result is the branch and the candidate
+refs, not the checkout. Every implementer checkout, the run's worktree and each
+`unit-*` worktree of a parallel attempt (found from the worker records), first
+has its unfinished edits pinned in a ref: the run's worktree as a candidate, a
+unit's under `refs/orbit/<run>/unsaved/<worker>` (a `worktree.preserved` event
+each). A checkout whose edits could not be pinned is kept, and so is one a
+worker may still be writing in (its stop was not confirmed) until a later
+controller start confirms it stopped; `orbit gc` does not prune such a run
+meanwhile. `BLOCKED` and paused runs keep their worktrees, since they may resume,
+until the run is resumed to an end or cancelled (`orbit cancel <run-id>`);
+`orbit gc` never touches them.
 
 The plugin is the `plugin/` directory of the repository, not the repository root
 (`docs/decisions/0006-plugin-packaging.md`): the bundle `plugin/dist/orbit.mjs`,

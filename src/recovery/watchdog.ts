@@ -12,7 +12,7 @@ import { getLease, getRun, listRuns, transition, type RunRecord } from '../contr
 import type { ProviderAdapter } from '../adapters/types.ts';
 import { LOG_FILE } from '../adapters/shim.ts';
 import type { Logger } from '../core/log.ts';
-import { releaseExhaustedRunWorktrees } from './release.ts';
+import { releaseEndedRunWorktrees } from './release.ts';
 import { enterRecovery, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { stopWorker } from './reconcile.ts';
 
@@ -255,7 +255,7 @@ async function abandon(opts: WatchdogOptions, run: RunRecord, workers: WorkerRec
   }
   const out: EnterRecoveryOutcome = enterRecovery(db, clock, { runId: run.id, ownerId, reason: `watchdog: ${detail}`, ledgerFor: opts.ledgerFor, fallbackMax: opts.fallbackRecoveries });
   if (out.outcome === 'exhausted') {
-    await releaseExhaustedRunWorktrees({ db, clock, ownerId, runId: run.id, orbitHome: opts.orbitHome, log: opts.log });
+    await releaseEndedRunWorktrees({ db, clock, ownerId, runId: run.id, orbitHome: opts.orbitHome, log: opts.log });
     return 'exhausted';
   }
   return out.outcome === 'recovering' || out.outcome === 'already-recovering' ? 'abandoned-to-recovering' : null;

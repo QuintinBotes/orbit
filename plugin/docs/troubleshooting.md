@@ -610,7 +610,12 @@ of these settings is the fix, `orbit doctor` prints the same note.
   ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
   `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own (the work
   of an `EXHAUSTED` run is in its candidate refs, `refs/orbit/<run>/candidates/<n>`,
-  and its evidence under `.orbit/runs/<id>`). A `BLOCKED` or paused run keeps its
+  the unfinished edits of a parallel unit under `refs/orbit/<run>/unsaved/<worker>`,
+  and its evidence under `.orbit/runs/<id>`). A checkout the report says was kept
+  is either one whose edits could not be pinned (recover them, then
+  `git worktree remove` it) or one a worker may still be writing in, which the
+  next controller start releases once it confirms the worker stopped (`orbit gc`
+  skips that run until then). A `BLOCKED` or paused run keeps its
   worktrees until it is resumed to an end or cancelled (`orbit cancel <run-id>`);
   `orbit gc` never removes them: it prunes only finished runs.
 - **`orbit service uninstall` says the service manager is "still stopping" the
