@@ -245,15 +245,36 @@ describe('a review that asked for repair only through notes gets one fresh revie
     expect(outcome().fresh_review).toMatchObject({ started: false });
   });
 
-  it('a defect of the candidate the fresh review reports is repaired like any finding, and the note is not', async () => {
+  // The lead's rule: if the fresh review blocks again for any reason, the run ends BLOCKED naming the findings. A defect
+  // it reports is named, not repaired, and a claim it raises is named, not taken to the Inquisition.
+  it('a fresh review that reports a defect of the candidate ends BLOCKED naming it and the note, without a repair', async () => {
     const defect: IngestedFinding = { externalId: 'COR-2', severity: 'high', category: 'correctness', location: 'apps/calc.mjs:2', path: 'apps/calc.mjs', line: 2, claim: 'mul accepts non-numeric arguments and returns NaN instead of throwing', evidence: 'mul("a", 2) is NaN', suggestedValidation: 'Add a test asserting mul("a", 2) throws' };
     const { cand, reviewer } = await setup(answer('REPAIR_REQUIRED', [TEST_1, defect]), { sameProvider: true });
     record(cand, 'REPAIR_REQUIRED', [TEST_1, COR_1, PRAC_1], 'claude');
     await settle();
-    expect(state()).toBe('REPAIRING');
+    expect(state()).toBe('BLOCKED');
     expect(reviewer.specs).toHaveLength(1);
-    const repair = JSON.parse(lab.db.get<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT)!.data_json) as { findings: { external_id: string }[] };
-    expect(repair.findings.map((f) => f.external_id)).toEqual(['COR-2']);
+    expect(repairs()).toBe(0);
+    expect(transitionsTo('REPAIRING')).toBe(0);
+    expect(transitionsTo('INQUISITION')).toBe(0);
+    const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+    expect(reason).toMatch(/the one fresh review of this tree \([^)]*REPAIR_REQUIRED\)[^;]*did not approve it either: /);
+    expect(reason).toMatch(/TEST-1 \(high, a note\)/);
+    expect(reason).toMatch(/COR-2 \(high, /);
+    expect(outcome().fresh_review).toMatchObject({ started: true, verdict: 'REPAIR_REQUIRED', findings: expect.arrayContaining([expect.objectContaining({ external_id: 'COR-2' }), expect.objectContaining({ external_id: 'TEST-1' })]) });
+    expect(outcome().open_findings).toEqual(expect.arrayContaining([expect.objectContaining({ external_id: 'COR-2' })]));
+  });
+
+  it('a fresh review that raises a medium claim ends BLOCKED naming it, without the Inquisition', async () => {
+    const claim: IngestedFinding = { externalId: 'COR-3', severity: 'medium', category: 'correctness', location: 'apps/calc.mjs:2', path: 'apps/calc.mjs', line: 2, claim: 'mul may overflow for very large integers and lose precision', evidence: 'mul(2 ** 53, 3) is not exact', suggestedValidation: 'Add a test multiplying 2 ** 53 by 3' };
+    const { cand, reviewer } = await setup(answer('REPAIR_REQUIRED', [claim]), { sameProvider: true });
+    record(cand, 'REPAIR_REQUIRED', [TEST_1, COR_1, PRAC_1], 'claude');
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(reviewer.specs).toHaveLength(1);
+    expect(repairs()).toBe(0);
+    expect(transitionsTo('INQUISITION')).toBe(0);
+    expect(getRun(lab.db, lab.runId).outcomeReason ?? '').toMatch(/did not approve it either: COR-3 \(medium, /);
   });
 
   it('never approves by itself: a review asking for repair through a real defect is repaired, not re-reviewed', async () => {
