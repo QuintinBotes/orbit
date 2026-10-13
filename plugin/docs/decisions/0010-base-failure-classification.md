@@ -224,15 +224,33 @@ repository: a missing target.
 The words of Orbit's limits wrapper (`orbit-limits`, the bash every check runs
 under by default) count as a shell's: bash 5's `orbit-limits: line 1: <path>:
 No such file or directory`, and macOS bash 3.2's exit 126 `cannot execute: No
-such file or directory` for a path. An absolute path any command of the check
-starts (a chain's, one `exec` starts) counts as well; a bare name only for a
-direct invocation, since in a chain it may be one a script of the repository
-runs. A program the sandbox refuses to start (exit 126, `Operation not
+such file or directory` for a path. A program any command of the check starts
+counts as well, by an absolute path or a bare name: a chain's, a pipeline's,
+one `exec` starts, and one of the script a shell the check starts with `-c`
+runs (`sh -c "..."`, read up to three scripts deep). A name only a script of
+the repository runs (`cd client && npm test` whose script runs a missing
+`jest`) is none of them, and a failing test next to the line keeps it the
+code's. A program the sandbox refuses to start (exit 126, `Operation not
 permitted`, signal `program-denied`; 0.3.0 retest) is an environment failure
 too, for any program the command starts, by its path as the command writes it
 or the path the shell found a bare name at on PATH. When it lies in the
 repository or in the folder beside it, which the check sandbox denies, the
 reason names those folders, and the PATH the check found it on for a bare name.
+A command substitution is read as a part of the word it stands in, and its own
+commands are read too (`echo $(git rev-parse HEAD) /x` runs `echo` and `git`,
+not `/x`).
+
+A backstop reads the output alone, whatever the command looks like (`eval
+"$CMD"`, a script of the repository; second review of the 0.3.0 retest fix): a
+base-revision failure whose output shows a launcher (a shell, `eval`, `exec`,
+`env`, Orbit's limits wrapper, node's spawn) refusing to start a program in the
+repository or in the folder beside it, by its path or a bare name the check's
+PATH finds there (`program-denied`), any other "Operation not permitted" for a
+path there (`filesystem-denied`), or, with exit 127, a "not found" for a path
+there or a bare name the check's PATH finds there (`program-not-found`), is an
+environment failure. The check's own checkout is never such a folder, and a
+check whose tests ran and failed stays the code's, whatever its output quotes:
+a test whose assertion message names such a refusal is a failing test.
 
 ### Evidence for an environment failure
 

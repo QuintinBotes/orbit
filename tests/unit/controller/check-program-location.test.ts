@@ -247,3 +247,97 @@ describe('PREFLIGHT: a bare name found on a PATH that leads into a folder the ch
     expect(baselineBlockReason({ runId: lab.runId, baseRevision: BASE_REV, environment: found.environment, misconfigured: [] })).toContain('install the program where the check runs');
   });
 });
+
+// Second review of the fix: a bare name a chain starts, hidden by srt on Linux (`cd tests && pytest -q` with
+// a PATH into the repository, exit 127), and the program of a shell the check script starts (`sh -c "<venv>/python -m
+// pytest"`, exit 126) were left unclassified, so PREFLIGHT offered a baseline exception for tests that never started.
+// And whatever the command looks like (`eval "$CMD"`), a refusal of a path in a folder the check sandbox denies, or a
+// "not found" for a name the check's PATH finds there, is the environment's; a test that ran and failed stays the code's.
+describe('PREFLIGHT: a program a chain, a nested shell or eval starts, in a folder the check sandbox denies', () => {
+  const installPytest = (dir: string): void => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'pytest'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  };
+  const inRepoPytest = (set: (bin: string) => void) => ({ repo }: { repo: string }): string => {
+    const bin = join(repo, '.venv', 'bin');
+    installPytest(bin);
+    set(bin);
+    return join(bin, 'pytest');
+  };
+  const blocksWithoutQuestion = (denied: { report: BaselineReport; checkout: string }) => {
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.report.complete).toBe(false);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting).toEqual([]);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
+    return found;
+  };
+
+  it('a bare name a chain starts, not found on a PATH into the repository (exit 127)', () => {
+    let bin = '';
+    const denied = deniedBaseline(inRepoPytest((b) => (bin = b)), { command: () => ['cd tests && pytest -q'], shell: true, exitCode: 127, log: () => '/bin/sh: 1: pytest: not found\n' });
+    vi.stubEnv('PATH', `${bin}:/usr/bin:/bin`);
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', onPath: { name: 'pytest', setBy: null } }) })]);
+  });
+
+  it('the program of a shell the check script starts with -c (exit 126)', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.venv', 'bin', 'python'), { command: (p) => [`sh -c "${p} -m pytest"`], shell: true, log: (p) => `/bin/sh: ${p}: Operation not permitted\n` });
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository' }) })]);
+    expect(found.environment[0]!.programDenial!.onPath).toBeUndefined();
+    expect(environmentFixSettings(found.environment)).toEqual(['checks.unit-tests.command']);
+  });
+
+  it('eval of a program the parser cannot see, refused in the repository (exit 126): the backstop', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.venv', 'bin', 'python'), {
+      command: () => ['eval "$CMD"'],
+      shell: true,
+      env: ({ repo }) => ({ CMD: `${join(repo, '.venv', 'bin', 'python')} -m pytest` }),
+      log: (p) => `/bin/sh: 1: ${p}: Operation not permitted\n`,
+    });
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository' }) })]);
+    expect(found.environment[0]!.cause).toContain(`the program "${denied.program}" the check runs lies in the repository`);
+  });
+
+  it('eval of a bare name not found on a PATH into the repository (exit 127): the backstop', () => {
+    let bin = '';
+    const denied = deniedBaseline(inRepoPytest((b) => (bin = b)), { command: () => ['eval "$CMD"'], shell: true, env: () => ({ CMD: 'pytest -q' }), exitCode: 127, log: () => '/bin/sh: 1: pytest: not found\n' });
+    vi.stubEnv('PATH', `${bin}:/usr/bin:/bin`);
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-not-found'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', onPath: { name: 'pytest', setBy: null } }) })]);
+  });
+
+  it('eval of a bare name refused where a PATH into the repository finds it, as dash names it (exit 126): the backstop', () => {
+    let bin = '';
+    const denied = deniedBaseline(inRepoPytest((b) => (bin = b)), { command: () => ['eval "$CMD"'], shell: true, env: () => ({ CMD: 'pytest -q' }), log: () => '/bin/dash: 1: eval: pytest: Operation not permitted\n' });
+    vi.stubEnv('PATH', `${bin}:/usr/bin:/bin`);
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], programDenial: expect.objectContaining({ program: denied.program, under: 'repository', onPath: { name: 'pytest', setBy: null } }) })]);
+    expect(found.environment[0]!.cause).toContain(`the program "pytest" the check runs is "${denied.program}" on the PATH Orbit runs its checks with, which leads into the repository`);
+  });
+
+  it('a refusal of another path in the repository: a filesystem denial there, not a program', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.git', 'config'), { command: () => ['./scripts/sync.sh && npm test'], shell: true, exitCode: 1, log: (p) => `error: could not lock config file ${p}: Operation not permitted\n` });
+    const found = blocksWithoutQuestion(denied);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['filesystem-denied'] })]);
+    expect(found.environment[0]!.programDenial).toBeUndefined();
+    expect(found.environment[0]!.cause).toBe(`the sandbox or the operating system refused "${denied.program}" ("operation not permitted"), which lies in the repository (${lab.repo}), a folder the check sandbox denies: a check runs in a checkout of its own and may not use it`);
+  });
+
+  it('a test that ran and failed, whose assertion message names a refused path in the repository, stays a pre-existing failure', () => {
+    const denied = deniedBaseline(({ repo }) => join(repo, '.venv', 'bin', 'python'), {
+      command: () => ['eval "$CMD"'],
+      shell: true,
+      env: ({ repo }) => ({ CMD: `${join(repo, '.venv', 'bin', 'python')} -m pytest` }),
+      exitCode: 1,
+      log: (p) => `tests/test_perm.py F\nE   AssertionError: assert 'ok' == '/bin/sh: ${p}: Operation not permitted'\nFAILED tests/test_perm.py::test_refused - AssertionError\n1 failed in 0.02s\n`,
+    });
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(found.report.failures[0]!.classification).toBeUndefined();
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
+  });
+});

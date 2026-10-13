@@ -39,7 +39,10 @@
  * tool environment built in each checkout by the dependency install or placed outside that folder. The 0.3.0 retest
  * pointed a check at a virtualenv there and doctor passed it: it started the interpreter the virtualenv links to, and read
  * the probe of a sibling one, refused with exit 126 "Operation not permitted", as an exit with no denial, which a probe
- * now reads as the refusal it is (classifyProgramNotFound).
+ * now reads as the refusal it is (classifyProgramNotFound). Doctor judges this from the command's text alone, so a
+ * command it cannot read for certain (a command substitution, a here-document, eval, shells nested deeper than it reads;
+ * evidence/check-command.ts checkPrograms) only warns about such a program, and never fails the check for it: what the
+ * text shows there may not be a program the check starts (second review of the 0.3.0 retest fix).
  */
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,7 +52,7 @@ import { OrbitError } from '../../core/errors.ts';
 import { redact } from '../../core/redact.ts';
 import { environmentFix, programDenial, programDenialCause, type FailureWithCommand, type ProgramDenial } from '../../controller/environment-block.ts';
 import { DOTNET_FORMAT_REASON, dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatAndNodeFix, formatLoadsProject, formatOutsideFix, formatReadsFolder, formatRestoreFix, formatRestoresUnpinned, sdkFormatsInProcess } from '../../evidence/dotnet-format.ts';
-import { startedPrograms } from '../../evidence/check-command.ts';
+import { checkPrograms } from '../../evidence/check-command.ts';
 import { classifyProgramNotFound } from '../../evidence/check-misconfigured.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentFailure } from '../../evidence/environment-failure.ts';
 import { findMsbuildNodeDenial, msbuildFix, msbuildFixReason, msbuildNodeDenialText, msbuildNodes, probeNodeSwitches, type MsbuildFix, type MsbuildFixWhere, type MsbuildNodeDenial } from '../../evidence/msbuild.ts';
@@ -104,27 +107,27 @@ function checkWord(check: CheckDefinition): string | null {
 }
 
 /**
- * The absolute paths of the programs a check's command starts (0.3.0 retest; evidence/check-command.ts startedPrograms,
- * which PREFLIGHT reads a refused program's denial against too): an argv's program, or each program of a shell command (a
- * `shell: true` check, or an argv that hands a script to sh -c: a chain's, a pipeline's, one `exec` starts), the
- * interpreter of a tool environment named by its path included. A relative path is a file of the check's checkout, and
- * a bare name is looked up on PATH.
- */
-export function absolutePrograms(check: Pick<CheckDefinition, 'command' | 'shell'>): string[] {
-  return startedPrograms(check.command, check.shell === true).filter((p) => isAbsolute(p));
-}
-
-/**
  * The first program of `check` that lies in a folder its sandbox denies because of where the repository is
  * (controller/environment-block.ts programDenial): the repository, or the folder that holds it and its sibling projects.
+ * The programs are the absolute paths a check's command starts (0.3.0 retest; evidence/check-command.ts checkPrograms,
+ * which PREFLIGHT reads a refused program's denial against too): an argv's program, or each program of a shell command (a
+ * `shell: true` check, or an argv that hands a script to sh -c: a chain's, a pipeline's, a substitution's, a nested
+ * shell's, one `exec` starts), the interpreter of a tool environment named by its path included. A relative path is a
+ * file of the check's checkout, and a bare name is looked up on PATH. `uncertain` when doctor cannot read the command for
+ * certain, so that it warns at most.
  */
-function deniedProgram(check: CheckDefinition, repo: string, homeDir: string): ProgramDenial | null {
-  for (const program of absolutePrograms(check)) {
+function deniedProgram(check: CheckDefinition, repo: string, homeDir: string): { denial: ProgramDenial; uncertain: boolean } | null {
+  const read = checkPrograms(check.command, check.shell === true);
+  for (const program of read.programs) {
+    if (!isAbsolute(program)) continue;
     const found = programDenial(program, repo, homeDir);
-    if (found) return found;
+    if (found) return { denial: found, uncertain: read.uncertain };
   }
   return null;
 }
+
+/** Why doctor only warns about a program in a denied folder that it read from a command it cannot read for certain. */
+const UNCERTAIN_READING = 'if the check starts it: doctor cannot read its command for certain (a command substitution, a here-document, eval, or shells nested deeper than it reads)';
 
 export interface CheckSandboxInput {
   config: OrbitConfig;
@@ -271,6 +274,8 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   const folderForm = platform !== 'darwin' || repo === null || !checkoutBelowDenied({ checkout: join(input.orbitHome ?? join(input.homeDir, '.orbit'), 'worktrees', repoKeyFor(repo), 'run', 'checkout'), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   // Checks whose MSBuild calls no definition shows (make, a script, a shell line): a warning with the fix.
   const undetermined: { check: CheckDefinition; msbuild: MsbuildFix; label?: string }[] = [];
+  // Checks whose command, which doctor cannot read for certain, may start a program in a denied folder: a warning.
+  const uncertain: { check: CheckDefinition; failure: FailureWithCommand }[] = [];
   let started = 0;
   const used = new Set<ToolchainId>(repo ? detectToolchains({ roots: [repo] }) : []);
   // The checks that get each toolchain's profile, found as the runner finds them (their command, the checkout root and their cwd).
@@ -338,9 +343,11 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     // from the command, before any probe, which would start what an in-repository link points to instead.
     const located = repo ? deniedProgram(check, repo, input.homeDir) : null;
     if (located) {
-      const cause = programDenialCause(located);
-      details.push(`${check.id}: ${cause}`);
-      refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ['program-denied'], cause, lines: [], programDenial: located } });
+      const cause = programDenialCause(located.denial);
+      const failure: FailureWithCommand = { checkId: check.id, fingerprint: null, signals: ['program-denied'], cause, lines: [], programDenial: located.denial };
+      details.push(located.uncertain ? `${check.id}: ${cause}, ${UNCERTAIN_READING}` : `${check.id}: ${cause}`);
+      if (located.uncertain) uncertain.push({ check, failure });
+      else refused.push({ check, failure });
       continue;
     }
     if (judge(check, ids.includes('dotnet'))) continue;
@@ -413,14 +420,13 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     return [...(ids.length > 0 ? [`${ids.length === 1 ? 'check' : 'checks'} ${ids.join(', ')}`] : []), ...items.flatMap((i) => (i.label ? [i.label] : []))].join(' and ');
   };
   if (refused.length === 0 && refusedToolchains.length === 0) {
-    if (undetermined.length > 0) {
-      return result(
-        'warn',
-        `doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? 'runs' : 'run'} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`,
-        details,
-        'dotnet commands that pin one MSBuild node (-m:1)',
-        fixFor([]),
-      );
+    if (undetermined.length > 0 || uncertain.length > 0) {
+      const warnings = [
+        ...(undetermined.length > 0 ? [`doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? 'runs' : 'run'} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`] : []),
+        ...(uncertain.length > 0 ? [`doctor cannot tell for certain whether ${subject(uncertain)} ${uncertain.length === 1 ? 'starts' : 'start'} a program in a folder the check sandbox denies; one that does cannot start in a check`] : []),
+      ];
+      const missing = [...(undetermined.length > 0 ? ['dotnet commands that pin one MSBuild node (-m:1)'] : []), ...(uncertain.length > 0 ? ['a check executable that can start in the check sandbox'] : [])];
+      return result('warn', warnings.join('; '), details, missing.join(', and '), fixFor(uncertain));
     }
     return result('pass', started === 0 ? 'no check executable outside the repository to start' : `${started} check executable(s) start in the sandbox`, details);
   }
@@ -428,7 +434,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     const names = refusedToolchains.map((r) => r.id);
     const listed = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(', ')} and ${names.at(-1)} toolchains`;
     const status = refusedToolchains.some((r) => r.mandatory) ? 'fail' : 'warn';
-    return result(status, `the sandbox refuses ${listed}; checks that use ${names.length === 1 ? 'it' : 'them'} would block at their baseline`, details, 'a toolchain that can start in the check sandbox', fixFor(refusedToolchains));
+    return result(status, `the sandbox refuses ${listed}; checks that use ${names.length === 1 ? 'it' : 'them'} would block at their baseline`, details, 'a toolchain that can start in the check sandbox', fixFor([...refusedToolchains, ...uncertain]));
   }
   const status = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? 'fail' : 'warn';
   // What the sandbox refuses: MSBuild's worker nodes, dotnet format's build host, or both, when that is all it refuses
@@ -462,7 +468,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
           : `the sandbox refuses ${refused.length === 1 ? 'the executable' : 'the executables'} of ${subject(refused)}; ${blocks}`,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : 'a check executable that can start in the check sandbox',
-    fixFor([...refused, ...refusedToolchains]),
+    fixFor([...refused, ...refusedToolchains, ...uncertain]),
   );
 }
 

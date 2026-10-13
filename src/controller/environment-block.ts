@@ -27,7 +27,7 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } fro
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
 import { directInvocation, startedProgram, startedPrograms } from '../evidence/check-command.ts';
-import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
+import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
@@ -474,7 +474,8 @@ function baselineOutput(ctx: RunContext, report: BaselineReport, failure: Baseli
  * failing test in its output (evidence/environment-failure.ts), or the program its command runs is not installed where
  * it runs (exit 127) or the sandbox refused to start it (exit 126, evidence/check-misconfigured.ts
  * classifyProgramNotFound). A program in a folder the check profile denies because of where the repository is (a tool
- * environment in the repository or beside it, 0.3.0 retest) is named with those folders (programDenial). Such a check
+ * environment in the repository or beside it, 0.3.0 retest) is named with those folders (programDenial), and is read
+ * from the output alone when the command does not show it (`eval "$CMD"`, deniedFolderFailure). Such a check
  * never got as far as the repository's code, so it is not a pre-existing failure: no baseline exception may be offered
  * for it, since approving one would let a run pass with a check that never ran.
  */
@@ -496,7 +497,7 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
     const found =
       classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
-      (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
+      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots)) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def) : null;
@@ -509,9 +510,10 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
  * Where the program a check could not start lies, when that is a folder the check profile denies because of where the
  * repository is (programDenial): refused (program-denied) or hidden (program-not-found: srt on Linux lays an empty folder
  * over it, and on macOS a bare name whose PATH folder the sandbox denies is not found either). The program is the one the
- * shell named (EnvironmentFailure.program): a path the command writes; the path the shell found a bare name at on PATH;
- * or a bare name it did not find, which lies where the first folder of the check's PATH that holds it is (onPath). Null
- * for any other failure, and for a layout that cannot be judged.
+ * shell named (EnvironmentFailure.program): a path the command writes; the path the shell found a bare name at on PATH
+ * (a name the command starts, or a path in a folder of the check's PATH, when the command does not write it); or a bare
+ * name it did not find, or refused by that name, which lies where the first folder of the check's PATH that holds it is
+ * (onPath). Null for any other failure, and for a layout that cannot be judged.
  */
 function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env'>): ProgramDenial | null {
   if (!found.signals.includes('program-denied') && !found.signals.includes('program-not-found')) return null;
@@ -526,16 +528,60 @@ function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<C
     if (isAbsolute(program)) {
       const d = programDenial(program, repo, home);
       if (d === null) return null;
-      return startedPrograms(def.command, shell).includes(program) ? d : { ...d, onPath: { name: basename(program), setBy } };
+      const programs = startedPrograms(def.command, shell);
+      if (programs.includes(program)) return d;
+      // A path the command does not write (eval "$CMD", the backstop): found on PATH when its name is one the command
+      // starts or its folder is one of the check's PATH, else written where the command does not show it.
+      const onPath = programs.includes(basename(program)) || pathFolders(def).some((dir) => resolve(dir) === dirname(resolve(program)));
+      return onPath ? { ...d, onPath: { name: basename(program), setBy } } : d;
     }
-    if (program.includes('/') || !found.signals.includes('program-not-found')) return null;
-    // The first folder of the PATH that holds the name is where the shell would have started it.
-    for (const dir of (def.env.PATH ?? process.env.PATH ?? '').split(delimiter)) {
-      if (!isAbsolute(dir) || !isExecutableFile(join(dir, program))) continue;
-      const d = programDenial(join(dir, program), repo, home);
-      return d === null ? null : { ...d, onPath: { name: program, setBy } };
-    }
+    // A bare name: one the shell did not find, or one a launcher refused by the name (dash's `eval: x: ...`).
+    if (program.includes('/')) return null;
+    const at = onCheckPath(def, program);
+    if (at === null) return null;
+    const d = programDenial(at, repo, home);
+    return d === null ? null : { ...d, onPath: { name: program, setBy } };
+  } catch {
     return null;
+  }
+}
+
+/** The folders of the PATH a check runs with (evidence/runner.ts checkEnv): its env's, or the controller's own. */
+function pathFolders(def: Pick<CheckDefinition, 'env'>): string[] {
+  return (def.env.PATH ?? process.env.PATH ?? '').split(delimiter).filter((dir) => isAbsolute(dir));
+}
+
+/** Where the check's shell would have started a bare name: in the first folder of its PATH that holds it, or null. */
+function onCheckPath(def: Pick<CheckDefinition, 'env'>, name: string): string | null {
+  for (const dir of pathFolders(def)) if (isExecutableFile(join(dir, name))) return join(dir, name);
+  return null;
+}
+
+/**
+ * The backstop (evidence/check-misconfigured.ts classifyDeniedFolderProgram): a base-revision failure whose output shows
+ * a refused path, or a program not found, in a folder the check profile denies because of where the repository is,
+ * whatever the check's command looks like. The check's own directories (`insideRoots`, its checkout among them) are never
+ * such a folder. Null for a layout that cannot be judged.
+ */
+function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[]): EnvironmentFailure | null {
+  try {
+    const repo = ctx.snapshot.repo_root;
+    const home = homeOf(ctx.deps);
+    const roots = insideRoots.filter((root) => isAbsolute(root)).flatMap((root) => [resolve(root), canonicalPath(root)]);
+    const own = (path: string): boolean => {
+      const spelled = resolve(path);
+      return [spelled, join(canonicalPath(dirname(spelled)), basename(spelled))].some((p) => roots.some((root) => isWithin(p, root)));
+    };
+    // A log may name the same path on many lines: each is resolved once.
+    const seen = new Map<string, string | null>();
+    const holding = (path: string): string | null => {
+      if (seen.has(path)) return seen.get(path)!;
+      const d = isAbsolute(path) && !own(path) ? programDenial(path, repo, home) : null;
+      const where = d === null ? null : d.under === 'repository' ? `the repository (${d.repository})` : `the folder that holds the repository and its sibling projects (${d.parent!})`;
+      seen.set(path, where);
+      return where;
+    };
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name) });
   } catch {
     return null;
   }

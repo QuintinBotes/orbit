@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { directInvocation, startedPrograms } from '../../../src/evidence/check-command.ts';
+import { checkPrograms, directInvocation, startedPrograms } from '../../../src/evidence/check-command.ts';
 
 // ADR 0010: a usage error is the check's only when the check's own command invokes the tool directly. These are the
 // shapes a check's command takes, and which of them is a direct invocation of one program.
@@ -105,5 +105,50 @@ describe('startedPrograms: every program a check command starts', () => {
     expect(startedPrograms([''], true)).toEqual([]);
     expect(startedPrograms(['CI=1'], true)).toEqual([]);
     expect(startedPrograms(['env', '-S', `${PY} -m pytest`], false)).toEqual([]);
+  });
+});
+
+// Second review of the 0.3.0 retest fix: a shell a check's script starts with -c runs a script of its
+// own, whose programs the check starts too, and a command substitution is part of the word it stands in, not the end of
+// the command that holds it. A reading that cannot be certain (a substitution, a here-document, eval, shells nested past
+// the bound) says so, so that doctor warns about what it finds there and never fails a valid command for it.
+describe('checkPrograms: nested shells, substitutions and how certain the reading is', () => {
+  const PY = '/home/acme/projects/shop/.venv/bin/python';
+  const REPO = '/home/acme/projects/shop';
+
+  it('reads the script of a shell the check script starts with -c, as it reads an argv one', () => {
+    expect(startedPrograms([`sh -c "${PY} -m pytest"`], true)).toEqual(['sh', PY]);
+    expect(startedPrograms([`cd tests && bash -lc '${PY} -m pytest'`], true)).toEqual(['cd', 'bash', PY]);
+    expect(startedPrograms(['bash', '-c', `sh -c "exec ${PY} -m pytest"`], false)).toEqual(['bash', 'sh', PY]);
+    expect(checkPrograms([`sh -c "${PY} -m pytest"`], true)).toEqual({ programs: ['sh', PY], uncertain: false });
+    expect(directInvocation([`sh -c "${PY} -m pytest -q"`], true)).toEqual({ tool: 'pytest', program: 'pytest', args: ['-q'] });
+  });
+
+  it('reads shells nested past the bound as uncertain, and reads no further', () => {
+    const deep = `sh -c "sh -c 'sh -c \\"sh -c ${PY}\\"'"`;
+    const read = checkPrograms([deep], true);
+    expect(read.uncertain).toBe(true);
+    expect(read.programs).not.toContain(PY);
+  });
+
+  it('keeps the words of a command around a substitution: the substitution is part of a word, its own commands are read too', () => {
+    expect(startedPrograms([`echo $(git rev-parse --short HEAD) ${REPO} && npm test`], true)).toEqual(['echo', 'git', 'npm']);
+    expect(startedPrograms([`echo \`git rev-parse HEAD\` ${REPO} && npm test`], true)).toEqual(['echo', 'git', 'npm']);
+    expect(startedPrograms([`VERSION=$(${PY} -V) npm test`], true)).toEqual(['npm', PY]);
+    expect(startedPrograms([`echo "rev $(git rev-parse HEAD) in ${REPO}" && npm test`], true)).toEqual(['echo', 'git', 'npm']);
+    expect(startedPrograms([`npm test -- --shard=$((1 + 1))/4 ${REPO}`], true)).toEqual(['npm']);
+    expect(startedPrograms([`diff <(sort a) ${REPO}/b && npm test`], true)).toEqual(['diff', 'sort', 'npm']);
+  });
+
+  it('says a reading is uncertain for a substitution, a here-document or eval, and certain for a plain chain', () => {
+    expect(checkPrograms([`cd tests && ${PY} -m pytest`], true).uncertain).toBe(false);
+    expect(checkPrograms([`${PY} -m pytest -k 'a && b' 2>&1 | tee log.txt`], true).uncertain).toBe(false);
+    expect(checkPrograms([`npm test -- --shard=$((1 + 1))/4`], true).uncertain).toBe(false);
+    expect(checkPrograms([`echo $(git rev-parse HEAD) && npm test`], true).uncertain).toBe(true);
+    expect(checkPrograms([`echo "$(git rev-parse HEAD)"`], true).uncertain).toBe(true);
+    expect(checkPrograms([`${PY} -m pytest <<EOF\nx\nEOF`], true).uncertain).toBe(true);
+    expect(checkPrograms(['eval "$CMD"'], true).uncertain).toBe(true);
+    expect(checkPrograms(['/bin/sh', '-c', 'eval "$CMD"'], false).uncertain).toBe(true);
+    expect(checkPrograms([PY, '-m', 'pytest'], false)).toEqual({ programs: [PY], uncertain: false });
   });
 });

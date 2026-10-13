@@ -1,6 +1,6 @@
 import { basename, isAbsolute } from 'node:path';
 import { directInvocation, startedProgram, startedPrograms, type DirectInvocation } from './check-command.ts';
-import { showsCodeFailure, type EnvironmentFailure } from './environment-failure.ts';
+import { showsCodeFailure, type EnvironmentFailure, type EnvironmentSignal } from './environment-failure.ts';
 import { stripAnsi } from './fingerprint.ts';
 
 /**
@@ -129,11 +129,12 @@ const SHELL_NOT_FOUND =
  * A shell, env or Orbit's limits wrapper (`orbit-limits`, isolation/limits.ts, a bash that execs the command) reporting
  * that the operating system refused to start a program (exit 126): `/bin/sh: /x/python: Operation not permitted`,
  * `orbit-limits: line 0: exec: /x/python: cannot execute: Operation not permitted`, `env: /x/python: Operation not
- * permitted`. The program is captured as the line spells it, spaces included (`/x/my venvs/bin/python`): a caller
- * compares it with the words of the check's command.
+ * permitted`, and bash's `/bin/sh: /x/pytest: /x/python: bad interpreter: Operation not permitted` for a script (a tool
+ * environment's console script; captured under Seatbelt with bash 3.2 and 5). The program is captured as the line spells
+ * it, spaces included (`/x/my venvs/bin/python`): a caller compares it with the words of the check's command.
  */
 const SHELL_NOT_PERMITTED =
-  /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|orbit-limits)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?(\S.*?): (?:cannot execute: )?Operation not permitted$|^(?:\S*\/)?zsh:\d+: operation not permitted: (\S.*)$|^(?:\S*\/)?env: ['‘]?(\S.*?)['’]?: Operation not permitted$/;
+  /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|orbit-limits)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:exec:\s*)?(\S.*?): (?:cannot execute: |[^:]+: bad interpreter: )?Operation not permitted$|^(?:\S*\/)?zsh:\d+: operation not permitted: (\S.*)$|^(?:\S*\/)?env: ['‘]?(\S.*?)['’]?: Operation not permitted$/;
 
 const runsMsbuild = (inv: DirectInvocation): boolean => inv.tool === 'msbuild' || (inv.tool === 'dotnet' && MSBUILD_COMMANDS.has(inv.args[0] ?? ''));
 /** The switch MSBuild names is one the command passes, when it names one. */
@@ -339,10 +340,11 @@ export function classifyMisconfigured(input: MisconfiguredInput): MisconfiguredC
  *   (program-not-found). It is not installed there, not on the check's PATH, misspelled, or in a folder the check
  *   sandbox hides (on Linux srt lays an empty folder over a denied one; on macOS a bare name whose PATH folder the
  *   sandbox denies is not found either). The program is the one a direct invocation starts or the one a runner or
- *   `python -m` runs, by a bare name or an absolute path, or an absolute path any command of the check's starts (a
- *   chain's, one `exec` starts): a bare name in a chain may be one a script of the repository runs. macOS's bash 3.2 gives
- *   a path its limits wrapper cannot find exit 126 ("cannot execute: No such file or directory"), read the same way. A
- *   path relative to the check's cwd is a script of the repository (script-not-found).
+ *   `python -m` runs, by a bare name or an absolute path, or one any command of the check's starts (a chain's, a nested
+ *   shell's, one `exec` starts): an absolute path, or with exit 127 a bare name (`cd tests && pytest -q`). A name only a
+ *   script of the repository runs (`cd client && npm test` whose script runs a missing jest) is none of them. macOS's
+ *   bash 3.2 gives a path its limits wrapper cannot find exit 126 ("cannot execute: No such file or directory"), read the
+ *   same way. A path relative to the check's cwd is a script of the repository (script-not-found).
  * - refused: the shell's, env's or Orbit's limits wrapper's "Operation not permitted" for a program the command starts
  *   (evidence/check-command.ts startedPrograms: a chain's, a pipeline's, one `exec` starts), by its absolute path as the
  *   command writes it, spaces included, or the path the shell found a bare name at on PATH, with exit 126
@@ -387,7 +389,9 @@ export function classifyProgramNotFound(input: MisconfiguredInput): EnvironmentF
     const missing = m?.slice(1).find((g) => g !== undefined);
     if (missing === undefined) continue;
     const direct = exit === 127 && inv !== null && (missing === inv.program || missing === started) && !(missing.includes('/') && !isAbsolute(missing));
-    if (!direct && !startsPath(missing)) continue;
+    // A bare name any command of the check's starts, which its shell looked up on the check's PATH (second review of the 0.3.0 retest fix).
+    const bare = exit === 127 && !missing.includes('/') && programs.includes(missing);
+    if (!direct && !bare && !startsPath(missing)) continue;
     return {
       checkId: input.checkId,
       fingerprint: null,
@@ -396,6 +400,95 @@ export function classifyProgramNotFound(input: MisconfiguredInput): EnvironmentF
       lines: [line.slice(0, MAX_LINE_CHARS)],
       program: missing,
     };
+  }
+  return null;
+}
+
+/**
+ * Where a check's program would lie for the backstop (classifyDeniedFolderProgram): the folder the check sandbox denies
+ * because of where the repository is that holds a path (the repository, or the folder that holds it and its sibling
+ * projects; never the check's own checkout), and where the check's PATH finds a bare name.
+ */
+export interface DeniedFolders {
+  /** The denied folder that holds `path`, as a reason names it ("the repository (/x)"), or null when none does. */
+  holding: (path: string) => string | null;
+  /** The path of the first folder of the check's PATH that holds an executable of that name, or null. */
+  onPath: (name: string) => string | null;
+}
+
+/** The operating system refusing an operation: "Operation not permitted", EPERM. */
+const REFUSAL = /operation not permitted|\bEPERM\b/i;
+/**
+ * A launcher refusing to start a program, which it names as the command wrote it (a path, spaces included, or a bare
+ * name): a shell's, eval's, exec's, env's or Orbit's limits wrapper's `<who>: <program>: Operation not permitted`
+ * (`exec: <program>: cannot execute: ...`, dash's `sh: 1: eval: <program>: ...`), bash's `<program>: <interpreter>: bad
+ * interpreter: Operation not permitted` for a script, zsh's `operation not permitted: <program>`, node's `spawn
+ * <program> EPERM`. Captured under Seatbelt on macOS (bash 3.2 and 5, dash, zsh, env, node). A tool's refusal of a file
+ * it works on (`mkdir: /x: Operation not permitted`) is no launcher's.
+ */
+const LAUNCHER_REFUSAL =
+  /^(?:\S*\/)?(?:sh|bash|dash|ksh|ash|zsh|orbit-limits|env|xargs|nohup|nice|timeout)(?::\s*line \d+)?:\s*(?:\d+:\s*)?(?:(?:eval|exec):\s*)?['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?: (?:cannot execute: |[^:]+: bad interpreter: )?operation not permitted$|^(?:\S*\/)?(?:zsh|\(eval\)):\d+: operation not permitted: (\S.*)$|\bspawn(?:Sync)? (\/\S+) EPERM\b/i;
+/** An absolute path a line quotes ('/x y', "/x", ‘/x’), spaces included, or writes as one word. */
+const QUOTED_PATH = /['"\u2018\u201C](\/[^'"\u2019\u201D]+)['"\u2019\u201D]/g;
+const PATH_WORD = /(?<![\w./~-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+/g;
+/**
+ * A program a launcher did not find, as it names it: a shell's (`/bin/sh: 1: pytest: not found`, `bash: line 1: x:
+ * command not found`, `/x: No such file or directory`), eval's, env's or zsh's (`command not found: x`).
+ */
+const NOT_FOUND = /(?:^|:\s)(?:exec:\s*)?['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?: (?:cannot execute: )?(?:command not found|not found|No such file or directory)$|(?:command not found|no such file or directory): (\S.*)$/;
+
+/**
+ * The backstop for a check the sandbox stopped at a folder it denies, whatever the check's command looks like (second
+ * review of the 0.3.0 retest fix; ADR 0010): `eval "$CMD"`, a script of the repository, a launcher whose words the
+ * parser does not follow. classifyProgramNotFound reads a program the command starts; this reads the output alone, and
+ * needs where what was refused lies to be sure:
+ *
+ * - a launcher refusing to start a program (LAUNCHER_REFUSAL) that lies in such a folder, by its path or by a bare name
+ *   the check's PATH finds there (program-denied), whatever the exit code (a launcher such as npm passes on its own);
+ * - any other refusal ("Operation not permitted", EPERM) of a path in such a folder, which the line quotes or writes
+ *   (filesystem-denied: a check runs in a checkout of its own, and may not use the repository or the folder beside it);
+ * - with exit 127, a launcher's "not found" for a path in such a folder (on Linux srt lays an empty folder over a denied
+ *   one) or for a bare name the check's PATH finds there (program-not-found).
+ *
+ * A check whose own tests or build ran and failed (showsCodeFailure) is the code's, whatever its output quotes: a test
+ * whose assertion message names such a refusal is a failing test. Null too for a check that passed or did not exit.
+ */
+export function classifyDeniedFolderProgram(input: MisconfiguredInput, folders: DeniedFolders): EnvironmentFailure | null {
+  const exit = input.exitCode;
+  if (exit === null || exit === 0) return null;
+  const text = stripAnsi(input.output);
+  if (showsCodeFailure(text)) return null;
+  /** Where a program the line names (a path, or a bare name the check's PATH finds) lies, when that is a denied folder. */
+  const located = (named: string): string | null => {
+    const at = isAbsolute(named) ? named : named.includes('/') ? null : folders.onPath(named);
+    return at === null ? null : folders.holding(at);
+  };
+  const failure = (signal: EnvironmentSignal, cause: string, line: string, program?: string): EnvironmentFailure => ({
+    checkId: input.checkId,
+    fingerprint: null,
+    signals: [signal],
+    cause,
+    lines: [line.slice(0, MAX_LINE_CHARS)],
+    ...(program !== undefined ? { program } : {}),
+  });
+  for (const raw of outputLines(text)) {
+    const line = raw.trim();
+    if (REFUSAL.test(line)) {
+      const program = LAUNCHER_REFUSAL.exec(line)?.slice(1).find((g) => g !== undefined);
+      const where = program !== undefined ? located(program) : null;
+      if (program !== undefined && where !== null) {
+        return failure('program-denied', `the sandbox or the operating system refused to start the program "${program}" the check runs ("operation not permitted"), which lies in ${where}, a folder the check sandbox denies`, line, program);
+      }
+      for (const path of [...[...line.matchAll(QUOTED_PATH)].map((q) => q[1]!), ...(line.match(PATH_WORD) ?? [])]) {
+        const held = folders.holding(path);
+        if (held !== null) return failure('filesystem-denied', `the sandbox or the operating system refused "${path}" ("operation not permitted"), which lies in ${held}, a folder the check sandbox denies: a check runs in a checkout of its own and may not use it`, line);
+      }
+    }
+    if (exit !== 127) continue;
+    const missing = NOT_FOUND.exec(line)?.slice(1).find((g) => g !== undefined);
+    const where = missing !== undefined ? located(missing) : null;
+    if (missing === undefined || where === null) continue;
+    return failure('program-not-found', `the program "${missing}" was not found where the check runs (exit 127): it lies in ${where}, a folder the check sandbox denies`, line, missing);
   }
   return null;
 }

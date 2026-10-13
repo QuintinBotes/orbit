@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { classifyMisconfigured, classifyProgramNotFound, USAGE_ERRORS, type MisconfiguredInput } from '../../../src/evidence/check-misconfigured.ts';
+import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, USAGE_ERRORS, type MisconfiguredInput } from '../../../src/evidence/check-misconfigured.ts';
 
 // Issue #23: a check whose command is wrong fails on the base revision in under a second, and was offered as a
 // baseline exception. A tool's own usage error, from the check's own direct invocation of that tool, is not a
@@ -245,12 +245,11 @@ describe('classifyProgramNotFound: a program the check runs is not installed whe
     expect(classifyProgramNotFound(input(['npx', 'jest'], 127, 'bash: line 1: npx: command not found\n'))?.signals).toEqual(['program-not-found']);
   });
 
-  it('is null for a program the check does not run itself, a script of the repository, another exit code or no direct invocation', () => {
+  it('is null for a program the check does not run itself, a script of the repository, or another exit code', () => {
     expect(classifyProgramNotFound(input(['make', 'test'], 127, '/bin/sh: jest: command not found\n'))).toBeNull();
     expect(classifyProgramNotFound(input(['npm test'], 127, 'sh: 1: jest: not found\n', { shell: true }))).toBeNull();
     expect(classifyProgramNotFound(input(['./scripts/check.sh'], 127, fixture('sh-script-not-found.log'), { shell: true }))).toBeNull();
     expect(classifyProgramNotFound(input(['dotnett build'], 1, fixture('sh-command-not-found.log'), { shell: true }))).toBeNull();
-    expect(classifyProgramNotFound(input(['true && dotnett build'], 127, fixture('sh-command-not-found.log'), { shell: true }))).toBeNull();
     expect(classifyProgramNotFound(input(['dotnett build'], 127, `${fixture('sh-command-not-found.log')}not ok 1 - builds\n`, { shell: true }))).toBeNull();
   });
 });
@@ -335,10 +334,9 @@ describe('classifyProgramNotFound: the limits wrapper, chains, exec and paths wi
       expect(f, output).toMatchObject({ signals: ['program-not-found'], program, lines: [output.split('\n')[0]] });
       expect(f!.cause).toBe(`the program "${program}" was not found where the check runs (exit ${exit}): it is not installed there, not on the check's PATH, or misspelled`);
     }
-    // A script of the repository stays the code's, and a bare name a chain runs may be one a script of it runs.
+    // A script of the repository stays the code's (a bare name a chain starts is the check's own: see the second review below).
     expect(classifyProgramNotFound(input(['./run-tests.sh'], 127, 'orbit-limits: line 1: ./run-tests.sh: No such file or directory\n'))).toBeNull();
     expect(classifyProgramNotFound(input(['./run-tests.sh'], 126, 'orbit-limits: ./run-tests.sh: No such file or directory\norbit-limits: line 0: exec: ./run-tests.sh: cannot execute: No such file or directory\n'))).toBeNull();
-    expect(classifyProgramNotFound(input(['cd tests && pytest -q'], 127, '/bin/sh: pytest: command not found\n', { shell: true }))).toBeNull();
   });
 
   it('reads a refused program of a chain, one exec starts, and one whose path has a space as the check\'s own (exit 126)', () => {
@@ -365,5 +363,125 @@ describe('classifyProgramNotFound: the limits wrapper, chains, exec and paths wi
     // The words of a path with a space are not the path.
     expect(classifyProgramNotFound(input(['/home/acme/projects/my', 'venvs/shop/bin/python'], 126, deniedBy('orbit-limits', SPACED)))).toBeNull();
     expect(classifyProgramNotFound(input([`cd tests && ${SIBLING} -m pytest`], 126, `${deniedBy('/bin/sh', SIBLING)}FAILED tests/test_x.py::test_y\n`, { shell: true }))).toBeNull();
+  });
+});
+
+// Second review of the 0.3.0 retest fix. A bare name a chain starts that is not found (`cd tests && pytest
+// -q`, exit 127; srt hides a PATH folder in the repository on Linux) is the check's own program, as an absolute path a
+// chain starts is: matched against the programs the command starts, never a name only a script of the repository runs,
+// and never next to a failing test. A shell the check script starts with -c starts the programs of its own script.
+describe('classifyProgramNotFound: a bare name a chain starts, and a nested shell\'s program', () => {
+  const VENV = '/home/acme/projects/shop/.venv/bin/python';
+
+  it('reads a bare name a chain starts that the shell did not find (exit 127)', () => {
+    for (const output of ['/bin/sh: 1: pytest: not found\n', '/bin/sh: pytest: command not found\n', 'bash: line 1: pytest: command not found\n']) {
+      const f = classifyProgramNotFound(input(['cd tests && pytest -q'], 127, output, { shell: true }));
+      expect(f, output).toMatchObject({ signals: ['program-not-found'], program: 'pytest', lines: [output.trim()] });
+    }
+    expect(classifyProgramNotFound(input(['true && dotnett build'], 127, fixture('sh-command-not-found.log'), { shell: true }))?.program).toBe('dotnett');
+    expect(classifyProgramNotFound(input(['/bin/sh', '-c', 'cd tests && pytest -q'], 127, '/bin/sh: 1: pytest: not found\n'))?.program).toBe('pytest');
+  });
+
+  it('is null for a bare name only a script of the repository runs, or next to a failing test', () => {
+    expect(classifyProgramNotFound(input(['cd client && npm test'], 127, 'sh: 1: jest: not found\n', { shell: true }))).toBeNull();
+    expect(classifyProgramNotFound(input(['cd tests && pytest -q'], 127, '/bin/sh: 1: pytest: not found\nFAILED tests/test_x.py::test_y\n', { shell: true }))).toBeNull();
+    expect(classifyProgramNotFound(input(['cd tests && pytest -q'], 1, '/bin/sh: 1: pytest: not found\n', { shell: true }))).toBeNull();
+  });
+
+  // bash's words when the refused program is a script (a tool environment's console script, `.venv/bin/pytest`), as
+  // captured under Seatbelt on macOS with bash 3.2 and 5.
+  it('reads bash\'s "bad interpreter" refusal of a script the command starts (exit 126)', () => {
+    const PYTEST = '/home/acme/projects/shop/.venv/bin/pytest';
+    const output = `/bin/sh: ${PYTEST}: ${VENV}: bad interpreter: Operation not permitted\n`;
+    expect(classifyProgramNotFound(input([`cd tests && ${PYTEST} -q`], 126, output, { shell: true }))).toMatchObject({ signals: ['program-denied'], program: PYTEST });
+  });
+
+  it('reads the refused program of a shell the check script starts with -c (exit 126)', () => {
+    const output = `/bin/sh: ${VENV}: Operation not permitted\n`;
+    expect(classifyProgramNotFound(input([`sh -c "${VENV} -m pytest"`], 126, output, { shell: true }))).toMatchObject({ signals: ['program-denied'], program: VENV });
+    expect(classifyProgramNotFound(input(['bash', '-c', `sh -c "${VENV} -m pytest"`], 126, output))).toMatchObject({ signals: ['program-denied'], program: VENV });
+  });
+});
+
+// The backstop (second review of the 0.3.0 retest fix): whatever the command looks like (`eval "$CMD"`, a script the
+// parser cannot follow), a base-revision failure whose output shows the operating system refusing a path in a folder the
+// check sandbox denies (the repository, the folder beside it), or a "not found" (exit 127) for a name the check's PATH
+// finds there, or a path there, is the environment's. It never fires for a test that ran and failed, nor for a path
+// outside those folders.
+describe('classifyDeniedFolderProgram: a refusal in a folder the check sandbox denies, whatever the command', () => {
+  const REPO = '/home/acme/projects/shop';
+  const PARENT = '/home/acme/projects';
+  const VENV = `${REPO}/.venv/bin/python`;
+  const SPACED = `${PARENT}/my venvs/bin/python`;
+  const folders = {
+    holding: (p: string) => (p === REPO || p.startsWith(`${REPO}/`) ? `the repository (${REPO})` : p === PARENT || p.startsWith(`${PARENT}/`) ? `the folder that holds it (${PARENT})` : null),
+    onPath: (name: string) => (name === 'pytest' ? `${REPO}/.venv/bin/pytest` : name === 'node' ? '/usr/local/bin/node' : null),
+  };
+
+  // The launchers' words, as Seatbelt's refusal of a program in a denied folder made them print on macOS (bash 3.2 and
+  // 5, dash, zsh, env, node), the paths renamed.
+  it('reads a launcher\'s refusal to start a program in a denied folder, by its path or a bare name the PATH finds there', () => {
+    const PYTEST = `${REPO}/.venv/bin/pytest`;
+    const cases: [string, string][] = [
+      [`/bin/sh: ${VENV}: Operation not permitted\n`, VENV],
+      [`/bin/sh: ${PYTEST}: /bin/sh: bad interpreter: Operation not permitted\n`, PYTEST],
+      [`/bin/dash: 1: eval: ${VENV}: Operation not permitted\n`, VENV],
+      [`/bin/dash: 1: eval: pytest: Operation not permitted\n`, 'pytest'],
+      [`bash: line 1: ${SPACED}: Operation not permitted\n`, SPACED],
+      [`(eval):1: operation not permitted: ${VENV}\n`, VENV],
+      [`orbit-limits: line 0: exec: ${VENV}: cannot execute: Operation not permitted\n`, VENV],
+      [`env: ${VENV}: Operation not permitted\n`, VENV],
+      [`xargs: ${VENV}: Operation not permitted\n`, VENV],
+      [`Error: spawnSync ${VENV} EPERM\n`, VENV],
+    ];
+    for (const [output, program] of cases) {
+      const f = classifyDeniedFolderProgram(input(['eval "$CMD"'], 126, output, { shell: true }), folders);
+      expect(f, output).toMatchObject({ checkId: 'build', fingerprint: null, signals: ['program-denied'], program, lines: [output.trim()] });
+    }
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 126, `/bin/sh: ${VENV}: Operation not permitted\n`, { shell: true }), folders)!.cause).toBe(
+      `the sandbox or the operating system refused to start the program "${VENV}" the check runs ("operation not permitted"), which lies in the repository (${REPO}), a folder the check sandbox denies`,
+    );
+    // Whatever the exit code a launcher passes on (npm exits 1 for its script's refused program).
+    expect(classifyDeniedFolderProgram(input(['npm test'], 1, `sh: 1: ${VENV}: Operation not permitted\n`, { shell: true }), folders)?.program).toBe(VENV);
+  });
+
+  it('reads any other refusal of a path in a denied folder as a filesystem denial there', () => {
+    for (const output of [`PermissionError: [Errno 1] Operation not permitted: '${SPACED}'\n`, `mkdir: ${REPO}/build: Operation not permitted\n`, `error: could not lock config file ${REPO}/.git/config: Operation not permitted\n`]) {
+      const f = classifyDeniedFolderProgram(input(['npm test'], 1, output, { shell: true }), folders);
+      expect(f, output).toMatchObject({ signals: ['filesystem-denied'], lines: [output.trim()] });
+      expect(f!.program).toBeUndefined();
+    }
+    expect(classifyDeniedFolderProgram(input(['npm test'], 1, `mkdir: ${REPO}/build: Operation not permitted\n`, { shell: true }), folders)!.cause).toBe(
+      `the sandbox or the operating system refused "${REPO}/build" ("operation not permitted"), which lies in the repository (${REPO}), a folder the check sandbox denies: a check runs in a checkout of its own and may not use it`,
+    );
+  });
+
+  it('reads a "not found" (exit 127) for a bare name the check\'s PATH finds in a denied folder, or a path there', () => {
+    const f = classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: pytest: not found\n', { shell: true }), folders);
+    expect(f).toMatchObject({ signals: ['program-not-found'], program: 'pytest', lines: ['/bin/sh: 1: pytest: not found'] });
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, `bash: line 1: ${VENV}: No such file or directory\n`, { shell: true }), folders)?.program).toBe(VENV);
+    // A name the PATH finds elsewhere, or does not find, a path elsewhere, a relative path, or another exit code: not this.
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: node: not found\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: ruff: not found\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: /opt/acme/bin/tool: not found\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 127, '/bin/sh: 1: .venv/bin/pytest: not found\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, '/bin/sh: 1: pytest: not found\n', { shell: true }), folders)).toBeNull();
+  });
+
+  it('stays a code failure for a test that ran and failed, whose assertion message says "Operation not permitted" for such a path', () => {
+    const output = [
+      'tests/test_perm.py F                                                     [100%]',
+      `E   AssertionError: assert 'ok' == '/bin/sh: ${VENV}: Operation not permitted'`,
+      `FAILED tests/test_perm.py::test_refused - AssertionError: assert 'ok' == '/bin/sh: ${VENV}: Operation not permitted'`,
+      '1 failed in 0.02s',
+    ].join('\n');
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, output, { shell: true }), folders)).toBeNull();
+  });
+
+  it('is null for a refusal of a path outside the denied folders, or of none, and for a check that passed or timed out', () => {
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 126, '/bin/sh: /opt/acme/bin/tool: Operation not permitted\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 1, 'mkdir: Operation not permitted\n', { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], 0, `/bin/sh: ${VENV}: Operation not permitted\n`, { shell: true }), folders)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['eval "$CMD"'], null, `/bin/sh: ${VENV}: Operation not permitted\n`, { shell: true }), folders)).toBeNull();
   });
 });

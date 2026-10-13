@@ -7,9 +7,12 @@ import { basename } from 'node:path';
  * A.csproj B.csproj` is the check's command line, while `npm test` whose script runs a wrong `dotnet build`, a chain such
  * as `dotnet restore && npm test`, or `dotnet run --project build/Build.csproj` whose program runs one, put the error in
  * code of the repository, which a change may fix. So a check's command is read as one direct invocation: its program,
- * after a leading env assignment, `env` or an npx-style runner, and that program's arguments. A shell command that is
- * a chain, a pipeline, a background job, a subshell, a command substitution or more than one line is no direct
- * invocation at all.
+ * after a leading env assignment, `env` or an npx-style runner, and that program's arguments; a shell given a script with
+ * -c (`sh -c "pytest -q"`) is read as the command of its script. A shell command that is a chain, a pipeline, a
+ * background job, a subshell, a command substitution or more than one line is no direct invocation at all.
+ *
+ * The programs a command starts (checkPrograms) are read wherever it starts them: each command of a chain, a pipeline,
+ * a subshell or a substitution, and of the script a shell it starts with -c runs, with how certain that reading is.
  */
 
 export interface DirectInvocation {
@@ -23,6 +26,13 @@ export interface DirectInvocation {
 
 const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash']);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/**
+ * Scripts read at most, each run by a shell of the one before (the check's own shell script, then `sh -c '...'` in it, and
+ * so on). A shell nested deeper is not read, and makes the reading uncertain.
+ */
+const MAX_SCRIPT_DEPTH = 3;
+/** Substitutions read at most one inside another; a script nested deeper is read as one that does not parse. */
+const MAX_SUBSTITUTION_DEPTH = 32;
 
 /** Runners that run the program named after them (and their options), by the words that start them. */
 const RUNNERS: readonly { words: readonly string[]; valueOptions: readonly string[]; refuse?: readonly string[] }[] = [
@@ -157,11 +167,19 @@ function afterOptions(words: readonly string[], from: number, valueOptions: read
   return i;
 }
 
-/** The words of the one simple command `command` runs, or null when it runs no such command (module comment). */
+/**
+ * The words of the one simple command `command` runs, or null when it runs no such command (module comment): a shell
+ * given a script with -c runs the command of that script, up to MAX_SCRIPT_DEPTH scripts deep.
+ */
 function invocationWords(command: readonly string[], shell: boolean): string[] | null {
-  if (shell) return command.length === 1 ? shellWords(command[0]!) : null;
-  const script = shellScript(command);
-  return script !== undefined ? shellWords(script) : [...command];
+  let words = shell ? (command.length === 1 ? shellWords(command[0]!) : null) : [...command];
+  for (let depth = shell ? 1 : 0; words !== null; depth++) {
+    const script = shellScript(words);
+    if (script === undefined) return words;
+    if (depth >= MAX_SCRIPT_DEPTH) return null;
+    words = shellWords(script);
+  }
+  return null;
 }
 
 /** The word after `env` at `i` and its options and assignments; null when an option makes env run something else. */
@@ -221,132 +239,278 @@ const BEFORE_COMMAND: ReadonlySet<string> = new Set(['if', 'then', 'else', 'elif
 /** Reserved words that start a compound command whose words up to the next separator are no command (`for x in a b`). */
 const NO_COMMAND: ReadonlySet<string> = new Set(['for', 'case', 'select', 'function', 'fi', 'done', 'esac', '}']);
 
-/**
- * The words of each simple command a shell script runs, quotes and escapes resolved and redirections dropped: the
- * commands of a chain, a pipeline, a list, a background job, a subshell, a command substitution outside quotes and each
- * line, in order. A here-document ends the reading, since its body is no command. Null when the script does not parse
- * (an unterminated quote).
- */
-export function scriptCommands(script: string): string[][] | null {
-  const commands: string[][] = [];
-  let words: string[] = [];
-  let cur = '';
-  let inWord = false;
-  let dropNext = false;
-  const flush = (): void => {
-    if (inWord) {
-      if (dropNext) dropNext = false;
-      else words.push(cur);
-    }
-    cur = '';
-    inWord = false;
-  };
-  const end = (): void => {
-    flush();
-    dropNext = false;
-    if (words.length > 0) commands.push(words);
-    words = [];
-  };
-  const s = script;
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i]!;
-    if (c === "'") {
-      const close = s.indexOf("'", i + 1);
-      if (close < 0) return null;
-      cur += s.slice(i + 1, close);
-      inWord = true;
-      i = close + 1;
-    } else if (c === '"') {
-      // A substitution inside double quotes stays part of the word: it is an argument's value, read no further.
-      let j = i + 1;
-      for (; j < s.length && s[j] !== '"'; j++) {
-        if (s[j] === '\\' && j + 1 < s.length && '"\\$`'.includes(s[j + 1]!)) j++;
-        cur += s[j];
-      }
-      if (j >= s.length) return null;
-      inWord = true;
-      i = j + 1;
-    } else if (c === '\\') {
-      if (i + 1 < s.length && s[i + 1] !== '\n') {
-        cur += s[i + 1];
-        inWord = true;
-      }
-      i += 2;
-    } else if (c === '#' && !inWord) {
-      const nl = s.indexOf('\n', i);
-      i = nl < 0 ? s.length : nl;
-    } else if (c === '\n' || c === ';' || c === '|' || c === '(' || c === ')' || c === '`') {
-      end();
-      i++;
-    } else if (c === '$' && s[i + 1] === '(') {
-      end();
-      i += 2;
-    } else if (c === '&') {
-      if (s[i + 1] === '>') {
-        // `&>file` and `&>>file` redirect both streams.
-        flush();
-        i += s[i + 2] === '>' ? 3 : 2;
-        dropNext = true;
-      } else {
-        end();
-        i++;
-      }
-    } else if (c === '>' || c === '<') {
-      if (c === '<' && s[i + 1] === '<') {
-        end();
-        return commands;
-      }
-      if (inWord && /^\d+$/.test(cur)) {
-        cur = '';
-        inWord = false;
-      } else flush();
-      i++;
-      if (s[i] === '>' || s[i] === '|') i++;
-      if (s[i] === '&') {
-        i++;
-        while (i < s.length && /[\d-]/.test(s[i]!)) i++;
-      } else dropNext = true;
-    } else if (/\s/.test(c)) {
-      flush();
-      i++;
-    } else {
-      cur += c;
-      inWord = true;
-      i++;
-    }
-  }
-  end();
-  return commands;
+/** How a shell script reads (readScript). */
+export interface ScriptReading {
+  /**
+   * The words of each simple command, quotes and escapes resolved and redirections dropped, in the order the commands
+   * start: a command that holds a substitution comes before the commands of the substitution.
+   */
+  commands: string[][];
+  /**
+   * Whether the script holds what a reading of its text cannot follow for certain: a command substitution (whose output
+   * becomes words of the command around it) or a process substitution, or a here-document (whose body is not read).
+   */
+  uncertain: boolean;
 }
 
-/** The program each command of a shell script starts (scriptCommands), reserved words skipped. */
-function scriptPrograms(script: string): string[] {
-  const out: string[] = [];
-  for (const command of scriptCommands(script) ?? []) {
+/**
+ * The simple commands a shell script runs (ScriptReading): the commands of a chain, a pipeline, a list, a background job,
+ * a subshell, each line, and those of a command substitution (`$(...)`, backquotes, in double quotes too) or a process
+ * substitution (`<(...)`), which is read as a part of the word it stands in, so the command around it keeps its words
+ * (`echo $(git rev-parse HEAD) /x` runs echo with /x as its argument, and git). An arithmetic expansion (`$((1 + 1))`)
+ * is a part of a word too, and runs nothing. A here-document ends the reading, since its body is no command. Null when
+ * the script does not parse (an unterminated quote or substitution).
+ */
+export function readScript(script: string): ScriptReading | null {
+  const s = script;
+  const commands: string[][] = [];
+  let uncertain = false;
+  let broken = false;
+  let stopped = false;
+  /** The index after the `)` that closes the `(` at `open`, counting the parentheses between; -1 when none does. */
+  const closing = (open: number): number => {
+    let depth = 0;
+    for (let k = open; k < s.length; k++) {
+      if (s[k] === '(') depth++;
+      else if (s[k] === ')' && --depth === 0) return k + 1;
+    }
+    return -1;
+  };
+  /**
+   * Reads the commands from `start` to the `close` that ends a substitution (the `)` of `$(`, or a backquote), or to the
+   * end of the script, and returns the index after it. `nested` counts the substitutions it is in.
+   */
+  const list = (start: number, close: ')' | '`' | null, nested = 0): number => {
+    if (nested > MAX_SUBSTITUTION_DEPTH) {
+      broken = true;
+      return s.length;
+    }
+    let words: string[] = [];
+    let at = commands.length;
+    let cur = '';
+    let inWord = false;
+    let dropNext = false;
+    // Subshells opened in this list: their `)` is not the one that closes it.
+    let open = 0;
+    const flush = (): void => {
+      if (inWord) {
+        if (dropNext) dropNext = false;
+        else words.push(cur);
+      }
+      cur = '';
+      inWord = false;
+    };
+    const end = (): void => {
+      flush();
+      dropNext = false;
+      if (words.length > 0) commands.splice(at, 0, words);
+      words = [];
+      at = commands.length;
+    };
+    /** Reads the substitution whose text starts at `from` and whose commands start at `body`; it becomes part of the word. */
+    const substitution = (from: number, body: number, until: ')' | '`'): number => {
+      uncertain = true;
+      const after = list(body, until, nested + 1);
+      cur += s.slice(from, after);
+      inWord = true;
+      return after;
+    };
+    let i = start;
+    while (i < s.length && !broken && !stopped) {
+      const c = s[i]!;
+      if (close === '`' && c === '`') {
+        end();
+        return i + 1;
+      }
+      if (c === "'") {
+        const q = s.indexOf("'", i + 1);
+        if (q < 0) {
+          broken = true;
+          break;
+        }
+        cur += s.slice(i + 1, q);
+        inWord = true;
+        i = q + 1;
+      } else if (c === '"') {
+        let j = i + 1;
+        while (j < s.length && s[j] !== '"' && !broken && !stopped) {
+          if (s[j] === '\\' && j + 1 < s.length && '"\\$`'.includes(s[j + 1]!)) {
+            cur += s[j + 1];
+            j += 2;
+          } else if (s[j] === '$' && s[j + 1] === '(' && s[j + 2] === '(') {
+            const after = closing(j + 1);
+            if (after < 0) broken = true;
+            else {
+              cur += s.slice(j, after);
+              j = after;
+            }
+          } else if (s[j] === '$' && s[j + 1] === '(') j = substitution(j, j + 2, ')');
+          else if (s[j] === '`') j = substitution(j, j + 1, '`');
+          else cur += s[j++];
+        }
+        if (j >= s.length) {
+          broken = true;
+          break;
+        }
+        inWord = true;
+        i = j + 1;
+      } else if (c === '\\') {
+        if (i + 1 < s.length && s[i + 1] !== '\n') {
+          cur += s[i + 1];
+          inWord = true;
+        }
+        i += 2;
+      } else if (c === '#' && !inWord) {
+        const nl = s.indexOf('\n', i);
+        i = nl < 0 ? s.length : nl;
+      } else if (c === '$' && s[i + 1] === '(' && s[i + 2] === '(') {
+        const after = closing(i + 1);
+        if (after < 0) {
+          broken = true;
+          break;
+        }
+        cur += s.slice(i, after);
+        inWord = true;
+        i = after;
+      } else if (c === '$' && s[i + 1] === '(') {
+        i = substitution(i, i + 2, ')');
+      } else if (c === '`') {
+        i = substitution(i, i + 1, '`');
+      } else if ((c === '<' || c === '>') && s[i + 1] === '(') {
+        // A process substitution is a file name the command reads or writes.
+        flush();
+        i = substitution(i, i + 2, ')');
+      } else if (c === ')') {
+        end();
+        if (open === 0 && close === ')') return i + 1;
+        if (open > 0) open--;
+        i++;
+      } else if (c === '(') {
+        end();
+        open++;
+        i++;
+      } else if (c === '\n' || c === ';' || c === '|') {
+        end();
+        i++;
+      } else if (c === '&') {
+        if (s[i + 1] === '>') {
+          // `&>file` and `&>>file` redirect both streams.
+          flush();
+          i += s[i + 2] === '>' ? 3 : 2;
+          dropNext = true;
+        } else {
+          end();
+          i++;
+        }
+      } else if (c === '>' || c === '<') {
+        if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+          // A here-document: its body is no command, and where it ends is not read.
+          uncertain = true;
+          end();
+          stopped = true;
+          break;
+        }
+        if (inWord && /^\d+$/.test(cur)) {
+          cur = '';
+          inWord = false;
+        } else flush();
+        i++;
+        // `>>`, `>|`, and a here-string's `<<<`.
+        if (s[i] === '>' || s[i] === '|') i++;
+        else if (c === '<' && s[i] === '<' && s[i + 1] === '<') i += 2;
+        if (s[i] === '&') {
+          i++;
+          while (i < s.length && /[\d-]/.test(s[i]!)) i++;
+        } else dropNext = true;
+      } else if (/\s/.test(c)) {
+        flush();
+        i++;
+      } else {
+        cur += c;
+        inWord = true;
+        i++;
+      }
+    }
+    end();
+    if (close !== null && !stopped) broken = true;
+    return s.length;
+  };
+  list(0, null);
+  return broken ? null : { commands, uncertain };
+}
+
+/** The programs a shell script starts (scriptPrograms), each as the command writes it, and whether the reading is uncertain. */
+export interface CheckPrograms {
+  programs: string[];
+  /**
+   * Whether the command holds what a reading of its text cannot follow for certain (ScriptReading.uncertain), runs eval,
+   * nests shells deeper than MAX_SCRIPT_DEPTH, or does not parse: a program read from it may not be one it starts, and
+   * one it starts may not be read. `orbit doctor`, which judges a check from its command alone, warns at most then.
+   */
+  uncertain: boolean;
+}
+
+/**
+ * The program each command of a shell script starts (readScript), reserved words skipped, into `out`, and the programs
+ * of the script a shell it starts with -c, or eval, runs (nestedPrograms). `depth` is the script's own (1 for a check's
+ * shell script). Whether the reading is uncertain.
+ */
+function scriptPrograms(script: string, depth: number, out: string[]): boolean {
+  const reading = readScript(script);
+  if (reading === null) return true;
+  let uncertain = reading.uncertain;
+  for (const command of reading.commands) {
     let words = command;
     while (words.length > 0 && BEFORE_COMMAND.has(words[0]!)) words = words.slice(1);
     if (words.length === 0 || NO_COMMAND.has(words[0]!)) continue;
     const i = programIndex(words);
-    if (i !== null) out.push(words[i]!);
+    if (i === null) continue;
+    out.push(words[i]!);
+    if (nestedPrograms(words.slice(i), depth, out)) uncertain = true;
   }
-  return out;
+  return uncertain;
 }
 
 /**
- * Every program a check's command starts, as the command writes it, each once in order (0.3.0 retest): an argv's
- * program, after leading assignments, `exec` and `env`; and when that is a shell given a script with -c, or the check
- * is a `shell` check, the program each command of the script starts (a chain's, a pipeline's, a subshell's, one `exec`
- * starts). Not the programs a runner, `python -m` or a script of the repository starts in turn. A shell or env that
- * cannot start one of them names it as written here (a quoted path with a space is one program), or, for a bare name,
- * by the path it found it at on PATH. `orbit doctor` and PREFLIGHT read a check's programs with this one function.
+ * The programs of the script that `words` (a program and its arguments, in a script of depth `depth`) runs, into `out`,
+ * when the program is a shell given a script with -c (`sh -c "..."`, `bash -lc '...'`) or the builtin eval, whose
+ * arguments are a script, read as their words stand (eval expands them first, so its reading is uncertain). Whether the
+ * reading is uncertain: past MAX_SCRIPT_DEPTH a script is not read.
  */
+function nestedPrograms(words: readonly string[], depth: number, out: string[]): boolean {
+  const evaluated = words[0] === 'eval';
+  const script = evaluated ? words.slice(1).join(' ') : shellScript(words);
+  if (script === undefined) return false;
+  if (depth >= MAX_SCRIPT_DEPTH) return true;
+  return scriptPrograms(script, depth + 1, out) || evaluated;
+}
+
+/**
+ * Every program a check's command starts, as the command writes it, each once (0.3.0 retest), and whether the reading is
+ * uncertain (CheckPrograms): an argv's program, after leading assignments, `exec` and `env`; and when that is a shell
+ * given a script with -c, or the check is a `shell` check, the program each command of the script starts (a chain's, a
+ * pipeline's, a subshell's, a substitution's, one `exec` starts), and so on for a shell such a script starts with -c
+ * (`sh -c "/x/python -m pytest"`), up to MAX_SCRIPT_DEPTH scripts deep. Not the programs a runner, `python -m` or a
+ * script of the repository starts in turn. A shell or env that cannot start one of them names it as written here (a
+ * quoted path with a space is one program), or, for a bare name, by the path it found it at on PATH. `orbit doctor` and
+ * PREFLIGHT read a check's programs with this one function.
+ */
+export function checkPrograms(command: readonly string[], shell: boolean): CheckPrograms {
+  const out: string[] = [];
+  let uncertain: boolean;
+  if (shell) uncertain = scriptPrograms(command[0] ?? '', 1, out);
+  else {
+    const i = programIndex(command);
+    if (i === null) return { programs: [], uncertain: false };
+    out.push(command[i]!);
+    uncertain = nestedPrograms(command.slice(i), 0, out);
+  }
+  return { programs: [...new Set(out)], uncertain };
+}
+
+/** The programs of checkPrograms. */
 export function startedPrograms(command: readonly string[], shell: boolean): string[] {
-  if (shell) return [...new Set(scriptPrograms(command[0] ?? ''))];
-  const i = programIndex(command);
-  if (i === null) return [];
-  const script = shellScript(command.slice(i));
-  return [...new Set([command[i]!, ...(script !== undefined ? scriptPrograms(script) : [])])];
+  return checkPrograms(command, shell).programs;
 }
 
 /**
