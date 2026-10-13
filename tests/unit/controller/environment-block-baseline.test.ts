@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, baselineIncompleteBlockReason, baselineIncompleteChecks, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
+import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, baselineIncompleteBlockReason, baselineIncompleteChecks, checksNotExecutedFor, environmentBlockReason, environmentFix, environmentFixSettings, type BlockedCheck } from '../../../src/controller/environment-block.ts';
 import { askAboutBaseFailures, classifyBaseline } from '../../../src/controller/steps/preflight.ts';
 import type { BaselineReport } from '../../../src/evidence/baseline.ts';
 import { msbuildNodeDenialNote, msbuildNodeFix } from '../../../src/evidence/msbuild.ts';
@@ -119,6 +119,24 @@ describe('environmentFix', () => {
     // Issue #33: it is the checks that restore from the filled cache; the install only when dependencies.install_command restores packages (Orbit's own install is skipped without an npm lockfile).
     expect(environmentFix([tls])).toMatch(/which the checks that restore read, and the dependency install too when dependencies\.install_command restores packages \(docs\/troubleshooting\.md/);
     expect(environmentFix([tls])).not.toMatch(/from which the dependency install and the checks restore/);
+  });
+
+  // Regression (review): a network denial was always recorded as needing network_hosts, so the advice said to cancel
+  // and start a new run, although a pinned dependency restore can succeed after its cache is filled outside the
+  // sandbox and a resume reruns the baseline. No policy change is required then, and both remedies are named.
+  it('keeps the resume for a network denial, naming the cache filled outside the sandbox and the host allowed in a new run', () => {
+    const refused: BlockedCheck = { ...dotnet, signals: ['network-denied'], lines: ['curl: (56) CONNECT tunnel failed, response 403'] };
+    expect(environmentFixSettings([refused], 'linux')).toEqual([]);
+    const fix = environmentFix([refused], 'linux')!;
+    expect(fix).toMatch(/fill .*cache outside the sandbox/);
+    expect(fix).toMatch(/add the host to the check's network_hosts/);
+    expect(fix).toContain('.orbit/config.yaml');
+    expect(fix).toMatch(/start a new run/);
+    expect(fix).not.toMatch(/[\u2013\u2014]/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [refused] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
   });
 
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {

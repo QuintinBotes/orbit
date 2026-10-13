@@ -35851,6 +35851,60 @@ function checkPrograms(command, shell) {
 function startedPrograms(command, shell) {
   return checkPrograms(command, shell).programs;
 }
+function collectExecutionDirs(script, depth, base, program, out) {
+  if (depth > MAX_SCRIPT_DEPTH) return true;
+  const reading = readScript(script);
+  if (reading === null || reading.uncertain || /[|()]/.test(script)) return true;
+  let dir = [...base];
+  let uncertain = false;
+  for (const raw of reading.commands) {
+    let words2 = raw;
+    while (words2.length > 0 && ASSIGNMENT2.test(words2[0])) words2 = words2.slice(1);
+    if (words2[0] === "builtin") words2 = words2.slice(1);
+    if (words2.length === 0) continue;
+    const head = words2[0];
+    if (BEFORE_COMMAND.has(head) || NO_COMMAND.has(head) || NOT_FOLLOWED.has(head) || head === "function" || head === "pushd" || head === "popd") return true;
+    if (head === "cd") {
+      let i = 1;
+      while (i < words2.length && (words2[i] === "--" || /^-[LPe]+$/.test(words2[i]))) {
+        i++;
+        if (words2[i - 1] === "--") break;
+      }
+      const operands = words2.slice(i);
+      const target = operands[0];
+      if (operands.length !== 1 || target === void 0 || target === "" || target.startsWith("/") || target.startsWith("-") || target.startsWith("~") || /[$`*?[\]{}]/.test(target)) return true;
+      for (const part of target.split("/")) {
+        if (part === "" || part === ".") continue;
+        if (part === ".." && dir.length > 0 && dir[dir.length - 1] !== "..") dir = dir.slice(0, -1);
+        else dir = [...dir, part];
+      }
+      continue;
+    }
+    const started = programIndices(words2);
+    for (const i of started) if (words2[i] === program) out.push(dir.join("/"));
+    const last = started.at(-1);
+    if (last === void 0) continue;
+    if (words2[last] === "eval") return true;
+    const nested = shellScript(words2.slice(last));
+    if (nested !== void 0 && collectExecutionDirs(nested, depth + 1, dir, program, out)) uncertain = true;
+  }
+  return uncertain;
+}
+function programExecutionDir(command, shell, program) {
+  const out = [];
+  let uncertain;
+  if (shell) {
+    uncertain = collectExecutionDirs(command[0] ?? "", 1, [], program, out);
+  } else {
+    const started = programIndices(command);
+    if (started.length === 0) return null;
+    for (const i of started) if (command[i] === program) out.push("");
+    const nested = shellScript(command.slice(started.at(-1)));
+    uncertain = nested !== void 0 && collectExecutionDirs(nested, 1, [], program, out);
+  }
+  if (uncertain || out.length === 0) return null;
+  return out.every((d) => d === out[0]) ? out[0] : null;
+}
 function directInvocation(command, shell) {
   const words2 = invocationWords(command, shell);
   if (words2 === null) return null;
@@ -36631,8 +36685,7 @@ var init_check_misconfigured = __esm({
         String.raw`${BEFORE_PROGRAM}${NAMED}: (?:cannot execute: |[^:]+: bad interpreter: )?operation not permitted$`,
         String.raw`^(?:\S*\/)?(?:zsh|\(eval\)):\d+: operation not permitted: (\S.*)$`,
         String.raw`\bspawn(?:Sync)? (\S+) EPERM\b`,
-        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\boperation not permitted\b`,
-        String.raw`\boperation not permitted: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`
+        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\boperation not permitted\b`
       ].join("|"),
       "i"
     );
@@ -36644,8 +36697,7 @@ var init_check_misconfigured = __esm({
         String.raw`^(?:\S*\/)?(?:zsh|\(eval\)):\d+: (?:command not found|no such file or directory): (\S.*)$`,
         String.raw`(?:^|:\s)${NAMED}: command not found$`,
         String.raw`\bspawn(?:Sync)? (\S+) ENOENT\b`,
-        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\bNo such file or directory\b`,
-        String.raw`\bNo such file or directory: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`
+        String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\bNo such file or directory\b`
       ].join("|")
     );
     NOT_FOUND = /(?:^|:\s)(?:exec:\s*|failed to run command |cannot run )?['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?: (?:cannot execute: )?(?:command not found|not found|No such file or directory)$|(?:command not found|no such file or directory): (\S.*)$/;
@@ -55853,8 +55905,7 @@ function environmentFixes(failures, platform3) {
   const network = has("network-denied");
   const nugetOnMac2 = platform3 === "darwin" ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
   if (network.length > nugetOnMac2.length) {
-    fixes.push("the check reached for a host its policy does not let it reach, and the sandbox's network proxy refused it: add the host to the check's network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)");
-    change(network.filter((f) => !nugetOnMac2.includes(f)), (id) => `checks.${id}.network_hosts`);
+    fixes.push("the check reached for a host its policy does not let it reach, and the sandbox's network proxy refused it: if it was restoring pinned dependencies, fill their cache outside the sandbox (run that restore outside Orbit, where the check reads the same cache) and resume this run, which runs the baseline again; or add the host to the check's network_hosts in .orbit/config.yaml (it must also be covered by network.allowed_hosts) and start a new run, because this run's policy is frozen; or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)");
   }
   if (has("nuget-http-denied").length > 0) {
     fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
@@ -55954,7 +56005,7 @@ function deniedProgramOf(ctx, found, def) {
       return onPath ? { ...d2, onPath: { name: basename17(program), setBy } } : d2;
     }
     if (program.includes("/")) {
-      const target = relativeTarget(repo, def, program, (path) => programDenial(path, repo, home2) !== null);
+      const target = relativeProgramTarget(repo, def, program, (path) => programDenial(path, repo, home2) !== null);
       if (target === null) return null;
       const d2 = programDenial(target, repo, home2);
       return d2 === null ? null : { ...d2, program, target };
@@ -55974,9 +56025,14 @@ function onCheckPath(def, name) {
   for (const dir of pathFolders(def)) if (isExecutableFile(join51(dir, name))) return join51(dir, name);
   return null;
 }
-function relativeTarget(repoRoot, def, path, denied) {
+function relativeProgramTarget(repoRoot, def, program, denied) {
+  const dir = programExecutionDir(def.command, def.shell === true, program);
+  if (dir === null) return null;
+  return relativeTarget(repoRoot, dir === "" ? def.cwd : join51(def.cwd, dir), program, denied);
+}
+function relativeTarget(repoRoot, cwd, path, denied) {
   const root = resolve13(repoRoot);
-  const spelled = resolve13(root, def.cwd, path);
+  const spelled = resolve13(root, cwd, path);
   if (!isWithin(spelled, root) || !existsSync35(spelled)) return null;
   const realRoot = canonicalPath(root);
   let at = realRoot;
@@ -56023,7 +56079,7 @@ function deniedFolderFailure(ctx, def, run, insideRoots) {
       seen.set(path, where2);
       return where2;
     };
-    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path, (target) => holding(target) !== null) });
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeProgramTarget(repo, def, path, (target) => holding(target) !== null) });
   } catch {
     return null;
   }

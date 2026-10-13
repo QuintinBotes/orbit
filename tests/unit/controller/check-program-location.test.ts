@@ -618,3 +618,78 @@ describe('PREFLIGHT: links the repository commits, and a comparison that names a
     expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
   });
 });
+
+// Regressions from the review of the backstop. A Python exception filename that matched an executable on PATH inside
+// the repository was read as a failed launch of that program, although Python ran and never tried to start it; and a
+// relative program a shell refused after `cd tests` was followed from the check's configured cwd, so the repository
+// root's link decided a run that happened in tests. Both made a genuine code failure an environment block.
+describe('PREFLIGHT: a runtime file error, and a relative program after cd (review regressions)', () => {
+  it('python3 opening a file named like a program on a PATH into the repository stays a pre-existing failure', () => {
+    const denied = deniedBaseline(
+      ({ repo }) => {
+        const bin = join(repo, 'node_modules', '.bin');
+        mkdirSync(bin, { recursive: true });
+        writeFileSync(join(bin, 'tsc'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        return join(bin, 'tsc');
+      },
+      {
+        command: () => ['python3', '-c', 'open("tsc")'],
+        exitCode: 1,
+        env: ({ repo }) => ({ PATH: `${join(repo, 'node_modules', '.bin')}:/usr/bin:/bin` }),
+        log: () => 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: \'tsc\'\n',
+      },
+    );
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
+  });
+
+  /** A sibling tool environment's interpreter, the file a denied link leads to. */
+  const siblingPython = (base: string): string => {
+    const target = join(base, 'shop-venv', 'bin', 'python');
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    return target;
+  };
+  const toolAt = (repo: string, dir: string, target: string | null): void => {
+    const tools = join(repo, dir, 'tools');
+    mkdirSync(tools, { recursive: true });
+    if (target === null) writeFileSync(join(tools, 'python'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    else symlinkSync(target, join(tools, 'python'));
+  };
+
+  it('cd tests && ./tools/python is read in tests: the root link into a denied folder does not classify a run of the checkout\'s own file there', () => {
+    const denied = deniedBaseline(
+      ({ base, repo }) => {
+        const target = siblingPython(base);
+        toolAt(repo, '.', target);
+        toolAt(repo, 'tests', null);
+        return './tools/python';
+      },
+      { command: () => ['cd tests && ./tools/python -m pytest'], shell: true, log: () => '/bin/sh: ./tools/python: Operation not permitted\n' },
+    );
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting.map((f) => f.checkId)).toEqual(['unit-tests']);
+  });
+
+  it('cd tests && ./tools/python is read in tests: a denied link there blocks, though the root holds a plain file', () => {
+    let target = '';
+    const denied = deniedBaseline(
+      ({ base, repo }) => {
+        target = siblingPython(base);
+        toolAt(repo, '.', null);
+        toolAt(repo, 'tests', target);
+        return './tools/python';
+      },
+      { command: () => ['cd tests && ./tools/python -m pytest'], shell: true, log: () => '/bin/sh: ./tools/python: Operation not permitted\n' },
+    );
+    const ctx = lab.ctx();
+    const found = classifyBaseline(ctx, denied.report, denied.checkout);
+    expect(found.environment).toEqual([expect.objectContaining({ signals: ['program-denied'], questionId: null, programDenial: expect.objectContaining({ program: './tools/python', under: 'parent', target }) })]);
+    expect(askAboutBaseFailures(ctx, found, { baseRevision: BASE_REV, key: '' }).preExisting).toEqual([]);
+    expect(listQuestions(lab.db, lab.runId)).toEqual([]);
+  });
+});

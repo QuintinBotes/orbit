@@ -26,7 +26,7 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
-import { directInvocation, startedProgram, startedPrograms } from '../evidence/check-command.ts';
+import { directInvocation, programExecutionDir, startedProgram, startedPrograms } from '../evidence/check-command.ts';
 import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
@@ -313,9 +313,9 @@ function formatFix(f: FailureWithCommand): string {
 
 /**
  * How to fix a check the sandbox or the operating system refused (issue #10): the .NET cases by name, any other denial
- * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through the check's
- * network_hosts or the dependency install, and a program that is not installed where the check runs. Null for a crash or
- * a check that could not be started, whose way forward is already said.
+ * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through a cache
+ * filled outside the sandbox, the check's network_hosts or the dependency install, and a program that is not installed
+ * where the check runs. Null for a crash or a check that could not be started, whose way forward is already said.
  *
  * A .NET named pipe the sandbox refused under /tmp (ADR 0009, addendum) has three fixes: an MSBuild worker node seen in
  * `dotnet test`'s own crash (MSB1025, socket-denied) is pinned with -m:1 on the check's command; one the runner stopped
@@ -333,10 +333,12 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
 
 /**
  * The policy settings the fix of `failures` (environmentFix) changes: a check's command (-m:1, the form of dotnet format
- * that loads no project, a program placed where a check can start it), its network_hosts, or the check itself (a dotnet
- * format check removed). The policy is frozen with the run, so a resume runs the same check again and only a new run
- * picks such a fix up (0.3.0 retest). Empty when the fix is the environment's (a cache filled, a program installed, the
- * srt Orbit ships) or may be either (a filesystem denial, which a check's env or the host may cure).
+ * that loads no project, a program placed where a check can start it), or the check itself (a dotnet format check
+ * removed). The policy is frozen with the run, so a resume runs the same check again and only a new run picks such a
+ * fix up (0.3.0 retest). Empty when the fix is the environment's (a cache filled, a program installed, the srt Orbit
+ * ships) or may be either: a filesystem denial, which a check's env or the host may cure, and a network denial, which
+ * a cache filled outside the sandbox may cure (a pinned dependency restore) where allowing the host would change the
+ * check's network_hosts. A required policy change is recorded only when no environment-only remedy exists.
  */
 export function environmentFixSettings(failures: readonly FailureWithCommand[], platform: NodeJS.Platform = process.platform): string[] {
   return environmentFixes(failures, platform).settings;
@@ -403,9 +405,11 @@ function environmentFixes(failures: readonly FailureWithCommand[], platform: Nod
   // certificate in the sandbox there, so its fix is the cache filled outside it (review of #10).
   const network = has('network-denied');
   const nugetOnMac = platform === 'darwin' ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
+  // A pinned dependency restore refused its host may need nothing but its cache filled, which is the environment's to
+  // fix: a resume reruns the baseline against the filled cache. Only the other remedy, allowing the host, changes the
+  // frozen policy, so no policy change is recorded for a network denial and both remedies are named (review).
   if (network.length > nugetOnMac.length) {
-    fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: add the host to the check\'s network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
-    change(network.filter((f) => !nugetOnMac.includes(f)), (id) => `checks.${id}.network_hosts`);
+    fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: if it was restoring pinned dependencies, fill their cache outside the sandbox (run that restore outside Orbit, where the check reads the same cache) and resume this run, which runs the baseline again; or add the host to the check\'s network_hosts in .orbit/config.yaml (it must also be covered by network.allowed_hosts) and start a new run, because this run\'s policy is frozen; or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
   }
   if (has('nuget-http-denied').length > 0) {
     fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
@@ -568,9 +572,9 @@ function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<C
       const onPath = programs.includes(basename(program)) || pathFolders(def).some((dir) => resolve(dir) === dirname(resolve(program)));
       return onPath ? { ...d, onPath: { name: basename(program), setBy } } : d;
     }
-    // A path relative to the check's cwd: where a link the repository commits there leads, when it leads out of it.
+    // A path relative to the directory the failing command ran in: where a link the repository commits there leads, when it leads out of it.
     if (program.includes('/')) {
-      const target = relativeTarget(repo, def, program, (path) => programDenial(path, repo, home) !== null);
+      const target = relativeProgramTarget(repo, def, program, (path) => programDenial(path, repo, home) !== null);
       if (target === null) return null;
       const d = programDenial(target, repo, home);
       return d === null ? null : { ...d, program, target };
@@ -600,9 +604,22 @@ function onCheckPath(def: Pick<CheckDefinition, 'env'>, name: string): string | 
 const MAX_LINKS = 40;
 
 /**
- * Where a program the check names by a path relative to its cwd leads, when a link on the way leads into a folder the
+ * Where a program the shell named by a relative path leads (relativeTarget), read from the directory the failing
+ * command ran in, as the command parser establishes it through a chain's `cd`s (evidence/check-command.ts
+ * programExecutionDir), not from the check's configured cwd: for `cd tests && ./tools/python -m pytest` the link at
+ * tests/tools/python decides, never the one at the repository root. Null when that directory is not known for
+ * certain: the failure is then not classified by this path at all, and stays a baseline-exception question.
+ */
+function relativeProgramTarget(repoRoot: string, def: Pick<CheckDefinition, 'command' | 'shell' | 'cwd'>, program: string, denied: (path: string) => boolean): string | null {
+  const dir = programExecutionDir(def.command, def.shell === true, program);
+  if (dir === null) return null;
+  return relativeTarget(repoRoot, dir === '' ? def.cwd : join(def.cwd, dir), program, denied);
+}
+
+/**
+ * Where a program the check names by a path relative to `cwd` leads, when a link on the way leads into a folder the
  * check sandbox denies (`denied`; third review of the 0.3.0 retest fix and Codex's review of it), read in the
- * repository's own tree at the check's cwd, which the check's checkout holds too and which is gone by the time the base
+ * repository's own tree at that cwd, which the check's checkout holds too and which is gone by the time the base
  * revision is judged. Each link is read for its literal target before anything is canonicalised, one name at a time: a
  * link whose target is an absolute path leads there from the checkout too, so one into the repository or the folder
  * beside it counts for that path (with the rest of the program's path after it), even where the file there links on
@@ -612,9 +629,9 @@ const MAX_LINKS = 40;
  * sibling), or when no link on the way leads into a denied folder: one that stays in the repository leads to the
  * checkout's own copy, which is what the check ran.
  */
-function relativeTarget(repoRoot: string, def: Pick<CheckDefinition, 'cwd'>, path: string, denied: (path: string) => boolean): string | null {
+function relativeTarget(repoRoot: string, cwd: string, path: string, denied: (path: string) => boolean): string | null {
   const root = resolve(repoRoot);
-  const spelled = resolve(root, def.cwd, path);
+  const spelled = resolve(root, cwd, path);
   if (!isWithin(spelled, root) || !existsSync(spelled)) return null;
   const realRoot = canonicalPath(root);
   let at = realRoot;
@@ -671,7 +688,7 @@ function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'comman
       seen.set(path, where);
       return where;
     };
-    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeTarget(repo, def, path, (target) => holding(target) !== null) });
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeProgramTarget(repo, def, path, (target) => holding(target) !== null) });
   } catch {
     return null;
   }

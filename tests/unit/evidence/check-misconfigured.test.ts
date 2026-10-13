@@ -582,7 +582,6 @@ describe('classifyDeniedFolderProgram: wrappers, launchers that relay another ex
       [1, 'api:test: sh: pytest: command not found\napi:test: ERROR: command finished with error: command (/x/api) npm run test exited (127)\n', 'pytest', 'api:test: sh: pytest: command not found'],
       [2, 'error: Failed to spawn: `pytest`\n  Caused by: No such file or directory (os error 2)\n', 'pytest', 'error: Failed to spawn: `pytest` Caused by: No such file or directory (os error 2)'],
       [1, 'Error: spawnSync pytest ENOENT\n    at Object.spawnSync (node:internal/child_process:1120:20)\n', 'pytest', 'Error: spawnSync pytest ENOENT'],
-      [1, "FileNotFoundError: [Errno 2] No such file or directory: 'pytest'\n", 'pytest', "FileNotFoundError: [Errno 2] No such file or directory: 'pytest'"],
       [1, './scripts/test.sh: line 2: pytest: command not found\n', 'pytest', './scripts/test.sh: line 2: pytest: command not found'],
     ];
     for (const [exit, output, program, line] of cases) {
@@ -596,10 +595,9 @@ describe('classifyDeniedFolderProgram: wrappers, launchers that relay another ex
     expect(judge(1, `cat: ${REPO}/data.json: No such file or directory\n`)).toBeNull();
   });
 
-  it('reads a refusal of a bare name by node, Python or a wrapper, uv\'s two lines, and a script\'s own bash prefix', () => {
+  it('reads a refusal of a bare name by node\'s spawn or a wrapper, uv\'s two lines, and a script\'s own bash prefix', () => {
     const cases: [number, string, string, string][] = [
       [1, 'Error: spawnSync pytest EPERM\n    at Object.spawnSync (node:internal/child_process:1120:20)\n', 'pytest', 'Error: spawnSync pytest EPERM'],
-      [1, "Traceback (most recent call last):\nPermissionError: [Errno 1] Operation not permitted: 'pytest'\n", 'pytest', "PermissionError: [Errno 1] Operation not permitted: 'pytest'"],
       [126, "gtimeout: failed to run command 'pytest': Operation not permitted\n", 'pytest', "gtimeout: failed to run command 'pytest': Operation not permitted"],
       [126, `timeout: failed to run command '${VENV}': Operation not permitted\n`, VENV, `timeout: failed to run command '${VENV}': Operation not permitted`],
       [2, `error: Failed to spawn: \`${PYTEST}\`\n  Caused by: Operation not permitted (os error 1)\n`, PYTEST, `error: Failed to spawn: \`${PYTEST}\` Caused by: Operation not permitted (os error 1)`],
@@ -621,6 +619,24 @@ describe('classifyDeniedFolderProgram: wrappers, launchers that relay another ex
     expect(judge(126, '/bin/sh: ./tools/python: Operation not permitted\n', ['cd . && ./tools/python -m pytest'])?.program).toBe('./tools/python');
     // One that leads nowhere denied stays the code's.
     expect(judge(126, '/bin/sh: ./tools/other: Operation not permitted\n', ['./tools/other'])).toBeNull();
+  });
+
+  // Regression (review of the backstop): `python3 -c 'open("tsc")'` with the repository's node_modules/.bin on PATH
+  // was read as a failed launch of tsc, although Python ran and never tried to start it. A language runtime's file
+  // error names a file it tried to open, never a program it looked up on PATH, so it is no launch failure: only a
+  // launcher's own line (a shell's, env's, a wrapper's, a spawn report) or a shell's 126 or 127 is.
+  it('never reads a language runtime\'s file error as a failed launch through PATH', () => {
+    const withTsc = {
+      holding: folders.holding,
+      onPath: (name: string) => (name === 'tsc' ? `${REPO}/node_modules/.bin/tsc` : folders.onPath(name)),
+    };
+    const traceback = 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: \'tsc\'\n';
+    expect(classifyDeniedFolderProgram(input(['python3', '-c', 'open("tsc")'], 1, traceback), withTsc)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['python3', '-c', 'open("tsc")'], 1, 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\nPermissionError: [Errno 1] Operation not permitted: \'tsc\'\n'), withTsc)).toBeNull();
+    expect(classifyDeniedFolderProgram(input(['node', '-e', 'require("fs").readFileSync("tsc")'], 1, "Error: ENOENT: no such file or directory, open 'tsc'\n"), withTsc)).toBeNull();
+    // Launch-specific evidence for the same name still counts: the shell's own line, and node's spawn report.
+    expect(classifyDeniedFolderProgram(input(['tsc', '--noEmit'], 127, '/bin/sh: 1: tsc: not found\n'), withTsc)).toMatchObject({ signals: ['program-not-found'], program: 'tsc' });
+    expect(classifyDeniedFolderProgram(input(['node', 'scripts/check.js'], 1, 'Error: spawnSync tsc ENOENT\n'), withTsc)).toMatchObject({ signals: ['program-not-found'], program: 'tsc' });
   });
 
   // A ctest failure is a test that ran and failed, whatever its output quotes; so are a formatter's verdicts.

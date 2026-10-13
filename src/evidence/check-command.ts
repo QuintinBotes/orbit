@@ -624,6 +624,79 @@ export function startedPrograms(command: readonly string[], shell: boolean): str
 }
 
 /**
+ * The directory a script's commands run `program` from, as segments below `base`, collected into `out` (one entry per
+ * command that starts it, joined with `/`): a plain `cd <dir>` moves the commands after it, and the script a shell a
+ * command starts with -c inherits the directory of that command. Whether the reading is uncertain, as CheckPrograms
+ * says it, and also for what the flattened reading cannot place: a pipeline or a subshell (a `cd` in one does not reach
+ * the command after it, and readScript loses where one ends), a conditional or compound command (whether its `cd`
+ * ran, and for which commands, is not in the text), eval, pushd or popd, and a `cd` whose target is no plain relative
+ * path (an absolute path, `~`, `-`, an expansion or a glob).
+ */
+function collectExecutionDirs(script: string, depth: number, base: readonly string[], program: string, out: string[]): boolean {
+  if (depth > MAX_SCRIPT_DEPTH) return true;
+  const reading = readScript(script);
+  if (reading === null || reading.uncertain || /[|()]/.test(script)) return true;
+  let dir = [...base];
+  let uncertain = false;
+  for (const raw of reading.commands) {
+    let words = raw;
+    while (words.length > 0 && ASSIGNMENT.test(words[0]!)) words = words.slice(1);
+    if (words[0] === 'builtin') words = words.slice(1);
+    if (words.length === 0) continue;
+    const head = words[0]!;
+    if (BEFORE_COMMAND.has(head) || NO_COMMAND.has(head) || NOT_FOLLOWED.has(head) || head === 'function' || head === 'pushd' || head === 'popd') return true;
+    if (head === 'cd') {
+      let i = 1;
+      while (i < words.length && (words[i] === '--' || /^-[LPe]+$/.test(words[i]!))) {
+        i++;
+        if (words[i - 1] === '--') break;
+      }
+      const operands = words.slice(i);
+      const target = operands[0];
+      if (operands.length !== 1 || target === undefined || target === '' || target.startsWith('/') || target.startsWith('-') || target.startsWith('~') || /[$`*?[\]{}]/.test(target)) return true;
+      for (const part of target.split('/')) {
+        if (part === '' || part === '.') continue;
+        if (part === '..' && dir.length > 0 && dir[dir.length - 1] !== '..') dir = dir.slice(0, -1);
+        else dir = [...dir, part];
+      }
+      continue;
+    }
+    const started = programIndices(words);
+    for (const i of started) if (words[i] === program) out.push(dir.join('/'));
+    const last = started.at(-1);
+    if (last === undefined) continue;
+    if (words[last] === 'eval') return true;
+    const nested = shellScript(words.slice(last));
+    if (nested !== undefined && collectExecutionDirs(nested, depth + 1, dir, program, out)) uncertain = true;
+  }
+  return uncertain;
+}
+
+/**
+ * The directory the command that starts `program` runs in, relative to the check's initial cwd (`''` for that cwd
+ * itself, `tests` after `cd tests`), or null when the command's text does not establish it for certain
+ * (collectExecutionDirs), when the command does not start the program at all, or when it starts it from more than one
+ * directory (which one failed is not in the text). A shell the command starts with -c runs its script from that
+ * command's directory. A caller that reads where a relative program leads declines on null rather than reading it
+ * from the wrong folder.
+ */
+export function programExecutionDir(command: readonly string[], shell: boolean, program: string): string | null {
+  const out: string[] = [];
+  let uncertain: boolean;
+  if (shell) {
+    uncertain = collectExecutionDirs(command[0] ?? '', 1, [], program, out);
+  } else {
+    const started = programIndices(command);
+    if (started.length === 0) return null;
+    for (const i of started) if (command[i] === program) out.push('');
+    const nested = shellScript(command.slice(started.at(-1)));
+    uncertain = nested !== undefined && collectExecutionDirs(nested, 1, [], program, out);
+  }
+  if (uncertain || out.length === 0) return null;
+  return out.every((d) => d === out[0]) ? out[0]! : null;
+}
+
+/**
  * The program the command runs itself and its arguments (module comment), or null when the command is no direct
  * invocation of one program. `shell` is the check's `shell` setting: its command is then one script.
  */

@@ -460,9 +460,11 @@ const NAMED = String.raw`['\u2018]?([^:\s'\u2018][^:]*?)['\u2019]?`;
  * failed to run command '<program>': ...`, a script's own `./x.sh: line 2: <program>: ...`), bash's `<program>:
  * <interpreter>: bad interpreter: Operation not permitted` for a script, zsh's `operation not permitted: <program>`,
  * node's `spawn <program> EPERM`, uv's "Failed to spawn: `<program>`" with its "Caused by: Operation not permitted"
- * (logicalLines joins the two), and Python's `Operation not permitted: '<name>'` for a bare name. Captured under Seatbelt
- * on macOS (bash 3.2 and 5, dash, zsh, env, node, Python, uv, make) and with GNU coreutils 9. A tool's refusal of a file it
- * works on (`mkdir: /x: Operation not permitted`) is no launcher's.
+ * (logicalLines joins the two). Captured under Seatbelt on macOS (bash 3.2 and 5, dash, zsh, env, node, uv, make) and
+ * with GNU coreutils 9. A tool's refusal of a file it works on (`mkdir: /x: Operation not permitted`) is no launcher's,
+ * and neither is a language runtime's file error (`PermissionError: [Errno 1] Operation not permitted: '<name>'` from
+ * opening a file): it names a file the program that did start tried to open, never a program it looked up on PATH, so
+ * it is no launch failure, whatever PATH holds a program of that name.
  */
 const LAUNCHER_REFUSAL = new RegExp(
   [
@@ -470,7 +472,6 @@ const LAUNCHER_REFUSAL = new RegExp(
     String.raw`^(?:\S*\/)?(?:zsh|\(eval\)):\d+: operation not permitted: (\S.*)$`,
     String.raw`\bspawn(?:Sync)? (\S+) EPERM\b`,
     String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\boperation not permitted\b`,
-    String.raw`\boperation not permitted: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`,
   ].join('|'),
   'i',
 );
@@ -482,7 +483,11 @@ const PATH_WORD = /(?<![\w./~-])\/[^\s'"`\u2018\u2019\u201C\u201D:,;()<>[\]{}|]+
  * shell's, eval's, env's, make's, a wrapper's or a script's own (BEFORE_PROGRAM: `/bin/sh: 1: pytest: not found`, `make:
  * pytest: No such file or directory`, `timeout: failed to run command 'pytest': No such file or directory`), zsh's
  * (`command not found: x`), any shell's `x: command not found`, node's `spawn x ENOENT`, uv's "Failed to spawn: `x`"
- * with its "Caused by: No such file or directory", and Python's `No such file or directory: 'x'` for a bare name.
+ * with its "Caused by: No such file or directory". A language runtime's file error is none of these: Python's
+ * `FileNotFoundError: [Errno 2] No such file or directory: 'x'` and node's `ENOENT: no such file or directory, open
+ * 'x'` name a file the program that did start tried to open (`python3 -c 'open("tsc")'`), never a program it tried to
+ * start, so the name is never resolved through PATH. Only a launcher's own line, a spawn report, or (through
+ * NOT_FOUND below) a shell's exit 127 makes a not-found a launch failure.
  */
 const LAUNCHER_NOT_FOUND = new RegExp(
   [
@@ -491,7 +496,6 @@ const LAUNCHER_NOT_FOUND = new RegExp(
     String.raw`(?:^|:\s)${NAMED}: command not found$`,
     String.raw`\bspawn(?:Sync)? (\S+) ENOENT\b`,
     String.raw`\bFailed to spawn: \x60([^\x60]+)\x60.*\bNo such file or directory\b`,
-    String.raw`\bNo such file or directory: ['"\u2018]([^'"\u2019/\s][^'"\u2019/]*)['"\u2019]`,
   ].join('|'),
 );
 /**

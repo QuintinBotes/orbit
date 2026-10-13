@@ -635,10 +635,14 @@ pre-existing failure gets its question, and a pass makes a failure on a
 candidate the change's. `orbit resume` after an environment block runs the
 check on the base revision again. When the fix is a change to a check's
 definition (`-m:1` on its command, a `dotnet format` check removed or put in
-the form that loads no project, a host added to its `network_hosts`, a program
-moved out of the repository), the reason, the closing line, `orbit status` and
+the form that loads no project, a program moved out of the repository), the
+reason, the closing line, `orbit status` and
 the report say to cancel the run and start a new one instead: the run keeps the
-policy it started with, so a resume would run the same check again.
+policy it started with, so a resume would run the same check again. A network
+denial is not such a fix: a pinned dependency restore may need only its cache
+filled outside the sandbox, so the reason names both remedies, filling that
+cache and resuming, or adding the host to the check's `network_hosts` in
+`.orbit/config.yaml` and starting a new run, and keeps the resume.
 
 A repair attempt that ends on a tree an earlier attempt produced, which
 verification judges `FAIL` exactly as before, ends the run `EXHAUSTED` as

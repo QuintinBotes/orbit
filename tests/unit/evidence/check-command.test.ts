@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkPrograms, directInvocation, startedPrograms } from '../../../src/evidence/check-command.ts';
+import { checkPrograms, directInvocation, programExecutionDir, startedPrograms } from '../../../src/evidence/check-command.ts';
 
 // ADR 0010: a usage error is the check's only when the check's own command invokes the tool directly. These are the
 // shapes a check's command takes, and which of them is a direct invocation of one program.
@@ -223,5 +223,46 @@ describe('checkPrograms: wrappers, shell options, and what a reading does not fo
     // A subshell, after a keyword too, is read for certain.
     expect(checkPrograms([`if (cd tests && ${PY} -m pytest); then echo ok; fi`], true)).toEqual({ programs: ['cd', PY, 'echo'], uncertain: false });
     expect(checkPrograms([`! (${PY} -m pytest)`], true)).toEqual({ programs: [PY], uncertain: false });
+  });
+});
+
+// Review regression: a relative program's link was followed from the check's configured cwd, although the failing
+// command ran after `cd tests`. The directory the command ran in is tracked through a chain's plain `cd`s, and is
+// not claimed where the text cannot establish it, so the caller declines instead of reading a link from the wrong
+// folder.
+describe('programExecutionDir: where the command that starts a program runs', () => {
+  const REL = './tools/python';
+
+  it('reads the initial cwd for an argv command, a plain script and a wrapper, and the folder a chain cd\'s to', () => {
+    expect(programExecutionDir([REL, '-m', 'pytest'], false, REL)).toBe('');
+    expect(programExecutionDir(['timeout', '600', REL, '-m', 'pytest'], false, REL)).toBe('');
+    expect(programExecutionDir([`${REL} -m pytest`], true, REL)).toBe('');
+    expect(programExecutionDir([`cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`cd tests && cd unit && ${REL} -m pytest`], true, REL)).toBe('tests/unit');
+    expect(programExecutionDir([`cd tests && cd .. && ${REL} -m pytest`], true, REL)).toBe('');
+    expect(programExecutionDir([`cd ./tests/ && exec ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir(['/bin/sh', '-c', `cd tests && ${REL} -m pytest`], false, REL)).toBe('tests');
+    expect(programExecutionDir([`cd tests && sh -c "./tools/python -m pytest"`], true, REL)).toBe('tests');
+    // The same program started twice from one folder is that folder.
+    expect(programExecutionDir([`cd tests && ${REL} -m ruff check . && ${REL} -m pytest`], true, REL)).toBe('tests');
+  });
+
+  it('is null where the directory is not known for certain, or the program is not the command\'s own', () => {
+    const unsure: [string[], boolean][] = [
+      [[`cd "$DIR" && ${REL} -m pytest`], true],
+      [[`cd /opt/checkout/tests && ${REL} -m pytest`], true],
+      [[`cd && ${REL} -m pytest`], true],
+      [[`cd - && ${REL} -m pytest`], true],
+      [[`(cd tests && ${REL} -m pytest)`], true],
+      [[`cd tests && ${REL} -m pytest | tee log.txt`], true],
+      [[`if cd tests; then ${REL} -m pytest; fi`], true],
+      [[`eval "$CMD"`], true],
+      // Started from two folders: which one failed is not in the text.
+      [[`${REL} -m ruff check . && cd tests && ${REL} -m pytest`], true],
+      // Only a script of the repository, or make's recipe, starts it.
+      [['./scripts/test.sh'], false],
+      [['make', 'test'], false],
+    ];
+    for (const [command, shell] of unsure) expect(programExecutionDir(command, shell, REL), command.join(' ')).toBeNull();
   });
 });
