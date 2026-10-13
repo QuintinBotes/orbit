@@ -99,8 +99,8 @@ function messageOf(err: unknown): string {
 export async function sendDesktop(p: NotificationPayload, deps: Pick<NotifyDeps, 'platform' | 'exec'>): Promise<ChannelOutcome> {
   if (deps.platform === 'darwin') return { channel: 'desktop', status: 'skipped', detail: 'no desktop notifier on darwin: Orbit does not use AppleScript notifications; use the webhook channel' };
   if (deps.platform !== 'linux') return { channel: 'desktop', status: 'skipped', detail: `no desktop notifier on ${deps.platform}` };
-  const argv = ['notify-send', '--app-name=Orbit', '--', payloadTitle(p), payloadText(p)];
-  const program = argv[0]!;
+  const program = 'notify-send';
+  const argv = [program, '--app-name=Orbit', '--', payloadTitle(p), payloadText(p)];
   try {
     const r = await deps.exec(argv, DESKTOP_TIMEOUT_MS);
     if (r.notFound) return { channel: 'desktop', status: 'skipped', detail: `${program} is not available` };

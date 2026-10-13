@@ -31,6 +31,17 @@ function events(env: NotifyEnv, type: string): Record<string, unknown>[] {
 const ENV = { ACME_WEBHOOK_URL: 'https://hooks.acme.test/services/T0/B0/secretpart' };
 
 describe('notifying when a run ends', () => {
+  it('on macOS records the desktop channel as skipped, never sent, and runs nothing', async () => {
+    const env = world();
+    setState(env, 'SUCCEEDED', 'all criteria supported', env.clock.now());
+    const sys = fakeSystem({ env: ENV, platform: 'darwin' });
+    const out = await notifyRunEnded(input(env, sys));
+    expect(out!.find((o) => o.channel === 'desktop')).toMatchObject({ status: 'skipped' });
+    expect(sys.execCalls).toEqual([]);
+    expect(events(env, 'notification.sent').map((e) => e.channel)).not.toContain('desktop');
+    expect(events(env, 'notification.skipped').map((e) => e.channel)).toContain('desktop');
+  });
+
   it('sends through every configured channel once, and records each outcome as an event', async () => {
     const env = world();
     setState(env, 'SUCCEEDED', 'all criteria supported', env.clock.now());
