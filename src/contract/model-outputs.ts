@@ -17,6 +17,7 @@ import inquisitorSchema from '../../schemas/inquisitor-output.schema.json' with 
 import curatorSchema from '../../schemas/curator-output.schema.json' with { type: 'json' };
 import explorerSchema from '../../schemas/explorer-output.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
+import type { FindingCategory } from '../review/types.ts';
 import { validateAgainst } from './json-schema.ts';
 import type { AmendmentProposal, AssumptionStatusValue } from './amendment-types.ts';
 import { practiceProblems, type PracticeSelection } from './practices.ts';
@@ -179,7 +180,8 @@ export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export interface ReviewFinding {
   id: string;
   severity: FindingSeverity;
-  category: string;
+  /** Free text; `evidence-classification` is the one category Orbit reads (review/types.ts EVIDENCE_CLASSIFICATION_CATEGORY). */
+  category: FindingCategory;
   location: string | null;
   claim: string;
   evidence: string;

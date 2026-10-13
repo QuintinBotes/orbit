@@ -1040,24 +1040,31 @@ established) when less wall time is left than `fail_before_timeout_seconds`.
 Its attempts are recorded apart from the run's checks, and a later candidate
 with the same probe tree (a repair of production code only) reuses them.
 
-In every mode, a review finding that only disputes the outcome Orbit recorded
-(for example "the fail-before evidence shows only a load failure"), with no
-clause about anything else, such as a case the tests miss, how the candidate
-behaves or a surviving mutant, and no defect in its evidence, is reported
-as a note, a `review.finding.noted` decision, and never blocks, goes to repair
-or goes to the Inquisition: a repair changes the candidate, not the base
-revision. A review that asked for repair only through such notes approves
+In every mode, a review finding is a note if and only if the reviewer files it
+under the category `evidence-classification` and no check confirms it. The
+reviewer brief reserves that category for a finding that disputes a
+classification Orbit recorded of its own evidence (today the fail-before
+outcome, for example "the fail-before evidence shows only a load failure") and
+asks for nothing a change to the candidate can give; a finding about the tests'
+content, coverage or assertions or the code's behaviour, or one that mixes
+both, uses its normal category. A note is a `review.finding.noted` decision and
+never blocks, goes to repair or goes to the Inquisition: a repair changes the
+candidate, not the base revision. The claim's wording is never read to decide
+it, since a wording rule can silence a real defect however it is tightened, and
+any other category, one an older reviewer writes included, is an ordinary
+finding. A review that asked for repair only through such notes approves
 nothing, so the tree first gets one fresh review (a `review.fresh` decision,
 charged to `review_rounds` like any review), told that the recorded outcome is
-not a finding. It is an ordinary review: its `APPROVE` lets the run go on,
-and a defect of the candidate it reports goes to repair as any review's would.
-If it again asks for repair only through such notes, or at the `review_rounds`
+not a finding. It is an ordinary review: its `APPROVE` lets the run go on, and
+a defect of the candidate it reports goes to repair as any review's would. If
+it again asks for repair only through such notes, or at the `review_rounds`
 cap, the run ends `BLOCKED` naming the findings, and a resume starts no second
-fresh review, so the way forward is a new run. The planner
-does not write a criterion that the new tests fail on the base revision, since
-that is this setting's to establish; the contract draft drops one that says
-nothing else, with a `contract.criterion-dropped` decision
-([ADR 0014, addendum](decisions/0014-fail-before.md)).
+fresh review, so the way forward is a new run. The planner does not write a
+criterion that the new tests fail on the base revision, since that is this
+setting's to establish, and the Inquisition never requires fail-before
+mechanics such as a mutant run or a stub implementation. Orbit never removes a
+criterion: one the planner writes all the same stays as written ([ADR 0014,
+addendum](decisions/0014-fail-before.md)).
 
 ## notifications
 

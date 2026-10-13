@@ -180,43 +180,42 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    superseded.
 3. **A finding that only disputes a classification Orbit recorded is a note.** A repair changes the
    candidate, never the base revision, so a repair sent to answer a finding about the probe's outcome
-   reproduced the same tree, and the .NET runs ended on non-progress. The review resolver now reports a
-   finding whose subject is a classification Orbit made of its own evidence as an `advisory` note, recorded as
-   a `review.finding.noted` decision, in every mode: it never blocks, is never a claim to test, and goes to
-   neither repair nor the Inquisition. Today the one such classification is the fail-before outcome, which
-   the finding's claim names and disputes (a load, compile or import failure, not an assertion). A finding is
-   a note only when it disputes the outcome exclusively: every clause of its claim (each sentence, each part
-   joined by "and", "but", "however", "although", "while", a semicolon, a colon or a comma, and each aside in
-   parentheses) matches whole one of a few fixed statements about the recorded outcome, such as "the
-   fail-before evidence for AC-1 shows only a load failure", "it does not show that any assertion about the
-   criteria failed" or "the new tests depend on Clamp existing"; a clause is never searched for a word. A
-   clause that says anything more keeps the whole finding a claim, even when it also names the base revision
-   or the probe: the tests' content, coverage or assertions (a tautology, a missing case), the code's
-   behaviour, the candidate, or a stub or mutant run (a surviving mutant is a defect of the tests). So does
-   such a defect stated in the finding's evidence, or in the evidence of another report of the same claim,
-   and a check that confirmed it; when in doubt, it is a claim.
+   reproduced the same tree, and the .NET runs ended on non-progress. The review output now has a finding
+   category of its own, `evidence-classification`. The reviewer brief says to use it only for a finding that
+   disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks for
+   nothing a change to the candidate can give; a finding about the tests' content, coverage or assertions, or
+   about the code's behaviour, uses its normal category, and so does one that mixes both. The review resolver
+   reports a finding as an `advisory` note, recorded as a `review.finding.noted` decision, in every mode, if
+   and only if its category is `evidence-classification` and no check confirms it (no `FAILED` evidence that
+   exercises it on the tree, and no earlier acceptance). A note never blocks, is never a claim to test, and
+   goes to neither repair nor the Inquisition. Any other category, one an older reviewer writes included, is
+   an ordinary finding, whatever its claim says.
+   The rule is structure, not wording. The first version recognised a note from the words of its claim:
+   every clause had to match one of a few fixed statements about the recorded outcome, and wording about a
+   defect, the candidate or a stub or mutant run kept it a claim. Three rounds of adversarial review each
+   found a claim that named a real defect and was still read as a note, and each fix only moved the gap:
+   English pattern matching that can silence a real defect is bypassable however it is tightened. So the
+   resolver no longer reads a claim to decide whether it is a note; the reviewer states it, and a check that
+   confirms the finding overrides it.
    Delivery still needs an approving review, so a review that asked for repair only through such notes
    approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
    Follow-up: first the tree gets one fresh review (a `review.fresh` decision, charged to `review_rounds`), told
-   the outcome is not a finding. It is an ordinary review: its APPROVE clears, and a defect of the candidate it
-   reports goes to repair as any review's would. If it again asks for repair only through such notes, or no review
-   round is left to start it, the run ends BLOCKED naming the findings, and a resume starts no second one.
+   the outcome is not a finding and when to use `evidence-classification`. It is an ordinary review: its
+   APPROVE clears, and a defect of the candidate it reports goes to repair as any review's would. If it again
+   asks for repair only through such notes, or no review round is left to start it, the run ends BLOCKED
+   naming the findings, and a resume starts no second one.
 4. **The planner does not promise fail-before.** In the required run the planner wrote AC-4, "The new tests
    fail on the base revision (ImportError for round_price)". The candidate's passing log was then cited to
    support it, and an inquiry told the implementer to keep the import error "as the contract states". The
    planner brief now forbids a criterion that the new tests fail on the base revision, and an assumption that
-   a check runs the new tests: both are Orbit's to establish. The contract draft drops a criterion only when
-   every clause, each aside in parentheses included, says exactly that the tests the change adds fail on the
-   base revision, that tests pass, or names the failure ("ImportError for round_price" names it and states no
-   behaviour), with a `contract.criterion-dropped` decision that quotes the whole criterion. A criterion with
-   any other clause (behaviour after "and" or "while", in parentheses, or in another sentence) is kept whole
-   and unchanged, and so is wording the draft does not recognise, and one about tests it does not call new or
-   calls existing (a bug fix's failing tests, which the probe does not run). One plain word may name the
-   tests ("unit", "apply_discount"), never a hyphenated phrase or a path, which can say what they check, and
-   only a criterion id ("AC-2") in parentheses says nothing. The other criteria keep their ids, and the last
-   mandatory criterion is never dropped. An assumption
-   that a check runs the new tests is not recognised in code, and the Inquisitor brief forbids an amendment
-   that requires evidence no check produces.
+   a check runs the new tests: both are Orbit's to establish. The Inquisitor brief forbids an amendment that
+   requires evidence no check produces, and any requirement of fail-before mechanics (a mutant run, a stub
+   implementation, or keeping an import error "as the contract states"), since Orbit's probe establishes
+   fail-before. Orbit never removes a criterion. The first version dropped one from the contract draft when
+   every clause of it said only that the new tests fail on the base revision or that tests pass; adversarial
+   review found criteria with a real requirement that the wording rule deleted, such as "the new tests fail on
+   the base revision and authentication rejects cross-tenant requests while valid requests pass", for the same
+   reason as in item 3. A criterion the planner writes against the brief stays in the contract as written.
 5. **The packet shows the tests that failed.** The packet showed the last 2,000 characters of each probe
    log, which for a test runner are its passing suites and summary, so the reviewer never saw which tests
    failed (the demo UI run's `reviews/1/packet.md`, lines 119 to 131). Under `required`, the one mode whose

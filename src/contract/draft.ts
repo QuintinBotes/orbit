@@ -10,7 +10,6 @@
  * The result is a pure function of its inputs, so re-running a crashed
  * CONTRACTING step produces the same contract.
  */
-import { clausesOf } from '../core/clauses.ts';
 import { OrbitError } from '../core/errors.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { AcceptanceCriterion, ContractAssumption, GoalContract } from './types.ts';
@@ -35,7 +34,7 @@ export interface DraftContractInput {
   environment?: string | null;
 }
 
-export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected' | 'criterion-dropped';
+export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected';
 
 /** A change the controller made to the planner's proposal, with its reason. */
 export interface DraftAdjustment {
@@ -73,7 +72,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
     }
   };
 
-  const drafted: AcceptanceCriterion[] = plan.criteria.map((c, i) => {
+  const criteria: AcceptanceCriterion[] = plan.criteria.map((c, i) => {
     const checkIds: string[] = [];
     for (const id of c.check_ids) {
       if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
@@ -88,20 +87,6 @@ export function draftContract(input: DraftContractInput): DraftResult {
       check_ids: checkIds,
     };
   });
-  // Whether the new tests fail on the base revision is verification.fail_before's to establish (ADR 0014), not a
-  // criterion's: the candidate's passing check log was once cited to support such a criterion. One that says only that,
-  // and that tests pass, is dropped with its reason. Ids keep the planner's order, so a planner key still names the same
-  // criterion; the last mandatory criterion is never dropped.
-  const failBefore = new Set(drafted.filter((c) => onlyFailBefore(c.statement)).map((c) => c.id));
-  if (!drafted.some((c) => c.mandatory && !failBefore.has(c.id))) failBefore.clear();
-  for (const c of drafted.filter((x) => failBefore.has(x.id))) {
-    adjustments.push({
-      kind: 'criterion-dropped',
-      subject: c.id,
-      reason: `"${c.statement}" says only that the new tests fail on the base revision, or that tests pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`,
-    });
-  }
-  const criteria = drafted.filter((c) => !failBefore.has(c.id));
 
   const required: string[] = [];
   for (const id of plan.required_check_ids) {
@@ -233,57 +218,6 @@ export function draftContract(input: DraftContractInput): DraftResult {
 
   const validated = validateContract(contract, snapshot, input.policyHash === undefined ? {} : { policyHash: input.policyHash });
   return { contract: validated, adjustments };
-}
-
-// A criterion that the new tests fail on the base revision. Each clause is matched whole, never searched for a word, so
-// a clause that says anything more (what the change does, in any wording, an aside in parentheses included) keeps the
-// criterion.
-
-/**
- * The one plain word that may name tests: "unit", "regression", "apply_discount", "e2e". Never a hyphenated phrase, a
- * path or more words: a longer name can say what the tests check ("the new cross-tenant-requests-get-403 tests"), and
- * that is behaviour.
- */
-const TEST_NAME = String.raw`(?:[A-Za-z_]+|e2e)`;
-/** A plain directory the tests are added under: "tests/", "tests/unit", "src/__tests__/". Not a file, not a phrase. */
-const TEST_DIRECTORY = String.raw`[A-Za-z_]+(?:/[A-Za-z_]+)*/?`;
-/** The tests the change adds: "the new (unit) tests", "the added tests", "newly added specs", "tests added under tests/", "the tests the change adds". */
-const NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:${TEST_NAME}\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+${TEST_DIRECTORY})?)`;
-/** Any tests, or a word for the ones just named: "they", "the existing apply_discount tests". "Specs" alone may be documents, so only the new ones count. */
-const ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:${TEST_NAME}\s+)?(?:tests?|test\s+(?:cases?|suites?)))`;
-const MODAL = String.raw`(?:(?:must|should|will|do|does)\s+)?`;
-const FAIL = String.raw`${MODAL}(?:fail(?:s|ed)?|(?:are|is)\s+failing)`;
-const PASS = String.raw`${MODAL}(?:(?:still|then|all|both|now)\s+)?pass(?:es|ed)?`;
-const BASE_REVISION = String.raw`(?:(?:on|against|at)\s+(?:the\s+)?(?:base|baseline)(?:\s+(?:revision|commit|tree|branch|version))?|(?:before|without|prior\s+to)\s+(?:the|this)\s+(?:change|fix|implementation))`;
-const WITH_THE_CHANGE = String.raw`(?:(?:after|with|on|against)\s+(?:(?:the|this)\s+(?:change|fix|implementation|candidate)|it)|afterwards)`;
-/** "The new tests fail on the base revision", "On the base revision the new tests fail". */
-const NEW_TESTS_FAIL_ON_BASE = new RegExp(
-  String.raw`^(?:${NEW_TESTS}\s+${FAIL}\s+${BASE_REVISION}|${BASE_REVISION},?\s+${NEW_TESTS}\s+${FAIL})$`,
-  'i',
-);
-/** "pass with the change", "the existing apply_discount tests still pass", "with the change they pass". */
-const TESTS_PASS = new RegExp(
-  String.raw`^(?:(?:${ANY_TESTS}\s+)?${PASS}(?:\s+${WITH_THE_CHANGE})?|${WITH_THE_CHANGE},?\s+${ANY_TESTS}\s+${PASS})$`,
-  'i',
-);
-/** The failure named, as an aside names it: "ImportError for round_price", "an import error for round_price", "ModuleNotFoundError on the base revision". */
-const NAMES_THE_FAILURE =
-  /^(?:(?:for\s+example|such\s+as|an?|the)\s+)*(?:\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)|(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)\s+(?:error|failure)s?|missing\s+(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?))(?:\s+(?:for|of|on|in|from)\s+(?:(?:the\s+)?base(?:\s+revision)?|[\w.:/'"`-]+(?:\(\))?))?$/i;
-/** Tests that exist on the base revision, such as a bug fix's failing tests: the fail-before probe establishes nothing about them. */
-const EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
-
-/**
- * Whether a criterion statement says only that the new tests fail on the base revision (and that tests pass). Every
- * clause, each aside in parentheses included, must be exactly one of these: the tests the change adds fail on the base
- * revision, tests pass (with or after the change), or the failure named ("ImportError for round_price"); and at least
- * one must be the first. A criterion with any other clause is kept whole. So is one about tests failing on the base
- * revision that it does not call new or calls existing (a bug fix's failing tests: the probe runs only the tests the
- * change adds, so it establishes nothing about those), and so is any wording not recognised: when in doubt, keep.
- */
-function onlyFailBefore(statement: string): boolean {
-  const clauses = clausesOf(statement);
-  const failsOnBase = (c: string): boolean => NEW_TESTS_FAIL_ON_BASE.test(c) && !EXISTING_TESTS.test(c);
-  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || TESTS_PASS.test(c) || NAMES_THE_FAILURE.test(c));
 }
 
 /** Trimmed, non-blank, de-duplicated by normalized wording, original order kept. */

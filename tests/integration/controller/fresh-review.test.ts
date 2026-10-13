@@ -68,11 +68,14 @@ function reviewerPurposes(l: Lab, runId: string): string[] {
   return l.db().all<{ purpose: string }>("SELECT purpose FROM workers WHERE run_id = ? AND role = 'reviewer' ORDER BY created_at, rowid", runId).map((w) => w.purpose.replace(/:cand-[0-9a-f]+#/, ':cand#'));
 }
 
-/** The .NET run's findings, told of the calculator: TEST-1 disputes the recorded outcome; the info findings are remarks. */
+/**
+ * The .NET run's findings, told of the calculator: TEST-1 disputes the recorded outcome, filed under the category
+ * evidence-classification as the reviewer brief now asks; the info findings are remarks.
+ */
 const TEST_1 = {
   id: 'TEST-1',
   severity: 'high',
-  category: 'test-adequacy',
+  category: 'evidence-classification',
   location: 'tests/mul.test.mjs:1',
   claim: 'The fail-before evidence for AC-1 shows only a load failure. It does not show that any assertion about the criterion failed. The new test depends on mul existing, but the probe does not prove that it checks its behavior.',
   evidence: "In the fail-before log the only error is SyntaxError: The requested module '../apps/calc.mjs' does not provide an export named 'mul'. No assertion ran on the base revision.",

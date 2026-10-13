@@ -1,14 +1,15 @@
 import picomatch from 'picomatch';
-import { clausesOf } from '../core/clauses.ts';
 import { OrbitError } from '../core/errors.ts';
 import { redact } from '../core/redact.ts';
 import { validateModelOutput } from '../contract/model-outputs.ts';
 import type { CheckStatus, RepairBrief } from '../evidence/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import {
+  EVIDENCE_CLASSIFICATION_CATEGORY,
   FINDING_SEVERITIES,
   UNRESOLVED_FINDING_STATUSES,
   findingFingerprint,
+  isEvidenceClassification,
   isFindingSeverity,
   severityRank,
   splitLocation,
@@ -346,7 +347,10 @@ export interface Disposition {
   carried: boolean;
   /** Earlier findings of the same claim that were closed (rejected or resolved) on another tree. */
   recurrenceOf: string[];
-  /** The classification Orbit recorded that the finding disputes (`recordedClassificationDispute`): it is a note. */
+  /**
+   * Set when the finding is a note: its category is `evidence-classification` and no check confirmed it, so it disputes
+   * RECORDED_EVIDENCE_CLASSIFICATION, which no repair can change.
+   */
   recordedClassification?: string;
 }
 
@@ -410,124 +414,14 @@ export interface Resolution {
 // ---------------------------------------------------------------------------
 // Orbit's own recorded classifications
 
-// The wording of a claim about the fail-before outcome. Each clause of such a claim is matched whole against these, never
-// searched for a word, so a clause that says anything more keeps the finding a claim.
-
-/** A list of criterion ids, as `clausesOf` keeps one: "AC-1", "AC-1, AC-2 and AC-3", "AC-1 to AC-4". */
-const IDS = String.raw`AC-\d+(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or|to|through)\s+)AC-\d+)*`;
-/** A name the failure is for: "round_price", "Clamp", "'../apps/calc.mjs'". One word, so it cannot say anything more. */
-const NAME = String.raw`[\w.:'"\x60/-]+(?:\(\))?`;
-/** The base revision: "the base", "the base revision". */
-const ON_BASE = String.raw`on\s+the\s+base(?:\s+revision)?`;
-/** An error a load, compile or import failure reports: "ImportError", "ModuleNotFoundError", "SyntaxError". */
-const ERROR_NAME = String.raw`\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)`;
-/** A load, compile or import failure, named: "a load failure", "missing implementation imports", "an ImportError for round_price". */
-const LOAD_FAILURE = String.raw`(?:(?:an?|the)\s+)?(?:(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)?\s+(?:failure|error)s?|missing\s+(?:implementation\s+|new\s+)?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)(?:\s+(?:failure|error)s?)?|${ERROR_NAME})(?:\s+(?:for|of|in|from)\s+${NAME})?(?:\s+${ON_BASE})?(?:\s+(?:only|alone))?`;
-/** Assertions that did not fail: "an assertion", "failing behavioral assertions", "an assertion demonstrating incorrect naming on the base revision". */
-const ASSERTION = String.raw`(?:(?:an?|any)\s+)?(?:(?:failing|failed)\s+)?(?:behaviou?ral\s+)?assertions?(?:\s+failures?)?(?:\s+(?:demonstrating|showing|proving)\s+(?:[\w.'-]+\s+){0,6}?${ON_BASE})?`;
-const CONTRAST = String.raw`(?:not|rather\s+than|instead\s+of)`;
-/** The fail-before outcome: "the fail-before evidence for AC-1", "the only fail-before evidence", "the reported fail-before evidence attributed to AC-7". */
-const OUTCOME = String.raw`(?:the\s+)?(?:only\s+)?(?:(?:reported|recorded)\s+)?(?:fail(?:ed)?-before(?:\s+(?:evidence|outcome|probe|result|classification|log|run|failure)s?)?|fail(?:ed)?\s+before\s+(?:evidence|outcome|probe|result|classification|log)s?)(?:\s+(?:for|of|attributed\s+to)\s+${IDS})?`;
-/** What the outcome is: "shows only", "is", "comes only from", "only hit", "demonstrates", "failed with". */
-const IS = String.raw`(?:(?:only|merely|just)\s+)?(?:is|was|are|were|shows?|showed|demonstrates?|demonstrated|reports?|reported|records?|recorded|contains?|consists\s+of|(?:comes?|came)\s+(?:only\s+)?from|(?:fails|failed)\s+(?:only\s+)?(?:with|on)|hits?)(?:\s+(?:only|merely|just))?`;
-/** Does not show: "It does not show", "This alone cannot prove". */
-const DOES_NOT_SHOW = String.raw`(?:it|this|that)\s+(?:alone\s+)?(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:show|prove|demonstrate|establish|indicate)\s+(?:that\s+)?`;
-/** The new tests: "the new tests", "the new price test", "they". */
-const THE_NEW_TESTS = String.raw`(?:the\s+new\s+(?:[A-Za-z_]+\s+)?tests?|they|it)`;
-const BEHAVIOUR = String.raw`(?:its|their|the)\s+(?:[\w-]+\s+(?:or\s+)?){0,3}?behaviou?rs?`;
-const whole = (re: string): RegExp => new RegExp(String.raw`^${re}$`, 'i');
-
-interface RecordedClassification {
-  /** The classification, as a note names it. */
-  what: string;
-  /** Wording that makes it the subject of a claim. */
-  subject: RegExp;
-  /** Wording that disputes it. */
-  dispute: RegExp;
-  /** The clause that names it and disputes it, whole: a note has one. */
-  states: RegExp;
-  /** Other clauses about it, whole, anywhere in the claim. */
-  about: readonly RegExp[];
-  /** Clauses that go on from the one before, whole: "It does not show that any assertion failed", "not an assertion". */
-  after: readonly RegExp[];
-}
-
 /**
- * Classifications Orbit records about its own evidence, which a reviewer may dispute but no repair can change (ADR 0014,
- * 0.3.1 addendum). A finding that only disputes one of them is reported as a note: it never blocks, is never a claim to
- * test, and goes to neither a repair nor the Inquisition. A finding is a note only when every clause of its claim is one
- * of the classification's own statements, matched whole: one clause about anything else keeps it an ordinary finding.
+ * What a note disputes, as its reason, the run's outcome and the fresh review's prompt name it (ADR 0014, 0.3.1
+ * addendum, item 3). A finding is a note if and only if its category is EVIDENCE_CLASSIFICATION_CATEGORY and no check
+ * confirms it. That is structure the reviewer states, never the wording of its claim: the resolver reads no claim to
+ * decide it, because matching English, however tightened, can silence a real defect. The reviewer brief says when the
+ * category applies, and a finding that also names a defect of the tests or the code uses its normal category.
  */
-const RECORDED_CLASSIFICATIONS: readonly RecordedClassification[] = [
-  {
-    // The fail-before outcome is of the base revision: a compile, collection or import failure of a new symbol counts by
-    // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
-    what: 'the fail-before outcome Orbit recorded for the base revision',
-    subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
-    dispute:
-      /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i,
-    // "The fail-before evidence for AC-1 shows only a load failure", "... demonstrates missing implementation imports
-    // rather than failing behavioral assertions".
-    states: whole(String.raw`${OUTCOME}\s+${IS}\s+${LOAD_FAILURE}(?:\s+${CONTRAST}\s+${ASSERTION})?`),
-    about: [
-      // "The new tests depend on Clamp existing", "It shows the new tests depend on Clamp existing".
-      whole(String.raw`(?:it\s+(?:only\s+)?shows\s+(?:that\s+)?)?the\s+new\s+(?:[A-Za-z_]+\s+)?tests?\s+(?:only\s+)?depends?\s+on\s+${NAME}\s+existing`),
-      // "the probe does not prove that they check its behavior".
-      whole(String.raw`the\s+(?:fail-before\s+)?probe\s+(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:prove|show|establish|demonstrate)\s+(?:that\s+)?${THE_NEW_TESTS}\s+(?:checks?|tests?|verif(?:y|ies)|exercises?)\s+${BEHAVIOUR}`),
-      // "The base run fails", "The base revision build failed to compile".
-      whole(String.raw`the\s+base(?:\s+revision)?\s+(?:run|build|probe)\s+(?:only\s+)?(?:fails|failed)(?:\s+to\s+(?:compile|load|import|collect|build|link))?`),
-      // "The local round_price wrapper turns the missing symbol into an AssertionError".
-      whole(String.raw`the\s+(?:local\s+)?(?:${NAME}\s+)?(?:wrapper|shim)\s+turns\s+the\s+missing\s+(?:symbol|import|function|module|definition|export)\s+into\s+an?\s+\w*(?:Error|Exception)`),
-    ],
-    after: [
-      // "It does not show that any assertion about the criteria failed", "... any assertion about the criteria failing on the base".
-      whole(String.raw`${DOES_NOT_SHOW}(?:any|an?|one)\s+(?:(?:new|behaviou?ral)\s+)?assertions?(?:\s+about\s+(?:the\s+)?(?:[\w.-]+\s+){0,4}?criteri(?:a|on))?\s+(?:failed|fails|failing|ran|runs|running)(?:\s+${ON_BASE})?`),
-      // "not an assertion", "not that their assertions check the clamping or throwing behavior".
-      whole(String.raw`${CONTRAST}\s+(?:${ASSERTION}|that\s+(?:their|its|the(?:\s+new)?(?:\s+tests')?)\s+assertions?\s+(?:checks?|tests?|verif(?:y|ies)|exercises?)\s+${BEHAVIOUR})`),
-      // "The base run fails while collecting the module, with an ImportError for round_price".
-      whole(String.raw`collecting\s+the\s+(?:test\s+)?(?:modules?|tests?|test\s+files?|files?)`),
-      whole(String.raw`with\s+(?:an?\s+)?${ERROR_NAME}(?:\s+(?:for|of|in|from)\s+${NAME})?`),
-    ],
-  },
-];
-
-/** Wording that names a defect of the tests themselves, which a repair can fix: such a finding is not a note. */
-const TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
-
-/**
- * Wording that says what the tests check, cover or leave out, or how the code behaves: something a repair can change, so
- * a finding that uses it is not a note either, whatever else its claim says.
- */
-const OTHER_DEFECT =
-  /\bomi(?:t|ts|tted|tting|ssions?)\b|\black(?:s|ing)?\b|\b(?:leaves?|left) out\b|\bmiss(?:es|ed)\b|\bmissing (?:tests?|test cases?|cases?|coverage|assertions?|checks?)\b|\bno (?:tests?|test cases?|cases?|assertions?) (?:of|for|that|covers?|exercises?|checks?|asserts?)\b|\bwithout (?:a |any )?tests?\b|\b(?:do|does|did)(?: not|n't) (?:test|cover|exercise|check|assert|verify|call)\b|\bnever (?:tests?|covers?|exercises?|checks?|asserts?|verif(?:y|ies)|calls?)\b|\b(?:only|merely|just) (?:asserts?|checks?|tests?|verif(?:y|ies)|exercises?|covers?|compares?)\b|\b(?:asserts?|checks?|verif(?:y|ies)|exercises?|covers?|compares?) only\b|\b(?:coverage|uncovered|untested)\b|\bnot (?:tested|covered|exercised|checked|asserted|verified)\b|\bmock(?:s|ed|ing)?\b|\bfixtures?\b|\bflak(?:y|iness)\b|\bskip(?:s|ped|ping)?\b|\b(?:returns?|raises?|throws?|accepts?|rejects?|crash(?:es|ed)?|leaks?|hangs?|corrupts?|overflows?)\b|\bbugs?\b|\bwrong(?:ly)?\b|\bregress(?:es|ed|ions?)?\b|\bvulnerab\w*|\binsecure\b|\binjection\b/i;
-
-/**
- * Wording about the candidate, a stub or mutant run, or what code does: a claim or evidence that uses it is about the
- * candidate or its tests, never only about the recorded outcome. A surviving mutant is a defect of the tests, the very
- * evidence the probe exists to raise.
- */
-const ABOUT_THE_CANDIDATE =
-  /\bcandidate\b|\b(?:stub|mutant)s?\b|\b(?:gives?|gave|computes?|computed|keeps?|kept|survives?|survived|drops?|dropped|prints?|printed|behaves?|behaved|ignores?|ignored|ships?|shipped|still pass(?:es|ed)?|would (?:still )?pass)\b/i;
-
-/**
- * The classification Orbit recorded that a finding disputes, or null when the finding is about the candidate or also
- * about the candidate. A finding disputes a classification only when its claim names it and disputes it, every clause
- * of its claim (each sentence, each part joined by a conjunction, a semicolon, a colon or a comma, each aside in
- * parentheses) is one of the classification's own statements, matched whole, and neither its claim nor its evidence
- * names a defect, the candidate, a stub or mutant run, or what code does. The suggested validation is not read: it may
- * rightly describe a stub. When in doubt it is not a note: an ordinary finding is tested or repaired, and a note never is.
- */
-export function recordedClassificationDispute(f: Pick<ResolvableFinding, 'claim'> & { evidence?: string | null }): string | null {
-  for (const text of [f.claim, f.evidence ?? '']) {
-    if (TEST_DEFECT.test(text) || OTHER_DEFECT.test(text) || ABOUT_THE_CANDIDATE.test(text)) return null;
-  }
-  const c = RECORDED_CLASSIFICATIONS.find((r) => r.subject.test(f.claim) && r.dispute.test(f.claim));
-  if (!c) return null;
-  const clauses = clausesOf(f.claim, { commas: true });
-  const any = (res: readonly RegExp[], x: string): boolean => res.some((re) => re.test(x));
-  const about = (x: string, i: number): boolean => c.states.test(x) || any(c.about, x) || (i > 0 && any(c.after, x));
-  return clauses.some((x) => c.states.test(x)) && clauses.every(about) ? c.what : null;
-}
+export const RECORDED_EVIDENCE_CLASSIFICATION = 'a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision';
 
 // ---------------------------------------------------------------------------
 // Resolution
@@ -614,9 +508,10 @@ export function resolveFindings(input: ResolveInput): Resolution {
     // Closed against this very tree in an earlier pass: terminal, and evidence is not re-litigated.
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === 'rejected' || m.f.status === 'resolved') ? currentMembers[0]!.f : null;
-    // A note only while no check has confirmed the finding (confirming evidence, here or on an earlier tree, governs), and
-    // only when every report of it is one: a defect any of them states, in its claim or its evidence, keeps it a claim.
-    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => recordedClassificationDispute(m.f) !== null) ? recordedClassificationDispute(rep.f) : null;
+    // A note if and only if the reviewer filed it under evidence-classification and no check has confirmed it (confirming
+    // evidence, here or on an earlier tree, governs). The claim's wording is not read. Every report of it shares the
+    // category, which is part of the fingerprint.
+    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
 
     if (closedHere) {
       status = closedHere.status as FindingStatus;
@@ -624,7 +519,7 @@ export function resolveFindings(input: ResolveInput): Resolution {
     } else if (recorded !== null) {
       // Not a claim about the candidate: whatever its severity, it is reported and nothing waits on it.
       status = 'advisory';
-      reason = `a note, not a defect: it disputes ${recorded}, a classification of Orbit's own evidence that no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
+      reason = `a note, not a defect: filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check, it disputes ${recorded}, which no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status = 'claim_pending';
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join('; ')} refutes while ${refs(confirms).join('; ')} confirms; needs Inquisition`;

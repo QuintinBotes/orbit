@@ -6946,7 +6946,7 @@ function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth 
     else
       end = lineWidth - indentAtStart;
   }
-  let split2 = void 0;
+  let split = void 0;
   let prev = void 0;
   let overflow = false;
   let i = -1;
@@ -6979,18 +6979,18 @@ function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth 
       if (mode === FOLD_BLOCK)
         i = consumeMoreIndentedLines(text2, i, indent.length);
       end = i + indent.length + endStep;
-      split2 = void 0;
+      split = void 0;
     } else {
       if (ch === " " && prev && prev !== " " && prev !== "\n" && prev !== "	") {
         const next = text2[i + 1];
         if (next && next !== " " && next !== "\n" && next !== "	")
-          split2 = i;
+          split = i;
       }
       if (i >= end) {
-        if (split2) {
-          folds.push(split2);
-          end = split2 + endStep;
-          split2 = void 0;
+        if (split) {
+          folds.push(split);
+          end = split + endStep;
+          split = void 0;
         } else if (mode === FOLD_QUOTED) {
           while (prev === " " || prev === "	") {
             prev = ch;
@@ -7003,7 +7003,7 @@ function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth 
           folds.push(j);
           escapedFolds[j] = true;
           end = j + endStep;
-          split2 = void 0;
+          split = void 0;
         } else {
           overflow = true;
         }
@@ -10438,13 +10438,13 @@ function parseBlockScalarHeader({ offset, props }, strict, onError) {
   return { mode, indent, chomp, comment, length };
 }
 function splitLines(source) {
-  const split2 = source.split(/\n( *)/);
-  const first = split2[0];
+  const split = source.split(/\n( *)/);
+  const first = split[0];
   const m = first.match(/^( *)/);
   const line0 = m?.[1] ? [m[1], first.slice(m[1].length)] : ["", first];
   const lines = [line0];
-  for (let i = 1; i < split2.length; i += 2)
-    lines.push([split2[i], split2[i + 1]]);
+  for (let i = 1; i < split.length; i += 2)
+    lines.push([split[i], split[i + 1]]);
   return lines;
 }
 var init_resolve_block_scalar = __esm({
@@ -33572,7 +33572,7 @@ var init_review_output_schema = __esm({
             properties: {
               id: { type: "string", pattern: "^[A-Z][A-Z0-9]*-[0-9]+$", description: "Category prefix and number, for example SEC-1." },
               severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
-              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance." },
+              category: { type: "string", description: "For example authorization, correctness, test-adequacy, scope, performance. evidence-classification is reserved for a finding that disputes a classification Orbit recorded of its own evidence (today the fail-before outcome) and asks for nothing a change to the candidate can give: unless a check confirms it, Orbit reports it as a note that never blocks. A finding about the tests' content, coverage or assertions or about the code's behaviour, or one that mixes both, uses its normal category." },
               location: { type: ["string", "null"], description: "path:line, or null for a finding about the change as a whole." },
               claim: { type: "string" },
               evidence: { type: "string" },
@@ -36357,61 +36357,6 @@ if (child) {
   }
 });
 
-// src/core/clauses.ts
-function clausesOf(statement, opts = {}) {
-  const lists = [];
-  const text2 = statement.replace(/[\0\x01]/g, " ").replace(CRITERION_IDS, (ids) => `${lists.push(ids) - 1}`);
-  return split(text2, lists, opts);
-}
-function split(text2, lists, opts) {
-  const asides = [];
-  let main2 = "";
-  for (let i = 0; i < text2.length; i++) {
-    if (text2[i] !== "(") {
-      main2 += text2[i];
-      continue;
-    }
-    let depth = 0;
-    let j = i;
-    for (; j < text2.length; j++) {
-      if (text2[j] === "(") depth++;
-      else if (text2[j] === ")" && --depth === 0) break;
-    }
-    if (i > 0 && /[\w\]]/.test(text2[i - 1])) {
-      main2 += text2.slice(i, j + 1);
-    } else {
-      main2 += ` \0${asides.length}\0 `;
-      asides.push(text2.slice(i + 1, j));
-    }
-    i = j;
-  }
-  const out = [];
-  for (const part of main2.split(opts.commas ? BREAK_OR_COMMA : BREAK3)) {
-    const inner = [];
-    const clause = part.replace(ASIDE, (_, k) => {
-      inner.push(asides[Number(k)]);
-      return " ";
-    }).replace(IDS, (_, k) => lists[Number(k)]).replace(/\s+/g, " ").replace(/^[\s,]+|[\s,.]+$/g, "");
-    if (clause !== "" && !SAYS_NOTHING.test(clause)) out.push(clause);
-    for (const aside of inner) out.push(...split(aside, lists, opts));
-  }
-  return out;
-}
-var CONJUNCTION, BREAK3, BREAK_OR_COMMA, CRITERION_ID, CRITERION_IDS, SAYS_NOTHING, ASIDE, IDS;
-var init_clauses = __esm({
-  "src/core/clauses.ts"() {
-    "use strict";
-    CONJUNCTION = String.raw`(?:^|\s)(?:and(?:\s+also)?|but|however|although|though|while|whereas)(?=[\s,]|$)`;
-    BREAK3 = new RegExp(String.raw`[.!?](?=\s|$)|;|:(?=\s|$)|${CONJUNCTION}`, "i");
-    BREAK_OR_COMMA = new RegExp(String.raw`[.!?](?=\s|$)|[;,]|:(?=\s|$)|${CONJUNCTION}`, "i");
-    CRITERION_ID = String.raw`\bAC-\d+\b`;
-    CRITERION_IDS = new RegExp(String.raw`${CRITERION_ID}(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or|to|through)\s+)${CRITERION_ID})+`, "gi");
-    SAYS_NOTHING = new RegExp(String.raw`^(?:(?:${CRITERION_ID}|e\.g|i\.e|etc|and|or|to|through)[\s,.]*)+$`, "i");
-    ASIDE = /\0(\d+)\0/g;
-    IDS = /\x01(\d+)\x01/g;
-  }
-});
-
 // src/review/types.ts
 function isFindingSeverity(v) {
   return typeof v === "string" && FINDING_SEVERITIES.includes(v);
@@ -36421,6 +36366,9 @@ function isFindingStatus(v) {
 }
 function severityRank(s) {
   return FINDING_SEVERITIES.indexOf(s);
+}
+function isEvidenceClassification(category) {
+  return (category ?? "").trim().toLowerCase() === EVIDENCE_CLASSIFICATION_CATEGORY;
 }
 function splitLocation(location) {
   if (location === null) return { path: null, line: null };
@@ -36438,7 +36386,7 @@ function findingFingerprint(f) {
   const { path } = splitLocation(f.location);
   return `fp-${sha256([(f.category ?? "").trim().toLowerCase(), path ?? "", normalizeClaim(f.claim)].join("\n")).slice(0, 16)}`;
 }
-var REVIEW_VERDICTS, FINDING_SEVERITIES, FINDING_STATUSES, TERMINAL_FINDING_STATUSES, UNRESOLVED_FINDING_STATUSES, RESOLVED_FINDING_STATUSES;
+var REVIEW_VERDICTS, FINDING_SEVERITIES, FINDING_STATUSES, TERMINAL_FINDING_STATUSES, UNRESOLVED_FINDING_STATUSES, RESOLVED_FINDING_STATUSES, EVIDENCE_CLASSIFICATION_CATEGORY;
 var init_types4 = __esm({
   "src/review/types.ts"() {
     "use strict";
@@ -36449,6 +36397,7 @@ var init_types4 = __esm({
     TERMINAL_FINDING_STATUSES = ["rejected", "resolved"];
     UNRESOLVED_FINDING_STATUSES = ["open", "claim_pending", "accepted"];
     RESOLVED_FINDING_STATUSES = ["resolved"];
+    EVIDENCE_CLASSIFICATION_CATEGORY = "evidence-classification";
   }
 });
 
@@ -36570,17 +36519,6 @@ function assessEvidence(e, treeHash) {
 function describeEvidence(e) {
   return `${e.kind}${e.checkId ? ` ${e.checkId}` : ""} ${e.status} on tree ${e.treeHash.slice(0, 12)} (${e.ref})`;
 }
-function recordedClassificationDispute(f) {
-  for (const text2 of [f.claim, f.evidence ?? ""]) {
-    if (TEST_DEFECT.test(text2) || OTHER_DEFECT.test(text2) || ABOUT_THE_CANDIDATE.test(text2)) return null;
-  }
-  const c = RECORDED_CLASSIFICATIONS.find((r) => r.subject.test(f.claim) && r.dispute.test(f.claim));
-  if (!c) return null;
-  const clauses = clausesOf(f.claim, { commas: true });
-  const any = (res, x) => res.some((re) => re.test(x));
-  const about = (x, i) => c.states.test(x) || any(c.about, x) || i > 0 && any(c.after, x);
-  return clauses.some((x) => c.states.test(x)) && clauses.every(about) ? c.what : null;
-}
 function quoted(s) {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > MAX_QUOTED ? `${one.slice(0, MAX_QUOTED)}...` : one;
@@ -36643,13 +36581,13 @@ function resolveFindings(input) {
     let reasonCode = "unvalidated";
     const currentMembers = group.filter((m) => m.current);
     const closedHere = currentMembers.length > 0 && currentMembers.every((m) => m.f.status === "rejected" || m.f.status === "resolved") ? currentMembers[0].f : null;
-    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => recordedClassificationDispute(m.f) !== null) ? recordedClassificationDispute(rep.f) : null;
+    const recorded = confirms.length === 0 && !wasAccepted && group.every((m) => isEvidenceClassification(m.f.category)) ? RECORDED_EVIDENCE_CLASSIFICATION : null;
     if (closedHere) {
       status2 = closedHere.status;
       reason = closedHere.resolution ?? `${closedHere.status} earlier on this tree`;
     } else if (recorded !== null) {
       status2 = "advisory";
-      reason = `a note, not a defect: it disputes ${recorded}, a classification of Orbit's own evidence that no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
+      reason = `a note, not a defect: filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check, it disputes ${recorded}, which no repair can change; it is reported, and neither repaired nor sent to the Inquisition`;
     } else if (refutes.length > 0 && confirms.length > 0) {
       status2 = "claim_pending";
       reason = `conflicting evidence on tree ${treeHash.slice(0, 12)}: ${refs(refutes).join("; ")} refutes while ${refs(confirms).join("; ")} confirms; needs Inquisition`;
@@ -36829,12 +36767,11 @@ function toRepairBrief(d, claim, group, snapshot2, confirms) {
     severity: d.severity
   };
 }
-var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, IDS2, NAME, ON_BASE, ERROR_NAME, LOAD_FAILURE, ASSERTION2, CONTRAST, OUTCOME, IS, DOES_NOT_SHOW, THE_NEW_TESTS, BEHAVIOUR, whole2, RECORDED_CLASSIFICATIONS, TEST_DEFECT, OTHER_DEFECT, ABOUT_THE_CANDIDATE, PRIOR_OPEN, MAX_QUOTED;
+var import_picomatch3, DEFAULT_SECURITY_POLICY, SECURITY_CATEGORY, DATE_ONLY, MACHINE_EVIDENCE_KINDS, RECORDED_EVIDENCE_CLASSIFICATION, PRIOR_OPEN, MAX_QUOTED;
 var init_resolve = __esm({
   "src/review/resolve.ts"() {
     "use strict";
     import_picomatch3 = __toESM(require_picomatch2(), 1);
-    init_clauses();
     init_errors();
     init_redact();
     init_model_outputs();
@@ -36843,53 +36780,7 @@ var init_resolve = __esm({
     SECURITY_CATEGORY = /secur|auth|inject|sqli|xss|csrf|ssrf|\brce\b|secret|credential|crypto|tenant|privacy|\bpii\b|traversal|deserializ|permission|access.?control|sandbox|vulnerab|escalation/i;
     DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
     MACHINE_EVIDENCE_KINDS = ["new_test", "existing_check", "reproduction", "static_analysis"];
-    IDS2 = String.raw`AC-\d+(?:(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or|to|through)\s+)AC-\d+)*`;
-    NAME = String.raw`[\w.:'"\x60/-]+(?:\(\))?`;
-    ON_BASE = String.raw`on\s+the\s+base(?:\s+revision)?`;
-    ERROR_NAME = String.raw`\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)`;
-    LOAD_FAILURE = String.raw`(?:(?:an?|the)\s+)?(?:(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)?\s+(?:failure|error)s?|missing\s+(?:implementation\s+|new\s+)?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)(?:\s+(?:failure|error)s?)?|${ERROR_NAME})(?:\s+(?:for|of|in|from)\s+${NAME})?(?:\s+${ON_BASE})?(?:\s+(?:only|alone))?`;
-    ASSERTION2 = String.raw`(?:(?:an?|any)\s+)?(?:(?:failing|failed)\s+)?(?:behaviou?ral\s+)?assertions?(?:\s+failures?)?(?:\s+(?:demonstrating|showing|proving)\s+(?:[\w.'-]+\s+){0,6}?${ON_BASE})?`;
-    CONTRAST = String.raw`(?:not|rather\s+than|instead\s+of)`;
-    OUTCOME = String.raw`(?:the\s+)?(?:only\s+)?(?:(?:reported|recorded)\s+)?(?:fail(?:ed)?-before(?:\s+(?:evidence|outcome|probe|result|classification|log|run|failure)s?)?|fail(?:ed)?\s+before\s+(?:evidence|outcome|probe|result|classification|log)s?)(?:\s+(?:for|of|attributed\s+to)\s+${IDS2})?`;
-    IS = String.raw`(?:(?:only|merely|just)\s+)?(?:is|was|are|were|shows?|showed|demonstrates?|demonstrated|reports?|reported|records?|recorded|contains?|consists\s+of|(?:comes?|came)\s+(?:only\s+)?from|(?:fails|failed)\s+(?:only\s+)?(?:with|on)|hits?)(?:\s+(?:only|merely|just))?`;
-    DOES_NOT_SHOW = String.raw`(?:it|this|that)\s+(?:alone\s+)?(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:show|prove|demonstrate|establish|indicate)\s+(?:that\s+)?`;
-    THE_NEW_TESTS = String.raw`(?:the\s+new\s+(?:[A-Za-z_]+\s+)?tests?|they|it)`;
-    BEHAVIOUR = String.raw`(?:its|their|the)\s+(?:[\w-]+\s+(?:or\s+)?){0,3}?behaviou?rs?`;
-    whole2 = (re) => new RegExp(String.raw`^${re}$`, "i");
-    RECORDED_CLASSIFICATIONS = [
-      {
-        // The fail-before outcome is of the base revision: a compile, collection or import failure of a new symbol counts by
-        // policy, and a repair, which changes only the candidate, cannot make the base revision fail another way.
-        what: "the fail-before outcome Orbit recorded for the base revision",
-        subject: /\bfail(?:ed)?-before\b|\bfail(?:ed)? before (?:evidence|outcome|probe|result|classification|log)s?\b|\b(?:new )?tests? (?:fail(?:s|ed)?|failing) on the base revision\b/i,
-        dispute: /\b(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)(?:-only)? (?:failure|error|fail(?:s|ed)?)s?\b|\bmissing (?:implementation |new )?(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?)\b|\b(?:not|rather than|instead of) (?:an? )?(?:failing )?(?:behaviou?ral )?assertions?\b/i,
-        // "The fail-before evidence for AC-1 shows only a load failure", "... demonstrates missing implementation imports
-        // rather than failing behavioral assertions".
-        states: whole2(String.raw`${OUTCOME}\s+${IS}\s+${LOAD_FAILURE}(?:\s+${CONTRAST}\s+${ASSERTION2})?`),
-        about: [
-          // "The new tests depend on Clamp existing", "It shows the new tests depend on Clamp existing".
-          whole2(String.raw`(?:it\s+(?:only\s+)?shows\s+(?:that\s+)?)?the\s+new\s+(?:[A-Za-z_]+\s+)?tests?\s+(?:only\s+)?depends?\s+on\s+${NAME}\s+existing`),
-          // "the probe does not prove that they check its behavior".
-          whole2(String.raw`the\s+(?:fail-before\s+)?probe\s+(?:(?:does|did)(?:\s+not|n't)|never|cannot|can't)\s+(?:prove|show|establish|demonstrate)\s+(?:that\s+)?${THE_NEW_TESTS}\s+(?:checks?|tests?|verif(?:y|ies)|exercises?)\s+${BEHAVIOUR}`),
-          // "The base run fails", "The base revision build failed to compile".
-          whole2(String.raw`the\s+base(?:\s+revision)?\s+(?:run|build|probe)\s+(?:only\s+)?(?:fails|failed)(?:\s+to\s+(?:compile|load|import|collect|build|link))?`),
-          // "The local round_price wrapper turns the missing symbol into an AssertionError".
-          whole2(String.raw`the\s+(?:local\s+)?(?:${NAME}\s+)?(?:wrapper|shim)\s+turns\s+the\s+missing\s+(?:symbol|import|function|module|definition|export)\s+into\s+an?\s+\w*(?:Error|Exception)`)
-        ],
-        after: [
-          // "It does not show that any assertion about the criteria failed", "... any assertion about the criteria failing on the base".
-          whole2(String.raw`${DOES_NOT_SHOW}(?:any|an?|one)\s+(?:(?:new|behaviou?ral)\s+)?assertions?(?:\s+about\s+(?:the\s+)?(?:[\w.-]+\s+){0,4}?criteri(?:a|on))?\s+(?:failed|fails|failing|ran|runs|running)(?:\s+${ON_BASE})?`),
-          // "not an assertion", "not that their assertions check the clamping or throwing behavior".
-          whole2(String.raw`${CONTRAST}\s+(?:${ASSERTION2}|that\s+(?:their|its|the(?:\s+new)?(?:\s+tests')?)\s+assertions?\s+(?:checks?|tests?|verif(?:y|ies)|exercises?)\s+${BEHAVIOUR})`),
-          // "The base run fails while collecting the module, with an ImportError for round_price".
-          whole2(String.raw`collecting\s+the\s+(?:test\s+)?(?:modules?|tests?|test\s+files?|files?)`),
-          whole2(String.raw`with\s+(?:an?\s+)?${ERROR_NAME}(?:\s+(?:for|of|in|from)\s+${NAME})?`)
-        ]
-      }
-    ];
-    TEST_DEFECT = /\btautolog\w*|\b(?:cannot|can never|could never|never) fail\b|\balways pass(?:es)?\b|\bpass(?:es)? (?:for|with) any (?:\w+ )?implementation\b|\bindependent of the (?:product|production) code\b|\basserts? nothing\b|\bvacuous\w*/i;
-    OTHER_DEFECT = /\bomi(?:t|ts|tted|tting|ssions?)\b|\black(?:s|ing)?\b|\b(?:leaves?|left) out\b|\bmiss(?:es|ed)\b|\bmissing (?:tests?|test cases?|cases?|coverage|assertions?|checks?)\b|\bno (?:tests?|test cases?|cases?|assertions?) (?:of|for|that|covers?|exercises?|checks?|asserts?)\b|\bwithout (?:a |any )?tests?\b|\b(?:do|does|did)(?: not|n't) (?:test|cover|exercise|check|assert|verify|call)\b|\bnever (?:tests?|covers?|exercises?|checks?|asserts?|verif(?:y|ies)|calls?)\b|\b(?:only|merely|just) (?:asserts?|checks?|tests?|verif(?:y|ies)|exercises?|covers?|compares?)\b|\b(?:asserts?|checks?|verif(?:y|ies)|exercises?|covers?|compares?) only\b|\b(?:coverage|uncovered|untested)\b|\bnot (?:tested|covered|exercised|checked|asserted|verified)\b|\bmock(?:s|ed|ing)?\b|\bfixtures?\b|\bflak(?:y|iness)\b|\bskip(?:s|ped|ping)?\b|\b(?:returns?|raises?|throws?|accepts?|rejects?|crash(?:es|ed)?|leaks?|hangs?|corrupts?|overflows?)\b|\bbugs?\b|\bwrong(?:ly)?\b|\bregress(?:es|ed|ions?)?\b|\bvulnerab\w*|\binsecure\b|\binjection\b/i;
-    ABOUT_THE_CANDIDATE = /\bcandidate\b|\b(?:stub|mutant)s?\b|\b(?:gives?|gave|computes?|computed|keeps?|kept|survives?|survived|drops?|dropped|prints?|printed|behaves?|behaved|ignores?|ignored|ships?|shipped|still pass(?:es|ed)?|would (?:still )?pass)\b/i;
+    RECORDED_EVIDENCE_CLASSIFICATION = "a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision";
     PRIOR_OPEN = UNRESOLVED_FINDING_STATUSES;
     MAX_QUOTED = 300;
   }
@@ -37019,9 +36910,9 @@ function simple(text2) {
   return at < 0 ? { prefix: ws, argv: [] } : { prefix: ws.slice(0, at), argv: ws.slice(at) };
 }
 function chainOf(line3) {
-  const split2 = line3.split(CHAIN_SEPARATOR);
-  const parts = split2.filter((_, i) => i % 2 === 0);
-  return parts.some((p) => SHELL_SYNTAX.test(p)) ? null : { parts, separators: split2.filter((_, i) => i % 2 === 1) };
+  const split = line3.split(CHAIN_SEPARATOR);
+  const parts = split.filter((_, i) => i % 2 === 0);
+  return parts.some((p) => SHELL_SYNTAX.test(p)) ? null : { parts, separators: split.filter((_, i) => i % 2 === 1) };
 }
 function unwrapEnv(argv2) {
   let i = 1;
@@ -42939,8 +42830,8 @@ function promptOf(r) {
   if (inputIncludesCacheRead(r.provider)) return r.input_tokens + cacheWrite;
   return r.input_tokens + (r.cache_read_tokens ?? 0) + cacheWrite;
 }
-function ratio(part, whole3) {
-  return whole3 > 0 ? Math.round(part / whole3 * 1e4) / 1e4 : null;
+function ratio(part, whole2) {
+  return whole2 > 0 ? Math.round(part / whole2 * 1e4) / 1e4 : null;
 }
 function count(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
@@ -49410,7 +49301,7 @@ function nextId(prefix, ids) {
 function criterionIdsIn(history) {
   const ids = [];
   const collect2 = (v) => {
-    if (typeof v === "string" && CRITERION_ID2.test(v)) ids.push(v);
+    if (typeof v === "string" && CRITERION_ID.test(v)) ids.push(v);
     else if (v !== null && typeof v === "object" && !Array.isArray(v)) collect2(v.id);
   };
   for (const record of history) {
@@ -49692,7 +49583,7 @@ function baselineExceptionProposal(failure, reason) {
     reason: reason?.trim() || `the failure predates this run; accepting it lets the run be judged on its own change, and only while the check keeps failing the same way`
   };
 }
-var DECISION_ID, CRITERION_ID2;
+var DECISION_ID, CRITERION_ID;
 var init_amend = __esm({
   "src/contract/amend.ts"() {
     "use strict";
@@ -49701,7 +49592,7 @@ var init_amend = __esm({
     init_validate();
     init_wording();
     DECISION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
-    CRITERION_ID2 = /^AC-[0-9]+$/;
+    CRITERION_ID = /^AC-[0-9]+$/;
   }
 });
 
@@ -58040,7 +57931,7 @@ ${fenced("text", red(failureExcerpt(text2, PROBE_LOG_CHARS)))}`
   }
   return `
 ### Fail-before
-verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them.
+verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them. A finding that disputes the outcome all the same uses the category evidence-classification and asks for nothing else; a finding about the new tests or the code uses its normal category.
 ${bullet(lines, MAX_LIST_ITEMS, 600)}${shown3.join("\n")}`;
 }
 function failBeforeReviewQuestions(ev) {
@@ -58752,7 +58643,7 @@ function draftContract(input) {
       adjustments.push({ kind: "check-dropped", subject: id, reason: `${where2} names check "${id}", which the policy does not define` });
     }
   };
-  const drafted = plan.criteria.map((c, i) => {
+  const criteria = plan.criteria.map((c, i) => {
     const checkIds = [];
     for (const id of c.check_ids) {
       if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
@@ -58767,16 +58658,6 @@ function draftContract(input) {
       check_ids: checkIds
     };
   });
-  const failBefore = new Set(drafted.filter((c) => onlyFailBefore(c.statement)).map((c) => c.id));
-  if (!drafted.some((c) => c.mandatory && !failBefore.has(c.id))) failBefore.clear();
-  for (const c of drafted.filter((x) => failBefore.has(x.id))) {
-    adjustments.push({
-      kind: "criterion-dropped",
-      subject: c.id,
-      reason: `"${c.statement}" says only that the new tests fail on the base revision, or that tests pass: verification.fail_before establishes the first, and no candidate is accepted unless its required checks pass`
-    });
-  }
-  const criteria = drafted.filter((c) => !failBefore.has(c.id));
   const required = [];
   for (const id of plan.required_check_ids) {
     if (!isCheck(id)) dropCheck(id, "required_check_ids");
@@ -58890,11 +58771,6 @@ function draftContract(input) {
   const validated = validateContract(contract, snapshot2, input.policyHash === void 0 ? {} : { policyHash: input.policyHash });
   return { contract: validated, adjustments };
 }
-function onlyFailBefore(statement) {
-  const clauses = clausesOf(statement);
-  const failsOnBase = (c) => NEW_TESTS_FAIL_ON_BASE.test(c) && !EXISTING_TESTS.test(c);
-  return clauses.some(failsOnBase) && clauses.every((c) => failsOnBase(c) || TESTS_PASS.test(c) || NAMES_THE_FAILURE.test(c));
-}
 function uniqueText(values) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -58907,11 +58783,10 @@ function uniqueText(values) {
   }
   return out;
 }
-var BASELINE_MATERIAL_TOPICS, TEST_NAME, TEST_DIRECTORY2, NEW_TESTS, ANY_TESTS, MODAL, FAIL, PASS, BASE_REVISION, WITH_THE_CHANGE, NEW_TESTS_FAIL_ON_BASE, TESTS_PASS, NAMES_THE_FAILURE, EXISTING_TESTS;
+var BASELINE_MATERIAL_TOPICS;
 var init_draft = __esm({
   "src/contract/draft.ts"() {
     "use strict";
-    init_clauses();
     init_errors();
     init_authority2();
     init_globs2();
@@ -58925,25 +58800,6 @@ var init_draft = __esm({
       "financial effects",
       "irreversible data behavior"
     ];
-    TEST_NAME = String.raw`(?:[A-Za-z_]+|e2e)`;
-    TEST_DIRECTORY2 = String.raw`[A-Za-z_]+(?:/[A-Za-z_]+)*/?`;
-    NEW_TESTS = String.raw`(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:new(?:ly)?(?:\s+added)?|added)\s+(?:${TEST_NAME}\s+)?(?:tests?|specs?|suites?|test\s+cases?)|(?:tests?|specs?|suites?)\s+(?:(?:that|which)\s+)?(?:the|this)\s+(?:change|fix|implementation|candidate)\s+adds|(?:tests?|specs?|suites?)\s+(?:added|introduced)(?:\s+(?:under|in|to)\s+${TEST_DIRECTORY2})?)`;
-    ANY_TESTS = String.raw`(?:they|these(?:\s+tests)?|both|${NEW_TESTS}|(?:(?:the|all(?:\s+the)?|every)\s+)?(?:(?:existing|other|remaining)\s+)?(?:${TEST_NAME}\s+)?(?:tests?|test\s+(?:cases?|suites?)))`;
-    MODAL = String.raw`(?:(?:must|should|will|do|does)\s+)?`;
-    FAIL = String.raw`${MODAL}(?:fail(?:s|ed)?|(?:are|is)\s+failing)`;
-    PASS = String.raw`${MODAL}(?:(?:still|then|all|both|now)\s+)?pass(?:es|ed)?`;
-    BASE_REVISION = String.raw`(?:(?:on|against|at)\s+(?:the\s+)?(?:base|baseline)(?:\s+(?:revision|commit|tree|branch|version))?|(?:before|without|prior\s+to)\s+(?:the|this)\s+(?:change|fix|implementation))`;
-    WITH_THE_CHANGE = String.raw`(?:(?:after|with|on|against)\s+(?:(?:the|this)\s+(?:change|fix|implementation|candidate)|it)|afterwards)`;
-    NEW_TESTS_FAIL_ON_BASE = new RegExp(
-      String.raw`^(?:${NEW_TESTS}\s+${FAIL}\s+${BASE_REVISION}|${BASE_REVISION},?\s+${NEW_TESTS}\s+${FAIL})$`,
-      "i"
-    );
-    TESTS_PASS = new RegExp(
-      String.raw`^(?:(?:${ANY_TESTS}\s+)?${PASS}(?:\s+${WITH_THE_CHANGE})?|${WITH_THE_CHANGE},?\s+${ANY_TESTS}\s+${PASS})$`,
-      "i"
-    );
-    NAMES_THE_FAILURE = /^(?:(?:for\s+example|such\s+as|an?|the)\s+)*(?:\w*(?:Import|ModuleNotFound|Name|Reference|NoSuchMethod|NoClassDefFound|ClassNotFound|MissingMethod|TypeLoad|Syntax|Compile|Compilation)(?:Error|Exception)|(?:load|loading|compile|compilation|compiler|import|collection|build|link|resolution)\s+(?:error|failure)s?|missing\s+(?:symbols?|imports?|modules?|functions?|methods?|definitions?|exports?))(?:\s+(?:for|of|on|in|from)\s+(?:(?:the\s+)?base(?:\s+revision)?|[\w.:/'"`-]+(?:\(\))?))?$/i;
-    EXISTING_TESTS = /\b(?:existing|pre-existing|current(?:ly)?|already|previously|known)\b/i;
   }
 });
 
@@ -60859,13 +60715,13 @@ async function parallelReview(ctx, cand, sel, focuses) {
   const pending = [];
   const caps = /* @__PURE__ */ new Map();
   const toStart = focuses.filter((f) => workersFor(ctx, `${focusBase(cand, f)}#1`).length === 0);
-  const whole3 = sessionSpendCap(ctx, sel.model, "reviewer", "final");
+  const whole2 = sessionSpendCap(ctx, sel.model, "reviewer", "final");
   const n2 = Math.max(1, toStart.length);
-  const share = whole3.capUsd === null ? null : Math.max(0, Math.floor((whole3.capUsd + whole3.worstCaseUsd - n2 * whole3.worstCaseUsd) / (n2 + (n2 - 1) * DEFAULT_CONTEXT_DUPLICATION) * 100) / 100);
+  const share = whole2.capUsd === null ? null : Math.max(0, Math.floor((whole2.capUsd + whole2.worstCaseUsd - n2 * whole2.worstCaseUsd) / (n2 + (n2 - 1) * DEFAULT_CONTEXT_DUPLICATION) * 100) / 100);
   for (const focus of focuses) {
     const base = focusBase(cand, focus);
     if (!toStart.includes(focus)) continue;
-    const cap = { capUsd: share, worstCaseUsd: whole3.worstCaseUsd };
+    const cap = { capUsd: share, worstCaseUsd: whole2.worstCaseUsd };
     caps.set(base, cap);
     pending.push({ id: base, role: "reviewer", writer: false, ownedPaths: [], dependsOn: [], revision: cand.treeHash, cancelWhen: ["revision-changed"], budget: { costUsd: cap.capUsd, wallMs: null, maxTurns: ledger.maxTurnsPerSession() }, provider: sel.provider, worktree: checkout, status: "pending" });
   }
@@ -61040,7 +60896,7 @@ async function resolveAndDecide(ctx, cand) {
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
-  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} dispute only ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
+  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
   let fresh = null;
   const asked = freshReviewOf(ctx, cand.treeHash);
   if (asked) {
@@ -61428,9 +61284,9 @@ function freshReviewText(rec2) {
   const names = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
   const what = [...new Set(rec2.noted.map((n2) => n2.classification))];
   return [
-    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below. Each disputes ${what.join(" or ")}.`,
-    ...what.map((w) => `${w.charAt(0).toUpperCase()}${w.slice(1)} is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.`),
-    "Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair."
+    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below, filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY}. Each disputes ${what.join(" or ")}.`,
+    "Such a classification is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.",
+    `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`
   ];
 }
 async function prepareReview(ctx, cand, provider) {
@@ -61469,6 +61325,7 @@ var init_reviewing = __esm({
     init_review();
     init_review_approval();
     init_store3();
+    init_types4();
     init_store4();
     init_context2();
     init_gates();
@@ -68731,8 +68588,8 @@ function promptOf2(r) {
   const write2 = r.cache_write_tokens ?? 0;
   return inputIncludesCacheRead(r.provider) ? input + write2 : input + (r.cache_read_tokens ?? 0) + write2;
 }
-function ratioOf(part, whole3) {
-  return whole3 > 0 ? Math.round(part / whole3 * 1e4) / 1e4 : null;
+function ratioOf(part, whole2) {
+  return whole2 > 0 ? Math.round(part / whole2 * 1e4) / 1e4 : null;
 }
 function concurrencyOverhead(db, inWindow, params, missing) {
   const w = db.get(

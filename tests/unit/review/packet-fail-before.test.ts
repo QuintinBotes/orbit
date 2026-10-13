@@ -142,6 +142,8 @@ describe.skipIf(!gitAvailable)('the review packet and fail-before', () => {
     expect(p.text).not.toMatch(/an assertion about AC-1, or only a load failure/);
     // The reviewer is told not to ask for evidence no check produces.
     expect(p.text).toMatch(/do not ask for mutant runs, stub implementations or a rerun of the probe/);
+    // A dispute of the outcome is filed by structure, under its own category, never recognised by its wording.
+    expect(p.text).toMatch(/A finding that disputes the outcome all the same uses the category evidence-classification and asks for nothing else; a finding about the new tests or the code uses its normal category\./);
     const questions = p.text.slice(p.text.indexOf('## Review questions'));
     expect(questions).toMatch(/tautolog/);
     expect(questions).toMatch(/cannot fail with any implementation/);

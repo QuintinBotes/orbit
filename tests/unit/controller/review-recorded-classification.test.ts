@@ -5,7 +5,9 @@
 // info findings. Orbit made TEST-1 claim_pending and blocking and sent it to repair; a repair cannot change the base
 // revision, so attempt 2 reproduced the tree and the run ended EXHAUSTED on non-progress. In the python advisory run
 // (orb-20261013-080355-6ac27f) the same finding, about pricing, went to the Inquisition as "financial effects" first,
-// which amended AC-4's proof. Such a finding is a note: no repair, no Inquisition.
+// which amended AC-4's proof. Such a finding is a note: no repair, no Inquisition. Whether it is one is structure, not
+// wording: the reviewer files it under the category evidence-classification (the reviewer brief says when), and the same
+// claim in any other category is an ordinary finding.
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
@@ -33,11 +35,11 @@ const claude = (): ProviderAdapter =>
     validateCredentials: async () => ({ state: 'valid', method: 'api_key', detail: 'ok' }),
   }) as unknown as ProviderAdapter;
 
-/** The dotnet run's findings, verbatim. */
+/** The dotnet run's findings, verbatim, TEST-1 filed as the reviewer brief now asks. */
 const TEST_1: IngestedFinding = {
   externalId: 'TEST-1',
   severity: 'high',
-  category: 'test-adequacy',
+  category: 'evidence-classification',
   location: 'tests/Acme.Tests/CalculatorTests.cs:23',
   path: 'tests/Acme.Tests/CalculatorTests.cs',
   line: 23,
@@ -48,11 +50,11 @@ const TEST_1: IngestedFinding = {
 const COR_1: IngestedFinding = { externalId: 'COR-1', severity: 'info', category: 'correctness', location: 'src/Acme/Calculator.cs:13', path: 'src/Acme/Calculator.cs', line: 13, claim: 'Reading the code, the implementation appears to meet AC-1 and AC-2.', evidence: 'Calculator.cs:13-18 holds the guard and the clamp.', suggestedValidation: null };
 const PRAC_1: IngestedFinding = { externalId: 'PRAC-1', severity: 'info', category: 'scope', location: null, path: null, line: null, claim: 'The justifications for the omitted practices are sound for an O(1) pure integer method.', evidence: 'Calculator.cs:11-19 has no I/O.', suggestedValidation: null };
 
-/** The python advisory run's TEST-1: about pricing, so it read as financial effects. */
+/** The python advisory run's TEST-1: about pricing, so it read as financial effects. Filed as the reviewer brief now asks. */
 const PRICING_TEST_1: IngestedFinding = {
   externalId: 'TEST-1',
   severity: 'high',
-  category: 'test-adequacy',
+  category: 'evidence-classification',
   location: 'tests/test_pricing.py:3',
   path: 'tests/test_pricing.py',
   line: 3,
@@ -158,6 +160,18 @@ describe('a review finding that only disputes the fail-before outcome Orbit reco
     expect(listFindings(lab.db, lab.runId)[0]!.status).toBe('advisory');
   });
 
+  it('the same claim in its normal category is an ordinary finding: tested or repaired, never a note and never a fresh review', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [{ ...TEST_1, category: 'test-adequacy' }]);
+    await reviewingStep(lab.ctx());
+    const f = listFindings(lab.db, lab.runId)[0]!;
+    expect(f.status).toBe('claim_pending');
+    expect((f.resolutionJson as { blocking: boolean }).blocking).toBe(true);
+    expect(listDecisions(lab.db, lab.runId, { kind: 'review.finding.noted' })).toEqual([]);
+    expect(listDecisions(lab.db, lab.runId, { kind: 'review.fresh' })).toEqual([]);
+    expect(reviewerPurposes()).toEqual([]);
+  });
+
   it('next to an approval it does not hold back delivery', async () => {
     const { cand } = await setup();
     record(cand, 'APPROVE', [TEST_1]);
@@ -194,7 +208,9 @@ describe('a review that asked for repair only through notes gets one fresh revie
     const prompt = reviewer.specs[0]!.prompt;
     expect(prompt).toMatch(/fresh review/i);
     expect(prompt).toContain('TEST-1 (high)');
-    expect(prompt).toMatch(/the fail-before outcome Orbit recorded for the base revision is not a finding and cannot be repaired by changing the candidate/i);
+    expect(prompt).toMatch(/filed under the category evidence-classification/);
+    expect(prompt).toMatch(/a classification Orbit recorded of its own evidence, such as the fail-before outcome of the base revision/);
+    expect(prompt).toMatch(/Such a classification is not a finding and cannot be repaired by changing the candidate/);
     expect(prompt).toContain(TEST_1.claim);
     // Nothing went to repair or the Inquisition, and the approval that clears the tree is the reviewer's own.
     expect(repairs()).toBe(0);

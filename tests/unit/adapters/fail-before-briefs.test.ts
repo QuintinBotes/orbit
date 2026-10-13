@@ -5,7 +5,11 @@
 //   and reviewers asked for stub, mutant or probe reruns that no check produces.
 // - planner: it wrote "The new tests fail on the base revision (ImportError for round_price)" as AC-4 and assumed the
 //   check runs the new tests, both of which Orbit checks itself.
-// - inquisitor: it amended AC-4 to require recorded mutant runs.
+// - inquisitor: it amended AC-4 to require recorded mutant runs, and told the implementer to keep the ImportError "as the
+//   contract states".
+// Whether a finding only disputes Orbit's own recorded evidence classification is structure, not wording (the lead's
+// decision after three rounds of adversarial review): the reviewer files it under the category evidence-classification,
+// and only for that; and the draft never removes a criterion, so the briefs carry the rule.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -34,6 +38,14 @@ describe('the reviewer brief', () => {
   it('asks for no evidence that no check produces', () => {
     expect(text).toMatch(/Do not ask for mutant runs, stub implementations or a rerun of the probe/);
   });
+
+  it('files a finding that only disputes a recorded evidence classification under the category evidence-classification, and nothing else there', () => {
+    const one = text.replace(/\s+/g, ' ');
+    expect(one).toMatch(/category "evidence-classification" only for a finding that disputes a classification Orbit recorded of its own evidence \(today the fail-before outcome\) and asks for nothing a change to the candidate can give/);
+    expect(one).toMatch(/A finding about the tests' content, coverage or assertions, or about the code's behaviour, uses its normal category/);
+    expect(one).toMatch(/A finding that disputes the recorded classification and also names such a defect uses the normal category/);
+    expect(one).toMatch(/reported as a note: it never blocks and is never repaired/);
+  });
 });
 
 describe('the planner brief', () => {
@@ -44,6 +56,10 @@ describe('the planner brief', () => {
     expect(text).toMatch(/nor an assumption that a check runs the new tests/);
     expect(text).toMatch(/verification\.fail_before/);
   });
+
+  it('no longer says such a criterion is dropped: Orbit never removes a criterion', () => {
+    expect(text).not.toMatch(/is dropped/);
+  });
 });
 
 describe('the inquisitor brief', () => {
@@ -52,5 +68,11 @@ describe('the inquisitor brief', () => {
   it('proposes no amendment that asks for evidence no check produces, and leaves Orbit\'s own evidence classifications alone', () => {
     expect(text).toMatch(/Never propose an amendment that requires evidence no check produces/);
     expect(text).toMatch(/fail-before/);
+  });
+
+  it('never requires fail-before mechanics, since Orbit\'s probe establishes fail-before', () => {
+    const one = text.replace(/\s+/g, ' ');
+    expect(one).toMatch(/Never require fail-before mechanics: no mutant run, no stub implementation, and no keeping of an import error "as the contract states"/);
+    expect(one).toMatch(/Orbit's fail-before probe establishes whether the new tests fail on the base revision/);
   });
 });

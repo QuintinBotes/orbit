@@ -18,3 +18,22 @@ describe('the docs on a review that asked for repair only through notes', () => 
     expect(doc).toMatch(/at the `review_rounds` cap, the run ends `BLOCKED` naming the findings/);
   });
 });
+
+// The lead's decision after three rounds of adversarial review: a note is structure (the finding's category), never the
+// wording of its claim, and the contract draft removes no criterion. The docs said a note was recognised clause by clause
+// and that the draft dropped a criterion with a `contract.criterion-dropped` decision.
+describe('the docs on what makes a finding a note, and on criteria about fail-before', () => {
+  it.each(['docs/configuration.md', 'docs/operations.md', 'docs/decisions/0014-fail-before.md'])('%s describes the structural rule, not the text rules', (p) => {
+    const doc = read(p);
+    expect(doc).toContain('`evidence-classification`');
+    expect(doc).not.toMatch(/matches whole one of a few fixed statements/);
+    expect(doc).not.toMatch(/contract\.criterion-dropped/);
+    expect(doc).not.toMatch(/the contract draft drops/i);
+  });
+
+  it('the ADR addendum says why the text rules were dropped', () => {
+    const adr = read('docs/decisions/0014-fail-before.md');
+    expect(adr).toMatch(/three rounds of adversarial review/i);
+    expect(adr).toMatch(/Orbit never removes a criterion/);
+  });
+});

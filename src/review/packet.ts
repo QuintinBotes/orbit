@@ -538,7 +538,7 @@ function failBeforeSection(ev: EvidenceReport, logs: ReadonlyMap<string, string>
   }
   return `
 ### Fail-before
-verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them.
+verification.fail_before is required: the probe ran each check on the base tree with the candidate's test files, and a criterion that rests on new tests is supported only when they fail there. A failure there shows that the tests depend on the change, not that they assert it. A compile, collection or import failure of a new symbol counts as fail-before by policy: it is not a finding. The outcome is Orbit's to record and no repair can change the base revision, so do not dispute it, and do not ask for mutant runs, stub implementations or a rerun of the probe: no check produces them. A finding that disputes the outcome all the same uses the category evidence-classification and asks for nothing else; a finding about the new tests or the code uses its normal category.
 ${bullet(lines, MAX_LIST_ITEMS, 600)}${shown.join('\n')}`;
 }
 

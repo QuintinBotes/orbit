@@ -39,7 +39,7 @@ import { preferredReviewProvider } from '../../policy/review.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
-import type { IngestedReview, ReviewRecord } from '../../review/types.ts';
+import { EVIDENCE_CLASSIFICATION_CATEGORY, type IngestedReview, type ReviewRecord } from '../../review/types.ts';
 import { listAmendments, listLedger, listQuestions } from '../../inquisition/store.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
@@ -440,12 +440,13 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     };
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
   }
-  // A review that asked for repair only through findings disputing Orbit's own evidence classification approves nothing,
-  // and no repair can answer it. It gets one fresh review of the same tree, told so (ADR 0014, 0.3.1 addendum, item 3),
-  // rather than an attempt spent on the same tree; only that reviewer's APPROVE lets the run go on. Without a review round
-  // left, or once the fresh review has not approved either, the run stops here and says why.
+  // A review that asked for repair only through notes (findings filed under evidence-classification that no check
+  // confirmed: they dispute Orbit's own evidence classification) approves nothing, and no repair can answer it. It gets
+  // one fresh review of the same tree, told so (ADR 0014, 0.3.1 addendum, item 3), rather than an attempt spent on the
+  // same tree; only that reviewer's APPROVE lets the run go on. Without a review round left, or once the fresh review has
+  // not approved either, the run stops here and says why.
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
-  const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} dispute only ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
+  const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
   let fresh: { text: string; outcome: Record<string, unknown> } | null = null;
   const asked = freshReviewOf(ctx, cand.treeHash);
   if (asked) {
@@ -972,9 +973,9 @@ function freshReviewText(rec: FreshReviewRecord): string[] {
   const names = rec.noted.map((n) => `${n.external_id ?? n.id} (${n.severity})`).join(', ');
   const what = [...new Set(rec.noted.map((n) => n.classification))];
   return [
-    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below. Each disputes ${what.join(' or ')}.`,
-    ...what.map((w) => `${w.charAt(0).toUpperCase()}${w.slice(1)} is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.`),
-    'Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair.',
+    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below, filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY}. Each disputes ${what.join(' or ')}.`,
+    'Such a classification is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.',
+    `Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair, and it uses its normal category. Use the category ${EVIDENCE_CLASSIFICATION_CATEGORY} only for a finding that disputes Orbit's recorded classification and asks for nothing else.`,
   ];
 }
 
