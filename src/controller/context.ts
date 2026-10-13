@@ -291,5 +291,10 @@ export function toolchainCacheRootFor(ctx: Pick<RunContext, 'deps' | 'run'>): st
 
 /** ~/.orbit/worktrees/<repo-hash>/<run-id>: worker worktrees and candidate checkouts, outside the repository. */
 export function runWorktreeRoot(ctx: Pick<RunContext, 'deps' | 'run'>): string {
-  return join(ctx.deps.orbitHome, 'worktrees', repoKey(ctx.run.repoRoot), ctx.run.id);
+  return worktreeRootFor(ctx.deps.orbitHome, ctx.run);
+}
+
+/** The same directory from the orbit home and the run row alone, for callers that hold no RunContext (recovery). */
+export function worktreeRootFor(orbitHome: string, run: Pick<RunRecord, 'id' | 'repoRoot'>): string {
+  return join(orbitHome, 'worktrees', repoKey(run.repoRoot), run.id);
 }

@@ -132,18 +132,21 @@ export function codexUsage(events: Record<string, unknown>[], model: string | nu
   };
 }
 
+/** The completed item types that are a look at or a change to the world (the others are the answer, a reasoning summary, a plan update or an error). */
+const CODEX_TOOL_ITEMS: ReadonlySet<string> = new Set(['command_execution', 'file_change', 'mcp_tool_call', 'web_search']);
+
 /**
- * How much a Codex session looked at and thought: the tool calls it made (commands, file changes, MCP calls, searches: every
- * completed item that is neither the answer nor a reasoning summary nor an error) and the reasoning tokens turn.completed
- * reports. Null reasoning when the turn did not complete or the CLI does not report them; a count of 0 tool calls is a
- * finding in itself (the answer came from the prompt alone).
+ * How much a Codex session looked at and thought: the tool calls it made (commands, file changes, MCP calls and searches,
+ * as codexEvents counts them; a plan update is not one) and the reasoning tokens turn.completed reports. Null reasoning
+ * when the turn did not complete or the CLI does not report them; a count of 0 tool calls is a finding in itself (the
+ * answer came from the prompt alone).
  */
 export function codexDepth(events: Record<string, unknown>[]): { toolCalls: number; reasoningTokens: number | null } {
   let toolCalls = 0;
   for (const e of events) {
     if (e.type !== 'item.completed' || !isObject(e.item)) continue;
     const type = (e.item as Record<string, unknown>).type;
-    if (typeof type === 'string' && type !== 'agent_message' && type !== 'reasoning' && type !== 'error') toolCalls++;
+    if (typeof type === 'string' && CODEX_TOOL_ITEMS.has(type)) toolCalls++;
   }
   const done = events.findLast((e) => e.type === 'turn.completed');
   const u = done && isObject(done.usage) ? (done.usage as Record<string, unknown>) : null;

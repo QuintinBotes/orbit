@@ -65,11 +65,11 @@ describe.skipIf(!READY)('acceptance: safe stops (spec section 2)', () => {
     const report = assertPreserved(l, run.id, 'EXHAUSTED', /budget|cost|hard cap/i);
     expect(report).toMatch(/## Budget consumption/);
     expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toEqual([]);
-    // Spend never passed the cap, and the contract and worktree are kept.
+    // Spend never passed the cap, and the contract is kept (the worktree is released).
     const cost = l.db().get<{ used: number; hard_cap: number }>("SELECT used, hard_cap FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", run.id)!;
     expect(cost.used).toBeLessThanOrEqual(cost.hard_cap);
     expect(existsSync(join(l.runDir(run.id), 'contract.json'))).toBe(true);
-    expect(existsSync(done.worktreePath!)).toBe(true);
+    expect(existsSync(done.worktreePath!)).toBe(false);
     assertRunInvariants(l, run.id);
   }, 180_000);
 
@@ -113,9 +113,9 @@ describe.skipIf(!READY)('acceptance: safe stops (spec section 2)', () => {
     expect(listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).every((w) => w.provider === 'codex')).toBe(true);
     expect(l.github().state.prs).toEqual([]);
     expect(listEvidenceReports(l.db(), run.id).at(-1)?.verdict).toBe('PASS');
-    // The read-only review checkout does not outlive the stop (the implementer's worktree does, for a person).
+    // The read-only review checkout does not outlive the stop; the implementer's worktree does only for a BLOCKED run, which may resume.
     expect(existsSync(join(l.orbitHome, 'worktrees', repoKey(l.repo), run.id, 'review-1'))).toBe(false);
-    expect(existsSync(done.worktreePath!)).toBe(true);
+    expect(existsSync(done.worktreePath!)).toBe(done.state === 'BLOCKED');
     assertPreserved(l, run.id, done.state, /review/i);
     assertRunInvariants(l, run.id);
   }, 180_000);

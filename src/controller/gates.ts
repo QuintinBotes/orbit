@@ -389,7 +389,8 @@ export function independentReviewGate(db: OrbitDb, input: ReviewGateArgs): GateR
   const independent = g.cleared.length === 0 || g.cleared.some((r) => r.provider !== input.implementerProvider);
   const why = `same-provider review, not independent: ${input.whyNotIndependent ?? 'no independent reviewer was usable'}`;
   const out = result('independent_review', g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
-  if (out.status === 'pass' && !independent) out.summary = `independent_review gate: review approved but it was ${why}`;
+  // "Approved" only when a review approved; a same-provider review can clear the tree (nothing blocking) without anyone approving it.
+  if (out.status === 'pass' && !independent) out.summary = approved ? `independent_review gate: review approved but it was ${why}` : `independent_review gate: same-provider review cleared the tree without an approval, not independent: ${input.whyNotIndependent ?? 'no independent reviewer was usable'}`;
   return out;
 }
 

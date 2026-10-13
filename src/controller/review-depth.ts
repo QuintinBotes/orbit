@@ -15,6 +15,9 @@ import type { RunContext } from './context.ts';
 
 export const REVIEW_DEPTH_KIND = 'review.depth';
 
+/** The tool Claude calls to hand back the structured answer the output schema asks for. */
+const STRUCTURED_OUTPUT_TOOL = 'StructuredOutput';
+
 export interface ReviewDepth {
   review_id: string;
   worker_id: string;
@@ -26,7 +29,10 @@ export interface ReviewDepth {
   reasoning_tokens: number | null;
 }
 
-/** Tool calls and reasoning tokens in one Claude transcript (stream-json). */
+/**
+ * Tool calls and reasoning tokens in one Claude transcript (stream-json). The StructuredOutput tool_use is how a worker
+ * delivers its answer, not a look at anything, so a review that only answered counts none.
+ */
 export function claudeDepth(events: readonly Record<string, unknown>[]): { toolCalls: number; reasoningTokens: number | null } {
   const calls = new Set<string>();
   let anonymous = 0;
@@ -34,7 +40,7 @@ export function claudeDepth(events: readonly Record<string, unknown>[]): { toolC
   for (const e of events) {
     if (e.type === 'assistant' && isObject(e.message) && Array.isArray(e.message.content)) {
       for (const b of e.message.content as unknown[]) {
-        if (!isObject(b) || b.type !== 'tool_use') continue;
+        if (!isObject(b) || b.type !== 'tool_use' || b.name === STRUCTURED_OUTPUT_TOOL) continue;
         if (typeof b.id === 'string') calls.add(b.id);
         else anonymous++;
       }

@@ -47,10 +47,17 @@ describe('agents/*.md', () => {
 
       it.runIf(role === 'implementer')('states which shell forms are allowed and which are denied, and what to use instead', () => {
         const body = stripFrontmatter(text);
-        expect(body).toMatch(/one simple command per Bash call/);
-        for (const denied of ['pipeline', 'heredoc', 'for or while loop', 'Scratch director']) expect(body, denied).toContain(denied);
-        expect(body).toContain('Write or Edit tool');
-        expect(body).toContain('configured check');
+        const rules = /Shell rules\. Allowed: (.*?) Denied[^:]*: (.*?) Instead: (.*?)(?:\n|$)/s.exec(body);
+        expect(rules, 'Shell rules. Allowed: ... Denied: ... Instead: ...').not.toBeNull();
+        const [, allowed, denied, instead] = rules as unknown as [string, string, string, string];
+        // Policy takes the most severe part of a compound command, so a pipeline or chain of allowed commands runs.
+        expect(allowed).toMatch(/pipelines? and chains?/);
+        expect(allowed).toContain('configured check');
+        for (const form of ['for or while loop', 'heredoc', 'run time', 'Scratch director', 'git']) expect(denied, form).toContain(form);
+        // Not denied, whatever the earlier wording said: a pipeline or a chain of allowed commands.
+        expect(denied).not.toMatch(/pipeline|chain|&&/);
+        expect(instead).toContain('Write or Edit tool');
+        expect(instead).toContain('configured check');
         expect(body).toMatch(/A denied (call|action) is final/);
       });
 

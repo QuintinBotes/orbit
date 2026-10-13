@@ -11,6 +11,8 @@ import { listWorkers, type WorkerRecord } from '../storage/workers.ts';
 import { getLease, getRun, listRuns, transition, type RunRecord } from '../controller/run-store.ts';
 import type { ProviderAdapter } from '../adapters/types.ts';
 import { LOG_FILE } from '../adapters/shim.ts';
+import type { Logger } from '../core/log.ts';
+import { releaseExhaustedRunWorktrees } from './release.ts';
 import { enterRecovery, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { stopWorker } from './reconcile.ts';
 
@@ -100,6 +102,9 @@ export interface WatchdogOptions {
   workerActivityAt?: (worker: WorkerRecord) => number | null;
   /** The host this controller runs on, to decide whether a controller's pid can be inspected. */
   host?: string;
+  /** The orbit home, where run worktrees live. With it, a run the watchdog ends EXHAUSTED has its worktrees released; without it they are kept. */
+  orbitHome?: string;
+  log?: Logger;
 }
 
 /**
@@ -249,7 +254,10 @@ async function abandon(opts: WatchdogOptions, run: RunRecord, workers: WorkerRec
     return 'blocked';
   }
   const out: EnterRecoveryOutcome = enterRecovery(db, clock, { runId: run.id, ownerId, reason: `watchdog: ${detail}`, ledgerFor: opts.ledgerFor, fallbackMax: opts.fallbackRecoveries });
-  if (out.outcome === 'exhausted') return 'exhausted';
+  if (out.outcome === 'exhausted') {
+    await releaseExhaustedRunWorktrees({ db, clock, ownerId, runId: run.id, orbitHome: opts.orbitHome, log: opts.log });
+    return 'exhausted';
+  }
   return out.outcome === 'recovering' || out.outcome === 'already-recovering' ? 'abandoned-to-recovering' : null;
 }
 

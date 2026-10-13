@@ -53,6 +53,25 @@ describe('codexDepth', () => {
     expect(codexDepth(events)).toEqual({ toolCalls: 3, reasoningTokens: 640 });
   });
 
+  it('does not count a plan update or a reasoning-only turn as reading anything, as codexEvents does not', () => {
+    const plan = [
+      { type: 'item.started', item: { id: 'item_0', type: 'todo_list', items: [{ text: 'Read the diff', completed: false }] } },
+      { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: '{}' } },
+      { type: 'item.completed', item: { id: 'item_0', type: 'todo_list', items: [{ text: 'Read the diff', completed: false }] } },
+      { type: 'turn.completed', usage: { output_tokens: 60, reasoning_output_tokens: 17 } },
+    ];
+    expect(codexDepth(plan)).toEqual({ toolCalls: 0, reasoningTokens: 17 });
+    expect(describeDepth({ tool_calls: 0, reasoning_tokens: 17 })).toContain('NO TOOL CALLS');
+  });
+
+  it('counts file changes and web searches as tool calls too', () => {
+    const events = [
+      { type: 'item.completed', item: { type: 'file_change', changes: [] } },
+      { type: 'item.completed', item: { type: 'web_search', query: 'q' } },
+    ];
+    expect(codexDepth(events).toolCalls).toBe(2);
+  });
+
   it('reports reasoning tokens as unknown, not zero, when the turn did not complete or the CLI does not say', () => {
     expect(codexDepth([{ type: 'item.completed', item: { type: 'agent_message', text: '{}' } }]).reasoningTokens).toBeNull();
     expect(codexDepth([{ type: 'turn.completed', usage: { output_tokens: 3 } }]).reasoningTokens).toBeNull();
@@ -64,6 +83,16 @@ describe('claudeDepth', () => {
     const use = (id: string, name: string) => ({ type: 'assistant', message: { id: 'm', content: [{ type: 'tool_use', id, name, input: {} }] } });
     const events = [use('t1', 'Read'), use('t1', 'Read'), use('t2', 'Grep'), { type: 'result', usage: { output_tokens_details: { thinking_tokens: 714 } } }];
     expect(claudeDepth(events)).toEqual({ toolCalls: 2, reasoningTokens: 714 });
+  });
+
+  it('does not count the StructuredOutput tool_use, which is how a Claude worker delivers its answer', () => {
+    const use = (id: string, name: string) => ({ type: 'assistant', message: { id: 'm', content: [{ type: 'tool_use', id, name, input: {} }] } });
+    expect(claudeDepth([use('t1', 'Read'), use('t2', 'Read'), use('t3', 'StructuredOutput')])).toEqual({ toolCalls: 2, reasoningTokens: null });
+    // A review that read no code and only answered is flagged, not credited with one call.
+    const answerOnlyClaude = [use('t1', 'StructuredOutput'), { type: 'result', usage: { output_tokens_details: { thinking_tokens: 803 } } }];
+    const depth = claudeDepth(answerOnlyClaude);
+    expect(depth).toEqual({ toolCalls: 0, reasoningTokens: 803 });
+    expect(describeDepth({ tool_calls: depth.toolCalls, reasoning_tokens: depth.reasoningTokens })).toContain('NO TOOL CALLS');
   });
 
   it('is zero tool calls and unknown reasoning for a session that only answered', () => {

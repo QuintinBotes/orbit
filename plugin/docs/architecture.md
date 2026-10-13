@@ -67,9 +67,11 @@ also appends an `events` row. Artifacts live under `.orbit/runs/<run-id>/`:
 Worktrees live outside the repository at `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`
 so a worker's filesystem allowlist never includes `.orbit/` or the main
 checkout. Mutable data never lives in the installed plugin directory. A run that
-ends `SUCCEEDED` or `CANCELLED` removes its worktrees (`controller/worktree-cleanup.ts`;
-an unsaved edit is first saved as a candidate); `BLOCKED`, `EXHAUSTED` and paused
-runs keep them, and `orbit gc` removes the finished ones.
+ends `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees
+(`controller/worktree-cleanup.ts`; an unsaved edit is first saved as a candidate;
+a run the recovery budget ends `EXHAUSTED` is released by `recovery/release.ts`).
+Its result is the branch and the candidate refs, not the checkout. `BLOCKED` and
+paused runs keep them, since they may resume, and `orbit gc` removes the rest.
 
 The plugin is the `plugin/` directory of the repository, not the repository root
 (`docs/decisions/0006-plugin-packaging.md`): the bundle `plugin/dist/orbit.mjs`,

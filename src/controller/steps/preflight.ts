@@ -277,11 +277,17 @@ export async function blockOnBaseline(
   });
 }
 
+/** Whether a gate's details say a review approved, when they say anything about it. */
+function approvedOf(details: unknown): { approved?: boolean } {
+  const approved = typeof details === 'object' && details !== null ? (details as { approved?: unknown }).approved : undefined;
+  return typeof approved === 'boolean' ? { approved } : {};
+}
+
 export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {
   decide(ctx, {
     kind: `gate.${g.gate}`,
     summary: g.summary ?? `${g.gate} gate ${g.status === 'not_applicable' ? 'not applicable' : g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure, ...(g.summary ? { independent: false } : {}) },
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure, ...(g.summary ? { independent: false, ...approvedOf(g.details) } : {}) },
   });
 }
 

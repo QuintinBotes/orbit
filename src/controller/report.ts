@@ -372,7 +372,7 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case 'EXHAUSTED': {
-      const advice = exhaustedAdvice(run);
+      const advice = exhaustedAdvice(run, ref);
       // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
       const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${clipAtWord(q.question, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
       return `${advice}${asked}`;
@@ -391,23 +391,27 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
  * budget; a refused extension, a failed diagnosis, a provider outage, spent recovery attempts and the attempt, review
  * and CI repair caps each name their own cause and way forward.
  */
-function exhaustedAdvice(run: RunRecord): string {
+function exhaustedAdvice(run: RunRecord, candidateRef: string | null): string {
   const reason = run.outcomeReason ?? 'see decisions';
   const why = `(${reason})`;
-  const kept = 'The worktree and evidence are preserved';
+  // The run's worktree is released when it ends (the result lives in the candidate refs), so the way forward starts from those.
+  const where = candidateRef !== null ? `the work is at ${candidateRef} (earlier candidates under refs/orbit/${run.id}/candidates/)` : 'no candidate was recorded';
+  const kept = `the worktree is released when a run ends; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
+  const Kept = `${kept[0]!.toUpperCase()}${kept.slice(1)}`;
+  const from = candidateRef !== null ? `the candidate at ${candidateRef}` : 'the evidence';
   // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
-  if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
-  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
+  if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; ${kept}. Revise the goal or the approach and start a new run.`;
+  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${Kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
   if (outcomeHas(run, 'extension') || /\band no extension\b/.test(reason)) {
     const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
-    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ''} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
+    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ''} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${Kept}; continue by hand from ${from}, or start a new run with a revised goal or approach.`;
   }
-  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
-  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
-  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
-  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
-  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
-  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
+  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept}).`;
+  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept}.`;
+  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${Kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
+  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${Kept}; continue by hand from ${from}, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
+  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${Kept}; read the CI logs and fix it by hand, or start a new run.`;
+  return `The authorized budget is spent ${why}. ${Kept}; continue by hand from ${from} or start a new run with a revised goal or limits.`;
 }
 
 export function renderMarkdown(r: FinalReport): string {

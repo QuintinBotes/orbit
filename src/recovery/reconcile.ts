@@ -21,6 +21,8 @@ import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
+import type { Logger } from '../core/log.ts';
+import { releaseExhaustedRunWorktrees } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
 import { groupOwnership, processOwnership } from './identity.ts';
@@ -179,11 +181,16 @@ export interface ReconcileOptions {
   fallbackRecoveries?: number;
   /** Output schema to validate a worker's result against; default by role (adapters/prompt ROLE_OUTPUT_KIND). */
   outputSchemaFor?: (worker: WorkerRecord) => object;
+  /** The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees released; without it they are kept. */
+  orbitHome?: string;
+  log?: Logger;
 }
 
 interface Ctx extends Required<Pick<ReconcileOptions, 'db' | 'ownerId' | 'clock' | 'adapters' | 'graceMs' | 'maxWorkerRestarts' | 'startGraceMs' | 'leaseTtlMs'>> {
   opts: ReconcileOptions;
   report: ReconcileReport;
+  /** Runs this pass ended EXHAUSTED through the recovery budget. */
+  exhausted: Set<string>;
 }
 
 const DEFAULT_LEASE_TTL_MS = 60_000;
@@ -206,6 +213,7 @@ export async function reconcileOnStart(opts: ReconcileOptions): Promise<Reconcil
     startGraceMs: opts.startGraceMs ?? DEFAULT_START_GRACE_MS,
     leaseTtlMs: opts.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
     opts,
+    exhausted: new Set(),
     report: {
       ownerId: opts.ownerId,
       at: opts.clock.now(),
@@ -303,6 +311,7 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
       });
       rep.recovery = outcome.outcome;
       run = outcome.run;
+      if (outcome.outcome === 'exhausted') ctx.exhausted.add(run.id);
     }
   }
 
@@ -349,6 +358,8 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
       actions_flagged: rep.actions.filter((a) => a.flagged).map((a) => a.actionId),
     });
   }
+  // Workers and checks are stopped by now; the run's result lives in its candidate refs, so its checkouts go (finishRun does the same).
+  if (ctx.exhausted.has(run.id)) await releaseExhaustedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
   return rep;
 }
 
@@ -618,7 +629,10 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
 function exhaust(ctx: Ctx, run: RunRecord, why: string): void {
   try {
     const ended = ctx.db.tx(() => exhaustRecovery(ctx.db, ctx.clock, { runId: run.id, ownerId: ctx.ownerId, why }));
-    if (ended) ctx.report.summary.runsExhausted++;
+    if (ended) {
+      ctx.report.summary.runsExhausted++;
+      ctx.exhausted.add(run.id);
+    }
   } catch (err) {
     ctx.report.errors.push({ runId: run.id, message: `could not end the run after a refused restart: ${err instanceof Error ? err.message : String(err)}` });
   }

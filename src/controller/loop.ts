@@ -340,6 +340,8 @@ export class Controller {
         ...(this.opts.graceMs !== undefined ? { graceMs: this.opts.graceMs } : {}),
         ...(this.opts.startGraceMs !== undefined ? { startGraceMs: this.opts.startGraceMs } : {}),
         ledgerFor: (id) => this.ledgerFor(id),
+        orbitHome: this.deps.orbitHome,
+        log: this.log,
       });
       for (const e of this.lastReconcile.errors) this.log.warn('reconcile error', { run_id: e.runId, error: e.message });
     } catch (err) {
@@ -416,6 +418,8 @@ export class Controller {
         ownerId: this.ownerId,
         adapters: this.deps.adapters,
         ledgerFor: (id) => this.ledgerFor(id),
+        orbitHome: this.deps.orbitHome,
+        log: this.log,
         ...(this.opts.watchdog ? { config: this.opts.watchdog } : {}),
       });
       let ended = false;

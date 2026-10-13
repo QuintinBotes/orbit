@@ -130,6 +130,22 @@ describe('a review that is already recorded', () => {
     expect(moved.data_json).not.toMatch(/independent review cleared/);
   });
 
+  it('a same-provider review that cleared the tree without approving it is not recorded as an approval', async () => {
+    const { cand } = await setup();
+    // REPAIR_REQUIRED whose only finding is advisory: the gate clears the tree, but nobody approved it.
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'claude');
+    await run();
+    const gate = decisions('gate.independent_review')[0]!;
+    expect(gate.data).toMatchObject({ status: 'pass', independent: false, approved: false });
+    expect(gate.summary).not.toMatch(/approved/);
+    expect(gate.summary).toMatch(/without an approval/);
+    expect(gate.summary).toMatch(/not independent/);
+    expect(state()).toBe('BLOCKED');
+    // The outcome does not call the same-provider review an independent one either.
+    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+  });
+
   it('an approval with a material question still open blocks the run before delivery', async () => {
     const { cand } = await setup();
     record(cand, 'APPROVE');

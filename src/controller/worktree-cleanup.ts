@@ -15,8 +15,11 @@ import { join } from 'node:path';
 import { snapshotCandidate, cleanupCandidateCheckout } from '../evidence/candidate.ts';
 import { adminDirFor, git } from '../evidence/git.ts';
 import type { RunContext } from './context.ts';
-import { runWorktreeRoot } from './context.ts';
-import { messageOf } from './workers.ts';
+import { worktreeRootFor } from './context.ts';
+import type { Clock } from '../core/clock.ts';
+import type { Logger } from '../core/log.ts';
+import type { OrbitDb } from '../storage/db.ts';
+import type { RunRecord } from './run-store.ts';
 import { appendEvent } from '../storage/events.ts';
 
 export const WORKTREES_RELEASED_EVENT = 'worktrees.released';
@@ -28,29 +31,46 @@ async function hasUnsavedEdits(worktree: string, repoRoot: string): Promise<bool
   return out.split('\0').some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith('node_modules/'));
 }
 
+/** What releasing a run's checkouts needs; the recovery paths, which hold no RunContext, supply it too. */
+export interface ReleaseWorktreesInput {
+  db: OrbitDb;
+  clock: Clock;
+  log: Pick<Logger, 'warn'>;
+  ownerId: string;
+  run: RunRecord;
+  orbitHome: string;
+  /** The attempt number a snapshot of an unsaved edit is recorded under. */
+  attempt: number;
+}
+
 /** Remove the run's checkouts after a terminal state but BLOCKED. Never throws: a cleanup problem must not change an outcome. */
 export async function releaseRunWorktrees(ctx: RunContext): Promise<void> {
-  const root = runWorktreeRoot(ctx);
+  await releaseWorktrees({ db: ctx.db, clock: ctx.clock, log: ctx.log, ownerId: ctx.ownerId, run: ctx.run, orbitHome: ctx.deps.orbitHome, attempt: Math.max(1, ctx.ledger?.state('implementation_attempts').used ?? 1) });
+}
+
+export async function releaseWorktrees(input: ReleaseWorktreesInput): Promise<void> {
+  const { run, log } = input;
+  const root = worktreeRootFor(input.orbitHome, run);
   if (!existsSync(root)) return;
-  const repoRoot = ctx.run.repoRoot;
+  const repoRoot = run.repoRoot;
   const kept: string[] = [];
   const removed: string[] = [];
-  const implementer = ctx.run.worktreePath;
+  const implementer = run.worktreePath;
   for (const name of readdirSync(root)) {
     const dir = join(root, name);
     try {
-      if (implementer && dir === implementer && ctx.run.baseRevision) {
+      if (implementer && dir === implementer && run.baseRevision) {
         if (await hasUnsavedEdits(dir, repoRoot)) {
-          await snapshotCandidate({ db: ctx.db, clock: ctx.clock, repoRoot, worktree: dir, runId: ctx.run.id, baseRev: ctx.run.baseRevision, attempt: Math.max(1, ctx.ledger?.state('implementation_attempts').used ?? 1), workerId: null });
+          await snapshotCandidate({ db: input.db, clock: input.clock, repoRoot, worktree: dir, runId: run.id, baseRev: run.baseRevision, attempt: input.attempt, workerId: null });
         }
       }
       await cleanupCandidateCheckout(repoRoot, dir);
       removed.push(name);
     } catch (err) {
       kept.push(name);
-      ctx.log.warn('could not remove a finished run\'s worktree; it is kept', { run_id: ctx.run.id, worktree: name, error: messageOf(err) });
+      log.warn('could not remove a finished run\'s worktree; it is kept', { run_id: run.id, worktree: name, error: err instanceof Error ? err.message : String(err) });
     }
   }
   if (kept.length === 0) rmSync(root, { recursive: true, force: true });
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, WORKTREES_RELEASED_EVENT, ctx.ownerId, { removed, kept }, ctx.clock.now()));
+  input.db.tx(() => appendEvent(input.db, run.id, WORKTREES_RELEASED_EVENT, input.ownerId, { removed, kept }, input.clock.now()));
 }

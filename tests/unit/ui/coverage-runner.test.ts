@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -809,5 +809,21 @@ describe('ui-run.json', () => {
     const o = input(p, candidate(), denied);
     await expect(runUiChecks(o)).rejects.toMatchObject({ code: 'POLICY_DENIED' });
     expect(JSON.parse(readFileSync(join(o.outDir, 'ui-run.json'), 'utf8'))).toMatchObject({ state: 'aborted', error: 'not allowed' });
+  });
+
+  it('is not left running when the work after the journeys throws (a git read of the checkout)', async () => {
+    const p = policy();
+    const c = candidate();
+    const fake = fakePlaywright(() => {
+      // The journeys end and the checkout stops being a repository: the reads that follow them fail.
+      renameSync(join(repo, '.git'), join(root, 'git-away'));
+      return { report: report([ok('x')]) };
+    });
+    const o = input(p, c, fake.provider);
+    await expect(runUiChecks(o)).rejects.toThrow();
+    const marker = JSON.parse(readFileSync(join(o.outDir, 'ui-run.json'), 'utf8'));
+    expect(marker.state).toBe('aborted');
+    expect(typeof marker.error).toBe('string');
+    expect(marker.endedAt).toBeGreaterThan(0);
   });
 });

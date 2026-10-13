@@ -1058,15 +1058,16 @@ database rows stay and are marked with a `run.artifacts_pruned` event. A
 `BLOCKED` run is never pruned, and neither is a run whose controller still holds
 its lease.
 
-Worktrees are separate from retention. A run that ends `SUCCEEDED` or
-`CANCELLED` removes its own worktrees when it ends, since its result is the
-branch and the candidate refs, not the checkout (an unsaved edit in the
-implementer's worktree is first saved as a candidate, so nothing is lost; if that
-fails the worktree is kept). A run that stops `BLOCKED` or `EXHAUSTED`, or is
-paused, keeps its worktrees so a person can resume from them. `orbit gc` removes
-the worktrees of an `EXHAUSTED` run (after `keep_runs_days`, or at once with
-`--keep-days 0`); those of a `BLOCKED` run stay until the run is resumed to an
-end or cancelled.
+Worktrees are separate from retention. A run that ends `SUCCEEDED`,
+`CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own worktrees when it ends,
+since its result is the branch and the candidate refs
+(`refs/orbit/<run>/candidates/<n>`), not the checkout, and none of these states
+has a way back (an unsaved edit in the implementer's worktree is first saved as
+a candidate, so nothing is lost; if that fails the worktree is kept). The final
+report of an `EXHAUSTED` run therefore sends a person to the latest candidate
+ref and the evidence under `.orbit/runs/<id>`, not to a worktree. A run that
+stops `BLOCKED`, or is paused, keeps its worktrees, because it may resume from
+them; those stay until the run is resumed to an end or cancelled.
 
 ## knowledge and guard
 
