@@ -792,3 +792,22 @@ describe('browsers under sandbox-runtime', () => {
     expect(r.notExecuted).toEqual([]);
   });
 });
+
+describe('ui-run.json', () => {
+  it('is updated to its final state, with the verdict, when the run ends', async () => {
+    const p = policy();
+    const { result } = await run(p, candidate(), () => ({ report: report([ok('x')]) }));
+    const state = JSON.parse(readFileSync(join(result.outDir, 'ui-run.json'), 'utf8'));
+    expect(result.verdict).toBe('PASS');
+    expect(state).toMatchObject({ state: 'finished', verdict: 'PASS', startedAt: result.startedAt, endedAt: result.endedAt });
+  });
+
+  it('is not left running when the run is stopped by a refusal after it started', async () => {
+    const p = policy({ ui: (u) => { u.environment.start_command = ['node', '-e', '']; } });
+    const inner = fakePlaywright(() => ({}));
+    const denied: IsolationProvider = { ...inner.provider, wrap: () => { throw new OrbitError('POLICY_DENIED', 'not allowed'); } };
+    const o = input(p, candidate(), denied);
+    await expect(runUiChecks(o)).rejects.toMatchObject({ code: 'POLICY_DENIED' });
+    expect(JSON.parse(readFileSync(join(o.outDir, 'ui-run.json'), 'utf8'))).toMatchObject({ state: 'aborted', error: 'not allowed' });
+  });
+});

@@ -5,6 +5,7 @@
  * written report, and decisions recorded through storage/decisions.ts.
  */
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
+import { clipAtWord } from '../../core/text.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { isSessionRefusal } from '../../adapters/types.ts';
 import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
@@ -21,6 +22,7 @@ import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
 import { blockingQuestions } from '../gates.ts';
+import { listQuestions, withdrawQuestion } from '../../inquisition/store.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
 import { applyAmendmentAnswers } from '../../inquisition/amendment-answers.ts';
 
@@ -61,7 +63,7 @@ export function note(ctx: RunContext, type: string, data: unknown): void {
 }
 
 export function decide(ctx: RunContext, input: { id?: string; kind: string; summary: string; data?: unknown }): DecisionRecord {
-  return recordDecision(ctx.db, ctx.runDir, { ...input, runId: ctx.run.id, summary: input.summary.slice(0, 1000) }, ctx.clock, { actor: ctx.ownerId });
+  return recordDecision(ctx.db, ctx.runDir, { ...input, runId: ctx.run.id, summary: clipAtWord(input.summary, 1000) }, ctx.clock, { actor: ctx.ownerId });
 }
 
 /**
@@ -89,12 +91,19 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   // A durable cancellation outranks every other outcome: only CANCELLED is reachable once it is recorded.
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
   if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);
+  // A cancelled run asks nothing more: its questions are withdrawn, so status does not list them as open.
+  if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
   const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
   await finalizeRun(ctx);
-  // The result lives in the branch and the candidate refs; a finished run does not keep a checkout (BLOCKED and EXHAUSTED do).
-  if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
+  // The result lives in the branch and the candidate refs; a finished run does not keep a checkout. BLOCKED alone keeps it: a person resumes from it.
+  if (target !== 'BLOCKED') await releaseRunWorktrees(ctx);
   return result;
+}
+
+/** Withdraw every question still open when the run is cancelled: nobody is left to answer it. */
+function closeQuestionsOfCancelledRun(ctx: RunContext): void {
+  for (const q of listQuestions(ctx.db, ctx.run.id, { status: 'open' })) withdrawQuestion(ctx.db, q.id, 'the run was cancelled', ctx.clock);
 }
 
 /** The longest outcome reason a run row keeps; outcome_json keeps the whole text. */
@@ -107,9 +116,9 @@ const OUTCOME_REASON_MAX = 2000;
  */
 function cappedReason(why: string, advice: string): string {
   if (why.length <= OUTCOME_REASON_MAX) return why;
-  if (advice === '' || !why.endsWith(advice) || advice.length > OUTCOME_REASON_MAX / 2) return why.slice(0, OUTCOME_REASON_MAX);
+  if (advice === '' || !why.endsWith(advice) || advice.length > OUTCOME_REASON_MAX / 2) return clipAtWord(why, OUTCOME_REASON_MAX);
   const head = why.slice(0, why.length - advice.length - 1);
-  return `${head.slice(0, OUTCOME_REASON_MAX - advice.length - 5)}... ${advice}`;
+  return `${clipAtWord(head, OUTCOME_REASON_MAX - advice.length - 1).replace(/\.\.\.$/, '')}... ${advice}`;
 }
 
 /**
@@ -361,9 +370,9 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
   const decision = decideRetry({ classification, attempt: prior.length + 1, infrastructureRetriesRemaining: ctx.ledger ? ctx.ledger.state('infrastructure_retries').remaining : Number.POSITIVE_INFINITY, wallRemainingMs, costRemainingUsd: null, ...(ctx.deps.random ? { random: ctx.deps.random } : {}) });
   if (decision.action !== 'retry') {
     if (decision.action === 'stop' && (decision.limit === 'infrastructure_retries' || decision.limit === 'wall')) {
-      return finishRun(ctx, 'EXHAUSTED', `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error?.slice(0, 200) ?? failed.status})`, { data: { counter: decision.limit === 'wall' ? 'wall_ms' : 'infrastructure_retries' } });
+      return finishRun(ctx, 'EXHAUSTED', `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { data: { counter: decision.limit === 'wall' ? 'wall_ms' : 'infrastructure_retries' } });
     }
-    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error?.slice(0, 200) ?? failed.status})`);
+    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`);
   }
   const record: RetryRecord = { what: failed.what, base: failed.base, purpose: failed.purpose, status: failed.status, retry: prior.length + 1, delay_ms: decision.delayMs, ceiling_ms: decision.ceilingMs, retry_after_ms: classification.retryAfterMs, not_before: ctx.clock.now() + decision.delayMs };
   // The retry is charged with its record: a crash between the two can neither charge it twice nor lose the wait.
@@ -415,7 +424,7 @@ export async function handleWorkerFailure(
     return { retry: true };
   }
   if (opts.exhausted) return { retry: false, result: await opts.exhausted() };
-  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${failed.error.slice(0, 200)}` : ''})`) };
+  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
 }
 
 /** The regeneration bound for malformed model output (spec section 14). */

@@ -3,11 +3,12 @@
  * (the implementer's worktree, the baseline checkout, review and verify checkouts). Nothing used to remove them, so
  * every finished run left an entry in `git worktree list` for good.
  *
- * Removed when a run ends SUCCEEDED or CANCELLED: the result lives in the run's branch and in its candidate refs
- * (`refs/orbit/<run>/candidates/<n>`), not in the checkout. An edit in the implementer's worktree that never became
- * a candidate (a run cancelled mid-work) is first snapshotted as one, so removal never loses work, and when that
- * snapshot fails the worktree is kept. A BLOCKED, EXHAUSTED or paused run keeps its worktree: a person resumes or
- * continues from it (spec section 14: stops preserve the worktree). `orbit gc --keep-days 0` removes those too.
+ * Removed when a run ends in any terminal state but BLOCKED (SUCCEEDED, CANCELLED, EXHAUSTED, IMPOSSIBLE): the result
+ * lives in the run's branch and in its candidate refs (`refs/orbit/<run>/candidates/<n>`), not in the checkout, and
+ * none of these states has a way back. An edit in the implementer's worktree that never became a candidate (a run
+ * cancelled mid-work) is first snapshotted as one, so removal never loses work, and when that snapshot fails the
+ * worktree is kept. A BLOCKED or paused run keeps its worktree: a person resumes from it (spec section 14: stops
+ * preserve the worktree). `orbit gc --keep-days 0` removes those too.
  */
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +28,7 @@ async function hasUnsavedEdits(worktree: string, repoRoot: string): Promise<bool
   return out.split('\0').some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith('node_modules/'));
 }
 
-/** Remove the run's checkouts after SUCCEEDED or CANCELLED. Never throws: a cleanup problem must not change an outcome. */
+/** Remove the run's checkouts after a terminal state but BLOCKED. Never throws: a cleanup problem must not change an outcome. */
 export async function releaseRunWorktrees(ctx: RunContext): Promise<void> {
   const root = runWorktreeRoot(ctx);
   if (!existsSync(root)) return;

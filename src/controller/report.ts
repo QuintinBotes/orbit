@@ -37,6 +37,8 @@ import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
+import { clipAtWord } from '../core/text.ts';
+import { REVIEW_DEPTH_KIND, describeDepth, type ReviewDepth } from './review-depth.ts';
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { learnFromRun, type LearnReport } from '../knowledge/learn.ts';
 import { settleRun } from '../knowledge/feedback.ts';
@@ -67,7 +69,13 @@ export interface FinalReport {
   criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[] }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
-  reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number }[];
+  reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
+  /**
+   * On `reviews`, `tool_calls` and `reasoning_tokens` say how deep each review session went (read from the provider's
+   * transcript when it ended; null when that was unavailable; absent in reports written before they existed).
+   */
+  /** Every review finding with its whole claim: the one-line views (outcome, gates, residual risks) cut long claims at a word. Absent in reports written before it existed. */
+  review_findings?: { id: string; review_id: string; severity: string; status: string; claim: string }[];
   /**
    * Who reviewed (docs/decisions/0007-reviewer-availability.md). A same-provider review is never presented as
    * independent: it carries why the independent reviewer was unavailable, and who approved it when a person was
@@ -159,6 +167,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [] };
   });
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
+  const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [(d.data as ReviewDepth).review_id, d.data as ReviewDepth] as const));
   const findings = listFindings(db, run.id);
   const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
   const delivery = readJsonIfExists<{ commit: string; branch: string; pr: { number: number; url?: string } | null }>(join(opts.runDir, 'delivery.json'));
@@ -184,9 +193,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const env = readJsonIfExists<{ gate?: { notes?: string[] } }>(join(opts.runDir, 'environment.json'));
   risks.push(...(env?.gate?.notes ?? []));
   if (!usage.costComplete || budget.cost_measurement.includes('unmeasured')) risks.push(`model spend: ${budget.cost_measurement}`);
-  for (const f of findings.filter((x) => x.status === 'advisory' || x.status === 'open' || x.status === 'claim_pending')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === 'advisory' || x.status === 'open' || x.status === 'claim_pending')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${clipAtWord(f.claim, 200)}`);
   // Confirmed defects not yet resolved are blocking; they must never vanish from the report.
-  for (const f of findings.filter((x) => x.status === 'accepted')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === 'accepted')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${clipAtWord(f.claim, 200)}`);
   let exceptions: { expires?: string }[] = [];
   try {
     if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
@@ -198,13 +207,17 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     const index = typeof ex?.index === 'number' ? ex.index : -1;
     const expires = exceptions[index]?.expires;
     const reason = typeof ex?.reason === 'string' ? ex.reason : (f.resolution ?? 'no reason recorded');
-    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? 'never'}`);
+    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${clipAtWord(f.claim, 200)}; exception reason: ${clipAtWord(reason, 160)}; expires: ${expires ?? 'never'}`);
+  }
+  for (const r of reviews) {
+    const d = depths.get(r.id);
+    if (d?.tool_calls === 0) risks.push(`review depth: ${r.provider}/${r.model ?? 'default'} review ${r.id} made no tool calls (${d.reasoning_tokens === null ? 'reasoning tokens unavailable' : `${d.reasoning_tokens} reasoning tokens`}), so it judged from the packet alone and read none of the code`);
   }
   const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
   if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith('same-provider review:'))) {
     risks.push(`same-provider review: ${reviewer.why_not_independent ?? 'no independent reviewer was usable'}; ${reviewer.provider}/${reviewer.model ?? 'default'} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ''}`);
   }
-  for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${q.question.slice(0, 200)}`);
+  for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${clipAtWord(q.question, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
   const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
   risks.push(...plugins.risks);
@@ -225,9 +238,10 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     criteria,
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
-    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
     decisions,
+    review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
@@ -360,7 +374,7 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
     case 'EXHAUSTED': {
       const advice = exhaustedAdvice(run);
       // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
-      const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
+      const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${clipAtWord(q.question, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
       return `${advice}${asked}`;
     }
     case 'IMPOSSIBLE':
@@ -408,7 +422,8 @@ export function renderMarkdown(r: FinalReport): string {
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
   if (r.reviewer) out.push(reviewerLine(r.reviewer), '');
-  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), '');
+  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), '');
+  if (r.review_findings && r.review_findings.length > 0) out.push('## Review findings', '', list(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
   out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
@@ -430,6 +445,16 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Residual risks', '', list(r.residual_risks), '');
   out.push('## Next action', '', r.next_action, '');
   return redact(`${out.join('\n')}`);
+}
+
+/** The depth fields of a report review line; empty for a review with no record (an older run). */
+function depthOf(d: ReviewDepth | undefined): { tool_calls?: number | null; reasoning_tokens?: number | null } {
+  return d ? { tool_calls: d.tool_calls, reasoning_tokens: d.reasoning_tokens } : {};
+}
+
+function depthText(v: FinalReport['reviews'][number]): string {
+  if (v.tool_calls === undefined) return '';
+  return `; ${describeDepth({ tool_calls: v.tool_calls, reasoning_tokens: v.reasoning_tokens ?? null })}`;
 }
 
 function round(n: number): string {

@@ -218,6 +218,27 @@ stays null until a branch exists, and `candidate_ref` carries the ref. In the de
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
+### The final report
+
+`orbit report <run-id>` prints `final.md`; `final.json` has the same content.
+Its review table says, for each review session, who reviewed (an independent
+review, or a same-provider one marked NOT independent with the reason), the
+verdict, the number of findings, and how deep the session went: the tool calls
+it made and the reasoning tokens it used, read from the provider's transcript
+when it ends (`review.depth` decisions; `tool_calls` and `reasoning_tokens` in
+`reviews` of `final.json`, null when the transcript could not be read). A review
+that made no tool calls is flagged `NO TOOL CALLS` and listed under residual
+risks: it judged from the packet alone. The gate and the transition to delivery
+say the same of a same-provider review (`independent_review gate: review
+approved but it was same-provider review, not independent: ...`), never
+"independent review cleared".
+
+One-line views (the outcome, a gate reason, a finding in the residual risks)
+cut long text at a word, ending in `...`; the whole text of every review
+finding is in the report's Review findings section (`review_findings`). Several
+criteria that share one reason (fail-before evidence that did not show the
+change, say) are listed once under that reason.
+
 ### stats and gc
 
 `orbit stats` prints success rate, cost, token and cache use, repair loops and
@@ -228,7 +249,7 @@ Database rows stay and `BLOCKED` runs are never touched. Use `--dry-run` first.
 A pruned run keeps its record for `orbit status` and `orbit stats`, but `orbit
 verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
 its policy, evidence and candidate are gone.
-Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
+Runs that end `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` already remove their own worktrees; see
 [retention](configuration.md#routing-and-retention).
 
 `orbit gc` leaves the repository's toolchain dependency caches
@@ -397,8 +418,9 @@ Files on disk:
 - `<repo>/.orbit/runs/<run-id>/`: the frozen policy, contract, evidence, the final
   report (`final.md`) and `workers/<worker-id>/` with prompt, log, exit record and result.
 - `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`: worker checkouts, outside
-  the repository on purpose. A run that ends `SUCCEEDED` or `CANCELLED` removes its
-  worktrees; one that is `BLOCKED`, `EXHAUSTED` or paused keeps them until it
+  the repository on purpose. A run that ends `SUCCEEDED`, `CANCELLED`,
+  `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees (a `worktrees.released`
+  event records it); one that is `BLOCKED` or paused keeps them until it
   finishes or `orbit gc` removes them.
 
 `<repo>` is the working tree Orbit was started in. Inside a linked worktree

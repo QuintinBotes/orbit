@@ -917,6 +917,7 @@ providers:
     reasoning_effort: null
     extra_args: []
     tier: auto                    # auto | os-sandbox | codex-sandbox (Codex only)
+    review_reasoning_effort: medium   # low | medium | high | xhigh | max (Codex only)
 ```
 
 `providers.<id>.tier` is the isolation tier of the Codex reviewer (ADR 0001,
@@ -940,6 +941,22 @@ Claude workers choose their own tier (`os-sandbox` with an exported credential
 and `sandbox-runtime`, else `claude-sandbox`; see [installation](installation.md#isolation-tiers))
 and a setting that silently did nothing would read as confinement that is not
 there. A config without the key (an older snapshot) reads as `auto`.
+
+`providers.<id>.review_reasoning_effort` is the reasoning effort of the Codex
+reviewer's sessions (`low`, `medium`, `high`, `xhigh` or `max`; default
+`medium`). Orbit passes it to the Codex CLI as `model_reasoning_effort`. At the
+CLI's own default a retest review of a 21,000 token packet answered in 17
+reasoning tokens with no tool call, which is why the default is `medium`; raise
+it for a risky change, or lower it to save cost. It replaces `reasoning_effort`
+for reviews: a config that sets only `reasoning_effort` keeps that effort for
+reviews, and a config that sets neither reviews at `medium`. The key exists for
+Codex providers only; `providers.claude.review_reasoning_effort` is rejected
+with a config error. A config without the key (an older snapshot) reviews at
+the effort it was selected with. The report's review table shows what each
+review session did (tool calls made and reasoning tokens, read from the
+provider's transcript) and flags a review that made no tool calls, so a reviewer
+that judged from the packet alone is visible; see
+[operations](operations.md#the-final-report).
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit
 off. It sets hard per-process limits on every worker shell command and check.

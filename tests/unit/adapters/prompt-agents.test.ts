@@ -45,6 +45,15 @@ describe('agents/*.md', () => {
         expect(tools).not.toContain('WebSearch');
       });
 
+      it.runIf(role === 'implementer')('states which shell forms are allowed and which are denied, and what to use instead', () => {
+        const body = stripFrontmatter(text);
+        expect(body).toMatch(/one simple command per Bash call/);
+        for (const denied of ['pipeline', 'heredoc', 'for or while loop', 'Scratch director']) expect(body, denied).toContain(denied);
+        expect(body).toContain('Write or Edit tool');
+        expect(body).toContain('configured check');
+        expect(body).toMatch(/A denied (call|action) is final/);
+      });
+
       it.runIf(['planner', 'reviewer', 'inquisitor', 'curator'].includes(role))('states that it has no shell and uses file-reading tools', () => {
         expect(String(fm.tools)).not.toContain('Bash');
         expect(text).toContain('You have no shell; use Read, Grep and Glob');

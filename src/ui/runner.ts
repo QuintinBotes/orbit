@@ -151,7 +151,9 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null,
   });
-  atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'running', candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  // The run's state marker: running now, finished (with the verdict) or aborted (with the error) when it ends.
+  const runMarker = { candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) };
+  atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'running', ...runMarker });
 
   const reasons: string[] = [];
   const unverified: string[] = [];
@@ -227,6 +229,9 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
         if (run.appFailed) break;
       }
     }
+  } catch (err) {
+    atomicWriteJson(join(outDir, 'ui-run.json'), redactValue({ state: 'aborted', ...runMarker, endedAt: clock.now(), error: err instanceof Error ? err.message : String(err) }));
+    throw err;
   } finally {
     if (app) await stopApp(app, { clock });
     removeScratch(appScratch);
@@ -330,6 +335,7 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     endedAt: clock.now(),
   };
   atomicWriteJson(join(outDir, UI_RESULT_FILE), redactValue(result));
+  atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'finished', ...runMarker, endedAt: result.endedAt, verdict });
   return result;
 }
 

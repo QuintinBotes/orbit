@@ -280,8 +280,8 @@ export async function blockOnBaseline(
 export function recordGate(ctx: RunContext, g: GateResult<unknown>): void {
   decide(ctx, {
     kind: `gate.${g.gate}`,
-    summary: `${g.gate} gate ${g.status === 'not_applicable' ? 'not applicable' : g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
-    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure },
+    summary: g.summary ?? `${g.gate} gate ${g.status === 'not_applicable' ? 'not applicable' : g.status}${g.reasons.length ? `: ${g.reasons.join('; ')}` : ''}${g.notes.length ? ` (notes: ${g.notes.join('; ')})` : ''}`,
+    data: { status: g.status, reasons: g.reasons, evidence: g.evidence, notes: g.notes, on_failure: g.onFailure, ...(g.summary ? { independent: false } : {}) },
   });
 }
 

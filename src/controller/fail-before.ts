@@ -229,6 +229,13 @@ export function failBeforeStale(ctx: RunContext, cand: CandidateRecord, record: 
   return ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND ts > ? LIMIT 1", ctx.run.id, record.createdAt) !== undefined;
 }
 
+/** `AC-1, AC-2: <text>` once per distinct text, in the order the criteria come: a reason several criteria share is stated once. */
+function groupedByText(items: readonly { id: string; text: string }[]): string[] {
+  const groups = new Map<string, string[]>();
+  for (const { id, text } of items) groups.set(text, [...(groups.get(text) ?? []), id]);
+  return [...groups].map(([text, ids]) => `${ids.join(', ')}: ${text}`);
+}
+
 function decideHow(runId: string, questions: readonly QuestionRecord[]): string {
   return `Answer ${questions.length === 1 ? 'it' : 'each'} with orbit decide ${runId} <question-id> ${ACCEPT_WITHOUT_FAIL_BEFORE}|${DECLINE_WITHOUT_FAIL_BEFORE}, then orbit resume ${runId}. Questions: ${questions.map((q) => `${q.id}: ${q.question}`).join(' | ')}`;
 }
@@ -251,7 +258,7 @@ export async function routeFailBefore(ctx: RunContext, cand: CandidateRecord, ev
     const declined = askable.filter((e) => answerFor(ctx, cand.treeHash, e.criterion_id).state === 'declined');
     const questions = askable.filter((e) => !declined.includes(e)).map((e) => ask(ctx, cand, e, `the probe was not established for tree ${tree}`));
     const parts = [
-      `fail-before evidence is required (verification.fail_before: required), and for candidate ${cand.seq} (tree ${tree}) it was not established: ${notEstablished.map((e) => `${e.criterion_id}: ${e.fail_before!.reason}`).join('; ')}`,
+      `fail-before evidence is required (verification.fail_before: required), and for candidate ${cand.seq} (tree ${tree}) it was not established: ${groupedByText(notEstablished.map((e) => ({ id: e.criterion_id, text: e.fail_before!.reason }))).join('; ')}`,
       ...(environment.length > 0 ? [`${environment.map((e) => e.criterion_id).join(', ')}: the cause is the environment's (an environment signal, an ERROR or a failed install), which is never accepted in place of the evidence; fix it, then orbit resume ${ctx.run.id} runs the probe again`] : []),
       ...(declined.length > 0 ? [`${declined.map((e) => e.criterion_id).join(', ')}: a person declined to accept ${declined.length === 1 ? 'it' : 'them'} without fail-before for this tree`] : []),
       ...(questions.length > 0 ? [decideHow(ctx.run.id, questions)] : []),
@@ -283,7 +290,7 @@ async function askPerson(ctx: RunContext, cand: CandidateRecord, gaps: readonly 
   const declined = gaps.filter((e) => answerFor(ctx, cand.treeHash, e.criterion_id).state === 'declined');
   const questions = gaps.filter((e) => !declined.includes(e)).map((e) => ask(ctx, cand, e, why));
   const parts = [
-    `${gaps.map((e) => e.criterion_id).join(', ')}: ${gaps.map((e) => e.note).join('; ')}; ${why}`,
+    `${groupedByText(gaps.map((e) => ({ id: e.criterion_id, text: e.note ?? '' }))).join('; ')}; ${why}`,
     ...(declined.length > 0 ? [`${declined.map((e) => e.criterion_id).join(', ')}: a person declined to accept ${declined.length === 1 ? 'it' : 'them'} without fail-before for tree ${tree}; a repair that adds a test failing on the base revision is the way on (orbit repair ${ctx.run.id})`] : []),
     ...(questions.length > 0 ? [`Accept ${questions.length === 1 ? 'it' : 'them'} without fail-before for tree ${tree} (a refactor, or a characterization test), or not. ${decideHow(ctx.run.id, questions)}`] : []),
   ];

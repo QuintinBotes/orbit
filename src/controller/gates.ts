@@ -16,7 +16,8 @@ import type { CredentialCheck } from '../recovery/credentials.ts';
 import { reviewerLabel, type ReviewerSelection } from '../review/select.ts';
 import type { DeliveryEnvironmentProblem } from './delivery-env.ts';
 import { reviewGate, type ReviewGateResult } from '../review/stale.ts';
-import { listReviews } from '../review/store.ts';
+import { listFindings, listReviews } from '../review/store.ts';
+import { clipAtWord } from '../core/text.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { contractProblems, releaseEnvironmentProblem } from '../contract/validate.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
@@ -63,6 +64,8 @@ export interface GateResult<D = Record<string, unknown>> {
   passed: boolean;
   /** Why it did not pass; empty on pass. */
   reasons: string[];
+  /** The decision record's wording for a pass that needs more than the bare status (a review that was not independent). */
+  summary?: string;
   /** What was looked at: artifact paths, ids, hashes, plain observations. */
   evidence: string[];
   /** Things the gate passed with but could not establish (stated, never implied). */
@@ -362,13 +365,32 @@ export interface ReviewGateArgs {
   snapshot: PolicySnapshot;
   implementerProvider: string;
   now: number;
+  /** Why no independent reviewer was usable (the recorded reviewer selection), for a review by the implementer's own provider. */
+  whyNotIndependent?: string | null;
 }
 
-export function independentReviewGate(db: OrbitDb, input: ReviewGateArgs): GateResult<{ gate: ReviewGateResult; approved: boolean }> {
-  const g = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+/**
+ * The review gate cuts a finding's claim at a fixed length, mid-word; the claim as it is stored is cut here at a word instead
+ * (the whole text stays in the report's review findings).
+ */
+function withWholeClaim(db: OrbitDb, runId: string, reason: string): string {
+  const m = /^(finding (\S+) \([^)]*\) blocks delivery[^:]*): (.*)$/s.exec(reason);
+  if (!m) return reason;
+  const f = listFindings(db, runId).find((x) => (x.externalId ?? x.id) === m[2] && x.claim.startsWith(m[3]!));
+  return f ? `${m[1]}: ${clipAtWord(f.claim, 200)}` : reason;
+}
+
+export function independentReviewGate(db: OrbitDb, input: ReviewGateArgs): GateResult<{ gate: ReviewGateResult; approved: boolean; independent: boolean }> {
+  const gated = reviewGate(db, { runId: input.runId, treeHash: input.treeHash, snapshot: input.snapshot, implementerProvider: input.implementerProvider, now: input.now });
+  const g = { ...gated, reasons: gated.reasons.map((r) => withWholeClaim(db, input.runId, r)) };
   const approved = g.cleared.some((r) => r.verdict === 'APPROVE');
   const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
-  return result('independent_review', g.reasons, evidence, [], { gate: g, approved });
+  // A review by the provider that implemented is a review, not an independent one: the record says so and why, as the report does.
+  const independent = g.cleared.length === 0 || g.cleared.some((r) => r.provider !== input.implementerProvider);
+  const why = `same-provider review, not independent: ${input.whyNotIndependent ?? 'no independent reviewer was usable'}`;
+  const out = result('independent_review', g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
+  if (out.status === 'pass' && !independent) out.summary = `independent_review gate: review approved but it was ${why}`;
+  return out;
 }
 
 // ---------------------------------------------------------------------------

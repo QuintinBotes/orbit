@@ -382,10 +382,14 @@ export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): Isolati
   return { ...defaultIsolationLimits(), ...(config.isolation.limits ?? {}) };
 }
 
+/** The reasoning efforts the Codex adapter accepts (adapters/codex.ts CODEX_EFFORTS), and the default of a review. */
+export const REVIEW_REASONING_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const DEFAULT_REVIEW_REASONING_EFFORT = 'medium';
+
 function defaultProvider(id: string, eligible: boolean): ProviderConfig {
   const base: ProviderConfig = { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
-  // The isolation tier is a Codex reviewer setting; no other provider carries the key.
-  return providerFamily(id) === 'codex' ? { ...base, tier: 'auto' } : base;
+  // The isolation tier and the review effort are Codex reviewer settings; no other provider carries the keys.
+  return providerFamily(id) === 'codex' ? { ...base, tier: 'auto', review_reasoning_effort: DEFAULT_REVIEW_REASONING_EFFORT } : base;
 }
 
 /** The provider family an id names: `claude`, `codex`, or an id starting with one of them (`codex-review`); null for any other. */
@@ -562,7 +566,13 @@ function normalizeProviders(raw: unknown, defaults: Record<string, ProviderConfi
   if (!isPlainObject(raw)) return raw;
   const out: Record<string, unknown> = { ...defaults };
   for (const [id, def] of Object.entries(raw)) {
-    out[id] = isPlainObject(def) ? { ...(defaults[id] ?? defaultProvider(id, false)), ...def } : def;
+    if (!isPlainObject(def)) {
+      out[id] = def;
+      continue;
+    }
+    // A person who set only reasoning_effort keeps that effort for reviews: the new key's default must not override it.
+    const inherit = def.review_reasoning_effort === undefined && typeof def.reasoning_effort === 'string' && providerFamily(id) === 'codex' ? { review_reasoning_effort: def.reasoning_effort } : {};
+    out[id] = { ...(defaults[id] ?? defaultProvider(id, false)), ...inherit, ...def };
   }
   return out;
 }
@@ -815,6 +825,16 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
       // Rejected rather than ignored: a tier that silently did nothing would read as confinement that is not there.
       if (isPlainObject(provider) && provider.tier !== undefined && providerFamily(id) === 'claude') {
         problems.push(`providers.${id}.tier: is a setting of the Codex reviewer only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+      }
+    }
+  },
+  function providerReviewEfforts(c, problems) {
+    for (const [id, provider] of Object.entries(c.providers)) {
+      if (!isPlainObject(provider) || provider.review_reasoning_effort === undefined) continue;
+      if (providerFamily(id) !== 'codex') {
+        problems.push(`providers.${id}.review_reasoning_effort: is a setting of the Codex reviewer only; a Claude reviewer's effort comes from providers.${id}.reasoning_effort and the router`);
+      } else if (!REVIEW_REASONING_EFFORTS.includes(provider.review_reasoning_effort as string)) {
+        problems.push(`providers.${id}.review_reasoning_effort: ${JSON.stringify(provider.review_reasoning_effort)} is not one of ${REVIEW_REASONING_EFFORTS.join(', ')}`);
       }
     }
   },

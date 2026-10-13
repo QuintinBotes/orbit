@@ -16,7 +16,7 @@ jobs:
   verify:
     name: verify (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:

@@ -188,6 +188,12 @@ export interface ProviderConfig {
    * carry it for every Codex provider; absent in older snapshots, which read as `auto`.
    */
   tier?: CodexTierSetting;
+  /**
+   * Codex providers only: the reasoning effort of a review session (low, medium, high, xhigh or max; default medium). It
+   * replaces `reasoning_effort` for reviews, which a person who set only that key keeps as this key's value. Absent in
+   * older snapshots, which review at the selection's effort.
+   */
+  review_reasoning_effort?: string;
 }
 
 /** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */

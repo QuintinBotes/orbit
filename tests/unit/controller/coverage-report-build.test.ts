@@ -84,7 +84,7 @@ describe('the final report of a run with everything recorded', () => {
     expect(r.revision).toMatchObject({ base: 'b'.repeat(40), candidate: cand.commitSha, tree: cand.treeHash, branch: 'orbit/delivered', delivered_commit: 'd'.repeat(40), pull_request: { number: 7, url: 'https://example.test/pr/7' } });
     expect(r.unverified).toEqual(['SAST is unverified']);
     expect(r.residual_risks).toEqual(expect.arrayContaining(['no isolation', 'check unit passed only on a rerun (flaky)']));
-    expect(r.residual_risks.some((x) => x.startsWith('review finding F-1 (low, open): claim F-1 '))).toBe(true);
+    expect(r.residual_risks.some((x) => x.startsWith('review finding F-1 (low, open): claim F-1'))).toBe(true);
     expect(r.residual_risks.find((x) => x.startsWith('review finding F-1'))!.length).toBeLessThan(260);
   });
 
