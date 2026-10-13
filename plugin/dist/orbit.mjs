@@ -60598,39 +60598,57 @@ async function reviewingStep(ctx) {
     throw new OrbitError("STALE_EVIDENCE", `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
   await cancelObsoleteWork(ctx, cand.treeHash);
+  const fresh = freshReviewOf(ctx, cand.treeHash);
+  if (fresh) return freshReview(ctx, cand, fresh);
   const focuses = reviewFocuses(ctx, cand);
   if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length >= focuses.length) return resolveAndDecide(ctx, cand);
+  const usable = await usableReviewer(ctx, cand);
+  if (!usable.ok) return usable.step;
+  const sel = usable.sel;
+  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
+  return pending ?? resolveAndDecide(ctx, cand);
+}
+async function usableReviewer(ctx, cand) {
   const sel = await reviewerSelection(ctx, cand);
   if (sel.decision === "BLOCK") {
     if (sel.code === "AUTH_EXPIRED" || sel.code === "AUTH_MISSING") {
       const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
-      return blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason);
+      return { ok: false, step: await blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason) };
     }
-    return finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } });
+    return { ok: false, step: await finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } }) };
   }
   if (sel.needsApproval === true) {
     const approval = sameProviderApproval(ctx, sel);
     if (approval.state === "pending") {
-      return finishRun(
-        ctx,
-        "BLOCKED",
-        `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
-        { outcome: { reviewer: sel, questions: [approval.questionId] } }
-      );
+      return {
+        ok: false,
+        step: await finishRun(
+          ctx,
+          "BLOCKED",
+          `no independent reviewer is usable; review.when_unavailable is ask, so question ${approval.questionId} asks whether ${sel.provider} may review this run's candidate in a separate session (not independently). Answer with orbit decide ${ctx.run.id} ${approval.questionId} yes (or no), then orbit resume ${ctx.run.id}`,
+          { outcome: { reviewer: sel, questions: [approval.questionId] } }
+        )
+      };
     }
     if (approval.state === "declined") {
-      return finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
-        outcome: { reviewer: sel, questions: [approval.questionId] }
-      });
+      return {
+        ok: false,
+        step: await finishRun(ctx, "BLOCKED", `${approval.by ?? "nobody"} declined a same-provider review (question ${approval.questionId}) and no independent reviewer is usable; make one usable (orbit doctor shows why it is not), then start a new run`, {
+          outcome: { reviewer: sel, questions: [approval.questionId] }
+        })
+      };
     }
   }
-  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  return { ok: true, sel };
+}
+async function singleReview(ctx, cand, sel, opts) {
   const round5 = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   const got = await obtain(ctx, {
-    base: `review:${cand.id}`,
+    base: opts.base,
     maxAttempts: MAX_REGENERATIONS,
-    what: `the ${sel.provider} reviewer`,
+    what: opts.what,
     // One review round per reviewer session started, regenerations included: every session costs a round.
     beforeStart: () => ctx.ledger.consume("review_rounds", 1),
     request: (purpose) => ({
@@ -60643,7 +60661,7 @@ async function reviewingStep(ctx) {
       cwd: checkout,
       readOnly: true,
       phase: "final",
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir)
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh)
     }),
     accept: (r) => {
       try {
@@ -60682,7 +60700,7 @@ async function reviewingStep(ctx) {
     },
     ctx.clock
   );
-  return resolveAndDecide(ctx, cand);
+  return null;
 }
 function reviewFocuses(ctx, cand) {
   const ui = ctx.snapshot.config.ui;
@@ -60894,9 +60912,81 @@ async function resolveAndDecide(ctx, cand) {
   }
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
   const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} dispute only ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
-  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}${notes}`.slice(0, 2e3), {
-    outcome: { review_gate: gate.reasons, open_findings: openFindings(open2), ...noted.length > 0 ? { noted_findings: openFindings(noted) } : {} }
+  let fresh = null;
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked) {
+    fresh = describeFreshReview(ctx, asked, resolution, state);
+  } else if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
+    const rounds = ctx.ledger.state("review_rounds");
+    if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
+    fresh = {
+      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`,
+      outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
+    };
+  }
+  return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}${notes}${fresh?.text ?? ""}`.slice(0, 2e3), {
+    outcome: { review_gate: gate.reasons, open_findings: openFindings(open2), ...noted.length > 0 ? { noted_findings: openFindings(noted) } : {}, ...fresh ? { fresh_review: fresh.outcome } : {} }
   });
+}
+function freshReviewDecisionId(ctx, treeHash) {
+  return `dec-${ctx.run.id}-review-fresh-${treeHash}`;
+}
+function freshReviewOf(ctx, treeHash) {
+  const d = getDecision(ctx.db, freshReviewDecisionId(ctx, treeHash));
+  return d ? d.data : null;
+}
+function recordedFreshReview(ctx, rec2) {
+  const prefix = `${rec2.base}#`;
+  const workers = new Set(ctx.db.all("SELECT id, purpose FROM workers WHERE run_id = ? AND role = 'reviewer'", ctx.run.id).filter((w) => w.purpose?.startsWith(prefix)).map((w) => w.id));
+  return listReviews(ctx.db, ctx.run.id, { treeHash: rec2.tree_hash }).find((r) => r.workerId !== null && workers.has(r.workerId)) ?? null;
+}
+function askedOnlyThroughNotes(state, noted) {
+  const notedIds = new Set(noted.flatMap((d) => d.memberIds));
+  return state.reviews.filter((r) => r.verdict === "REPAIR_REQUIRED" && state.findings.some((f) => f.reviewId === r.id && notedIds.has(f.id))).map((r) => r.id);
+}
+async function startFreshReview(ctx, cand, state, noted) {
+  const rec2 = {
+    tree_hash: cand.treeHash,
+    candidate_id: cand.id,
+    base: `review-fresh:${cand.id}`,
+    superseded: state.reviews.map((r) => r.id),
+    noted: noted.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, classification: d.recordedClassification, claim: d.claim.slice(0, 500) }))
+  };
+  decide2(ctx, {
+    id: freshReviewDecisionId(ctx, cand.treeHash),
+    kind: FRESH_REVIEW_KIND,
+    summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: review(s) ${rec2.superseded.join(", ")} asked for repair only through note(s) ${rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ")} on ${[...new Set(rec2.noted.map((n2) => n2.classification))].join(" and ")}, which no repair can change; only an APPROVE from the fresh review clears the tree`,
+    data: rec2
+  });
+  return freshReview(ctx, cand, rec2);
+}
+async function freshReview(ctx, cand, rec2) {
+  let review = recordedFreshReview(ctx, rec2);
+  if (!review) {
+    const usable = await usableReviewer(ctx, cand);
+    if (!usable.ok) return usable.step;
+    const pending = await singleReview(ctx, cand, usable.sel, { base: rec2.base, what: `the ${usable.sel.provider} fresh reviewer`, fresh: rec2 });
+    if (pending) return pending;
+    review = recordedFreshReview(ctx, rec2);
+    if (!review) throw new OrbitError("INTERNAL", `the fresh review of tree ${rec2.tree_hash} was recorded but cannot be found`);
+  }
+  for (const id of rec2.superseded) {
+    if (id === review.id) continue;
+    markReviewInvalidated(ctx.db, id, `superseded by fresh review ${review.id} of the same tree: it asked for repair only through notes on a classification Orbit recorded, which no repair can change`, ctx.clock);
+  }
+  return resolveAndDecide(ctx, cand);
+}
+function describeFreshReview(ctx, rec2, resolution, state) {
+  const earlier = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
+  const review = recordedFreshReview(ctx, rec2);
+  if (!review) return { text: `; the fresh review of the tree asked after note(s) ${earlier} has not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
+  const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
+  const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
+  const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
+  return {
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} raised only the note(s) ${earlier}, did not approve it either: ${named2}`,
+    outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
+  };
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -61183,25 +61273,36 @@ function packetShaOf(reviewDir) {
 function readText(p) {
   return readFileSync31(p, "utf8");
 }
-function reviewerPrompt(ctx, cand, reviewDir, focus = "general") {
+function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null) {
   const text2 = readText(join62(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
     "Reject weak proof, test weakening, scope leakage, regressions, unsafe defaults and unresolved material assumptions. Each finding must be a specific, testable claim with a location.",
     ...focus === "general" ? [] : [FOCUS_TEXT[focus]],
+    ...fresh ? freshReviewText(fresh) : [],
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`
   ].join("\n");
+  const noted = fresh ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
   return renderWorkerPrompt({
     role: "reviewer",
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
-    untrusted: [{ label: "review packet", content: text2, ref: `reviews/${cand.seq}/packet.md` }],
+    untrusted: [{ label: "review packet", content: text2, ref: `reviews/${cand.seq}/packet.md` }, ...noted],
     maxBlockChars: text2.length + 100,
     maxPromptChars: text2.length + 4e4
   });
+}
+function freshReviewText(rec2) {
+  const names = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
+  const what = [...new Set(rec2.noted.map((n2) => n2.classification))];
+  return [
+    `This is a fresh review of a tree that an earlier review asked to have repaired only through finding(s) ${names}, quoted below. Each disputes ${what.join(" or ")}.`,
+    ...what.map((w) => `${w.charAt(0).toUpperCase()}${w.slice(1)} is not a finding and cannot be repaired by changing the candidate: a repair changes only the candidate, never the base revision.`),
+    "Judge the candidate as in any review: a finding is a defect of the candidate or of its tests that a change to the candidate can repair."
+  ];
 }
 async function prepareReview(ctx, cand, provider) {
   const reviewDir = join62(ctx.runDir, "reviews", String(cand.seq));
@@ -61210,7 +61311,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync43(checkout) || readdirSync12(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, REVIEW_REPAIR_EVENT, UNDECIDED;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -61257,6 +61358,7 @@ var init_reviewing = __esm({
       security: "Focus: security. Authorization and tenancy, input validation, injection, secrets and sensitive data, unsafe defaults. Report any other defect you see as well.",
       ui: "Focus: the user interface. User-visible states (empty, loading, error), accessibility, layout and interaction regressions on the changed screens. Report any other defect you see as well."
     };
+    FRESH_REVIEW_KIND = "review.fresh";
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
   }

@@ -188,6 +188,7 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    about the tests themselves (a tautology, a test that passes for any implementation) is still a claim.
    Delivery still needs an approving review, so a review that asked for repair only through such notes
    approves nothing: the run stops BLOCKED and names them, instead of spending an attempt on the same tree.
+   Follow-up: first the tree gets one fresh review, told the outcome is not a finding; only its APPROVE clears.
 4. **The planner does not promise fail-before.** In the required run the planner wrote AC-4, "The new tests
    fail on the base revision (ImportError for round_price)". The candidate's passing log was then cited to
    support it, and an inquiry told the implementer to keep the import error "as the contract states". The
