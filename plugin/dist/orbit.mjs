@@ -60870,11 +60870,9 @@ async function resolveAndDecide(ctx, cand) {
     if (waiting) return waiting;
     return move2(ctx, "DELIVERING", `independent review cleared tree ${cand.treeHash}`);
   }
-  const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
-  const asked = freshReviewOf(ctx, cand.treeHash);
-  if (asked) return blockOnReview(ctx, cand, gate, open2, resolution, describeFreshReview(ctx, asked, resolution, state));
   const repairRequested = state.reviews.some((r) => r.verdict === "REPAIR_REQUIRED");
   const blockRank = blockSeverityRank(ctx);
+  const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
   const toRepair = open2.filter(
     (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
@@ -60928,8 +60926,12 @@ async function resolveAndDecide(ctx, cand) {
     if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
   }
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
+  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} dispute only ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
   let fresh = null;
-  if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked) {
+    fresh = describeFreshReview(ctx, asked, resolution, state);
+  } else if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
     const rounds = ctx.ledger.state("review_rounds");
     if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
     fresh = {
@@ -60937,11 +60939,6 @@ async function resolveAndDecide(ctx, cand) {
       outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
     };
   }
-  return blockOnReview(ctx, cand, gate, open2, resolution, fresh);
-}
-async function blockOnReview(ctx, cand, gate, open2, resolution, fresh) {
-  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
-  const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} dispute only ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
   return finishRun(ctx, "BLOCKED", `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join("; ") || "no approving review"}${notes}${fresh?.text ?? ""}`.slice(0, 2e3), {
     outcome: { review_gate: gate.reasons, open_findings: openFindings(open2), ...noted.length > 0 ? { noted_findings: openFindings(noted) } : {}, ...fresh ? { fresh_review: fresh.outcome } : {} }
   });

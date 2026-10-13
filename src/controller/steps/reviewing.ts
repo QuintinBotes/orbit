@@ -371,17 +371,12 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     return move(ctx, 'DELIVERING', `independent review cleared tree ${cand.treeHash}`);
   }
 
-  const open = resolution.dispositions.filter((d) => d.status === 'accepted' || d.status === 'claim_pending' || d.status === 'open');
-  // A tree that had its one fresh review is decided by it alone: if it did not clear the tree, for any reason (a note
-  // again, a defect of the candidate, a claim to test), the run ends here naming the findings, with no repair or inquiry.
-  const asked = freshReviewOf(ctx, cand.treeHash);
-  if (asked) return blockOnReview(ctx, cand, gate, open, resolution, describeFreshReview(ctx, asked, resolution, state));
-
   // Review findings drive a repair loop (spec sections 12 and 14). A finding confirmed by evidence, and a
   // finding a reviewer asked to have repaired (REPAIR_REQUIRED, now or for an earlier tree) at a blocking
   // severity, becomes a repair brief; it is closed later only by a test exercising it that passes.
   const repairRequested = state.reviews.some((r) => r.verdict === 'REPAIR_REQUIRED');
   const blockRank = blockSeverityRank(ctx);
+  const open = resolution.dispositions.filter((d) => d.status === 'accepted' || d.status === 'claim_pending' || d.status === 'open');
   const toRepair = open.filter(
     (d) => d.status === 'accepted' || undecided.has(d.findingId) || ((repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)),
   );
@@ -447,11 +442,15 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   }
   // A review that asked for repair only through findings disputing Orbit's own evidence classification approves nothing,
   // and no repair can answer it. It gets one fresh review of the same tree, told so (ADR 0014, 0.3.1 addendum, item 3),
-  // rather than an attempt spent on the same tree; only that reviewer's APPROVE lets the run go on (a fresh review that
-  // did not is decided above). Without a review round left, the run stops here and says why.
+  // rather than an attempt spent on the same tree; only that reviewer's APPROVE lets the run go on. Without a review round
+  // left, or once the fresh review has not approved either, the run stops here and says why.
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
-  let fresh: FreshReviewOutcome | null = null;
-  if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
+  const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} dispute only ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
+  let fresh: { text: string; outcome: Record<string, unknown> } | null = null;
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked) {
+    fresh = describeFreshReview(ctx, asked, resolution, state);
+  } else if (gate.passed && askedOnlyThroughNotes(state, noted).length > 0) {
     // Every review of the tree is cleared and none approves: an approval is all that is missing, and a fresh review is
     // the only thing that can give one. It costs a review round like any review, so none starts at the cap.
     const rounds = ctx.ledger!.state('review_rounds');
@@ -461,19 +460,6 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       outcome: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } },
     };
   }
-  return blockOnReview(ctx, cand, gate, open, resolution, fresh);
-}
-
-/** What the BLOCKED outcome says of the tree's fresh review: the one that did not clear it, or why none started. */
-interface FreshReviewOutcome {
-  text: string;
-  outcome: Record<string, unknown>;
-}
-
-/** End the run BLOCKED because review does not clear the tree, naming the open findings, the notes and the fresh review. */
-async function blockOnReview(ctx: RunContext, cand: CandidateRecord, gate: ReturnType<typeof independentReviewGate>, open: readonly Disposition[], resolution: Resolution, fresh: FreshReviewOutcome | null): Promise<StepResult> {
-  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
-  const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} dispute only ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
   return finishRun(ctx, 'BLOCKED', `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}${notes}${fresh?.text ?? ''}`.slice(0, 2000), {
     outcome: { review_gate: gate.reasons, open_findings: openFindings(open), ...(noted.length > 0 ? { noted_findings: openFindings(noted) } : {}), ...(fresh ? { fresh_review: fresh.outcome } : {}) },
   });
@@ -560,7 +546,7 @@ async function freshReview(ctx: RunContext, cand: CandidateRecord, rec: FreshRev
 }
 
 /** What the BLOCKED outcome says of a fresh review that did not clear the tree. */
-function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution: Resolution, state: ReturnType<typeof loadResolverState>): FreshReviewOutcome {
+function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution: Resolution, state: ReturnType<typeof loadResolverState>): { text: string; outcome: Record<string, unknown> } {
   const earlier = rec.noted.map((n) => `${n.external_id ?? n.id} (${n.severity})`).join(', ');
   const review = recordedFreshReview(ctx, rec);
   if (!review) return { text: `; the fresh review of the tree asked after note(s) ${earlier} has not come back`, outcome: { started: true, review_id: null, earlier_noted: rec.noted } };
