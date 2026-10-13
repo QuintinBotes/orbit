@@ -171,9 +171,13 @@ collection or import failure of a new symbol counts and is not a finding, and
 asks only about the new tests' quality. Under `advisory` and `off` the
 reviewer and the Inquisition see nothing of it. A review finding that only
 disputes the recorded outcome is a `review.finding.noted` decision in the
-timeline and a residual risk in the report, never a repair; when a review asked
-for repair only through such notes, the run ends `BLOCKED` naming them, since
-delivery needs an approving review.
+timeline and a residual risk in the report, never a repair. Delivery needs an
+approving review, so when a review asked for repair only through such notes,
+the tree first gets one fresh review (a `review.fresh` decision, charged to
+`review_rounds` like any review). Its `APPROVE` lets the run go on. Otherwise,
+or at the `review_rounds` cap, the run ends `BLOCKED` naming the findings; a
+resume would only block again, so `orbit status` and the report say to start a
+new run.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
