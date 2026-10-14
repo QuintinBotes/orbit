@@ -22,7 +22,8 @@
  * Every reason here is a run of sentences, each starting with a capital letter, and names each check once: checks that
  * share a cause and its evidence lines are listed together before them.
  */
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, realpathSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
@@ -30,6 +31,7 @@ import { directInvocation, programExecutionDir, startedProgram, startedPrograms 
 import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
+import { gitEnv } from '../evidence/git.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
 import type { EvidenceReport } from '../evidence/types.ts';
@@ -336,7 +338,8 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
  * that loads no project, a program placed where a check can start it), or the check itself (a dotnet format check
  * removed). The policy is frozen with the run, so a resume runs the same check again and only a new run picks such a
  * fix up (0.3.0 retest). Empty when the fix is the environment's (a cache filled, a program installed, the srt Orbit
- * ships) or may be either: a filesystem denial, which a check's env or the host may cure, and a network denial, which
+ * ships, a tool environment moved and a link outside the repository's folders repointed at it) or may be either: a
+ * filesystem denial, which a check's env or the host may cure, and a network denial, which
  * a cache filled outside the sandbox may cure (a pinned dependency restore) where allowing the host would change the
  * check's network_hosts. A required policy change is recorded only when no environment-only remedy exists.
  */
@@ -422,11 +425,21 @@ function environmentFixes(failures: readonly FailureWithCommand[], platform: Nod
   const located = failures.filter((f) => f.programDenial !== undefined && (f.signals.includes('program-denied') || f.signals.includes('program-not-found')));
   const byPath = located.filter((f) => f.programDenial!.onPath !== undefined);
   const byCommand = located.filter((f) => f.programDenial!.onPath === undefined);
-  if (byCommand.length > 0) {
-    const d = byCommand[0]!.programDenial!;
+  // A program outside the denied folders that is refused only for where it links to (`/opt/tools/python` into the
+  // repository's virtualenv): moving the environment and repointing that link cures it without changing the check's
+  // command, so no policy change is recorded and a resume runs the check again.
+  const byExternalLink = byCommand.filter((f) => f.programDenial!.target !== undefined && isAbsolute(f.programDenial!.program));
+  const byPlaced = byCommand.filter((f) => !byExternalLink.includes(f));
+  if (byExternalLink.length > 0) {
+    const d = byExternalLink[0]!.programDenial!;
+    const programs = [...new Set(byExternalLink.map((f) => f.programDenial!.program))];
+    fixes.push(`a program the check runs (${programs.map((p) => `"${p}"`).join(', ')}) lies outside the folders the check sandbox denies and links to a tool environment inside them: move that tool environment outside ${d.parent ?? d.repository}, repoint ${programs.length > 1 ? 'those links' : 'that link'} at it, then resume the run; the check's command does not change (docs/configuration.md, "Tool environments")`);
+  }
+  if (byPlaced.length > 0) {
+    const d = byPlaced[0]!.programDenial!;
     const reads = d.parent !== null ? 'may read neither the repository nor the folder that holds it and its sibling projects' : 'may not read the repository';
-    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${byCommand.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
-    change(byCommand, command);
+    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${byPlaced.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    change(byPlaced, command);
   }
   // A bare name the check looked up on a PATH that leads into a denied folder (an activated tool environment there): the
   // PATH is the fix. Orbit's own is the environment's, so a resume from a shell without it runs the check again; a PATH
@@ -515,10 +528,10 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
     const found =
       classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
-      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots)) : null);
+      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report.baseRevision)) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
-    const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def) : null;
+    const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def, report.baseRevision) : null;
     out.push({ ...found, ...(located ? { cause: programDenialCause(located), programDenial: located } : {}), ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...(logPath ? { logPath } : {}) });
   }
   return out;
@@ -552,7 +565,7 @@ export function deniedLaunches(ctx: RunContext, report: BaselineReport, environm
  * (onPath); or a path relative to the check's cwd, a link the repository commits that leads out of it (relativeTarget).
  * Null for any other failure, and for a layout that cannot be judged.
  */
-function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>): ProgramDenial | null {
+function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, baseRevision: string): ProgramDenial | null {
   if (!found.signals.includes('program-denied') && !found.signals.includes('program-not-found')) return null;
   const shell = def.shell === true;
   const program = found.program ?? startedProgram(def.command, shell);
@@ -574,7 +587,7 @@ function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<C
     }
     // A path relative to the directory the failing command ran in: where a link the repository commits there leads, when it leads out of it.
     if (program.includes('/')) {
-      const target = relativeProgramTarget(repo, def, program, (path) => programDenial(path, repo, home) !== null);
+      const target = relativeProgramTarget(repo, baseRevision, def, program, (path) => programDenial(path, repo, home) !== null);
       if (target === null) return null;
       const d = programDenial(target, repo, home);
       return d === null ? null : { ...d, program, target };
@@ -610,31 +623,81 @@ const MAX_LINKS = 40;
  * tests/tools/python decides, never the one at the repository root. Null when that directory is not known for
  * certain: the failure is then not classified by this path at all, and stays a baseline-exception question.
  */
-function relativeProgramTarget(repoRoot: string, def: Pick<CheckDefinition, 'command' | 'shell' | 'cwd'>, program: string, denied: (path: string) => boolean): string | null {
+function relativeProgramTarget(repoRoot: string, baseRevision: string, def: Pick<CheckDefinition, 'command' | 'shell' | 'cwd'>, program: string, denied: (path: string) => boolean): string | null {
   const dir = programExecutionDir(def.command, def.shell === true, program);
   if (dir === null) return null;
-  return relativeTarget(repoRoot, dir === '' ? def.cwd : join(def.cwd, dir), program, denied);
+  return relativeTarget(repoRoot, baseRevision, dir === '' ? def.cwd : join(def.cwd, dir), program, denied);
+}
+
+/** A path of the base revision's tree: its git mode (`120000` for a link) and its object id. */
+interface BaseTreeEntry {
+  mode: string;
+  oid: string;
+}
+
+/** Base trees read in this process, by repository and revision: a commit's tree does not change under it. */
+const baseTrees = new Map<string, ReadonlyMap<string, BaseTreeEntry> | null>();
+
+/** Every path of the base revision's git tree, folders included, or null when that tree cannot be read. */
+function baseTreeEntries(repoRoot: string, baseRevision: string): ReadonlyMap<string, BaseTreeEntry> | null {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseRevision)) return null;
+  const key = `${resolve(repoRoot)}\0${baseRevision}`;
+  const cached = baseTrees.get(key);
+  if (cached !== undefined) return cached;
+  let entries: Map<string, BaseTreeEntry> | null = null;
+  try {
+    const text = execFileSync('git', ['ls-tree', '-r', '-t', '-z', '--full-tree', baseRevision], { cwd: repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
+    entries = new Map();
+    for (const rec of text.split('\0')) {
+      const m = /^(\d+) (?:blob|tree|commit) ([0-9a-f]+)\t(.*)$/s.exec(rec);
+      if (m) entries.set(m[3]!, { mode: m[1]!, oid: m[2]! });
+    }
+  } catch {
+    entries = null;
+  }
+  if (baseTrees.size >= 8) baseTrees.clear();
+  baseTrees.set(key, entries);
+  return entries;
+}
+
+/** The literal target of a link of the base revision's tree, from its blob; null when it cannot be read. */
+function baseLinkTarget(repoRoot: string, oid: string): string | null {
+  try {
+    return execFileSync('git', ['cat-file', 'blob', oid], { cwd: repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 1024 * 1024 });
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Where a program the check names by a path relative to `cwd` leads, when a link on the way leads into a folder the
- * check sandbox denies (`denied`; third review of the 0.3.0 retest fix and Codex's review of it), read in the
- * repository's own tree at that cwd, which the check's checkout holds too and which is gone by the time the base
- * revision is judged. Each link is read for its literal target before anything is canonicalised, one name at a time: a
- * link whose target is an absolute path leads there from the checkout too, so one into the repository or the folder
- * beside it counts for that path (with the rest of the program's path after it), even where the file there links on
- * elsewhere, as a virtualenv's interpreter does; a link whose target is relative moves with the checkout, and counts only
- * once it leads out of the repository's tree (a link the repository commits to a tool environment beside it). Null when
- * there is no such file, when the path climbs out of the tree (`../x` leads out of the checkout, not to the repository's
- * sibling), or when no link on the way leads into a denied folder: one that stays in the repository leads to the
- * checkout's own copy, which is what the check ran.
+ * check sandbox denies (`denied`; third review of the 0.3.0 retest fix and Codex's review of it), read in the base
+ * revision's git tree at that cwd: the tree the baseline checkout held, which is gone by the time the base revision
+ * is judged. The working repository's own tree is never read: with `repository.allow_dirty_start` it can hold an
+ * uncommitted link the base revision does not have, and following it would classify a baseline failure ("not found"
+ * for a target the goal may add) by a link the baseline never ran. A path the base commit does not track, or does
+ * not track as a link where a link is followed, declines the classification. Each link is read for its literal
+ * target before anything is canonicalised, one name at a time: a link whose target is an absolute path leads there
+ * from the checkout too, so one into the repository or the folder beside it counts for that path (with the rest of
+ * the program's path after it), even where the file there links on elsewhere, as a virtualenv's interpreter does; a
+ * link whose target is relative moves with the checkout, and counts only once it leads out of the repository's tree
+ * (a link the repository commits to a tool environment beside it). Null when the base tree holds no such path, when
+ * the path climbs out of the tree (`../x` leads out of the checkout, not to the repository's sibling), when a link
+ * leads out of the base tree to somewhere that is not denied (where it goes from there is the host's, not the base
+ * revision's, to say), or when no link on the way leads into a denied folder: one that stays in the repository
+ * leads to the checkout's own copy, which is what the check ran.
  */
-function relativeTarget(repoRoot: string, cwd: string, path: string, denied: (path: string) => boolean): string | null {
+function relativeTarget(repoRoot: string, baseRevision: string, cwd: string, path: string, denied: (path: string) => boolean): string | null {
   const root = resolve(repoRoot);
   const spelled = resolve(root, cwd, path);
-  if (!isWithin(spelled, root) || !existsSync(spelled)) return null;
+  if (!isWithin(spelled, root)) return null;
+  const entries = baseTreeEntries(root, baseRevision);
+  if (entries === null) return null;
   const realRoot = canonicalPath(root);
+  // The folder the walk is in, as a filesystem path (what a link's target resolves against) and as a path of the
+  // base tree (what the next name is looked up by).
   let at = realRoot;
+  let tree: string[] = [];
   let rest = relative(root, spelled).split('/');
   // Whether the walk is still where the checkout's own copy of the tree would be: no absolute link followed yet.
   let inCheckout = true;
@@ -642,25 +705,25 @@ function relativeTarget(repoRoot: string, cwd: string, path: string, denied: (pa
     const name = rest.shift()!;
     if (name === '' || name === '.') continue;
     if (name === '..') {
+      if (tree.length === 0) return null;
+      tree = tree.slice(0, -1);
       at = dirname(at);
       continue;
     }
-    const next = join(at, name);
-    let literal: string;
-    try {
-      if (!lstatSync(next).isSymbolicLink()) {
-        at = next;
-        continue;
-      }
-      literal = readlinkSync(next);
-    } catch {
-      return null;
+    const entry = entries.get([...tree, name].join('/'));
+    if (entry === undefined) return null;
+    if (entry.mode !== '120000') {
+      tree = [...tree, name];
+      at = join(at, name);
+      continue;
     }
+    const literal = baseLinkTarget(root, entry.oid);
+    if (literal === null) return null;
     if (++links > MAX_LINKS) return null;
     if (isAbsolute(literal)) inCheckout = false;
     const leads = resolve(at, literal, ...rest);
     if ((!inCheckout || !isWithin(leads, realRoot)) && denied(leads)) return leads;
-    if (isAbsolute(literal)) at = '/';
+    if (isAbsolute(literal)) return null;
     rest = [...literal.split('/'), ...rest];
   }
   return null;
@@ -672,7 +735,7 @@ function relativeTarget(repoRoot: string, cwd: string, path: string, denied: (pa
  * whatever the check's command looks like. The check's own directories (`insideRoots`, its checkout among them) are never
  * such a folder. Null for a layout that cannot be judged.
  */
-function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[]): EnvironmentFailure | null {
+function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[], baseRevision: string): EnvironmentFailure | null {
   try {
     const repo = ctx.snapshot.repo_root;
     const home = homeOf(ctx.deps);
@@ -688,7 +751,7 @@ function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'comman
       seen.set(path, where);
       return where;
     };
-    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeProgramTarget(repo, def, path, (target) => holding(target) !== null) });
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeProgramTarget(repo, baseRevision, def, path, (target) => holding(target) !== null) });
   } catch {
     return null;
   }

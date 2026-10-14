@@ -625,12 +625,13 @@ export function startedPrograms(command: readonly string[], shell: boolean): str
 
 /**
  * The directory a script's commands run `program` from, as segments below `base`, collected into `out` (one entry per
- * command that starts it, joined with `/`): a plain `cd <dir>` moves the commands after it, and the script a shell a
- * command starts with -c inherits the directory of that command. Whether the reading is uncertain, as CheckPrograms
- * says it, and also for what the flattened reading cannot place: a pipeline or a subshell (a `cd` in one does not reach
- * the command after it, and readScript loses where one ends), a conditional or compound command (whether its `cd`
- * ran, and for which commands, is not in the text), eval, pushd or popd, and a `cd` whose target is no plain relative
- * path (an absolute path, `~`, `-`, an expansion or a glob).
+ * command that starts it, joined with `/`): a plain `cd <dir>` moves the commands after it (`builtin cd` and
+ * `command cd`, with command's own `-p`, are the same cd), and the script a shell a command starts with -c inherits
+ * the directory of that command. Whether the reading is uncertain, as CheckPrograms says it, and also for what the
+ * flattened reading cannot place: a pipeline or a subshell (a `cd` in one does not reach the command after it, and
+ * readScript loses where one ends), a conditional or compound command (whether its `cd` ran, and for which commands,
+ * is not in the text), eval, pushd or popd however they are reached, an option of `command` or `cd` that is not read
+ * here, and a `cd` whose target is no plain relative path (an absolute path, `~`, `-`, an expansion or a glob).
  */
 function collectExecutionDirs(script: string, depth: number, base: readonly string[], program: string, out: string[]): boolean {
   if (depth > MAX_SCRIPT_DEPTH) return true;
@@ -641,7 +642,24 @@ function collectExecutionDirs(script: string, depth: number, base: readonly stri
   for (const raw of reading.commands) {
     let words = raw;
     while (words.length > 0 && ASSIGNMENT.test(words[0]!)) words = words.slice(1);
-    if (words[0] === 'builtin') words = words.slice(1);
+    // `builtin cd` and `command cd` run the shell's cd, each possibly repeated (`command builtin cd`) and with
+    // command's own options (`command -p`); `command -v` only prints a path and runs nothing. An option of command
+    // that is not read here leaves the directory unknown.
+    for (;;) {
+      if (words[0] === 'builtin') words = words.slice(1);
+      else if (words[0] === 'command') {
+        let j = 1;
+        let prints = false;
+        while (j < words.length && /^-[pvV]+$/.test(words[j]!)) {
+          if (/[vV]/.test(words[j]!)) prints = true;
+          j++;
+        }
+        if (prints) break;
+        if (words[j] === '--') j++;
+        else if (j < words.length && words[j]!.startsWith('-')) return true;
+        words = words.slice(j);
+      } else break;
+    }
     if (words.length === 0) continue;
     const head = words[0]!;
     if (BEFORE_COMMAND.has(head) || NO_COMMAND.has(head) || NOT_FOLLOWED.has(head) || head === 'function' || head === 'pushd' || head === 'popd') return true;

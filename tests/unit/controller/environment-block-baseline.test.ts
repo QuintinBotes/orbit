@@ -139,6 +139,33 @@ describe('environmentFix', () => {
     expect(reason).not.toMatch(/[\u2013\u2014]/);
   });
 
+  // Regression: an absolute program outside the denied folders that links into the repository's virtualenv was
+  // recorded as needing checks.<id>.command changed, so the block reason (and the status and report built on it)
+  // said to cancel and start a new run, although moving the environment and repointing that external link cures it
+  // with the command unchanged.
+  it('keeps the resume for a program outside the denied folders that links into the repository\'s virtualenv, naming the move and the repointed link', () => {
+    const linked: BlockedCheck = {
+      ...dotnet,
+      checkId: 'unit',
+      signals: ['program-denied'],
+      lines: ['orbit-limits: /opt/tools/python: Operation not permitted'],
+      programDenial: { program: '/opt/tools/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository', target: '/home/acme/projects/shop/.venv/bin/python' },
+    };
+    expect(environmentFixSettings([linked])).toEqual([]);
+    const fix = environmentFix([linked])!;
+    expect(fix).toContain('"/opt/tools/python"');
+    expect(fix).toMatch(/move that tool environment outside \/home\/acme\/projects, repoint that link at it, then resume the run/);
+    expect(fix).toMatch(/the check's command does not change/);
+    expect(fix).not.toMatch(/correct checks\.unit\.command/);
+    expect(fix).not.toMatch(/[\u2013\u2014]/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [linked] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+    // The same interpreter named by its own path in the repository still needs the command corrected in a new run.
+    const placed: BlockedCheck = { ...linked, programDenial: { program: '/home/acme/projects/shop/.venv/bin/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository' } };
+    expect(environmentFixSettings([placed])).toEqual(['checks.unit.command']);
+  });
+
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {
     const reason = environmentBlockReason({ runId: 'orb-3', candidateSeq: 2, failures: [dotnet] });
     expect(reason).toMatch(/^Check build could not execute on candidate 2/);

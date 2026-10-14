@@ -18,7 +18,7 @@ import type { BaselineReport } from '../../../src/evidence/baseline.ts';
 import { finishCheckRun, planCheckRun } from '../../../src/evidence/store.ts';
 import { listQuestions } from '../../../src/inquisition/store.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
-import { BASE_REV, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
+import { BASE_REV, gitIn, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** Captured under Orbit's runner and srt 0.0.78 on macOS (the retest's in-repository virtualenv), the path renamed. */
@@ -55,6 +55,15 @@ function deniedBaseline(
     },
   });
   const ctx = lab.ctx();
+  // The base revision the report names is a real commit of the lab repository as the program callback left it, so a
+  // classification that follows a link reads the base tree, as it does for a run. A link a test makes after this
+  // helper returns is uncommitted, as one is with repository.allow_dirty_start.
+  writeFileSync(join(lab.repo, 'base-revision.txt'), 'base\n');
+  gitIn(lab.repo, 'init', '-q', '-b', 'main');
+  gitIn(lab.repo, 'add', '-A');
+  gitIn(lab.repo, 'commit', '-q', '-m', 'base');
+  const baseRevision = gitIn(lab.repo, 'rev-parse', 'HEAD');
+  const baseTree = gitIn(lab.repo, 'rev-parse', 'HEAD^{tree}');
   const dir = join(ctx.runDir, 'baseline');
   mkdirSync(dir, { recursive: true });
   const logPath = join(dir, 'unit-tests.log');
@@ -65,8 +74,8 @@ function deniedBaseline(
   const report: BaselineReport = {
     schema: 'orbit.baseline/1',
     runId: lab.runId,
-    baseRevision: BASE_REV,
-    baseTree: 'b'.repeat(40),
+    baseRevision,
+    baseTree,
     policyHash: ctx.run.policyHash,
     checkIds: ['unit-tests'],
     install: { skipped: true, reason: null, ok: false },
@@ -589,6 +598,28 @@ describe('PREFLIGHT: links the repository commits, and a comparison that names a
 
   it('a relative path to a script that does not exist (exit 127) stays a missing target', () => {
     const denied = deniedBaseline(() => './scripts/test.sh', { command: (p) => [p, '-q'], exitCode: 127, log: (p) => `orbit-limits: line 0: exec: ${p}: not found\n` });
+    const found = classifyBaseline(lab.ctx(), denied.report, denied.checkout);
+    expect(found.environment).toEqual([]);
+    expect(found.missingTargets).toEqual([expect.objectContaining({ checkId: 'unit-tests', signature: 'script-not-found' })]);
+  });
+
+  // Regression: with repository.allow_dirty_start the working repository can hold an uncommitted link the base
+  // revision does not have. Following it classified the baseline's "./tools/python: not found", a missing target
+  // the goal may add, as an environment failure of the sibling virtualenv the link points into.
+  it('an uncommitted link the base revision does not hold is not followed: ./tools/python not found stays a missing target (exit 127)', () => {
+    const denied = deniedBaseline(
+      ({ base }) => {
+        const target = join(base, 'shop-venv', 'bin', 'python');
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        return './tools/python';
+      },
+      { command: (p) => [p, '-q'], exitCode: 127, log: (p) => `orbit-limits: line 0: exec: ${p}: not found\n` },
+    );
+    // The link exists only in the working repository, made after the base commit the helper recorded: the baseline
+    // checkout never held it, so the sibling virtualenv it points into must not classify the failure.
+    mkdirSync(join(lab.repo, 'tools'), { recursive: true });
+    symlinkSync(join(lab.base, 'shop-venv', 'bin', 'python'), join(lab.repo, 'tools', 'python'));
     const found = classifyBaseline(lab.ctx(), denied.report, denied.checkout);
     expect(found.environment).toEqual([]);
     expect(found.missingTargets).toEqual([expect.objectContaining({ checkId: 'unit-tests', signature: 'script-not-found' })]);

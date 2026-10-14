@@ -247,6 +247,22 @@ describe('programExecutionDir: where the command that starts a program runs', ()
     expect(programExecutionDir([`cd tests && ${REL} -m ruff check . && ${REL} -m pytest`], true, REL)).toBe('tests');
   });
 
+  it('reads a cd reached through command or builtin, each repeated and with command\'s options, and is null for a folder change it cannot read', () => {
+    expect(programExecutionDir([`command cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`command -p cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`builtin cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`builtin command cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`command builtin cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    expect(programExecutionDir([`command command -p -- cd tests && ${REL} -m pytest`], true, REL)).toBe('tests');
+    // A folder change the text does not settle, however it is reached, leaves the folder unknown.
+    expect(programExecutionDir([`command pushd tests && ${REL} -m pytest`], true, REL)).toBeNull();
+    expect(programExecutionDir([`command -x cd tests && ${REL} -m pytest`], true, REL)).toBeNull();
+    expect(programExecutionDir([`command cd "$DIR" && ${REL} -m pytest`], true, REL)).toBeNull();
+    expect(programExecutionDir([`command cd $(cat dir.txt) && ${REL} -m pytest`], true, REL)).toBeNull();
+    // command -v only prints a path: it changes no folder.
+    expect(programExecutionDir([`command -v cd && ${REL} -m pytest`], true, REL)).toBe('');
+  });
+
   it('is null where the directory is not known for certain, or the program is not the command\'s own', () => {
     const unsure: [string[], boolean][] = [
       [[`cd "$DIR" && ${REL} -m pytest`], true],
