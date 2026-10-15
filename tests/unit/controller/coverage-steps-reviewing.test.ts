@@ -404,6 +404,17 @@ describe('a review that has to be run', () => {
     expect(lab.ctx().ledger!.state('review_rounds').used).toBe(1);
   });
 
+  // The second 0.3.1 retest: the role prompt told every reviewer "You have no shell; use Read, Grep and Glob", tools only
+  // the Claude CLI has, so a Codex reviewer found no way to open a file and judged from the packet alone.
+  it('tells a Codex reviewer to inspect the checkout with read-only shell commands, never that it has no shell', async () => {
+    const { reviewer } = await setup();
+    await run();
+    const said = `${reviewer.specs[0]!.systemPrompt}\n${reviewer.specs[0]!.prompt}`;
+    expect(said).toMatch(/read-only shell commands/);
+    expect(said).not.toMatch(/You have no shell/);
+    expect(said).not.toMatch(/use Read, Grep and Glob/);
+  });
+
   it('runs the Codex reviewer at the configured review effort, medium unless told otherwise', async () => {
     const { reviewer } = await setup();
     await run();

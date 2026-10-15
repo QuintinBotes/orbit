@@ -294,7 +294,7 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
   const scope = ctx.contract?.allowed_paths ?? c.scope.allowed_paths;
   const lines = [
     `- mode: ${c.mode}${opts.readOnly ? '; you are read-only: do not edit any file' : ''}`,
-    '- planner, reviewer, inquisitor and curator have no shell; use Read, Grep and Glob to inspect files and provided evidence',
+    '- planner, inquisitor and curator have no shell, only the file-reading tools Read, Grep and Glob; a reviewer inspects with the tools its task names and changes nothing',
     `- you may edit only: ${scope.join(', ')}`,
     `- protected (never edit): ${ctx.snapshot.effective_protected_paths.join(', ')}`,
     `- dependencies: add packages ${c.dependencies.add_packages ? 'allowed' : 'not allowed'}; lockfile changes ${c.dependencies.change_lockfile ? 'allowed' : 'not allowed'}`,

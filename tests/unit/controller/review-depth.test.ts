@@ -39,7 +39,7 @@ describe('codexDepth', () => {
     expect(codexDepth(answerOnly)).toEqual({ toolCalls: 0, reasoningTokens: 17 });
   });
 
-  it('counts commands, file reads and MCP calls, but not the answer, reasoning summaries or errors', () => {
+  it('counts the commands that looked at the checkout, but not MCP calls, the answer, reasoning summaries or errors', () => {
     const events = [
       { type: 'item.completed', item: { type: 'reasoning', text: 'thinking' } },
       { type: 'item.completed', item: { type: 'command_execution', command: 'rg foo' } },
@@ -50,7 +50,20 @@ describe('codexDepth', () => {
       { type: 'item.completed', item: { type: 'agent_message', text: '{}' } },
       { type: 'turn.completed', usage: { output_tokens: 900, reasoning_output_tokens: 640 } },
     ];
-    expect(codexDepth(events)).toEqual({ toolCalls: 3, reasoningTokens: 640 });
+    expect(codexDepth(events)).toEqual({ toolCalls: 2, reasoningTokens: 640 });
+  });
+
+  // The second 0.3.1 retest: a fresh reviewer asked to open the files looked for Read, Grep and Glob through MCP tool
+  // discovery, found none, opened nothing and blocked the tree. Discovering tools is not inspecting the checkout.
+  it('counts a session whose only tool calls were MCP tool discovery as having inspected nothing', () => {
+    const discovery = [
+      { type: 'item.completed', item: { type: 'agent_message', text: 'I will open the changed source.' } },
+      { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'codex', tool: 'list_tools', status: 'completed' } },
+      { type: 'item.completed', item: { type: 'mcp_tool_call', server: 'codex', tool: 'list_tools', status: 'completed' } },
+      { type: 'item.completed', item: { type: 'agent_message', text: '{}' } },
+      { type: 'turn.completed', usage: { output_tokens: 400, reasoning_output_tokens: 312 } },
+    ];
+    expect(codexDepth(discovery)).toEqual({ toolCalls: 0, reasoningTokens: 312 });
   });
 
   it('does not count a plan update or a reasoning-only turn as reading anything, as codexEvents does not', () => {
@@ -64,12 +77,12 @@ describe('codexDepth', () => {
     expect(describeDepth({ tool_calls: 0, reasoning_tokens: 17 })).toContain('NO TOOL CALLS');
   });
 
-  it('counts file changes and web searches as tool calls too', () => {
+  it('does not count file changes or web searches as looking at the checkout', () => {
     const events = [
       { type: 'item.completed', item: { type: 'file_change', changes: [] } },
       { type: 'item.completed', item: { type: 'web_search', query: 'q' } },
     ];
-    expect(codexDepth(events).toolCalls).toBe(2);
+    expect(codexDepth(events).toolCalls).toBe(0);
   });
 
   it('reports reasoning tokens as unknown, not zero, when the turn did not complete or the CLI does not say', () => {

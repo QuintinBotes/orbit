@@ -38,7 +38,7 @@ import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import { marksCharges } from '../../scheduling/accounting.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
-import { failBeforePolicy } from '../../policy/config.ts';
+import { failBeforePolicy, providerFamily } from '../../policy/config.ts';
 import { preferredReviewProvider } from '../../policy/review.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
@@ -151,7 +151,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
       cwd: checkout,
       readOnly: true,
       phase: 'final',
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir, 'general', opts.fresh),
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, 'general', opts.fresh, sel.provider),
     }),
     accept: (r) => {
       try {
@@ -293,7 +293,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
         readOnly: true,
         phase: 'final',
         ...(typeof caps.get(base)?.capUsd === 'number' ? { maxBudgetUsd: caps.get(base)!.capUsd } : {}),
-        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus),
+        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus, null, sel.provider),
       }),
       accept: (r) => {
         try {
@@ -1350,12 +1350,24 @@ function readText(p: string): string {
   return readFileSync(p, 'utf8');
 }
 
-function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: string, focus: ReviewFocus = 'general', fresh: FreshReviewRecord | null = null): string {
+/**
+ * How the reviewer looks at the checkout, in the tools its provider really has: the role prompt names none, since the
+ * Claude CLI's Read, Grep and Glob do not exist for Codex, which on the second 0.3.1 retest found no way to open a file
+ * and judged from the packet alone.
+ */
+function inspectionText(provider: string | null): string {
+  return providerFamily(provider ?? '') === 'codex'
+    ? 'Inspect the checkout with read-only shell commands (cat, sed -n, rg, ls, git diff, git show, git log); they run in a read-only sandbox, so never try to write, install anything or reach the network.'
+    : 'Inspect the checkout with Read, Grep and Glob; you have no shell.';
+}
+
+function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: string, focus: ReviewFocus = 'general', fresh: FreshReviewRecord | null = null, provider: string | null = null): string {
   const text = readText(join(reviewDir, 'packet.md'));
   const contract = assertContract(ctx);
   const task = [
     'Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.',
     'Reject weak proof, test weakening, scope leakage, regressions, unsafe defaults and unresolved material assumptions. Each finding must be a specific, testable claim with a location.',
+    inspectionText(provider),
     ...(focus === 'general' ? [] : [FOCUS_TEXT[focus]]),
     ...(fresh ? freshReviewText(fresh) : []),
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`,

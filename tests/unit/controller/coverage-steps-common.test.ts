@@ -303,7 +303,7 @@ describe('contract and policy helpers', () => {
     });
     const ctx = lab.ctx();
     const ro = policySummary(ctx, { readOnly: true });
-    expect(ro).toContain('planner, reviewer, inquisitor and curator have no shell; use Read, Grep and Glob');
+    expect(ro).toContain('planner, inquisitor and curator have no shell, only the file-reading tools Read, Grep and Glob');
     expect(ro).toContain('you are read-only: do not edit any file');
     expect(ro).toContain('you may edit only: apps/**, tests/**');
     expect(ro).toContain('network: registry.example.test');
