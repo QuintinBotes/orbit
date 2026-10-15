@@ -50897,7 +50897,15 @@ function sentences(statement) {
 function statesFailBefore(statement) {
   const testsFailThenLocus = new RegExp(String.raw`\btests?\b.*\b${FAIL_VERB}\b.*\b${LOCUS}\b`, "i");
   const locusThenTestsFail = new RegExp(String.raw`\b${LOCUS}\b.*\btests?\b.*\b${FAIL_VERB}\b`, "i");
-  return sentences(statement).some((s) => testsFailThenLocus.test(s) || locusThenTestsFail.test(s));
+  const testsLocusThenFail = new RegExp(String.raw`\btests?\b.*\b${LOCUS}\b(.*)\b${FAIL_VERB}\b`, "i");
+  const negatedFail = new RegExp(String.raw`\b${NEGATION}\s+${FAIL_VERB}\b`, "gi");
+  return sentences(statement).some((s) => {
+    const cleaned = s.replace(negatedFail, " ");
+    if (testsFailThenLocus.test(cleaned) || locusThenTestsFail.test(cleaned)) return true;
+    const m = testsLocusThenFail.exec(cleaned);
+    if (m === null || PASS_VERB.test(m[1])) return false;
+    return !/^after(?:wards)?\b/i.test(cleaned.slice(m.index + m[0].length).trimStart());
+  });
 }
 function escapeRegExp3(text2) {
   return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -50926,25 +50934,131 @@ function sentenceStatesCheckRunsTests(sentence, checkIds) {
   if (subject === void 0) return false;
   const verb2 = RUN_VERB.exec(sentence.slice(subject.end));
   if (verb2 === null) return false;
+  if (new RegExp(String.raw`\b${NEGATION}\b`, "i").test(sentence.slice(subject.end, subject.end + verb2.index))) return false;
   return TEST_OBJECT.test(sentence.slice(subject.end + verb2.index + verb2[0].length));
 }
 function statesCheckRunsTests(statement, checkIds) {
   return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
 }
-var LOCUS, FAIL_VERB, SUBJECT, RUN_VERB, TEST_OBJECT;
+function unknownNamedChecks(statement, checkIds) {
+  const configured = new Set([...checkIds].map((id) => id.toLowerCase()));
+  const unknown = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (word) => {
+    const lower2 = word.toLowerCase();
+    if (configured.has(lower2) || NOT_CHECK_NAMES.has(lower2) || seen.has(lower2)) return;
+    seen.add(lower2);
+    unknown.push(word);
+  };
+  for (const sentence of sentences(statement)) {
+    for (const m of sentence.matchAll(/\b([A-Za-z0-9][A-Za-z0-9_-]*)\s+checks?\b/gi)) add(m[1]);
+    for (const m of sentence.matchAll(/\bthe\s+checks?\s+(?:named\s+|called\s+)?([A-Za-z0-9][A-Za-z0-9_-]*)\b/gi)) {
+      if (!AFTER_CHECK_VERBS.has(m[1].toLowerCase())) add(m[1]);
+    }
+  }
+  return unknown;
+}
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
     LOCUS = String.raw`(?:(?:on|against)\s+(?:the\s+)?base revision|before\s+(?:the|this)\s+(?:change|fix)|without\s+(?:the|this)\s+change)`;
     FAIL_VERB = String.raw`(?:fails?|failing|failed)`;
+    NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|never|no\s+longer|cannot|can['’]t|won['’]t|will\s+not|is\s+not|isn['’]t)`;
+    PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
     TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
+    NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
+      "the",
+      "a",
+      "an",
+      "this",
+      "that",
+      "these",
+      "those",
+      "each",
+      "every",
+      "any",
+      "all",
+      "one",
+      "its",
+      "their",
+      "our",
+      "your",
+      "his",
+      "her",
+      "no",
+      "same",
+      "other",
+      "required",
+      "mandatory",
+      "optional",
+      "configured",
+      "existing",
+      "trusted",
+      "relevant",
+      "new",
+      "test",
+      "tests",
+      "testing",
+      "ci",
+      "project",
+      "repository"
+    ]);
+    AFTER_CHECK_VERBS = /* @__PURE__ */ new Set([
+      "run",
+      "runs",
+      "running",
+      "discover",
+      "discovers",
+      "discovering",
+      "collect",
+      "collects",
+      "collecting",
+      "execute",
+      "executes",
+      "executing",
+      "pick",
+      "picks",
+      "picking",
+      "find",
+      "finds",
+      "finding",
+      "import",
+      "imports",
+      "importing",
+      "is",
+      "are",
+      "was",
+      "were",
+      "has",
+      "have",
+      "had",
+      "do",
+      "does",
+      "did",
+      "will",
+      "would",
+      "can",
+      "could",
+      "should",
+      "must",
+      "pass",
+      "passes",
+      "passed",
+      "fail",
+      "fails",
+      "failed"
+    ]);
   }
 });
 
 // src/evidence/report.ts
 import { basename as basename15, isAbsolute as isAbsolute19, join as join41, relative as relative5, sep as sep11 } from "node:path";
+function contractAssumptionsHash(assumptions) {
+  return hashObject(assumptions.map((a) => ({ id: a.id, statement: a.statement })));
+}
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
@@ -51191,10 +51305,14 @@ function evaluateEvidence(input) {
   for (const a of contract.assumptions ?? []) {
     const named2 = statesCheckRunsTests(a.statement, configuredCheckIds);
     if (named2 === null) continue;
-    const itsChecks = named2.length > 0 ? [...named2] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
+    const unknown = unknownNamedChecks(a.statement, configuredCheckIds);
+    const itsChecks = unknown.length > 0 ? [...unknown] : named2.length > 0 ? [...named2] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
     let status2;
     let reason;
-    if (assumptionProbe === null) {
+    if (unknown.length > 0) {
+      status2 = "unverified";
+      reason = unknown.map((name) => `${name}: not a configured check`).join("; ");
+    } else if (assumptionProbe === null) {
       status2 = "unverified";
       reason = itsChecks.length > 0 ? `no probe ran for ${itsChecks.join(", ")}` : "no probe ran";
     } else if (itsChecks.length === 0) {
@@ -51208,7 +51326,7 @@ function evaluateEvidence(input) {
         return probed === void 0 ? `${id}: no probe result` : `${id}: ${probed.outcome} (${probed.reason})`;
       }).join("; ");
     }
-    assumptions.push({ assumption_id: a.id, status: status2, reason, checks: itsChecks });
+    assumptions.push({ assumption_id: a.id, statement: a.statement, status: status2, reason, checks: itsChecks });
     if (status2 !== "supported") note3(assumptionMode === "required" ? incomplete : unverified, `assumption ${a.id}: unverified (${reason})`);
   }
   const uiRows = (input.uiResults ?? []).map((u) => ({ journey: u.journey, status: u.status, artifacts: [...u.artifacts] }));
@@ -51249,7 +51367,7 @@ function evaluateEvidence(input) {
     checks,
     ui: uiRows,
     acceptance_evidence: criteria,
-    ...assumptions.length > 0 ? { assumptions } : {},
+    ...assumptions.length > 0 ? { assumptions, assumptions_hash: contractAssumptionsHash(contract.assumptions ?? []) } : {},
     verdict: fail3.length > 0 ? "FAIL" : incomplete.length > 0 ? "INCOMPLETE" : "PASS",
     unverified
   };
@@ -51286,6 +51404,9 @@ function staleReasons(report2, ctx) {
   if (report2.policy_hash !== policy) reasons.push(`policy snapshot changed: evidence used ${report2.policy_hash}, current is ${policy}`);
   const config = aggregateCheckConfigHash(ctx.snapshot, report2.checks.map((c) => c.id));
   if (report2.check_config_hash !== config) reasons.push("check configuration changed since the checks ran");
+  if (report2.assumptions_hash !== void 0 && ctx.contract !== void 0 && contractAssumptionsHash(ctx.contract.assumptions) !== report2.assumptions_hash) {
+    reasons.push("the contract's assumptions changed after the evidence was recorded");
+  }
   return reasons;
 }
 function isFresh(report2, ctx) {
@@ -54078,7 +54199,7 @@ function assembleFinalReport(db, run, opts) {
     assumptions: [
       ...(contract?.assumptions ?? []).map((a) => {
         const evaluated = evaluatedAssumptions.get(a.id);
-        return evaluated ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
+        return evaluated && evaluated.statement === a.statement ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
       }),
       ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))
     ],
@@ -60817,7 +60938,7 @@ function normalizeText(text2) {
   let negations = 0;
   const tokens3 = /* @__PURE__ */ new Set();
   for (const w of words2) {
-    if (NEGATION.has(w)) {
+    if (NEGATION2.has(w)) {
       negations++;
       continue;
     }
@@ -60915,7 +61036,7 @@ function proposeHypothesis(db, runId, input, clock) {
 function eliminatedHypothesisIds(db, runId) {
   return listHypotheses(db, runId).filter((h) => h.status === "eliminated").map((h) => h.id);
 }
-var STOP2, NEGATION, FOLD, ANCHOR, CONTENT_THRESHOLD, TEST_THRESHOLD;
+var STOP2, NEGATION2, FOLD, ANCHOR, CONTENT_THRESHOLD, TEST_THRESHOLD;
 var init_hypotheses = __esm({
   "src/inquisition/hypotheses.ts"() {
     "use strict";
@@ -61013,7 +61134,7 @@ var init_hypotheses = __esm({
       "up",
       "over"
     ]);
-    NEGATION = /* @__PURE__ */ new Set([
+    NEGATION2 = /* @__PURE__ */ new Set([
       "not",
       "no",
       "never",
@@ -61364,7 +61485,7 @@ function clauseBefore(text2, index) {
   return cut >= 0 ? head.slice(cut + 1) : head;
 }
 function isNegated2(text2, index) {
-  return NEGATION2.test(clauseBefore(text2, index));
+  return NEGATION3.test(clauseBefore(text2, index));
 }
 function normalizeMode(word) {
   const w = word.toLowerCase().replace(/\s+/g, "-");
@@ -61414,7 +61535,7 @@ function reconcileAuthority(goal, config) {
   }
   return out;
 }
-var MODE_RANK, ACTION_PATTERNS, NEGATION2, MODE_WORDS, MODE_PHRASES;
+var MODE_RANK, ACTION_PATTERNS, NEGATION3, MODE_WORDS, MODE_PHRASES;
 var init_authority2 = __esm({
   "src/contract/authority.ts"() {
     "use strict";
@@ -61425,7 +61546,7 @@ var init_authority2 = __esm({
       { action: "push_task_branch", label: "push a branch", re: /\bpush(?:es|ed|ing)?\b[^.;\n]{0,25}\b(?:branch|branches|origin|remote|changes|commits?|code)\b/gi },
       { action: "open_pull_request", label: "open a pull request", re: /\b(?:open|opens|opened|opening|create|creates|created|creating|raise|submit)\b[^.;\n]{0,20}\b(?:pull[- ]requests?|prs?)\b/gi }
     ];
-    NEGATION2 = /\b(?:do not|don'?t|dont|never|must not|mustn'?t|should not|shouldn'?t|without|no|not|avoid|skip|refrain from)\b/i;
+    NEGATION3 = /\b(?:do not|don'?t|dont|never|must not|mustn'?t|should not|shouldn'?t|without|no|not|avoid|skip|refrain from)\b/i;
     MODE_WORDS = "(autonomous[- ]delivery|release|supervised|autonomous)";
     MODE_PHRASES = [
       /\b(autonomous[- ]delivery)\b(?:\s+(?:mode|profile))?/gi,
@@ -62755,7 +62876,7 @@ async function verifyingStep(ctx) {
   if (amended) return amended;
   if (cand.status === "INVALIDATED") return violatingCandidate(ctx, cand);
   const existing = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
-  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot }) && !failBeforeStale(ctx, cand, existing)) return act(ctx, cand, existing);
+  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot, contract }) && !failBeforeStale(ctx, cand, existing)) return act(ctx, cand, existing);
   let scope = cand.scope ?? await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths });
   if (!cand.scope) setCandidateScope(ctx.db, cand.id, scope);
   let scopeGate = implementationScopeGate(scope, ctx.snapshot);
@@ -63394,7 +63515,7 @@ async function reviewingStep(ctx) {
   const cand = ctx.candidate;
   if (!cand || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is REVIEWING without a candidate or budget`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
-  if (!ev || ev.verdict !== "PASS" || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot })) {
+  if (!ev || ev.verdict !== "PASS" || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot, contract })) {
     throw new OrbitError("STALE_EVIDENCE", `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
   await cancelObsoleteWork(ctx, cand.treeHash);
@@ -64447,7 +64568,7 @@ async function deliveringStep(ctx) {
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is DELIVERING without a candidate`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === "APPROVE").at(-1) ?? null;
-  if (!ev || !review || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot })) {
+  if (!ev || !review || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot, contract })) {
     return move2(ctx, "VERIFYING", `delivery refused: ${!ev ? "no live evidence" : !review ? "no approving review of this tree" : "the evidence is stale"}; verifying again`);
   }
   const waiting = await blockOnOpenQuestions(ctx, "delivery");
