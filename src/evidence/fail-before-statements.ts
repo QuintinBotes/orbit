@@ -76,6 +76,9 @@ const TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpyte
  * configured check id), then one of those verbs, then the tests or a test file. A check that merely passes, a test
  * runner with no object, and the application running tests are not it.
  */
+/** What an agent joined by "and" or "or" starts as: a check named as such, the test command or the test runner. */
+const AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
+
 /** A form of "to be" or "get" directly before the run verb's participle: the passive "the tests are run by the check". */
 const PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
 
@@ -100,7 +103,16 @@ function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly stri
   if (by === null) return false;
   // The agent is the phrase "by" introduces, up to the end of its clause: a check named in a later clause ("run by CI
   // after the lint check passes") is not what runs the tests.
-  const agent = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|and|but|because|until|unless|so|then|where)\b/i)[0] ?? '';
+  const clause = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|but|because|until|unless|so|then|where)\b/i)[0] ?? '';
+  // "and" or "or" joins another agent ("by CI and the unit-tests check") when what follows starts as one; anything else
+  // after it begins a new clause, which names no agent of this statement.
+  const [first, ...joined] = clause.split(/\b(?:and|or)\b/i);
+  let agent = first ?? '';
+  for (const part of joined) {
+    const startsAsAgent = AGENT_START.test(part) || [...new Set(checkIds)].some((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])`, 'i').test(part));
+    if (!startsAsAgent) break;
+    agent += ` and ${part}`;
+  }
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
 }
 

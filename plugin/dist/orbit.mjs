@@ -50949,7 +50949,14 @@ function sentenceStatesTestsRunByCheck(sentence, checkIds) {
   const after = rest.slice(verb2.index + verb2[0].length);
   const by = /^\s*by\b/i.exec(after);
   if (by === null) return false;
-  const agent = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|and|but|because|until|unless|so|then|where)\b/i)[0] ?? "";
+  const clause = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|but|because|until|unless|so|then|where)\b/i)[0] ?? "";
+  const [first, ...joined] = clause.split(/\b(?:and|or)\b/i);
+  let agent = first ?? "";
+  for (const part of joined) {
+    const startsAsAgent = AGENT_START.test(part) || [...new Set(checkIds)].some((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp3(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])`, "i").test(part));
+    if (!startsAsAgent) break;
+    agent += ` and ${part}`;
+  }
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
 }
 function sentenceStatesCheckRunsTests(sentence, checkIds) {
@@ -50993,7 +51000,7 @@ function unknownNamedChecks(statement, checkIds) {
   }
   return unknown;
 }
-var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, AGENT_START, PASSIVE_RUN, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
@@ -51004,6 +51011,7 @@ var init_fail_before_statements = __esm({
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
     TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
+    AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
     PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
