@@ -117,7 +117,7 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
     gate ? (gate.fix ?? `${orbitHint('doctor')} shows each failing capability with the command that fixes it; then run again`) : null,
     // Workers loading a plugin the policy does not allow are all refused after they start: the exact line doctor prints.
     ...plugins.map((p) => `${p.fix}, then run again (${orbitHint('doctor')} lists every plugin it judged)`),
-    delivery ? `${delivery.fix} (or set mode: autonomous to run without delivery), then run again` : null,
+    delivery ? `${delivery.fix}, then run again` : null,
   ]
     .filter((f): f is string => f !== null)
     .join('; and ');

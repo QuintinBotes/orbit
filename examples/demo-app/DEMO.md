@@ -62,6 +62,10 @@ not encode the defect.
   the app, rather than loosening the expectations.
 - `scripts/demo/run-live-demo.sh --repo OWNER/NAME`: live providers, a private GitHub
   repository, billed. Reports land in `docs/demos/<date>/`.
+- Running a goal by hand with `orbit run`: the policy here is `autonomous-delivery`, so a
+  run is refused before any model call unless `GH_TOKEN` is set. To run locally without
+  delivering, set `mode: autonomous` and `actions.commit`, `actions.push_task_branch`,
+  `actions.open_pull_request` and `actions.repair_ci` to `false`, as the refusal says.
 
 ## Resetting a live demo repository
 

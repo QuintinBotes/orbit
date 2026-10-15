@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { defaultConfig } from '../../../src/policy/config.ts';
+import { defaultConfig, validateConfig } from '../../../src/policy/config.ts';
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../../src/controller/delivery-env.ts';
 import { environmentGate } from '../../../src/controller/gates.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
@@ -35,6 +35,25 @@ describe('deliveryEnvironmentProblem', () => {
     const bin = binWithGh();
     expect(deliveryEnvironmentProblem(config, { PATH: bin })).toMatchObject({ code: 'AUTH_MISSING', summary: 'GH_TOKEN is not set for the controller' });
     expect(deliveryEnvironmentProblem(config, { PATH: bin, GH_TOKEN: 'ghp_acme' })).toBeNull();
+  });
+
+  // The 0.3.1 retest: the demo's policy (autonomous-delivery, every delivery action on) without GH_TOKEN was refused with
+  // "or set mode: autonomous to run without delivery", and following that alone was refused again, since a delivery action
+  // left on is invalid in a mode that does not deliver. The way out names every setting to change.
+  it('names the local way out exactly: the policy it describes validates and does not deliver', () => {
+    const demo = { version: 1, mode: 'autonomous-delivery', actions: { commit: true, push_task_branch: true, open_pull_request: true, repair_ci: true } };
+    const bin = binWithGh();
+    for (const env of [{ PATH: bin }, { PATH: '/nonexistent' }]) {
+      const p = deliveryEnvironmentProblem(validateConfig(demo), env)!;
+      expect(p.fix).toContain('or, to run without delivery, set mode: autonomous and actions.commit, actions.push_task_branch, actions.open_pull_request and actions.repair_ci to false in .orbit/config.yaml');
+      // Following it: the mode and each action it names, read from the advice itself.
+      const named = [...p.fix.matchAll(/actions\.(\w+)/g)].map((m) => m[1]!);
+      const followed = validateConfig({ ...demo, mode: 'autonomous', actions: { ...demo.actions, ...Object.fromEntries(named.map((a) => [a, false])) } });
+      expect(deliversThroughGithub(followed)).toBe(false);
+    }
+    // Only the actions that are on are named.
+    const one = deliveryEnvironmentProblem(validateConfig({ version: 1, mode: 'autonomous-delivery', actions: { commit: true, push_task_branch: true, open_pull_request: false, repair_ci: false } }), { PATH: bin })!;
+    expect(one.fix).toContain('set mode: autonomous and actions.commit and actions.push_task_branch to false in .orbit/config.yaml');
   });
 });
 
