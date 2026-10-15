@@ -77,7 +77,17 @@ interface Unit {
   category?: CheckCategory;
   cwd?: string;
   command?: string[];
+  /** The check's timeout_seconds; LAB_TIMEOUT when absent. */
+  timeout?: number;
 }
+
+/**
+ * The lab's manual clock advances by the runner's poll interval on every poll without waiting, so simulated time runs far
+ * ahead of real time: on a GitHub runner 60 simulated seconds passed in about half a real second, before node --test had
+ * finished, and every probe timed out. The checks, the probe's bound and the run's wall time are therefore an hour, a
+ * day for the wall time, so only a test that means to time out (with a timeout of its own) does.
+ */
+const LAB_TIMEOUT = 3600;
 
 /** How a check's latest run ended on a candidate: a flaky pass is a pass that needed a rerun. */
 type Ran = 'PASSED' | 'FAILED' | 'flaky';
@@ -105,8 +115,10 @@ async function setup(o: Setup = {}) {
     deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } },
     tweak: (c) => {
       c.providers.codex = { ...c.providers.codex!, data_policy_eligible: true, model: 'gpt-6-astra' };
+      c.verification = { ...c.verification, fail_before_timeout_seconds: LAB_TIMEOUT };
+      c.scheduler.hard_limits.wall_minutes = 24 * 60;
       c.checks = { lint: { ...defaultCheck('lint'), command: [process.execPath, '-e', '0'], timeout_seconds: 60, category: 'lint' } };
-      for (const [id, u] of Object.entries(tests)) c.checks[id] = { ...defaultCheck(id), command: u.command ?? [process.execPath, '--test'], timeout_seconds: 60, category: u.category ?? 'test', cwd: u.cwd ?? '.' };
+      for (const [id, u] of Object.entries(tests)) c.checks[id] = { ...defaultCheck(id), command: u.command ?? [process.execPath, '--test'], timeout_seconds: u.timeout ?? LAB_TIMEOUT, category: u.category ?? 'test', cwd: u.cwd ?? '.' };
     },
   });
   const reviewer = scriptedAdapter(lab, ({ spec }: { spec: { prompt: string } }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [] }));
@@ -573,9 +585,9 @@ describe('a probe that cannot establish discrimination leaves the finding open, 
   });
 
   it('a timeout on the pre-repair tree', async () => {
-    // The check's own timeout: the lab's manual clock runs ahead while the runner polls, so the hanging run times out
-    // soon, and the control tree's run ends before it would.
-    currentUnit = { command: [process.execPath, 'tests/unit/mul-input.test.mjs'] };
+    // The check's own timeout of 60 s: the lab's manual clock runs ahead while the runner polls, so the hanging run times
+    // out soon, and the control tree's run ends before it would.
+    currentUnit = { command: [process.execPath, 'tests/unit/mul-input.test.mjs'], timeout: 60 };
     const source = "import { mul } from '../../apps/calc.mjs';\nlet threw = false;\ntry { mul('a', 2); } catch { threw = true; }\nif (!threw) await new Promise((r) => setTimeout(r, 60_000));\n";
     const { finding } = await repairThenApprove({ source, before: placeholder });
     expect(finding.status).not.toBe('resolved');

@@ -242,7 +242,15 @@ describe('a repair that named its validation test', () => {
   it.each([['a'.repeat(64)], [null]])('closes the finding when the named test changed, fails on the pre-repair tree, the required check passed on the new tree, and the reviewer no longer raises it (log %s)', async (logSha) => {
     // The unit check runs every test file, the repair's among them: on the pre-repair tree mul('a', 2) is NaN, so the
     // repair's test fails there, and without it the check passes there (ADR 0015).
-    const { cand, repo } = await setup({ tweak: (c) => void (c.checks.unit!.command = [process.execPath, '--test']) });
+    // An hour for the check and the repair probe's bound, and a day of wall time: the lab's manual clock runs far ahead of
+    // real time while the runner polls, and on a GitHub runner a 60 s check timed out before node --test finished.
+    const { cand, repo } = await setup({
+      tweak: (c) => {
+        c.checks.unit = { ...c.checks.unit!, command: [process.execPath, '--test'], timeout_seconds: 3600 };
+        c.verification = { ...c.verification, fail_before_timeout_seconds: 3600 };
+        c.scheduler.hard_limits.wall_minutes = 24 * 60;
+      },
+    });
     // The unit check passed cleanly on the reviewed candidate, as a probe needs.
     lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, started_at) VALUES ('cr-0', ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', 'PASSED', 0, 1)", lab.runId, cand.id, cand.treeHash);
     // First round: the reviewer asks for a repair of COR-1.
