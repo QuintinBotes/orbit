@@ -22,21 +22,27 @@
  * Every reason here is a run of sentences, each starting with a capital letter, and names each check once: checks that
  * share a cause and its evidence lines are listed together before them.
  */
+import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readJsonIfExists } from '../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
-import { directInvocation } from '../evidence/check-command.ts';
-import { classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
+import { directInvocation, programExecutionDir, startedProgram, startedPrograms } from '../evidence/check-command.ts';
+import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
 import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
+import { gitEnv } from '../evidence/git.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
 import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
+import { repositoryDenials } from '../isolation/profiles.ts';
+import { canonicalPath, isExecutableFile, isWithin } from '../isolation/util.ts';
+import type { CheckDefinition } from '../policy/types.ts';
 import { UI_RESULT_FILE } from '../ui/runner.ts';
 import type { UiNotExecuted } from '../ui/types.ts';
-import { folderFormRunsAt, runWorktreeRoot, type RunContext } from './context.ts';
+import { folderFormRunsAt, homeOf, runWorktreeRoot, type RunContext } from './context.ts';
+import { policyFixClause } from './resume.ts';
 import { uiEvidenceDir } from './verification.ts';
 
 /** Output read from a check's log at most, so a runaway log stays cheap. */
@@ -62,7 +68,75 @@ export type FailureWithCommand = EnvironmentFailure & {
    * the end of its log (stoppedNodeFix), so the reason carries it whole where the quoted note is cut.
    */
   nodeFix?: string;
+  /**
+   * For a program the check runs that could not start (program-denied, or program-not-found where srt hides a denied
+   * folder) and lies in a folder the check profile denies because of where the repository is: that folder.
+   */
+  programDenial?: ProgramDenial;
 };
+
+/**
+ * A program a check runs that lies in a folder its sandbox denies because of where the repository is
+ * (isolation/profiles.ts repositoryDenials): a tool environment in the repository or in a folder beside it, run by an
+ * absolute path (0.3.0 retest).
+ */
+export interface ProgramDenial {
+  program: string;
+  /** The repository: no check reads it, each runs in a checkout of its own outside it. */
+  repository: string;
+  /** The folder that holds the repository and its sibling projects, when the check profile denies it. */
+  parent: string | null;
+  /** Where the program lies: in the repository, or in a folder beside it. */
+  under: 'repository' | 'parent';
+  /**
+   * For a program that lies there only through a link (a link from elsewhere to a program in the repository, or one the
+   * repository commits to a tool environment beside it): the file it links to, which the sandbox refuses it for.
+   */
+  target?: string;
+  /**
+   * For a program the command names by a bare name, which the check looks up on its PATH: that name, and the setting
+   * that gives the check that PATH (`checks.<id>.env`), or null for the PATH Orbit runs its checks with, its own.
+   */
+  onPath?: { name: string; setBy: string | null };
+}
+
+/**
+ * Where `program` lies when a check profile denies it because of where the repository is, or null: a relative path (a
+ * file of the checkout) or one outside both folders. The program counts where it is written, with its folder resolved:
+ * an interpreter in a tool environment links to one outside it, and the sandbox refuses it for the folder it lies in.
+ * It counts where it links to as well (`target`; third review of the 0.3.0 retest fix): a link from elsewhere into such
+ * a folder is refused for the file it leads to. `own` says which paths are the check's own (its checkout), which never
+ * count.
+ */
+export function programDenial(program: string, repoRoot: string, homeDir: string, own: (path: string) => boolean = () => false): ProgramDenial | null {
+  if (!isAbsolute(program)) return null;
+  const { repository, parent } = repositoryDenials(repoRoot, homeDir);
+  const spelled = resolve(program);
+  const paths = [spelled, join(canonicalPath(dirname(spelled)), basename(spelled))].filter((p) => !own(p));
+  const real = canonicalPath(spelled);
+  const target = !paths.includes(real) && !own(real) ? real : null;
+  const folders = [['repository', repository] as const, ...(parent !== null ? [['parent', parent] as const] : [])];
+  for (const [under, dir] of folders) if (paths.some((p) => isWithin(p, dir))) return { program, repository, parent, under };
+  for (const [under, dir] of folders) if (target !== null && isWithin(target, dir)) return { program, repository, parent, under, target };
+  return null;
+}
+
+/** Why a program in a folder the check sandbox denies cannot start: the folders it denies, and which one holds the program. */
+export function programDenialCause(d: ProgramDenial): string {
+  const folders = d.parent !== null ? `the repository (${d.repository}) and the folder that holds it and its sibling projects (${d.parent})` : `the repository (${d.repository})`;
+  const where = d.under === 'repository' ? 'the repository' : 'a folder beside the repository';
+  if (d.onPath) {
+    const leads = d.target !== undefined ? `links to "${d.target}" in` : 'leads into';
+    return `the check sandbox denies ${folders}, and the program "${d.onPath.name}" the check runs is "${d.program}" on ${pathOf(d.onPath.setBy)}, which ${leads} ${where}, so it cannot start in a check`;
+  }
+  const lies = d.target !== undefined ? `links to "${d.target}", which lies in` : 'lies in';
+  return `the check sandbox denies ${folders}, and the program "${d.program}" the check runs ${lies} ${where}, so it cannot start in a check`;
+}
+
+/** The PATH a check looks a bare name up on: the one its env sets, or the one Orbit runs its checks with (evidence/runner.ts checkEnv). */
+function pathOf(setBy: string | null): string {
+  return setBy !== null ? `the PATH ${setBy} sets` : 'the PATH Orbit runs its checks with';
+}
 
 export type BlockedCheck = FailureWithCommand & {
   /** The baseline-exception question PREFLIGHT raised for this check's pre-existing failure; null for a check that could not execute (there is no failure to except). */
@@ -241,18 +315,45 @@ function formatFix(f: FailureWithCommand): string {
 
 /**
  * How to fix a check the sandbox or the operating system refused (issue #10): the .NET cases by name, any other denial
- * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through the check's
- * network_hosts or the dependency install, and a program that is not installed where the check runs. Null for a crash or
- * a check that could not be started, whose way forward is already said.
+ * through `orbit doctor`, which starts each check's executable in the sandbox, a refused connection through a cache
+ * filled outside the sandbox, the check's network_hosts or the dependency install, and a program that is not installed
+ * where the check runs. Null for a crash or a check that could not be started, whose way forward is already said.
  *
  * A .NET named pipe the sandbox refused under /tmp (ADR 0009, addendum) has three fixes: an MSBuild worker node seen in
  * `dotnet test`'s own crash (MSB1025, socket-denied) is pinned with -m:1 on the check's command; one the runner stopped
  * the check for (pipe-denied) has the exact fix for the check's command at the end of its log, where the runner wrote it
  * knowing the SDK the checkout pins; dotnet format's build host (pipe-denied, or socket-denied in a dotnet format check)
  * takes the form that loads no project.
+ *
+ * A program the check runs in a folder the check sandbox denies (programDenial) is placed where a check can start it: a
+ * tool environment built in each checkout by the dependency install, or one outside the repository's parent folder.
  */
 export function environmentFix(failures: readonly FailureWithCommand[], platform: NodeJS.Platform = process.platform): string | null {
+  const { fixes } = environmentFixes(failures, platform);
+  return fixes.length > 0 ? fixes.join('; and ') : null;
+}
+
+/**
+ * The policy settings the fix of `failures` (environmentFix) changes: a check's command (-m:1, the form of dotnet format
+ * that loads no project, a program placed where a check can start it), or the check itself (a dotnet format check
+ * removed). The policy is frozen with the run, so a resume runs the same check again and only a new run picks such a
+ * fix up (0.3.0 retest). Empty when the fix is the environment's (a cache filled, a program installed, the srt Orbit
+ * ships, a tool environment moved and a link outside the repository's folders repointed at it) or may be either: a
+ * filesystem denial, which a check's env or the host may cure, and a network denial, which
+ * a cache filled outside the sandbox may cure (a pinned dependency restore) where allowing the host would change the
+ * check's network_hosts. A required policy change is recorded only when no environment-only remedy exists.
+ */
+export function environmentFixSettings(failures: readonly FailureWithCommand[], platform: NodeJS.Platform = process.platform): string[] {
+  return environmentFixes(failures, platform).settings;
+}
+
+function environmentFixes(failures: readonly FailureWithCommand[], platform: NodeJS.Platform): { fixes: string[]; settings: string[] } {
   const fixes: string[] = [];
+  const settings = new Set<string>();
+  const change = (group: readonly EnvironmentFailure[], key: (id: string) => string): void => {
+    for (const f of group) settings.add(key(f.checkId));
+  };
+  const command = (id: string): string => `checks.${id}.command`;
   const has = (signal: EnvironmentSignal): FailureWithCommand[] => failures.filter((f) => f.signals.includes(signal));
   // A refused pipe can also leave a Seatbelt line for its fixed path under /tmp, which the tool's TMPDIR does not move.
   const refusedFs = failures.filter((f) => !f.signals.includes('pipe-denied') && (f.signals.includes('filesystem-denied') || f.signals.includes('permission-denied') || f.signals.includes('sandbox-violation')));
@@ -276,11 +377,15 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
   // MSBuild's worker nodes each bind a named pipe, a Unix socket under /tmp the check sandbox refuses; on one node it
   // starts none. Verified under Orbit's runner and srt on macOS: the dotnet test that failed with MSB1025 after five
   // minutes passes with -m:1 (ADR 0010; ADR 0009, addendum).
-  if (msbuild.length > 0) fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+  if (msbuild.length > 0) {
+    fixes.push(`${forChecks(msbuild)}this is MSBuild starting a worker node, whose named pipe .NET makes a Unix socket under /tmp, and the check sandbox does not let a check create one: build on one MSBuild node, with -m:1 on the check's dotnet command (for example [dotnet, test, -m:1]), which orbit doctor prints for the check's own command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")`);
+    change(msbuild, command);
+  }
   // The runner's exact fix for each, when the policy shows the command: the quoted note is cut before it (review of #10).
   if (stopped.length > 0) {
     const exact = stopped.every((f) => f.nodeFix !== undefined) ? [...new Set(stopped.map((f) => f.nodeFix!))] : null;
     fixes.push(`${forChecks(stopped)}the sandbox refuses MSBuild worker nodes their named pipe under /tmp: ${exact ? exact.join('; ') : 'the check\'s log ends with the fix for its command (docs/troubleshooting.md, ".NET builds and MSBuild worker nodes")'}`);
+    change(stopped, command);
   }
   // dotnet format reads -m:1 as the project to format and fails, and every form of it but whitespace --folder loads the
   // project through a build host whose pipe the sandbox refuses (measured under Orbit's runner and srt: SDK 9 on macOS,
@@ -292,29 +397,78 @@ export function environmentFix(failures: readonly FailureWithCommand[], platform
   if (folder.length > 0) {
     const ids = folder.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) takes no -m:1, which it reads as the project to format, and it loads the project through a build host whose named pipe .NET binds under /tmp, which no check sandbox may use: check whitespace with the form that loads no project, ${folder.map(formatFix).join('; ')}, and run the style and analyzer checks outside Orbit, in CI (docs/troubleshooting.md, "dotnet format under the sandbox")`);
+    change(folder, command);
   }
   if (outside.length > 0) {
     const ids = outside.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? 'checks' : 'check'} ${ids.join(', ')}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join('; ')} ${FORMAT_OUTSIDE_REASON}`);
+    change(outside, (id) => `checks.${id}`);
   }
   // On macOS a NuGet restore refused its host reaches nothing better with the host allowed: .NET cannot verify a
   // certificate in the sandbox there, so its fix is the cache filled outside it (review of #10).
   const network = has('network-denied');
   const nugetOnMac = platform === 'darwin' ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
+  // A pinned dependency restore refused its host may need nothing but its cache filled, which is the environment's to
+  // fix: a resume reruns the baseline against the filled cache. Only the other remedy, allowing the host, changes the
+  // frozen policy, so no policy change is recorded for a network denial and both remedies are named (review).
   if (network.length > nugetOnMac.length) {
-    fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: add the host to the check\'s network_hosts (it must also be covered by network.allowed_hosts), or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
+    fixes.push('the check reached for a host its policy does not let it reach, and the sandbox\'s network proxy refused it: if it was restoring pinned dependencies, fill their cache outside the sandbox (run that restore outside Orbit, where the check reads the same cache) and resume this run, which runs the baseline again; or add the host to the check\'s network_hosts in .orbit/config.yaml (it must also be covered by network.allowed_hosts) and start a new run, because this run\'s policy is frozen; or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)');
   }
   if (has('nuget-http-denied').length > 0) {
     fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
   } else if (nugetOnMac.length > 0 || has('nuget-tls-denied').length > 0) {
     fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
-  const missing = has('program-not-found');
+  // A program in the repository or a folder beside it: refused on macOS (program-denied), hidden by srt on Linux
+  // (program-not-found). Moving it changes the check's command, whatever the tool (0.3.0 retest), and for a bare name
+  // the PATH it was looked up on.
+  const located = failures.filter((f) => f.programDenial !== undefined && (f.signals.includes('program-denied') || f.signals.includes('program-not-found')));
+  // A program outside the denied folders that is refused only for where it links to (`/opt/tools/python` into the
+  // repository's virtualenv), whether the command names it or the check finds it on a PATH: moving the environment and
+  // repointing that link cures it without changing the check's command or its PATH, so no policy change is recorded and
+  // a resume runs the check again.
+  const byExternalLink = located.filter((f) => f.programDenial!.target !== undefined && isAbsolute(f.programDenial!.program));
+  const byPath = located.filter((f) => f.programDenial!.onPath !== undefined && !byExternalLink.includes(f));
+  const byPlaced = located.filter((f) => f.programDenial!.onPath === undefined && !byExternalLink.includes(f));
+  if (byExternalLink.length > 0) {
+    const d = byExternalLink[0]!.programDenial!;
+    const programs = [...new Set(byExternalLink.map((f) => f.programDenial!.program))];
+    fixes.push(`a program the check runs (${programs.map((p) => `"${p}"`).join(', ')}) lies outside the folders the check sandbox denies and links to a tool environment inside them: move that tool environment outside ${d.parent ?? d.repository}, repoint ${programs.length > 1 ? 'those links' : 'that link'} at it, then resume the run; the check's command does not change (docs/configuration.md, "Tool environments")`);
+  }
+  if (byPlaced.length > 0) {
+    const d = byPlaced[0]!.programDenial!;
+    const reads = d.parent !== null ? 'may read neither the repository nor the folder that holds it and its sibling projects' : 'may not read the repository';
+    fixes.push(`a check runs in a checkout of its own, outside the repository, and its sandbox ${reads}: build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, or place it outside ${d.parent ?? d.repository}, then correct ${byPlaced.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    change(byPlaced, command);
+  }
+  // A bare name the check looked up on a PATH that leads into a denied folder (an activated tool environment there): the
+  // PATH is the fix. Orbit's own is the environment's, so a resume from a shell without it runs the check again; a PATH
+  // the check's env sets is the frozen policy's.
+  const ownPath = byPath.filter((f) => f.programDenial!.onPath!.setBy === null);
+  if (ownPath.length > 0) {
+    fixes.push(`the check looks its program up on the PATH Orbit runs its checks with, the PATH of the shell that started orbit run or orbit resume --foreground (a service keeps the one orbit service install recorded), and that PATH leads into a folder the check sandbox denies: run Orbit from a shell whose PATH does not (deactivate the tool environment there, and install the service again from such a shell), then resume the run; or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, a change to ${ownPath.map((f) => command(f.checkId)).join(', ')} that needs a new run (docs/configuration.md, "Tool environments")`);
+  }
+  const checkPath = byPath.filter((f) => f.programDenial!.onPath!.setBy !== null);
+  if (checkPath.length > 0) {
+    const keys = checkPath.map((f) => f.programDenial!.onPath!.setBy!);
+    fixes.push(`the PATH the check's env sets leads into a folder the check sandbox denies: take that folder out of it, or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${[...new Set(keys)].join(', ')} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
+    for (const key of keys) settings.add(key);
+  }
+  // A refused program the shell found on PATH may be cured by the PATH, Orbit's own included, so its fix is not only the
+  // check's command (0.3.0 retest).
+  const refusedProgram = has('program-denied').filter((f) => !located.includes(f));
+  if (refusedProgram.length > 0) {
+    const named = refusedProgram.filter((f) => !foundOnPath(f));
+    const path = refusedProgram.length > named.length ? ', or give the check a PATH that finds it where a check may start it (the PATH Orbit runs its checks with, or the check\'s env)' : '';
+    fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
+    change(named, command);
+  }
+  const missing = has('program-not-found').filter((f) => !located.includes(f));
   if (missing.length > 0) {
-    const keys = missing.map((f) => `checks.${f.checkId}.command`).join(', ');
+    const keys = missing.map((f) => command(f.checkId)).join(', ');
     fixes.push(`install the program where the check runs, or give the check a PATH that holds it (through its env); if the name is misspelled, correct ${keys} in .orbit/config.yaml, which needs a new run because this run's policy is frozen (orbit doctor names a check whose executable is missing)`);
   }
-  return fixes.length > 0 ? fixes.join('; and ') : null;
+  return { fixes, settings: [...settings] };
 }
 
 /**
@@ -349,9 +503,12 @@ function baselineOutput(ctx: RunContext, report: BaselineReport, failure: Baseli
  * killed by a crash signal before it printed anything, the sandbox or the operating system refused it a filesystem
  * operation outside its checkout, a socket in the tool's own startup or a network connection, with no compile error or
  * failing test in its output (evidence/environment-failure.ts), or the program its command runs is not installed where
- * it runs (exit 127, evidence/check-misconfigured.ts classifyProgramNotFound). Such a check never got as far as the
- * repository's code, so it is not a pre-existing failure: no baseline exception may be offered for it, since approving
- * one would let a run pass with a check that never ran.
+ * it runs (exit 127) or the sandbox refused to start it (exit 126, evidence/check-misconfigured.ts
+ * classifyProgramNotFound). A program in a folder the check profile denies because of where the repository is (a tool
+ * environment in the repository or beside it, 0.3.0 retest) is named with those folders (programDenial), and is read
+ * from the output alone when the command does not show it (`eval "$CMD"`, deniedFolderFailure). Such a check
+ * never got as far as the repository's code, so it is not a pre-existing failure: no baseline exception may be offered
+ * for it, since approving one would let a run pass with a check that never ran.
  */
 export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineReport, checkoutDir: string): BlockedCheck[] {
   const out: BlockedCheck[] = [];
@@ -371,12 +528,238 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
     const found =
       classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
-      (def && def.kind === 'command' ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) : null);
+      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report.baseRevision)) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
-    out.push({ ...found, ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...(logPath ? { logPath } : {}) });
+    const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def, report.baseRevision) : null;
+    out.push({ ...found, ...(located ? { cause: programDenialCause(located), programDenial: located } : {}), ...commandOf(ctx, failure.checkId), folderForm, ...stoppedNodeFix(ctx, found, checkoutDir, folderForm), questionId: null, ...(logPath ? { logPath } : {}) });
   }
   return out;
+}
+
+/**
+ * The checks of `environment` the sandbox could not start the program of because it lies in a folder the check profile
+ * denies (program-denied or program-not-found, located: `programDenial`) and that exited 126 or 127. Such a launch
+ * failure is the environment's even where the shell's words also read as a script or a target that does not exist yet
+ * (Codex's review of the third fix): a virtualenv the repository links to beside it by a relative link is gone from the
+ * checkout's view, so the shell says "not found" for the path the command runs.
+ */
+export function deniedLaunches(ctx: RunContext, report: BaselineReport, environment: readonly BlockedCheck[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of environment) {
+    if (f.programDenial === undefined || !f.signals.some((s) => s === 'program-denied' || s === 'program-not-found')) continue;
+    const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: null, checkId: f.checkId, rootsOnly: true }).at(-1);
+    const exitCode = row ? row.exitCode : (report.checks.find((c) => c.checkId === f.checkId)?.exitCode ?? null);
+    if (exitCode === 126 || exitCode === 127) out.add(f.checkId);
+  }
+  return out;
+}
+
+/**
+ * Where the program a check could not start lies, when that is a folder the check profile denies because of where the
+ * repository is (programDenial): refused (program-denied) or hidden (program-not-found: srt on Linux lays an empty folder
+ * over it, and on macOS a bare name whose PATH folder the sandbox denies is not found either). The program is the one the
+ * shell named (EnvironmentFailure.program): a path the command writes; the path the shell found a bare name at on PATH
+ * (a name the command starts, or a path in a folder of the check's PATH, when the command does not write it); a bare
+ * name it did not find, or refused by that name, which lies where the first folder of the check's PATH that holds it is
+ * (onPath); or a path relative to the check's cwd, a link the repository commits that leads out of it (relativeTarget).
+ * Null for any other failure, and for a layout that cannot be judged.
+ */
+function deniedProgramOf(ctx: RunContext, found: EnvironmentFailure, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, baseRevision: string): ProgramDenial | null {
+  if (!found.signals.includes('program-denied') && !found.signals.includes('program-not-found')) return null;
+  const shell = def.shell === true;
+  const program = found.program ?? startedProgram(def.command, shell);
+  if (program === null) return null;
+  // The PATH the check ran with (evidence/runner.ts checkEnv): its env's, or the controller's own.
+  const setBy = def.env.PATH !== undefined ? `checks.${found.checkId}.env` : null;
+  try {
+    const repo = ctx.snapshot.repo_root;
+    const home = homeOf(ctx.deps);
+    if (isAbsolute(program)) {
+      const d = programDenial(program, repo, home);
+      if (d === null) return null;
+      const programs = startedPrograms(def.command, shell);
+      if (programs.includes(program)) return d;
+      // A path the command does not write (eval "$CMD", the backstop): found on PATH when its name is one the command
+      // starts or its folder is one of the check's PATH, else written where the command does not show it.
+      const onPath = programs.includes(basename(program)) || pathFolders(def).some((dir) => resolve(dir) === dirname(resolve(program)));
+      return onPath ? { ...d, onPath: { name: basename(program), setBy } } : d;
+    }
+    // A path relative to the directory the failing command ran in: where a link the repository commits there leads, when it leads out of it.
+    if (program.includes('/')) {
+      const target = relativeProgramTarget(repo, baseRevision, def, program, (path) => programDenial(path, repo, home) !== null);
+      if (target === null) return null;
+      const d = programDenial(target, repo, home);
+      return d === null ? null : { ...d, program, target };
+    }
+    // A bare name: one the shell did not find, or one a launcher refused by the name (dash's `eval: x: ...`).
+    const at = onCheckPath(def, program);
+    if (at === null) return null;
+    const d = programDenial(at, repo, home);
+    return d === null ? null : { ...d, onPath: { name: program, setBy } };
+  } catch {
+    return null;
+  }
+}
+
+/** The folders of the PATH a check runs with (evidence/runner.ts checkEnv): its env's, or the controller's own. */
+function pathFolders(def: Pick<CheckDefinition, 'env'>): string[] {
+  return (def.env.PATH ?? process.env.PATH ?? '').split(delimiter).filter((dir) => isAbsolute(dir));
+}
+
+/** Where the check's shell would have started a bare name: in the first folder of its PATH that holds it, or null. */
+function onCheckPath(def: Pick<CheckDefinition, 'env'>, name: string): string | null {
+  for (const dir of pathFolders(def)) if (isExecutableFile(join(dir, name))) return join(dir, name);
+  return null;
+}
+
+/** Links followed at most on the way to a program, as the operating system gives up on a loop. */
+const MAX_LINKS = 40;
+
+/**
+ * Where a program the shell named by a relative path leads (relativeTarget), read from the directory the failing
+ * command ran in, as the command parser establishes it through a chain's `cd`s (evidence/check-command.ts
+ * programExecutionDir), not from the check's configured cwd: for `cd tests && ./tools/python -m pytest` the link at
+ * tests/tools/python decides, never the one at the repository root. Null when that directory is not known for
+ * certain: the failure is then not classified by this path at all, and stays a baseline-exception question.
+ */
+function relativeProgramTarget(repoRoot: string, baseRevision: string, def: Pick<CheckDefinition, 'command' | 'shell' | 'cwd'>, program: string, denied: (path: string) => boolean): string | null {
+  const dir = programExecutionDir(def.command, def.shell === true, program);
+  if (dir === null) return null;
+  return relativeTarget(repoRoot, baseRevision, dir === '' ? def.cwd : join(def.cwd, dir), program, denied);
+}
+
+/** A path of the base revision's tree: its git mode (`120000` for a link) and its object id. */
+interface BaseTreeEntry {
+  mode: string;
+  oid: string;
+}
+
+/** Base trees read in this process, by repository and revision: a commit's tree does not change under it. */
+const baseTrees = new Map<string, ReadonlyMap<string, BaseTreeEntry> | null>();
+
+/** Every path of the base revision's git tree, folders included, or null when that tree cannot be read. */
+function baseTreeEntries(repoRoot: string, baseRevision: string): ReadonlyMap<string, BaseTreeEntry> | null {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseRevision)) return null;
+  const key = `${resolve(repoRoot)}\0${baseRevision}`;
+  const cached = baseTrees.get(key);
+  if (cached !== undefined) return cached;
+  let entries: Map<string, BaseTreeEntry> | null = null;
+  try {
+    const text = execFileSync('git', ['ls-tree', '-r', '-t', '-z', '--full-tree', baseRevision], { cwd: repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
+    entries = new Map();
+    for (const rec of text.split('\0')) {
+      const m = /^(\d+) (?:blob|tree|commit) ([0-9a-f]+)\t(.*)$/s.exec(rec);
+      if (m) entries.set(m[3]!, { mode: m[1]!, oid: m[2]! });
+    }
+  } catch {
+    entries = null;
+  }
+  if (baseTrees.size >= 8) baseTrees.clear();
+  baseTrees.set(key, entries);
+  return entries;
+}
+
+/** The literal target of a link of the base revision's tree, from its blob; null when it cannot be read. */
+function baseLinkTarget(repoRoot: string, oid: string): string | null {
+  try {
+    return execFileSync('git', ['cat-file', 'blob', oid], { cwd: repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 1024 * 1024 });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a program the check names by a path relative to `cwd` leads, when a link on the way leads into a folder the
+ * check sandbox denies (`denied`; third review of the 0.3.0 retest fix and Codex's review of it), read in the base
+ * revision's git tree at that cwd: the tree the baseline checkout held, which is gone by the time the base revision
+ * is judged. The working repository's own tree is never read: with `repository.allow_dirty_start` it can hold an
+ * uncommitted link the base revision does not have, and following it would classify a baseline failure ("not found"
+ * for a target the goal may add) by a link the baseline never ran. A path the base commit does not track, or does
+ * not track as a link where a link is followed, declines the classification. Each link is read for its literal
+ * target before anything is canonicalised, one name at a time: a link whose target is an absolute path leads there
+ * from the checkout too, so one into the repository or the folder beside it counts for that path (with the rest of
+ * the program's path after it), even where the file there links on elsewhere, as a virtualenv's interpreter does; a
+ * link whose target is relative moves with the checkout, and counts only once it leads out of the repository's tree
+ * (a link the repository commits to a tool environment beside it). Null when the base tree holds no such path, when
+ * the path climbs out of the tree (`../x` leads out of the checkout, not to the repository's sibling), when a link
+ * leads out of the base tree to somewhere that is not denied (where it goes from there is the host's, not the base
+ * revision's, to say), or when no link on the way leads into a denied folder: one that stays in the repository
+ * leads to the checkout's own copy, which is what the check ran.
+ */
+function relativeTarget(repoRoot: string, baseRevision: string, cwd: string, path: string, denied: (path: string) => boolean): string | null {
+  const root = resolve(repoRoot);
+  const spelled = resolve(root, cwd, path);
+  if (!isWithin(spelled, root)) return null;
+  const entries = baseTreeEntries(root, baseRevision);
+  if (entries === null) return null;
+  const realRoot = canonicalPath(root);
+  // The folder the walk is in, as a filesystem path (what a link's target resolves against) and as a path of the
+  // base tree (what the next name is looked up by).
+  let at = realRoot;
+  let tree: string[] = [];
+  let rest = relative(root, spelled).split('/');
+  // Whether the walk is still where the checkout's own copy of the tree would be: no absolute link followed yet.
+  let inCheckout = true;
+  for (let links = 0; rest.length > 0; ) {
+    const name = rest.shift()!;
+    if (name === '' || name === '.') continue;
+    if (name === '..') {
+      if (tree.length === 0) return null;
+      tree = tree.slice(0, -1);
+      at = dirname(at);
+      continue;
+    }
+    const entry = entries.get([...tree, name].join('/'));
+    if (entry === undefined) return null;
+    if (entry.mode !== '120000') {
+      tree = [...tree, name];
+      at = join(at, name);
+      continue;
+    }
+    const literal = baseLinkTarget(root, entry.oid);
+    if (literal === null) return null;
+    if (++links > MAX_LINKS) return null;
+    if (isAbsolute(literal)) inCheckout = false;
+    const leads = resolve(at, literal, ...rest);
+    if ((!inCheckout || !isWithin(leads, realRoot)) && denied(leads)) return leads;
+    if (isAbsolute(literal)) return null;
+    rest = [...literal.split('/'), ...rest];
+  }
+  return null;
+}
+
+/**
+ * The backstop (evidence/check-misconfigured.ts classifyDeniedFolderProgram): a base-revision failure whose output shows
+ * a refused path, or a program not found, in a folder the check profile denies because of where the repository is,
+ * whatever the check's command looks like. The check's own directories (`insideRoots`, its checkout among them) are never
+ * such a folder. Null for a layout that cannot be judged.
+ */
+function deniedFolderFailure(ctx: RunContext, def: Pick<CheckDefinition, 'command' | 'shell' | 'env' | 'cwd'>, run: { checkId: string; exitCode: number | null; output: string }, insideRoots: readonly string[], baseRevision: string): EnvironmentFailure | null {
+  try {
+    const repo = ctx.snapshot.repo_root;
+    const home = homeOf(ctx.deps);
+    const roots = insideRoots.filter((root) => isAbsolute(root)).flatMap((root) => [resolve(root), canonicalPath(root)]);
+    // A path in the check's own directories, however it is spelled, never counts; a link there into a denied folder does.
+    const own = (path: string): boolean => roots.some((root) => isWithin(path, root));
+    // A log may name the same path on many lines: each is resolved once.
+    const seen = new Map<string, string | null>();
+    const holding = (path: string): string | null => {
+      if (seen.has(path)) return seen.get(path)!;
+      const d = isAbsolute(path) ? programDenial(path, repo, home, own) : null;
+      const where = d === null ? null : d.under === 'repository' ? `the repository (${d.repository})` : `the folder that holds the repository and its sibling projects (${d.parent!})`;
+      seen.set(path, where);
+      return where;
+    };
+    return classifyDeniedFolderProgram({ ...run, command: def.command, shell: def.shell }, { holding, onPath: (name) => onCheckPath(def, name), relative: (path) => relativeProgramTarget(repo, baseRevision, def, path, (target) => holding(target) !== null) });
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a refused program is one the shell found on the check's PATH: its path is none the command writes. */
+function foundOnPath(f: FailureWithCommand): boolean {
+  return f.program !== undefined && f.command !== undefined && !startedPrograms(f.command.argv, f.command.shell).includes(f.program);
 }
 
 /**
@@ -467,13 +850,28 @@ export function amendmentSentence(checks: readonly AmendedCheck[]): string {
 export function baselineEnvironmentBlockReason(input: { runId: string; baseRevision: string; failures: readonly BlockedCheck[]; amended?: readonly AmendedCheck[] }): string {
   const { runId, failures } = input;
   const amended = (input.amended ?? []).filter((a) => failures.some((f) => f.checkId === a.checkId));
-  return joinSentences([
-    `${named(failures)} could not run on the base revision ${input.baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
+  return joinSentences([...environmentBaseSentences(input.baseRevision, failures, amended), afterEnvironmentFix(runId, environmentFixSettings(failures))]);
+}
+
+/** Which checks could not run on the base revision and why, the amendment that ran them, why no exception is offered, and the fix. */
+function environmentBaseSentences(baseRevision: string, failures: readonly BlockedCheck[], amended: readonly AmendedCheck[]): string[] {
+  return [
+    `${named(failures)} could not run on the base revision ${baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
     ...(amended.length > 0 ? [amendmentSentence(amended)] : []),
     `${failures.length > 1 ? 'They are' : 'It is'} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
     `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`,
-    `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`,
-  ]);
+  ];
+}
+
+/**
+ * What follows the fix of a base-revision environment block: a resume when the fix is the environment's, which runs the
+ * baseline again, and a new run when it changes the policy (environmentFixSettings), which the run keeps as it started,
+ * so that a resume would run the same check again (0.3.0 retest: "resolve, then orbit resume" after a fix of
+ * checks.<id>.command).
+ */
+function afterEnvironmentFix(runId: string, settings: readonly string[]): string {
+  if (settings.length === 0) return `Then orbit resume ${runId} runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen`;
+  return `${policyFixClause(settings).replace(/^t/, 'T')}, so resuming would run the same check again: cancel this run (orbit cancel ${runId}) and start a new run with orbit run`;
 }
 
 function incompleteBaseSentence(baseRevision: string, failures: readonly IncompleteBaselineCheck[]): string {
@@ -517,6 +915,16 @@ export function baselineBlockReason(input: { runId: string; baseRevision: string
   const amended = (input.amended ?? []).filter(
     (a) => misconfigured.some((m) => m.checkId === a.checkId) || environment.some((f) => f.checkId === a.checkId) || incomplete.some((f) => f.checkId === a.checkId),
   );
+  // Checks that could not run next to checks that did not complete, with nothing misconfigured: each for what it is, then
+  // the way forward of the environment fix (a new run when it changes a check in the frozen policy).
+  if (misconfigured.length === 0) {
+    return joinSentences([
+      ...environmentBaseSentences(input.baseRevision, environment, amended),
+      incompleteBaseSentence(input.baseRevision, incomplete),
+      incompleteExceptionSentence(incomplete),
+      afterEnvironmentFix(input.runId, environmentFixSettings(environment)),
+    ]);
+  }
   const sentences = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? 'are' : 'is'} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
     ...(amended.length > 0 ? [amendmentSentence(amended)] : []),

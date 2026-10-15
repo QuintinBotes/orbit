@@ -121,6 +121,20 @@ describe('the CLI closing line of a blocked run', () => {
     expect(r.out).not.toMatch(/start a new run|would only block again/);
   });
 
+  // 0.3.0 retest (dotnet): a PREFLIGHT environment block whose fix is a change to a check's definition (-m:1 on its command,
+  // a dotnet format check removed) ended "resolve the reason above, then orbit resume", which reads the same frozen check.
+  it('says cancel and start a new run after a base-revision environment block whose fix changes a check in the frozen policy', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    const outcome = { base_revision: 'a'.repeat(40), environment_failures: [{ check_id: 'unit-tests', classification: 'environment', signals: ['pipe-denied'] }], policy_fix: { settings: ['checks.unit-tests.command'] } };
+    hooks.start = async (id) => block(l, id, ['PREFLIGHT'], outcome);
+    const r = await drive(l, ['run', '--goal', 'one', '--foreground']);
+    expect(r.out).toMatch(/resuming would only block again \(the fix changes checks\.unit-tests\.command, which this run's frozen policy keeps as it started\): fix it, then "orbit cancel orb-\S+" and start a new run with "orbit run"\n$/);
+    expect(r.out).not.toMatch(/resolve the reason above|then "orbit resume/);
+    const id = /run (orb-\S+) ended/.exec(r.out)![1]!;
+    expect(buildRunStatus({ clock: systemClock }, l.db(), getRun(l.db(), id)).stage).toBe("BLOCKED (a new run is needed: the fix changes checks.unit-tests.command, which this run's frozen policy keeps as it started)");
+  });
+
   it('still says to resolve and resume for a block a resume can clear', async () => {
     const l = lab();
     await l.cli(['init']);

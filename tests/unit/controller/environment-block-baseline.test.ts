@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, baselineIncompleteBlockReason, baselineIncompleteChecks, checksNotExecutedFor, environmentBlockReason, environmentFix, type BlockedCheck } from '../../../src/controller/environment-block.ts';
+import { baselineEnvironmentBlockReason, baselineEnvironmentFailures, baselineIncompleteBlockReason, baselineIncompleteChecks, checksNotExecutedFor, environmentBlockReason, environmentFix, environmentFixSettings, type BlockedCheck } from '../../../src/controller/environment-block.ts';
 import { askAboutBaseFailures, classifyBaseline } from '../../../src/controller/steps/preflight.ts';
 import type { BaselineReport } from '../../../src/evidence/baseline.ts';
 import { msbuildNodeDenialNote, msbuildNodeFix } from '../../../src/evidence/msbuild.ts';
@@ -119,6 +119,72 @@ describe('environmentFix', () => {
     // Issue #33: it is the checks that restore from the filled cache; the install only when dependencies.install_command restores packages (Orbit's own install is skipped without an npm lockfile).
     expect(environmentFix([tls])).toMatch(/which the checks that restore read, and the dependency install too when dependencies\.install_command restores packages \(docs\/troubleshooting\.md/);
     expect(environmentFix([tls])).not.toMatch(/from which the dependency install and the checks restore/);
+  });
+
+  // Regression (review): a network denial was always recorded as needing network_hosts, so the advice said to cancel
+  // and start a new run, although a pinned dependency restore can succeed after its cache is filled outside the
+  // sandbox and a resume reruns the baseline. No policy change is required then, and both remedies are named.
+  it('keeps the resume for a network denial, naming the cache filled outside the sandbox and the host allowed in a new run', () => {
+    const refused: BlockedCheck = { ...dotnet, signals: ['network-denied'], lines: ['curl: (56) CONNECT tunnel failed, response 403'] };
+    expect(environmentFixSettings([refused], 'linux')).toEqual([]);
+    const fix = environmentFix([refused], 'linux')!;
+    expect(fix).toMatch(/fill .*cache outside the sandbox/);
+    expect(fix).toMatch(/add the host to the check's network_hosts/);
+    expect(fix).toContain('.orbit/config.yaml');
+    expect(fix).toMatch(/start a new run/);
+    expect(fix).not.toMatch(/[\u2013\u2014]/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [refused] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+    expect(reason).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // Regression (review): the same external link found through a PATH the check's env sets (`python -m pytest` with
+  // checks.unit.env.PATH=/opt/tools:/usr/bin:/bin) was grouped with a PATH into a denied folder, so checks.unit.env was
+  // recorded as the fix and the advice said to start a new run, although repointing the link changes neither the PATH
+  // nor the command.
+  it('keeps the resume for an external link the check finds through the PATH its env sets', () => {
+    const linked: BlockedCheck = {
+      ...dotnet,
+      checkId: 'unit',
+      signals: ['program-denied'],
+      lines: ['orbit-limits: /opt/tools/python: Operation not permitted'],
+      programDenial: { program: '/opt/tools/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository', target: '/home/acme/projects/shop/.venv/bin/python', onPath: { name: 'python', setBy: 'checks.unit.env' } },
+    };
+    expect(environmentFixSettings([linked])).toEqual([]);
+    const fix = environmentFix([linked])!;
+    expect(fix).toMatch(/move that tool environment outside \/home\/acme\/projects, repoint that link at it, then resume the run/);
+    expect(fix).not.toMatch(/correct checks\.unit\.env/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [linked] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+  });
+
+  // Regression: an absolute program outside the denied folders that links into the repository's virtualenv was
+  // recorded as needing checks.<id>.command changed, so the block reason (and the status and report built on it)
+  // said to cancel and start a new run, although moving the environment and repointing that external link cures it
+  // with the command unchanged.
+  it('keeps the resume for a program outside the denied folders that links into the repository\'s virtualenv, naming the move and the repointed link', () => {
+    const linked: BlockedCheck = {
+      ...dotnet,
+      checkId: 'unit',
+      signals: ['program-denied'],
+      lines: ['orbit-limits: /opt/tools/python: Operation not permitted'],
+      programDenial: { program: '/opt/tools/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository', target: '/home/acme/projects/shop/.venv/bin/python' },
+    };
+    expect(environmentFixSettings([linked])).toEqual([]);
+    const fix = environmentFix([linked])!;
+    expect(fix).toContain('"/opt/tools/python"');
+    expect(fix).toMatch(/move that tool environment outside \/home\/acme\/projects, repoint that link at it, then resume the run/);
+    expect(fix).toMatch(/the check's command does not change/);
+    expect(fix).not.toMatch(/correct checks\.unit\.command/);
+    expect(fix).not.toMatch(/[\u2013\u2014]/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [linked] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+    // The same interpreter named by its own path in the repository still needs the command corrected in a new run.
+    const placed: BlockedCheck = { ...linked, programDenial: { program: '/home/acme/projects/shop/.venv/bin/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository' } };
+    expect(environmentFixSettings([placed])).toEqual(['checks.unit.command']);
   });
 
   it('is added to the candidate reason for a check that could not execute because of a denial', () => {

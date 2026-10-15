@@ -515,9 +515,18 @@ revision ([ADR 0010](decisions/0010-base-failure-classification.md)):
   that could not establish the SSL connection (macOS: fill the cache outside
   the sandbox, `checks.dotnet-packages`); or it could not
   execute at all, a program its command runs that is not installed where it
-  runs (exit 127) included. The run ends `BLOCKED` at PREFLIGHT with the first
-  error line and a fix; fix the environment and `orbit resume <run-id>`, which
-  runs those checks again.
+  runs (exit 127) or that the sandbox does not let it start (exit 126,
+  "Operation not permitted": a program in the repository or in the folder that
+  holds it and its sibling projects, both of which the check sandbox denies, see
+  [Tool environments](configuration.md#tool-environments)) included. The run
+  ends `BLOCKED` at PREFLIGHT with the first error line and a fix, and no
+  baseline exception is offered; fix the environment and `orbit resume
+  <run-id>`, which runs those checks again. When the fix is a change to a
+  check's definition (`-m:1` on its command, a `dotnet format` check removed or
+  reshaped, a host in its `network_hosts`, a program moved out of the
+  repository), the reason, the closing line, `orbit status` and the report say
+  to cancel the run and start a new one instead, because the run keeps the
+  policy it started with and a resume would run the same check again.
 - **Pre-existing failure.** Everything else: a failure of the repository's code.
 
 Only a usage error the check's own command prints counts: its program (after a

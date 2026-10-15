@@ -48,8 +48,31 @@ describe('judgeWorkerPlugins', () => {
 
   it('warns, and does not fail, when the list cannot be read or a scope cannot be placed', async () => {
     expect(await judgeWorkerPlugins(adapter({ ok: false, detail: 'claude plugin list --json: exit 1' }), config())).toMatchObject({ status: 'warn', refused: [] });
-    const odd = await judgeWorkerPlugins(adapter({ ok: true, plugins: [{ id: 'acme-sync@acme', scope: 'synced', enabled: true }] }), config());
-    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-sync@acme (scope synced)' });
+    const odd = await judgeWorkerPlugins(adapter({ ok: true, plugins: [{ id: 'acme-odd@acme', scope: null, enabled: true }] }), config());
+    expect(odd).toMatchObject({ status: 'warn', summary: 'workers may load 1 plugin(s) the policy does not allow: acme-odd@acme (scope unknown)' });
+  });
+});
+
+// 0.3.0 retest (audit): doctor warned that workers "may load 6 plugin(s) the policy does not allow", all of scope synced,
+// with a fix that would allow them, while all 58 worker sessions loaded only Claude Code's built-ins: their launch records
+// carry the strict plugin policy and the final reports list no worker plugin. Orbit already keeps a synced plugin out of a
+// worker session, so doctor does not report one.
+describe('judgeWorkerPlugins: plugins Orbit already keeps out of a worker (0.3.0 retest)', () => {
+  const SYNCED: InstalledPlugin[] = ['acme-chat@synced', 'acme-design@synced', 'acme-notes@synced'].map((id) => ({ id, scope: 'synced', enabled: true }));
+
+  it('names only plugins a worker could load: synced plugins are not reported, allowed or not', async () => {
+    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: SYNCED }), config());
+    expect(v).toMatchObject({ status: 'pass', summary: 'workers load only Claude Code built-ins', missing: null, fix: null, refused: [] });
+    expect(v!.details).toContain('not loaded by workers: acme-chat@synced (scope synced; workers start with no user, project or local settings, which leaves synced plugins out)');
+    expect([v!.summary, v!.fix ?? ''].join('\n')).not.toMatch(/acme-chat@synced/);
+    const allowed = await judgeWorkerPlugins(adapter({ ok: true, plugins: SYNCED }), config({ allowed_plugins: ['acme-chat@synced'] }));
+    expect(allowed).toMatchObject({ status: 'pass', summary: 'workers load only Claude Code built-ins' });
+  });
+
+  it('still reports a managed plugin next to synced ones', async () => {
+    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: [...SYNCED, MANAGED[0]!] }), config());
+    expect(v).toMatchObject({ status: 'fail', summary: 'workers would load 1 plugin(s) the policy does not allow, so every worker session would be refused: acme-guard@acme-it (scope managed)' });
+    expect(v!.fix).toBe('add to .orbit/config.yaml: agents.allowed_plugins: ["acme-guard@acme-it"] (or agents.allow_managed_plugins: true for every managed plugin); a plugin can add hooks and tools to workers');
   });
 });
 
@@ -57,13 +80,14 @@ describe('judgeWorkerPlugins', () => {
 // (synced), and that each run's report lists them, while the workers' sessions loaded none and the reports listed
 // none. Workers start with `--setting-sources ""`: of the plugins `claude plugin list` shows, only a managed one is
 // known to load. A scope doctor cannot place is "may load", also once the policy allows it, and the report line says
-// what the sessions reported, not what the list suggests.
+// what the sessions reported, not what the list suggests. (A synced plugin is no longer reported at all: see the 0.3.0
+// retest below. One the list gives no scope stands for a scope doctor cannot place.)
 describe('judgeWorkerPlugins: what workers really load (issue #33)', () => {
-  const SYNCED: InstalledPlugin[] = [{ id: 'acme-sync@acme', scope: 'synced', enabled: true }];
+  const UNPLACED: InstalledPlugin[] = [{ id: 'acme-odd@acme', scope: null, enabled: true }];
 
   it('says "may load", not "would load", for an allowed plugin of a scope it cannot place, and does not promise the report lists it', async () => {
-    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: SYNCED }), config({ allowed_plugins: ['acme-sync@acme'] }));
-    expect(v).toMatchObject({ status: 'pass', summary: 'workers may load 1 plugin(s) of a scope doctor cannot place, each allowed by the policy: acme-sync@acme (scope synced, agents.allowed_plugins)' });
+    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: UNPLACED }), config({ allowed_plugins: ['acme-odd@acme'] }));
+    expect(v).toMatchObject({ status: 'pass', summary: 'workers may load 1 plugin(s) of a scope doctor cannot place, each allowed by the policy: acme-odd@acme (scope unknown, agents.allowed_plugins)' });
     const text = [v!.summary, ...v!.details].join('\n');
     expect(text).not.toMatch(/would load/);
     expect(text).not.toMatch(/each run lists the plugins its workers loaded/);
@@ -71,9 +95,9 @@ describe('judgeWorkerPlugins: what workers really load (issue #33)', () => {
   });
 
   it('keeps "would load" for a managed plugin, and names the others as the ones that may load, in one summary', async () => {
-    const both = [...MANAGED.slice(0, 1), ...SYNCED];
-    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: both }), config({ allowed_plugins: ['acme-guard@acme-it', 'acme-sync@acme'] }));
-    expect(v!.summary).toBe('workers would load 1 plugin(s) (scope managed) and may load 1 more of a scope doctor cannot place, each allowed by the policy: acme-guard@acme-it (scope managed, agents.allowed_plugins), acme-sync@acme (scope synced, agents.allowed_plugins)');
+    const both = [...MANAGED.slice(0, 1), ...UNPLACED];
+    const v = await judgeWorkerPlugins(adapter({ ok: true, plugins: both }), config({ allowed_plugins: ['acme-guard@acme-it', 'acme-odd@acme'] }));
+    expect(v!.summary).toBe('workers would load 1 plugin(s) (scope managed) and may load 1 more of a scope doctor cannot place, each allowed by the policy: acme-guard@acme-it (scope managed, agents.allowed_plugins), acme-odd@acme (scope unknown, agents.allowed_plugins)');
     const managedOnly = await judgeWorkerPlugins(adapter({ ok: true, plugins: [MANAGED[0]!, MANAGED[2]!] }), config({ allow_managed_plugins: true }));
     expect(managedOnly!.summary).toBe('workers would load 1 plugin(s), each allowed by the policy: acme-guard@acme-it (scope managed, agents.allow_managed_plugins)');
     expect(managedOnly!.details).toContain("a plugin can add hooks and tools to workers; a run's final report lists the plugins its worker sessions reported loading and says nothing when they loaded none");

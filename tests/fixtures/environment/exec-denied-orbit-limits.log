@@ -1,0 +1,3 @@
+orbit-limits: /home/acme/projects/shop/.venv/bin/python: Operation not permitted
+orbit-limits: line 0: exec: /home/acme/projects/shop/.venv/bin/python: cannot execute: Operation not permitted
+[orbit] check=unit-tests status=FAILED exit=126

@@ -69,6 +69,13 @@ categories at PREFLIGHT, in this order:
 5. **Pre-existing failure.** Everything else: a failure of the repository's
    code. Only this category is recorded as pre-existing.
 
+One exception to the order: a program the sandbox could not start because it
+lies in a folder the check sandbox denies (exit 126 or 127, with the folder
+established, below) is an environment failure even where the shell's words
+also read as a missing target (`script-not-found`): a virtualenv the
+repository links to beside it by a relative link is gone from the checkout's
+view, so the shell says "not found" for the path the command runs.
+
 A check in category 1, 3 or 4 ends the run `BLOCKED` at PREFLIGHT, before any
 model is asked anything, with no baseline-exception question. A check in
 category 2 goes on to CONTRACTING and is settled there (below). The reason
@@ -220,6 +227,65 @@ not on its PATH), so `orbit resume` runs the baseline again once it is
 installed, without `--force`. The fix names `checks.<id>.command` too, for a
 misspelled name, which needs a new run. A relative path is a script of the
 repository: a missing target.
+
+The words of Orbit's limits wrapper (`orbit-limits`, the bash every check runs
+under by default) count as a shell's: bash 5's `orbit-limits: line 1: <path>:
+No such file or directory`, and macOS bash 3.2's exit 126 `cannot execute: No
+such file or directory` for a path. A program any command of the check starts
+counts as well, by an absolute path or a bare name: a chain's, a pipeline's,
+one `exec` starts, one a wrapper starts (`timeout 600 pytest`, `nice`, `nohup`,
+`stdbuf`, `xargs`, `time`, `command`, whose GNU coreutils words, `timeout:
+failed to run command 'pytest': No such file or directory`, count as a
+shell's), and one of the script a shell the check starts with `-c` runs (`sh -c
+"..."`, after `--` or bash's long options too, read up to three scripts deep). A name only a script of
+the repository runs (`cd client && npm test` whose script runs a missing
+`jest`) is none of them, and a failing test next to the line keeps it the
+code's. A program the sandbox refuses to start (exit 126, `Operation not
+permitted`, signal `program-denied`; 0.3.0 retest) is an environment failure
+too, for any program the command starts, by its path as the command writes it
+or the path the shell found a bare name at on PATH. When it lies in the
+repository or in the folder beside it, which the check sandbox denies, the
+reason names those folders, and the PATH the check found it on for a bare name.
+A command substitution is read as a part of the word it stands in, and its own
+commands are read too (`echo $(git rev-parse HEAD) /x` runs `echo` and `git`,
+not `/x`).
+
+A backstop reads the output alone, whatever the command looks like (`eval
+"$CMD"`, `make test`, a script of the repository; second and third reviews of
+the 0.3.0 retest fix): a base-revision failure whose output shows a launcher (a
+shell, `eval`, `exec`, `env`, Orbit's limits wrapper, a wrapper such as
+`timeout`, `make`, a script's own `./x.sh: line 2:`, node's spawn, Python's
+`Operation not permitted: 'x'`, uv's `Failed to spawn` with its `Caused by:`
+line) refusing to start a program in the repository or in the folder beside it,
+by its path, a bare name the check's PATH finds there, or a link that leads
+there (`program-denied`), any other "Operation not permitted" for a path there
+(`filesystem-denied`), or a launcher's "not found" for such a program, whatever
+exit code the launcher passes on (make exits 2 for its recipe's, turbo 1), or
+with exit 127 (or make's `Error 127`) any "not found" for a path there
+(`program-not-found`), is an environment failure. A path is there when it is
+written there, its folder resolves there, or the file it links to lies there: a
+link from elsewhere into a denied folder is refused for where it leads, and a
+link the repository commits, run by a path relative to the check's `cwd`, is
+followed in the repository's own tree, since the checkout is gone when the base
+revision is judged. There each link is read for its literal target before
+anything is canonicalised: one whose target is an absolute path into the
+repository or the folder beside it leads there from the checkout too, and
+counts for that path even where the file there links on elsewhere (a
+virtualenv's interpreter does); one whose target is relative moves with the
+checkout, and counts only once it leads out of the repository's tree. The
+check's own checkout is never such a folder, and a check whose tests ran and
+failed stays the code's, whatever its output quotes: a test whose assertion
+message names such a refusal is a failing test, and so is ctest's failure
+report or a formatter's verdict ("1 file would be reformatted", "Code style
+issues found"). A line of a unified diff's content (after an `@@` line, one
+that starts with `+`, `-` or a space) is never such evidence: a comparison
+(`git diff --no-index`, `diff -u`) that shows one ran and failed.
+
+Recognising a base-revision check that could not start its program is
+best-effort over the shapes of shell commands and the words launchers print. A
+case it misses is classified a pre-existing failure, which only a person can
+accept: its baseline-exception question shows the failing log, and nothing
+accepts it silently.
 
 ### Evidence for an environment failure
 

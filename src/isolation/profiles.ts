@@ -493,6 +493,17 @@ export function repoParentDenial(repoRoot: string, homeDir: string): { path: str
 }
 
 /**
+ * The folders a check profile read-denies because of where the repository is (denyList), canonical: the repository,
+ * whose own working tree no check runs in (each check gets a checkout outside it), and the folder that holds it and its
+ * sibling projects when that is denied (repoParentDenial). A program in either cannot start in a check. For `orbit
+ * doctor` and PREFLIGHT, which name the folder; the profiles themselves are built by denyList.
+ */
+export function repositoryDenials(repoRoot: string, homeDir: string): { repository: string; parent: string | null } {
+  const repository = canonicalPath(repoRoot);
+  return { repository, parent: repoParentDenial(repository, homeDir).path };
+}
+
+/**
  * Whether a check profile read-denies a directory above `checkout`: the profile re-allows the checkout itself, so a
  * process in it can read everything below it and list nothing between it and that directory. A run's checkouts sit
  * in <orbit home>/worktrees/<repo key>/<run>/, and the default Orbit home, ~/.orbit, is denied (HOME_DENY_READ), so for a

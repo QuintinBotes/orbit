@@ -22,7 +22,7 @@ import type { ProviderCapabilities, CredentialStatus } from '../../adapters/type
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
-import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
+import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, deniedLaunches, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
 import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
@@ -141,14 +141,17 @@ export interface BaselineClassification {
  * Classify the failures of `report` (only those of the checks in `only`, when given: a baseline amendment judges the
  * checks it ran, and the rest were judged when they ran), in the order of ADR 0010: a misconfigured check, a missing
  * target, an environment failure, an ERROR without a completed result, and what is left a pre-existing failure of the
- * code.
+ * code. A program the sandbox could not start in a folder it denies (exit 126 or 127, deniedLaunches) comes before a
+ * missing target: the shell's "not found" for it reads as a script that does not exist yet too.
  */
 export function classifyBaseline(ctx: RunContext, report: BaselineReport, checkoutDir: string, only: ReadonlySet<string> | null = null): BaselineClassification {
   const judged = only === null ? report : { ...report, failures: report.failures.filter((f) => only.has(f.checkId)) };
-  const commandErrors = baselineMisconfiguredChecks(ctx, judged);
+  const notRun = baselineEnvironmentFailures(ctx, judged, checkoutDir);
+  const launches = deniedLaunches(ctx, judged, notRun);
+  const commandErrors = baselineMisconfiguredChecks(ctx, judged).filter((m) => !(m.kind === 'missing-target' && launches.has(m.checkId)));
   const misconfigured = commandErrors.filter((m) => m.kind === 'argument');
   const missingTargets = commandErrors.filter((m) => m.kind === 'missing-target');
-  const environment = baselineEnvironmentFailures(ctx, judged, checkoutDir).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
+  const environment = notRun.filter((f) => !commandErrors.some((m) => m.checkId === f.checkId));
   const incomplete = baselineIncompleteChecks(ctx, judged).filter((f) => !commandErrors.some((m) => m.checkId === f.checkId) && !environment.some((e) => e.checkId === f.checkId));
   const marked = classifiedBaseline(report, environment, incomplete, misconfigured, missingTargets);
   // A check the environment stopped, whose command the tool rejected, or that ended ERROR produced no result of its
@@ -252,6 +255,9 @@ export async function blockOnBaseline(
   atomicWriteJson(join(ctx.runDir, BASELINE_FILE), (amendment ? report : { ...report, complete: false }) satisfies BaselineReport);
   const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report.baseRevision, environment, incomplete, misconfigured, ...(amendment ? { amended: amendment.checks } : {}) });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: 'environment', signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
+  // A fix that changes the policy (a check's command) needs a new run, which the closing line, `orbit status` and the
+  // report say instead of a resume (resume.ts newRunNeeded): the run keeps the policy it started with.
+  const policyFix = environmentFixSettings(environment);
   const incompleteChecks = incomplete.map((f) => ({ check_id: f.checkId, classification: 'incomplete', cause: f.cause, evidence_lines: f.lines, ...(f.logPath ? { log_path: f.logPath } : {}) }));
   const misconfiguredChecks = misconfigured.map((m) => misconfiguredRecord(m));
   const at = amendment ? `amended-${amendment.at}` : String(report.recordedAt);
@@ -264,6 +270,7 @@ export async function blockOnBaseline(
       base_revision: report.baseRevision,
       ...stage,
       ...(environmentChecks.length > 0 ? { environment_failures: environmentChecks } : {}),
+      ...(policyFix.length > 0 ? { policy_fix: { settings: policyFix } } : {}),
       ...(incompleteChecks.length > 0 ? { incomplete_checks: incompleteChecks } : {}),
       ...(misconfiguredChecks.length > 0 ? { misconfigured_checks: misconfiguredChecks } : {}),
     },

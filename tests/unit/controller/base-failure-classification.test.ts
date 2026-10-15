@@ -170,6 +170,24 @@ describe('baselineBlockReason', () => {
     expectCapitalSentences(reason);
   });
 
+  // A check that could not run next to one that did not complete, with nothing misconfigured, was told it was misconfigured
+  // ("Check  is misconfigured", "correct  in .orbit/config.yaml"): the reason names what each is, and ends with the way
+  // forward of the environment fix, a new run when that fix changes a check in the frozen policy.
+  it('names a check that could not run and one that did not complete, with nothing misconfigured, for what each is', () => {
+    const incomplete = { checkId: 'lint', cause: 'the runner recorded ERROR before the check produced a result', lines: ['[orbit] check=lint status=ERROR'], logPath: '/orbit/runs/acme/baseline/lint.log' };
+    const reason = baselineBlockReason({ runId: 'orb-5', baseRevision: BASE_REV, environment: [socket], incomplete: [incomplete], misconfigured: [] });
+    expect(reason).toMatch(/^Check test could not run on the base revision aaaaaaaaaaaa, and the output shows an environment cause, not a pre-existing failure: the sandbox or the operating system refused the tool a socket/);
+    expect(reason).toMatch(/\. Fix: this is MSBuild starting a worker node/);
+    expect(reason).toMatch(/\. Check lint did not complete on the base revision aaaaaaaaaaaa: the runner recorded ERROR before the check produced a result \("\[orbit\] check=lint status=ERROR"\), output in \/orbit\/runs\/acme\/baseline\/lint\.log\./);
+    expect(reason).not.toMatch(/misconfigured|correct {2}in/);
+    expect(reason).toMatch(/\. The fix changes checks\.test\.command, which this run's frozen policy keeps as it started, so resuming would run the same check again: cancel this run \(orbit cancel orb-5\) and start a new run with orbit run\.$/);
+    expect(frozenPolicyCause(reason)).toBeNull();
+    expectCapitalSentences(reason);
+    // With an environment fix outside the policy, a resume runs both checks on the base revision again.
+    const fill: BlockedCheck = { checkId: 'restore', fingerprint: null, signals: ['nuget-tls-denied'], cause: 'NuGet could not establish the SSL connection', lines: ['error NU1301: The SSL connection could not be established'], questionId: null };
+    expect(baselineBlockReason({ runId: 'orb-6', baseRevision: BASE_REV, environment: [fill], incomplete: [incomplete], misconfigured: [] })).toMatch(/\. Then orbit resume orb-6 runs the baseline again; a changed check definition needs a new run, because this run's policy is frozen\.$/);
+  });
+
   it('issue #10: three checks with the same crash name the checks once and the shared evidence once, each log after it', () => {
     const three = ['build', 'test', 'format'].map((checkId) => ({ ...socket, checkId, logPath: `/orbit/runs/acme/baseline/${checkId}.log` }));
     const reason = baselineEnvironmentBlockReason({ runId: 'orb-4', baseRevision: BASE_REV, failures: three });
@@ -178,7 +196,9 @@ describe('baselineBlockReason', () => {
     expect(reason.match(/SocketException \(13\)/g)).toHaveLength(1);
     expect(reason).toContain('output in /orbit/runs/acme/baseline/build.log, /orbit/runs/acme/baseline/test.log, /orbit/runs/acme/baseline/format.log');
     expect(reason).toMatch(/\. They are not recorded as a pre-existing failure/);
-    expect(reason).toMatch(/\. Then orbit resume orb-4 runs the baseline again/);
+    // -m:1 is a change to each check's command, which the run's policy freezes: a new run, not a resume (0.3.0 retest).
+    expect(reason).toMatch(/\. The fix changes checks\.build\.command, checks\.test\.command, checks\.format\.command, which this run's frozen policy keeps as it started, so resuming would run the same check again: cancel this run \(orbit cancel orb-4\) and start a new run with orbit run\.$/);
+    expect(reason).not.toMatch(/orbit resume/);
     expectCapitalSentences(reason);
   });
 });

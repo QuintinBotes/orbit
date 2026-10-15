@@ -23,6 +23,7 @@ degraded but usable.
 | `checks` | a configured check's executable or script is missing | Install it, or correct the `command` in `checks`. With no checks defined, nothing can be verified. |
 | `checks` | `orbit init` proposed no check, or fewer than expected | Init proposes only for tools on `PATH` that the repository declares, and only when it writes a new config; it prints each tool it skipped and why (`checks.not_proposed` with `--json`). Install the tool, or add the check by hand; see [Checks that `orbit init` proposes](configuration.md#checks-that-orbit-init-proposes). A proposed check that fails offline needs `network_hosts` for its dependencies. |
 | `checks.sandbox` | `the sandbox refuses the executable of check X; a run would block at its baseline` | Under `sandbox-runtime`, doctor starts each check's executable (one installed outside the repository) in the sandbox that check gets, with a harmless argument (`--version`; `dotnet help`, which runs the .NET SDK's first-run steps; `go version`). The detail line shows what was refused. See [A check cannot run in the sandbox](#run-problems). A tool that exits non-zero with no denial in its output (an unknown `--version` flag) is not counted. |
+| `checks.sandbox` | `doctor cannot tell for certain whether check X starts a program in a folder the check sandbox denies; one that does cannot start in a check` (a warning), with the detail `the check sandbox denies the repository (...) and the folder that holds it and its sibling projects (...), and the program "..." the check runs lies in the repository` (or `in a folder beside the repository`) | The check's program, its argv's or one its shell command starts, is an absolute path in the repository or in a folder beside it, for example the interpreter of a virtualenv there, or a link from elsewhere to a program there (the detail then says it `links to "..."`). A check runs in a checkout of its own, outside the repository, and its sandbox may read neither folder, so the program cannot start (on macOS exit 126, "Operation not permitted", even when it links elsewhere). Doctor names it from the command's text alone, whatever the tool, and starts nothing of it; that text cannot show for certain that a run reaches the program (`/usr/bin/true || /path/to/repo/tool` never does), so doctor warns and never fails the check for it, and the detail says when it cannot read the command for certain either (a command substitution, a here-document, `eval`, a case statement, a function, a `[[` test, a parameter expansion, an array, deeply nested shells) or the path holds no executable file. A run whose check could not start such a program blocks at PREFLIGHT. Build the environment inside each checkout through `dependencies.install_command` and run it by a path relative to the check's `cwd`, or place it outside the repository's parent folder; see [Tool environments](configuration.md#tool-environments). A probe the sandbox refuses to start for another reason (exit 126 and "Operation not permitted" for the executable) is reported as refused too. |
 | `checks.sandbox` | `check X would start MSBuild worker nodes, which the sandbox refuses; a run would block at its baseline` | The check (or `dependencies.install_command`, named so) runs `dotnet build`, `test`, `publish`, `pack`, `restore`, `clean`, `msbuild` or `run` itself (its command, the command `env` starts, or a command of a chain joined by `&&` or `;`) without `-m:1`, and its own `env` does not set `DOTNET_PROCESSOR_COUNT=1`. It is refused without being started; the fix is its command with `-m:1` added, ready to paste, with the reason once after all such fixes. A `-m:1` after the `--` of `dotnet test` goes to the test runner and does not count. See [.NET builds and MSBuild worker nodes](#run-problems). |
 | `checks.sandbox` | `ui.environment.start_command would start MSBuild worker nodes, which the sandbox refuses; a run would fail where Orbit starts it` (or `release.environments.<name>.deploy_command`, `.verify_command`) | The application under test or a release command runs a dotnet build itself without `-m:1`, or `dotnet run`, which builds on worker nodes and hands `-m:1` to the program; or it runs a `dotnet format` that loads the project. These run in a sandbox built from the check profile, so the same rules apply, always as mandatory. The fields are argvs, so a fix that needs a shell line is a `sh -c` script: `ui.environment.start_command: ["sh", "-c", "dotnet build Web -m:1 && dotnet run --project Web --no-build"]`. See [.NET builds and MSBuild worker nodes](#run-problems) and "A .NET application under test never becomes ready". |
 | `checks.sandbox` | `doctor cannot tell whether check X runs MSBuild on one node` (warning) | The check runs dotnet through make, a script, a wrapper or a shell line with a pipe, `\|\|`, a substitution or a redirection, which its definition does not show. Make sure every dotnet build, test, publish, pack, restore, clean or msbuild it starts passes `-m:1`; one that does not is stopped as soon as MSBuild records the refused node. `DOTNET_PROCESSOR_COUNT=1` in the check's `env` also clears this warning. See [.NET builds and MSBuild worker nodes](#run-problems). |
@@ -38,7 +39,7 @@ degraded but usable.
 | `isolation` | `isolation.require_resource_limits is true but ... cannot enforce isolation.limits.memory_mb` | The provider has no hard memory cap. Use `isolation.provider: container` with `container.memory_mb` no higher than `limits.memory_mb`, set `limits.memory_mb: null`, or set `require_resource_limits: false`. |
 | `claude.cli` | claude not usable | Install Claude Code and put it on PATH, or set `providers.claude.command`. Sonnet 5.5 needs 2.1.284 or newer. |
 | `claude.auth` | credentials expired, invalid or missing | `claude auth login`, or export `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. For the service, make the variable visible to it (see [operations](operations.md#installing-the-service)). Then `orbit resume <run-id>`. |
-| `claude.plugins` | `workers would load N plugin(s) the policy does not allow, so every worker session would be refused` (failure), or `workers may load ...` (warning) | A managed plugin is loaded into every worker. Add the exact ids doctor prints to `agents.allowed_plugins` (or set `agents.allow_managed_plugins: true` to allow every managed plugin) in `.orbit/config.yaml`; a plugin can add hooks and tools to workers. `orbit run --foreground` refuses to start with the same message and fix, before a run, a check or a model call exists; a run handed to the service (`--detach`) is blocked at the start of PREFLIGHT with nothing spent. A run that already exists keeps its frozen policy: cancel it and start a new run. See [Plugins in worker sessions](configuration.md#plugins-in-worker-sessions). |
+| `claude.plugins` | `workers would load N plugin(s) the policy does not allow, so every worker session would be refused` (failure), or `workers may load ...` (warning) | A managed plugin is loaded into every worker. Add the exact ids doctor prints to `agents.allowed_plugins` (or set `agents.allow_managed_plugins: true` to allow every managed plugin) in `.orbit/config.yaml`; a plugin can add hooks and tools to workers. `orbit run --foreground` refuses to start with the same message and fix, before a run, a check or a model call exists; a run handed to the service (`--detach`) is blocked at the start of PREFLIGHT with nothing spent. A run that already exists keeps its frozen policy: cancel it and start a new run. A plugin of scope `synced` is not reported: workers start with no user, project or local settings, which leaves it out. See [Plugins in worker sessions](configuration.md#plugins-in-worker-sessions). |
 | `claude.worker-tier` | workers use the `claude-sandbox` tier | No exported Claude credential, or not using sandbox-runtime. Export `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and use `isolation.provider: sandbox-runtime` for the `os-sandbox` tier. |
 | `workers.loopback` | `on macOS workers cannot run test hosts that need a loopback socket (...), in either worker tier, and this repository's tests need one ...` (warning, macOS, a .NET or Gradle repository) | A worker's own test run fails where the checks pass: `dotnet test` aborts with `SocketException (13): Permission denied` at `Socket.Bind` (VSTest's test host connects back over loopback; "Test Run Aborted"), Gradle cannot start its test workers, and a test that starts a server gets `listen EPERM` or `bind: operation not permitted`; the worker reports those tests as not run. That is by design on macOS: no sandbox there can limit a listener to loopback (a server on 0.0.0.0 would be reachable from the network), and workers run model-driven commands, so they may not listen in either tier, and no setting changes it (ADR 0001, "Workers and loopback"). Keep `local_binding` (the default) on the checks that run these tests: they test every change a worker submits, and their failures go to diagnosis and repair. If doctor says no test check may listen, nothing runs them; a build or lint check that may listen runs none of these tests. On Linux `srt` starts every worker sandbox in a network namespace of its own (from its source, not measured by Orbit), and this passes. |
 | `workers.toolchains` | `workers run in the claude-sandbox tier, where Claude Code's sandbox does not let their commands write their build state, so a worker cannot build or test Go, Rust or JVM code here ...` (warning) | In the `claude-sandbox` tier a worker's build state (its private toolchain directory: `GOCACHE`, `CARGO_TARGET_DIR`, `GRADLE_USER_HOME`, Maven's local repository) is not writable by Claude Code's sandboxed Bash, so its own `go test` fails with "failed to initialize build cache ... operation not permitted" and `cargo test` with "failed to create directory ... Operation not permitted" before any test runs; the worker reports its tests as not run, and the checks, under `srt`, still run them. Export `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and use `isolation.provider: sandbox-runtime`, so workers run in the `os-sandbox` tier (`claude.worker-tier`). Shown only for a repository that uses one of these toolchains. |
@@ -188,16 +189,32 @@ of these settings is the fix, `orbit doctor` prints the same note.
   Orbit adds the rule .NET needs for it only with the `srt` it ships, and the
   check's record says when it was not added; see ".NET HTTP clients and NuGet
   restore on macOS"); the program its
-  command runs is not installed where it runs (the shell's "command not found",
-  exit 127: install it or give the check a PATH that holds it, or correct a
-  misspelled name, which needs a new run); or it was killed by a crash signal
-  before printing anything. Such a failure is not recorded as pre-existing and no
+  command runs is not installed where it runs (the shell's or Orbit's limits
+  wrapper's "command not found" or "not found", exit 127, or exit 126 for a path
+  under macOS's bash 3.2: install it or give the check a PATH that holds it, or
+  correct a misspelled name, which needs a new run); the sandbox did not let it start the
+  program its command runs (the shell's, `env`'s, a wrapper's such as
+  `timeout`'s, or Orbit's limits wrapper's "Operation not permitted" for that
+  program, exit 126, whichever command of a chain starts it, or a launcher's
+  refusal or "not found" the output shows for a program in those folders
+  whatever the command, `make test` and a script of the repository included: a
+  program in the repository or in a folder beside it, such as a virtualenv's
+  interpreter, or one that links there, which the check sandbox denies; the reason names
+  the repository and the folder that holds it and its sibling projects, and the
+  PATH a bare name was found on, and the fix is in [Tool
+  environments](configuration.md#tool-environments)); or it was killed by a
+  crash signal before printing anything. Such a failure is not recorded as pre-existing and no
   baseline exception is offered, since accepting one would let a run pass with a
-  check that never ran. Output that shows a compile error or a failing test is
+  check that never ran. Recognising a check that could not start its program is
+  best-effort over shell command shapes and launchers' messages: one it misses
+  is offered as a baseline-exception question that shows the failing log, and
+  is never accepted silently. Output that shows a compile error or a failing test is
   never read this way (a failing test in any runner's report: TAP, Jest,
-  pytest, unittest, go, cargo, VSTest's `Failed!  - Failed: 1`,
+  pytest, unittest, go, cargo, ctest, VSTest's `Failed!  - Failed: 1`,
   Microsoft.Testing.Platform's `failed X (12ms)` and `failed: 1`, which xunit v3,
-  MSTest's runner and TUnit print, and xunit's `[FAIL]`): that failure stays the
+  MSTest's runner and TUnit print, and xunit's `[FAIL]`, or a formatter's
+  verdict, black's `1 file would be reformatted` and prettier's `Code style
+  issues found`): that failure stays the
   code's, and so does a socket refused to the repository's own program. A
   restore error inside `dotnet build` on the base revision is read this way even
   though MSBuild counts it in "N Error(s)", when every error it counted is a
@@ -211,7 +228,14 @@ of these settings is the fix, `orbit doctor` prints the same note.
   (each check gets a private, empty one; set the tool's variables in the
   check's `env`) or change the check. `orbit resume <run-id>` runs those checks
   again once the environment is fixed; a changed check definition needs a new
-  run. The rules are in
+  run. Where the fix itself is a change to a check's definition (`-m:1` on its
+  command, a `dotnet format` check removed or put in the form that loads no
+  project, a host added to its `network_hosts`, a program moved out of the
+  repository), the reason ends "cancel this run (orbit cancel <run-id>) and start
+  a new run with orbit run", and the closing line, `orbit status` and the
+  report's next action say the same, never "resolve, then orbit resume": the
+  run keeps the policy it started with, so a resume would run the same check
+  again. The rules are in
   [ADR 0010](decisions/0010-base-failure-classification.md).
 - **A check is misconfigured.** The run blocks at PREFLIGHT with "Check X is
   misconfigured, not a pre-existing failure", the tool's error line, "command in

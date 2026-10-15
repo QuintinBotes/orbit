@@ -104,7 +104,27 @@ export function freshReviewSpent(run: Pick<RunRecord, 'outcomeJson'>): string | 
 }
 
 /**
- * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Three causes:
+ * The policy settings the fix of a base-revision environment block changes (steps/preflight.ts blockOnBaseline records
+ * them as `policy_fix`, environment-block.ts environmentFixSettings), as the outcome recorded them; empty for any other
+ * block.
+ */
+export function policyFixSettings(run: Pick<RunRecord, 'outcomeJson'>): string[] {
+  try {
+    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { policy_fix?: { settings?: unknown } }) : null;
+    const settings = o?.policy_fix?.settings;
+    return Array.isArray(settings) ? settings.filter((s): s is string => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Why a fix that changes `settings` needs a new run, as the block's reason and `orbit status` say it. */
+export function policyFixClause(settings: readonly string[]): string {
+  return `the fix changes ${settings.join(', ')}, which this run's frozen policy keeps as it started`;
+}
+
+/**
+ * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Four causes:
  *   - the block comes from the run's frozen policy (a check's definition, an isolation setting): a run keeps the policy
  *     it started with, and a resume is refused for it;
  *   - a candidate's check could not run for an environment cause, with no baseline exception to approve: the candidate's
@@ -112,7 +132,9 @@ export function freshReviewSpent(run: Pick<RunRecord, 'outcomeJson'>): string | 
  *     evidence and blocks again, whatever is repaired outside (issue #33). A failure that has a baseline-exception
  *     question is answered instead, and the run resumes;
  *   - review does not clear the tree after its one fresh review, or review_rounds left none to start (freshReviewSpent):
- *     a resume decides the tree the same way and blocks again.
+ *     a resume decides the tree the same way and blocks again;
+ *   - a check could not run on the base revision and its fix changes the policy (`policy_fix`: -m:1 on the check's
+ *     command, a program placed where a check can start it): a resume runs the same check again (0.3.0 retest).
  * A spent implementation-attempt counter is not a cause. It is charged when an attempt starts, so a run blocked in the
  * middle of its last attempt (a supervised authorization question, an expired login, transient provider failures) has it
  * full, and a resume continues that attempt and spends nothing new (steps/implementing.ts continueAttempt). A run that
@@ -130,6 +152,8 @@ export function newRunNeeded(db: OrbitDb, run: RunRecord): string | null {
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
   }
+  const settings = policyFixSettings(run);
+  if (settings.length > 0) return policyFixClause(settings);
   return freshReviewSpent(run);
 }
 

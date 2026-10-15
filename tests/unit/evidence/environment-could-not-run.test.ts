@@ -160,8 +160,20 @@ describe('classifyCouldNotRun: a .NET named pipe the sandbox refused under /tmp'
     ] as const) {
       const f = classifyCouldNotRun({ checkId: 'format', output, insideRoots: FORMAT_ROOTS });
       expect(f, line).toMatchObject({ checkId: 'format', fingerprint: null, signals: ['pipe-denied'], lines: [line] });
-      expect(f!.cause).toMatch(/^the sandbox refused a \.NET process the named pipe it binds under \/tmp \(an MSBuild worker node, or the build host dotnet format loads the project with\)/);
+      expect(f!.cause).toBe('the sandbox refused the build host dotnet format loads the project with the named pipe it binds under /tmp, so nothing was formatted');
     }
+  });
+
+  // 0.3.0 retest (dotnet, a test check without -m:1): the reason of a check the runner stopped for a refused MSBuild worker
+  // node said "the build host dotnet format loads the project with", a cause shared with the dotnet format case.
+  it('names an MSBuild worker node, and not dotnet format, for a check the runner stopped for a refused node', () => {
+    const note = RESTORE_NODE.trimEnd().split('\n').at(-1)!.replace('check=fmt', 'check=unit-tests');
+    const f = classifyCouldNotRun({ checkId: 'unit-tests', output: `  Determining projects to restore...\n${note}\n`, insideRoots: FORMAT_ROOTS });
+    expect(f).toMatchObject({ signals: ['pipe-denied'] });
+    expect(f!.cause).toBe('the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing');
+    expect(f!.cause).not.toMatch(/dotnet format|formatted/);
+    // dotnet format's own restore stopped for a node is the same refusal: an MSBuild worker node.
+    expect(classifyCouldNotRun({ checkId: 'format', output: RESTORE_NODE, insideRoots: FORMAT_ROOTS })!.cause).toBe(f!.cause);
   });
 
   it('reads the runner\'s record of a check it stopped for an MSBuild worker node the sandbox refused, on the log\'s last line only', () => {
