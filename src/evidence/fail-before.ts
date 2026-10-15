@@ -63,6 +63,7 @@ export type NotEstablishedCause =
   | 'content-only'
   | 'not-acceptable'
   | 'unscanned'
+  | 'base-failed'
   | 'not-probed';
 
 const NEVER_ACCEPTED: ReadonlySet<NotEstablishedCause> = new Set<NotEstablishedCause>(['environment', 'error', 'install']);
@@ -254,15 +255,23 @@ export interface CriterionTestSupport {
   flips: string[];
   /** Cited checks whose run includes a test change. */
   withTests: string[];
-  /** Of those, the checks the probe runs: command checks of category test that passed on the base revision. */
+  /**
+   * Of those, the checks the probe runs: command checks of category test that passed on the base revision, and
+   * browser checks (which the baseline never runs, so they need no base result: the ui probe runs its own control).
+   */
   probeable: string[];
   /** The new tests under the cited checks. */
   testPaths: string[];
 }
 
-/** A check the probes run: a command check of category test, never lint, typecheck, format or build. */
+/** A check the command probe runs: a command check of category test, never lint, typecheck, format or build. */
 export function isTestCommandCheck(def: CheckDefinition | undefined): def is CheckDefinition {
   return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test';
+}
+
+/** A browser check: one of kind playwright, or one of ui.journey_check_ids (the same checks the report reads journeys from). */
+export function isBrowserCheck(snapshot: Pick<PolicySnapshot, 'config'>, id: string): boolean {
+  return snapshot.config.checks[id]?.kind === 'playwright' || (snapshot.config.ui?.journey_check_ids ?? []).includes(id);
 }
 
 /** For each criterion, what its support through new tests rests on (ADR 0014 section 4). */
@@ -280,7 +289,7 @@ export function newTestSupport(contract: Pick<GoalContract, 'acceptance_criteria
   return contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
     const withTests = ids.filter((id) => tests(id).length > 0);
-    const probeable = withTests.filter((id) => isTestCommandCheck(snapshot.config.checks[id]) && baseStatus.get(id) === 'PASSED');
+    const probeable = withTests.filter((id) => isBrowserCheck(snapshot, id) || (isTestCommandCheck(snapshot.config.checks[id]) && baseStatus.get(id) === 'PASSED'));
     return {
       criterionId: c.id,
       flips: ids.filter((id) => baseStatus.get(id) === 'FAILED' || baseStatus.get(id) === 'TIMEOUT'),
@@ -936,7 +945,7 @@ export function criterionFailBefore(support: CriterionTestSupport, fb: FailBefor
   const probed = ids.map((id) => ({ id, c: fb.probe?.checks.find((x) => x.checkId === id) ?? null }));
   const checks = probed.flatMap(({ c }) => (c === null ? [] : [{ id: c.checkId, outcome: c.outcome, ...(c.cause ? { cause: c.cause } : {}), attempts: c.attempts.map((a) => ({ status: a.status, exit_code: a.exitCode, log: a.log })) }]));
   if (ids.length === 0) {
-    return { ...base, outcome: 'not-established', cause: 'not-probed', checks, reason: `${support.withTests.join(', ')} ${support.withTests.length === 1 ? 'is' : 'are'} not probed: only a command check of category test that passed on the base revision is`, ...acceptance };
+    return { ...base, outcome: 'not-established', cause: 'not-probed', checks, reason: `${support.withTests.join(', ')} ${support.withTests.length === 1 ? 'is' : 'are'} not probed: only a command check of category test that passed on the base revision, or a browser check, is`, ...acceptance };
   }
   const failed = probed.find(({ c }) => c?.outcome === 'failed-before');
   if (failed) return { ...base, outcome: 'failed-before', checks, reason: failed.c!.reason, ...acceptance };

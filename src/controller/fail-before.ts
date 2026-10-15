@@ -18,7 +18,8 @@
  */
 import { join } from 'node:path';
 import { hashObject } from '../core/hash.ts';
-import { acceptableCause, changesBetween, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeResult } from '../evidence/fail-before.ts';
+import { acceptableCause, changesBetween, isBrowserCheck, isTestCommandCheck, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeResult } from '../evidence/fail-before.ts';
+import { runUiFailBeforeProbe, type UiRunner } from './fail-before-ui.ts';
 import { git } from '../evidence/git.ts';
 import type { BaseComparison } from '../evidence/report.ts';
 import type { RunnerContext } from '../evidence/runner.ts';
@@ -47,12 +48,16 @@ export interface CollectFailBeforeInput {
   installOk: boolean;
   /** The candidate's runner context: the probe runs its checks the same way. */
   runner: RunnerContext;
+  /** The ui runner the browser probe drives (fail-before-ui.ts); absent, the one verification uses. Tests inject a scripted one. */
+  uiRunner?: UiRunner;
 }
 
 /**
  * The fail-before evidence of a candidate: its probe, run now or reused, or why none ran. The probe runs once per
  * candidate that is otherwise acceptable (every required check passed), changes at least one test-owned path, and has
- * a criterion resting on new tests under a test check that passed on the base revision.
+ * a criterion resting on new tests under a test check that passed on the base revision, or on new journeys under a
+ * browser check (ADR 0016, item 4: fail-before-ui.ts, whose control run on the base revision stands in for the
+ * base result the baseline never gives a browser check).
  */
 export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput): Promise<FailBeforeEvidence> {
   const { mode, timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
@@ -78,18 +83,38 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
   if (manifests.length > 0) {
     return evidence(null, { cause: 'manifest', reason: `not probed: the candidate changes ${manifests.join(', ')}, a dependency manifest or lockfile outside test-owned paths, so a test could fail or pass on the base revision for a dependency rather than for the change` });
   }
-  const probe = await runFailBeforeProbe({
-    runner: input.runner,
-    repoRoot: ctx.run.repoRoot,
-    baseRev,
-    candidate: cand,
-    checks: [...byCheck].sort(([a], [b]) => a.localeCompare(b)).map(([checkId, criteria]) => ({ checkId, criteria })),
-    changes: owned,
-    checkoutDir: join(runWorktreeRoot(ctx), `fail-before-${cand.seq}`),
-    timeoutMs: timeoutSeconds * 1000,
-    wallRemainingMs: wallRemaining(ctx),
-    decide: (d) => decide(ctx, d),
-  });
+  const ordered = [...byCheck].sort(([a], [b]) => a.localeCompare(b)).map(([checkId, criteria]) => ({ checkId, criteria }));
+  const commandChecks = ordered.filter((c) => isTestCommandCheck(ctx.snapshot.config.checks[c.checkId]));
+  const browserChecks = ordered.filter((c) => !commandChecks.includes(c) && isBrowserCheck(ctx.snapshot, c.checkId));
+  let probe: ProbeResult | null = null;
+  if (commandChecks.length > 0) {
+    probe = await runFailBeforeProbe({
+      runner: input.runner,
+      repoRoot: ctx.run.repoRoot,
+      baseRev,
+      candidate: cand,
+      checks: commandChecks,
+      changes: owned,
+      checkoutDir: join(runWorktreeRoot(ctx), `fail-before-${cand.seq}`),
+      timeoutMs: timeoutSeconds * 1000,
+      wallRemainingMs: wallRemaining(ctx),
+      decide: (d) => decide(ctx, d),
+    });
+  }
+  if (browserChecks.length > 0) {
+    const uiProbe = await runUiFailBeforeProbe(ctx, cand, {
+      baseRev,
+      changes: owned,
+      checks: browserChecks,
+      timeoutMs: timeoutSeconds * 1000,
+      wallRemainingMs: wallRemaining(ctx),
+      ...(input.uiRunner ? { uiRunner: input.uiRunner } : {}),
+    });
+    probe =
+      probe === null
+        ? { probeId: uiProbe.probeId, probeTree: uiProbe.probeTree, baseRevision: baseRev, testPaths: owned.map((c) => c.path).sort(), checks: uiProbe.checks, reused: false }
+        : { ...probe, checks: [...probe.checks, ...uiProbe.checks], reused: false };
+  }
   return evidence(probe);
 }
 

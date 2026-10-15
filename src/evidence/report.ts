@@ -7,7 +7,7 @@ import { checkCategory, failBeforePolicy } from '../policy/config.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { criterionFailBefore, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
+import { criterionFailBefore, isBrowserCheck as isConfiguredBrowserCheck, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
 import { statesCheckRunsTests, statesFailBefore } from './fail-before-statements.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
@@ -300,9 +300,8 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
       .join('; ');
   };
 
-  // Criteria.
-  const journeyIds = new Set(snapshot.config.ui?.journey_check_ids ?? []);
-  const isBrowserCheck = (id: string): boolean => snapshot.config.checks[id]?.kind === 'playwright' || journeyIds.has(id) || ui.has(id);
+  // Criteria. A browser check is the shared definition (evidence/fail-before.ts), or one journeys came in for here.
+  const isBrowserCheck = (id: string): boolean => isConfiguredBrowserCheck(snapshot, id) || ui.has(id);
   // Evidence granularity is the check (ADR 0014 section 4): a check several criteria cite supports each of them, and
   // decides each one's fail-before outcome, by the same whole run. Said wherever it applies, so a criterion that only
   // shares a check (existing behaviour unchanged, every journey still passing) is not read as having tests of its own.
