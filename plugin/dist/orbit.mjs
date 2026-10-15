@@ -50951,7 +50951,7 @@ function testsRunByChecksFrom(sentence, from, checkIds) {
   const verb2 = PASSIVE_RUN.exec(rest);
   if (verb2 === null || !SUBJECT_GAP.test(rest.slice(0, verb2.index))) return null;
   const upToParticiple = sentence.slice(0, from + verb2.index + verb2[0].length);
-  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, "i").test(upToParticiple)) return null;
+  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none|neither|nor|nothing|nobody|nowhere)\b`, "i").test(upToParticiple)) return null;
   const agents = PASSIVE_AGENTS.exec(rest.slice(verb2.index + verb2[0].length));
   if (agents === null) return null;
   const ids = [...new Set(checkIds)];

@@ -121,7 +121,7 @@ function testsRunByChecksFrom(sentence: string, from: number, checkIds: readonly
   const verb = PASSIVE_RUN.exec(rest);
   if (verb === null || !SUBJECT_GAP.test(rest.slice(0, verb.index))) return null;
   const upToParticiple = sentence.slice(0, from + verb.index + verb[0].length);
-  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, 'i').test(upToParticiple)) return null;
+  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none|neither|nor|nothing|nobody|nowhere)\b`, 'i').test(upToParticiple)) return null;
   const agents = PASSIVE_AGENTS.exec(rest.slice(verb.index + verb[0].length));
   if (agents === null) return null;
   const ids = [...new Set(checkIds)];

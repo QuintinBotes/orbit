@@ -125,6 +125,7 @@ describe('fail-before statement wording', () => {
     // A negative subject, and a check that is mentioned but is no agent.
     expect(statesCheckRunsTests('No tests are run by the lint check', ids)).toBeNull();
     expect(statesCheckRunsTests('None of the new tests are run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('Neither test is run by the lint check', ids)).toBeNull();
     expect(statesCheckRunsTests('The new tests are run by CI without the lint check', ids)).toBeNull();
     // The passive verb must belong to the tests, not to another clause; a later mention of the tests can still be it.
     expect(statesCheckRunsTests('The tests pass locally and ESLint is run by the lint check', ids)).toBeNull();
@@ -423,7 +424,7 @@ describe('fail_before per criterion, by mode', () => {
   });
 
   it('an ordinary assumption that only mentions a check is not flagged, so a required run with passing evidence stays PASS', () => {
-    for (const statement of ['The new tests will not be run by the lint check', 'The new tests are run by CI after the lint check passes']) {
+    for (const statement of ['The new tests will not be run by the lint check', 'The new tests are run by CI after the lint check passes', 'Neither test is run by the lint check']) {
       const inputs = withAssumptions({ id: 'AS-1', statement, status: 'unverified' as const });
       const e = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
       expect(e.report.assumptions, statement).toBeUndefined();
