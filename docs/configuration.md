@@ -1318,6 +1318,29 @@ same probe judges a review repair's test on the pre-repair tree (see
 [checks](#checks)), within the same bound for each probe tree and whatever the
 mode.
 
+Browser journeys are probed too (ADR 0016). A journey check (`ui.journey_check_ids`,
+or a check of kind `playwright`) whose directory holds a journey the candidate adds
+or changes runs on the base revision with the candidate's test-owned changes,
+through the same ui runner and app fixture as verification. The baseline runs
+command checks only, so the probe first runs the journeys on the base revision
+alone, once per run (reused by the base tree), and a failure counts only after
+that control passed. Only a failed journey is a failure (a skipped one is not),
+a browser that never started or a process that never reached the repository's
+code establishes nothing, one deadline covers the control and each attempt, and
+with no `ui.environment.start_command` the journeys are not probed, since they
+would run against a server Orbit did not start from the probe's checkout.
+
+A criterion that states its tests fail on the base revision, and an assumption
+that a check runs the new tests, are Orbit's to establish, so the probe decides
+them (ADR 0016). Such a criterion is supported only when its fail-before outcome
+is failed-before, never by a passing log; such an assumption is supported only
+when each check it names (or every probed check, when it names none) failed
+before, and one that names a check that is not configured stays unverified. An
+unverified one blocks under `required` and is a residual risk under `advisory`
+or `off`. The wording only selects these statements, and only to make Orbit
+stricter: a negated statement is not one of them. A changed assumption makes the
+evidence stale.
+
 In every mode, a review finding is a note if and only if the reviewer files it
 under the category `evidence-classification`, no check confirms it and no
 report of it has a security id (`SEC-`), since a security finding fails closed.
