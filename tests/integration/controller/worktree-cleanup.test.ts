@@ -1,6 +1,6 @@
 /**
- * P19: the worktrees of a run that ended SUCCEEDED, CANCELLED, EXHAUSTED or IMPOSSIBLE are removed (the branch and the
- * candidate refs stay, so nothing is lost), while a BLOCKED run keeps its worktree for the person who resolves it.
+ * P19: the worktrees of a run that ended SUCCEEDED or CANCELLED are removed (the branch and the candidate refs stay,
+ * so nothing is lost), while a BLOCKED or EXHAUSTED run keeps its worktree for the person who resolves it.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, writeFileSync } from 'node:fs';

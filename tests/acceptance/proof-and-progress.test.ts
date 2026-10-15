@@ -114,11 +114,11 @@ describe.skipIf(!READY)('acceptance: proof and progress', () => {
     expect(denied).toHaveLength(1);
     expect(denied[0]!.data).toMatchObject({ counter: 'implementation_attempts', decision: 'deny_extension', within_hard_limits: true });
     expect(listDecisions(db, run.id, { kind: 'allowance.extend' })).toEqual([]);
-    // Nothing left the repository; the evidence is preserved for a person and the work is in the candidate refs (the worktree is released).
+    // Nothing left the repository; the evidence and the worktree are preserved for a person.
     expect(l.github().state.prs).toEqual([]);
     expect(existsSync(reports.at(-1)!.reportPath!)).toBe(true);
-    expect(existsSync(done.worktreePath!)).toBe(false);
-    expect(readFileSync(join(l.runDir(run.id), 'final.md'), 'utf8')).toMatch(/EXHAUSTED[\s\S]*the evidence stays under/);
+    expect(existsSync(done.worktreePath!)).toBe(true);
+    expect(readFileSync(join(l.runDir(run.id), 'final.md'), 'utf8')).toMatch(/EXHAUSTED[\s\S]*preserved/);
     assertRunInvariants(l, run.id);
   }, 240_000);
 });
