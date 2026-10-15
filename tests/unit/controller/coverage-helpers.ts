@@ -101,7 +101,9 @@ export function makeUnitLab(opts: UnitLabOptions = {}): UnitLab {
       } catch {
         /* closed */
       }
-      rmSync(base, { recursive: true, force: true });
+      // A git process a test started (an automatic gc after its commits) may still be writing objects: retry the removal
+      // rather than fail the test on ENOTEMPTY (seen once on a GitHub runner).
+      rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
   if (opts.path) lab.walk(opts.path);
