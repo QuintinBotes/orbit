@@ -18,7 +18,7 @@ function sentences(statement: string): string[] {
 }
 
 /** A negation of the verb that follows it: a negated statement is not the statement these rules apply to. */
-const NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|never|no\s+longer|cannot|can['’]t|won['’]t|will\s+not|is\s+not|isn['’]t)`;
+const NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not)`;
 const PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
 
 /**
@@ -51,7 +51,7 @@ function escapeRegExp(text: string): string {
 /** A check id named in `text` as a whole word: not part of a longer id joined by a letter, a digit, a dash or an underscore. */
 function namedAt(text: string, checkId: string): { index: number; end: number } | null {
   if (checkId.length === 0) return null;
-  const m = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(checkId)}(?![A-Za-z0-9_-])`, 'i').exec(text);
+  const m = new RegExp(`(?<![A-Za-z0-9._-])${escapeRegExp(checkId)}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`, 'i').exec(text);
   return m === null ? null : { index: m.index, end: m.index + m[0].length };
 }
 
@@ -134,10 +134,15 @@ export function unknownNamedChecks(statement: string, checkIds: readonly string[
     seen.add(lower);
     unknown.push(word);
   };
+  // A check id's whole grammar (config.schema.json checkId: letters, digits, dots, dashes and underscores), optionally
+  // quoted or in backticks; a dot that ends the sentence is not part of the id.
+  const ID = String.raw`[\x60"'“‘]?([A-Za-z0-9][A-Za-z0-9._-]*)[\x60"'”’]?`;
+  const clean = (word: string): string => word.replace(/\.+$/, '');
   for (const sentence of sentences(statement)) {
-    for (const m of sentence.matchAll(/\b([A-Za-z0-9][A-Za-z0-9_-]*)\s+checks?\b/gi)) add(m[1]!);
-    for (const m of sentence.matchAll(/\bthe\s+checks?\s+(?:named\s+|called\s+)?([A-Za-z0-9][A-Za-z0-9_-]*)\b/gi)) {
-      if (!AFTER_CHECK_VERBS.has(m[1]!.toLowerCase())) add(m[1]!);
+    for (const m of sentence.matchAll(new RegExp(String.raw`(?<![A-Za-z0-9._-])${ID}\s+checks?\b`, 'gi'))) add(clean(m[1]!));
+    for (const m of sentence.matchAll(new RegExp(String.raw`\bthe\s+checks?\s+(?:named\s+|called\s+)?${ID}`, 'gi'))) {
+      const word = clean(m[1]!);
+      if (!AFTER_CHECK_VERBS.has(word.toLowerCase())) add(word);
     }
   }
   return unknown;

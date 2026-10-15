@@ -84,6 +84,9 @@ describe('fail-before statement wording', () => {
       'The new tests on the base revision pass and fail on other input',
       'The new tests do not fail on the base revision',
       'The new tests never fail on the base revision',
+      'The new tests on the base revision are not failing',
+      "The new tests on the base revision aren't failing",
+      'The new tests were not failing before the change',
     ]) {
       expect(statesFailBefore(statement), statement).toBe(false);
     }
@@ -104,6 +107,12 @@ describe('fail-before statement wording', () => {
     expect(unknownNamedChecks('The integration check runs the new tests', ids)).toEqual(['integration']);
     expect(unknownNamedChecks('The unit-tests-extra check runs the new tests', ids)).toEqual(['unit-tests-extra']);
     expect(unknownNamedChecks('The check named integration runs the new tests', ids)).toEqual(['integration']);
+    // Quoted names and the whole check id grammar (dots included).
+    expect(unknownNamedChecks('The `integration` check runs the new tests', ids)).toEqual(['integration']);
+    expect(unknownNamedChecks('The "integration" check runs the new tests', ids)).toEqual(['integration']);
+    expect(unknownNamedChecks('The unit.api check runs the new tests', [...ids, 'unit.api'])).toEqual([]);
+    expect(unknownNamedChecks('The unit.web check runs the new tests', [...ids, 'unit.api'])).toEqual(['unit.web']);
+    expect(statesCheckRunsTests('The unit.api check runs the new tests', [...ids, 'unit.api'])).toEqual(['unit.api']);
     // A check described in general is no check's name: no unknown check, so the fallback to every probed check applies.
     expect(unknownNamedChecks('The required test check runs the new tests', ids)).toEqual([]);
     expect(unknownNamedChecks('The configured mandatory check runs the new tests', ids)).toEqual([]);
@@ -434,6 +443,12 @@ describe('fail_before per criterion, by mode', () => {
     const c = judge('required', { probe: null, skipped: null, accepted: [] }, { contract: negated, ...baseFlipped });
     expect(c.report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'not-applicable' } });
     expect(c.report.verdict).toBe('PASS');
+    // A plural negation in the tests-locus-fail order too.
+    const plural = contract({
+      acceptance_criteria: [{ id: 'AC-1', statement: 'The new tests on the base revision are not failing', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }],
+      required_check_ids: ['unit'],
+    });
+    expect(judge('required', { probe: null, skipped: null, accepted: [] }, { contract: plural, ...baseFlipped }).report.verdict).toBe('PASS');
   });
 
   it('a criterion in tests-locus-fail order is flagged and unverified with a passed-before probe', () => {
