@@ -50945,10 +50945,11 @@ function sentenceStatesTestsRunByCheck(sentence, checkIds) {
   const rest = sentence.slice(object.index + object[0].length);
   const verb2 = PASSIVE_RUN.exec(rest);
   if (verb2 === null) return false;
+  if (new RegExp(String.raw`\b${NEGATION}\b`, "i").test(rest.slice(0, verb2.index + verb2[0].length))) return false;
   const after = rest.slice(verb2.index + verb2[0].length);
-  const by = /\bby\b/i.exec(after);
+  const by = /^\s*by\b/i.exec(after);
   if (by === null) return false;
-  const agent = after.slice(by.index + by[0].length);
+  const agent = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|and|but|because|until|unless|so|then|where)\b/i)[0] ?? "";
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
 }
 function sentenceStatesCheckRunsTests(sentence, checkIds) {

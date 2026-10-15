@@ -103,6 +103,12 @@ describe('fail-before statement wording', () => {
     // A negated passive, and tests run by something that is no check, are not this statement.
     expect(statesCheckRunsTests('The new tests are not run by the lint check', ids)).toBeNull();
     expect(statesCheckRunsTests('The new tests are run by CI every night', ids)).toBeNull();
+    // A review of the passive form: a negation before a compound auxiliary, and a check in a later clause, are not it.
+    expect(statesCheckRunsTests('The new tests will not be run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests have not been collected by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests cannot be executed by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI after the lint check passes', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI, and the lint check runs eslint', ids)).toBeNull();
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);
@@ -391,6 +397,15 @@ describe('fail_before per criterion, by mode', () => {
     expect(passed.report.unverified).toContain('assumption AS-1: unverified (unit: passed-before (unit passed on the base revision with the new tests))');
     const required = judge('required', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
     expect(required.report.verdict).not.toBe('PASS');
+  });
+
+  it('an ordinary assumption that only mentions a check is not flagged, so a required run with passing evidence stays PASS', () => {
+    for (const statement of ['The new tests will not be run by the lint check', 'The new tests are run by CI after the lint check passes']) {
+      const inputs = withAssumptions({ id: 'AS-1', statement, status: 'unverified' as const });
+      const e = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+      expect(e.report.assumptions, statement).toBeUndefined();
+      expect(e.report.verdict, statement).toBe('PASS');
+    }
   });
 
   it('a flagged assumption that names no check uses every check the probe ran', () => {

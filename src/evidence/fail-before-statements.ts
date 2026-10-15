@@ -92,10 +92,15 @@ function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly stri
   const rest = sentence.slice(object.index + object[0].length);
   const verb = PASSIVE_RUN.exec(rest);
   if (verb === null) return false;
+  // A negation anywhere between the tests and the participle states the opposite, compound auxiliaries included
+  // ("will not be run", "have not been collected", "cannot be executed").
+  if (new RegExp(String.raw`\b${NEGATION}\b`, 'i').test(rest.slice(0, verb.index + verb[0].length))) return false;
   const after = rest.slice(verb.index + verb[0].length);
-  const by = /\bby\b/i.exec(after);
+  const by = /^\s*by\b/i.exec(after);
   if (by === null) return false;
-  const agent = after.slice(by.index + by[0].length);
+  // The agent is the phrase "by" introduces, up to the end of its clause: a check named in a later clause ("run by CI
+  // after the lint check passes") is not what runs the tests.
+  const agent = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|and|but|because|until|unless|so|then|where)\b/i)[0] ?? '';
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
 }
 
