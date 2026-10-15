@@ -3,6 +3,7 @@ import type { Clock } from '../core/clock.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from '../contract/types.ts';
+import { checkCategory } from '../policy/config.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
@@ -301,6 +302,24 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   // Criteria.
   const journeyIds = new Set(snapshot.config.ui?.journey_check_ids ?? []);
   const isBrowserCheck = (id: string): boolean => snapshot.config.checks[id]?.kind === 'playwright' || journeyIds.has(id) || ui.has(id);
+  // Evidence granularity is the check (ADR 0014 section 4): a check several criteria cite supports each of them, and
+  // decides each one's fail-before outcome, by the same whole run. Said wherever it applies, so a criterion that only
+  // shares a check (existing behaviour unchanged, every journey still passing) is not read as having tests of its own.
+  const citedBy = new Map<string, string[]>();
+  for (const c of contract.acceptance_criteria) for (const id of new Set(c.check_ids ?? [])) citedBy.set(id, [...(citedBy.get(id) ?? []), c.id]);
+  const runOf = (id: string): string => {
+    if (isBrowserCheck(id)) return `the journeys ${id} runs`;
+    const def = snapshot.config.checks[id];
+    return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test' ? `the tests ${id} runs` : `what ${id} checks`;
+  };
+  const checkWide = (ids: readonly string[]): string | undefined => {
+    const shared = [...new Set(ids)].filter((id) => (citedBy.get(id)?.length ?? 0) > 1).sort();
+    return shared.length === 0 ? undefined : `check-wide: ${shared.map((id) => `${runOf(id)}, shared by ${citedBy.get(id)!.join(', ')}`).join('; ')}`;
+  };
+  for (const [id, e] of failBeforeOf) {
+    const wide = checkWide(e.checks.map((x) => x.id));
+    if (wide !== undefined) failBeforeOf.set(id, { ...e, check_wide: wide });
+  }
   const criteria: CriterionEvidence[] = contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
     let status: CriterionStatus;
@@ -347,7 +366,8 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
       note(unverified, `optional criterion ${c.id}: ${status}${why ? ` (${why})` : ''}`);
     }
     const entry = failBeforeOf.get(c.id);
-    return { criterion_id: c.id, status, artifacts, ...(why ? { note: why } : {}), ...(entry ? { fail_before: entry } : {}) };
+    const wide = checkWide(ids);
+    return { criterion_id: c.id, status, artifacts, ...(why ? { note: why } : {}), ...(wide !== undefined ? { check_wide: wide } : {}), ...(entry ? { fail_before: entry } : {}) };
   });
   if (notRun.length > 0) note(unverified, `fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: ${notRun.join(', ')}`);
   if (advisoryGaps.length > 0) note(unverified, `fail-before (advisory): ${advisoryGaps.join('; ')}`);

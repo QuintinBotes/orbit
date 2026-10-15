@@ -1,19 +1,24 @@
 // Review findings drive a repair loop (spec sections 12 and 14), pinned by tests that failed before it:
 // a REPAIR_REQUIRED review with a blocking finding goes REVIEWING -> REPAIRING with a repair brief, the
-// repaired tree is verified and reviewed again, and the finding is closed only by the passing test written
-// for it; the review_rounds cap ends the run EXHAUSTED with the open findings; a finding about financial
-// semantics goes to the Inquisition instead of being repaired on a guess.
+// repaired tree is verified and reviewed again, and the finding is closed only by the test written for it
+// failing on the pre-repair tree and passing on the repaired one (ADR 0015); a test that passes on both
+// leaves it open, whatever the check prints; the review_rounds cap ends the run EXHAUSTED with the open
+// findings; a finding about financial semantics goes to the Inquisition instead of being repaired on a guess.
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Controller } from '../../../src/controller/loop.ts';
+import { listCheckRuns } from '../../../src/evidence/store.ts';
+import { listProbeAttempts } from '../../../src/evidence/fail-before.ts';
 import { listFindings, listReviews } from '../../../src/review/store.ts';
+import { listDecisions } from '../../../src/storage/decisions.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
-import { APPROVE, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, MUL_TEST, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { APPROVE, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, MUL_TEST, NAMING_RUNNER, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
 const labs: Lab[] = [];
+/** A lab whose test runner prints "all tests passed" and nothing else: no output names the repair's test. */
 function lab(opts: Parameters<typeof makeLab>[0] = {}): Lab {
   const l = makeLab(opts);
   labs.push(l);
@@ -85,14 +90,40 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(stored.brief.post_fix_checks).toEqual(['unit']);
     expect(stored.brief.preserved_constraints.join('\n')).toMatch(/Do not weaken/);
 
-    // Closed by the passing validation test on the repaired tree, not by the second reviewer's approval.
+    // Closed by the validation test failing on the pre-repair tree, where the check passes without it, and passing on the
+    // repaired one, not by the second reviewer's approval, though the runner printed only "all tests passed".
     expect(finding).toMatchObject({ externalId: 'COR-1', status: 'resolved' });
     expect(finding!.resolution).toMatch(/tests\/mul-input\.test\.mjs/);
+    expect(finding!.resolution).toContain('unit failed on the pre-repair tree with the tests named for the finding (exit 1, 2 attempts), unit passed on the pre-repair tree without the tests named for findings, and unit passed on the repaired tree in the probe checkout');
+    expect(listDecisions(l.db(), run.id, { kind: 'review.repair-probe' }).map((d) => d.summary)).toEqual(['unit passed on the pre-repair tree without the tests named for findings: COR-1', 'unit passed on the repaired tree in the probe checkout: COR-1', 'unit failed on the pre-repair tree with the tests named for the finding (exit 1, 2 attempts): COR-1']);
+    // The probe's attempts are its own, never the run's check runs.
+    const probeIds = new Set(listProbeAttempts(l.db(), run.id).map((a) => a.id));
+    expect(probeIds.size).toBeGreaterThanOrEqual(2);
+    expect(listCheckRuns(l.db(), { runId: run.id }).some((c) => probeIds.has(c.id))).toBe(false);
+    expect(listCheckRuns(l.db(), { runId: run.id }).every((c) => c.status === 'PASSED' || c.candidateId === null)).toBe(true);
     const reviews = listReviews(l.db(), run.id, { includeInvalidated: true });
     expect(reviews.map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'APPROVE']);
     expect(listWorkers(l.db(), { runId: run.id, role: 'implementer' })).toHaveLength(2);
     const report = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.json'), 'utf8')) as { budget: { counters: { counter: string; used: number }[] } };
     expect(report.budget.counters.find((c) => c.counter === 'review_rounds')?.used).toBe(2);
+  }, 120_000);
+
+  it('a repair test that passes on the pre-repair tree too leaves the finding open, though the runner names it as passed, and the run ends EXHAUSTED at the review_rounds cap', async () => {
+    // The runner prints "ok - tests/mul-input.test.mjs": the 0.3.1 log rules credited that line, ADR 0015 reads no output.
+    const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2), files: { 'tests/run.mjs': NAMING_RUNNER } });
+    const weak = { ...REPAIR, edits: [...REPAIR.edits.slice(0, 2), { op: 'write', path: 'tests/mul-input.test.mjs', content: "import { mul } from '../apps/calc.mjs';\nif (mul(2, 3) !== 6) process.exit(1);\n" }] };
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), weak], reviewer: [REPAIR_REQUIRED, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1/);
+    const [finding] = listFindings(l.db(), run.id);
+    expect(finding!.status).not.toBe('resolved');
+    expect(finding!.resolution).toContain("tests/mul-input.test.mjs: the repair's test passes on the pre-repair tree too, so it does not tell the trees apart (unit passed on the pre-repair tree with the tests named for the finding)");
+    // The control tree, the repaired tree in the probe checkout, then the finding's tree: all pass.
+    expect(listProbeAttempts(l.db(), run.id).filter((a) => a.logPath?.includes('/repair-probe/')).map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'PASSED']);
   }, 120_000);
 
   it('a finding the repair did not cover stays open and the run ends EXHAUSTED at the review_rounds cap, naming the open finding', async () => {

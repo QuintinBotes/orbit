@@ -68,7 +68,12 @@ export interface FinalReport {
   mode: string;
   original_goal: string;
   objective: string | null;
-  criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[] }[];
+  /**
+   * `check_wide` and `fail_before` come from the evidence report (evidence/<seq>/report.json), whose criterion entries
+   * carry them in full: whether the criterion's support is a check other criteria share, and whether its new tests fail
+   * on the base revision (ADR 0014). Each is absent where the evidence report has none.
+   */
+  criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[]; check_wide?: string; fail_before?: ReportFailBefore }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
@@ -130,6 +135,16 @@ export interface FinalReport {
   generated_at: number;
 }
 
+/** A criterion's fail-before entry as the final report carries it: the evidence report's, without the probe's attempts. */
+export interface ReportFailBefore {
+  mode: string;
+  outcome: string;
+  /** Why the outcome is not established, when it is not. */
+  cause?: string;
+  reason: string;
+  check_wide?: string;
+}
+
 export interface WorkerPluginLine {
   id: string | null;
   scope: string | null;
@@ -183,7 +198,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
   const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
     const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
-    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [] };
+    const fb = e?.fail_before;
+    const failBefore: ReportFailBefore | undefined = fb ? { mode: fb.mode, outcome: fb.outcome, ...(fb.cause ? { cause: fb.cause } : {}), reason: fb.reason, ...(fb.check_wide ? { check_wide: fb.check_wide } : {}) } : undefined;
+    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [], ...(e?.check_wide ? { check_wide: e.check_wide } : {}), ...(failBefore ? { fail_before: failBefore } : {}) };
   });
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [(d.data as ReviewDepth).review_id, d.data as ReviewDepth] as const));
@@ -498,7 +515,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Outcome', '', `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ''}`, '');
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
-  out.push('## Criterion evidence', '', list(r.criteria.map((c) => `${c.id}${c.mandatory ? '' : ' (optional)'} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(', ')})` : ''}`)), '');
+  out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');
   out.push('## Checks', '', list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ''}${c.flaky ? ', flaky' : ''}, log ${c.log}`)), '');
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
@@ -532,6 +549,21 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Residual risks', '', list(r.residual_risks), '');
   out.push('## Next action', '', r.next_action, '');
   return redact(`${out.join('\n')}`);
+}
+
+/**
+ * A criterion's evidence line: status and artifacts, the fail-before outcome when the evidence report has one, and,
+ * when its check is shared, that the evidence is check-wide (the criterion's own note names every shared check it
+ * cites, so it stands for the fail-before one too).
+ */
+function criterionLine(c: FinalReport['criteria'][number]): string {
+  const fb = c.fail_before;
+  const wide = c.check_wide ?? fb?.check_wide;
+  return [
+    `${c.id}${c.mandatory ? '' : ' (optional)'} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(', ')})` : ''}`,
+    ...(fb ? [`fail-before (${fb.mode}): ${fb.outcome}${fb.cause ? ` (cause ${fb.cause})` : ''}: ${fb.reason}`] : []),
+    ...(wide ? [wide] : []),
+  ].join('; ');
 }
 
 /** The depth fields of a report review line; empty for a review with no record (an older run). */

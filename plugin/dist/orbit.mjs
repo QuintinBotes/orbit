@@ -39072,7 +39072,7 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
       }
       const shim = readShim(dirs.checkDir, token, spawned);
       const now = ctx.clock.now();
-      const settle2 = async (synthetic) => {
+      const settle3 = async (synthetic) => {
         const why = await reapAll(ctx, dirs.checkDir, token, shim);
         if (why !== null) {
           leftOpen = true;
@@ -39090,7 +39090,7 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
           }
         } else if (shim.pgid !== null) killQuiet(shim.pgid, "SIGTERM");
       }
-      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1e3) return await settle2("cancelled");
+      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1e3) return await settle3("cancelled");
       if (cancelSentAt === null && deniedAt === null && shim.pgid !== null && now >= nextDenialScan) {
         nextDenialScan = now + DENIAL_SCAN_MS;
         const denial = findMsbuildNodeDenial(dirs.tmpDir);
@@ -39108,19 +39108,19 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
         nextShimSearch = now + SHIM_SEARCH_MS;
         if (unnamedShim(dirs.checkDir, token) === null) return finalize(ctx, def, row, dirs, null, "lost");
       }
-      if (now > backstop && cancelSentAt === null) return await settle2("timeout");
+      if (now > backstop && cancelSentAt === null) return await settle3("timeout");
       if (shim.pid !== null) {
         if (!checkedIdentity) {
           checkedIdentity = true;
           if (!isAlive(shim.pid, shim.procStart)) {
             const late = readJsonFile(shimPath(dirs.checkDir, "exit"));
             if (late) continue;
-            return await settle2("lost");
+            return await settle3("lost");
           }
         } else if (!pidAlive(shim.pid)) {
           const late = readJsonFile(shimPath(dirs.checkDir, "exit"));
           if (late) continue;
-          return await settle2(cancelSentAt !== null ? "cancelled" : "lost");
+          return await settle3(cancelSentAt !== null ? "cancelled" : "lost");
         }
       }
       await sleepOrAbort(ctx, poll);
@@ -39802,20 +39802,20 @@ import { dirname as dirname17, isAbsolute as isAbsolute16, join as join28, relat
 function acceptableCause(cause) {
   return !NEVER_ACCEPTED.has(cause);
 }
-function judgeProbeAttempts(checkId, attempts) {
+function judgeProbeAttempts(checkId, attempts, where2 = FAIL_BEFORE_PROBE.where) {
   const done = (outcome, reason, cause) => ({ checkId, outcome, ...cause ? { cause } : {}, reason, attempts: [...attempts] });
   if (attempts.length === 0) return done("not-established", `${checkId} did not run on the probe tree`, "interrupted");
   const statuses = attempts.map((a) => a.status);
   if (statuses.includes("ERROR")) return done("not-established", `${checkId} could not be run on the probe tree (ERROR)`, "error");
   const signals = [...new Set(attempts.flatMap((a) => a.signals))];
   if (signals.length > 0) return done("not-established", `${checkId} could not run on the probe tree: its output shows an environment cause (${signals.join(", ")}), not a test result`, "environment");
-  if (statuses.every((s) => s === "PASSED")) return done("passed-before", `${checkId} passed on the base revision with the new tests`);
+  if (statuses.every((s) => s === "PASSED")) return done("passed-before", `${checkId} passed ${where2}`);
   if (statuses.every((s) => s === "FAILED")) {
-    if (attempts.length < 2) return done("not-established", `${checkId} failed once on the base revision with the new tests, and a failure counts only when it repeats`, "once");
+    if (attempts.length < 2) return done("not-established", `${checkId} failed once ${where2}, and a failure counts only when it repeats`, "once");
     const unscanned = attempts.find((a) => a.unscanned !== void 0);
     if (unscanned) return done("not-established", `${checkId} could not be judged on the probe tree: ${unscanned.unscanned}`, "unscanned");
     const exits = [...new Set(attempts.map((a) => a.exitCode === null ? "none" : String(a.exitCode)))];
-    return done("failed-before", `${checkId} failed on the base revision with the new tests (exit ${exits.join(", ")}, ${attempts.length} attempts)`);
+    return done("failed-before", `${checkId} failed ${where2} (exit ${exits.join(", ")}, ${attempts.length} attempts)`);
   }
   if (statuses.includes("TIMEOUT")) return done("not-established", `${checkId} timed out on the probe tree`, "timeout");
   if (statuses.includes("CANCELLED")) return done("not-established", `${checkId} was cancelled on the probe tree`, "cancelled");
@@ -39854,6 +39854,9 @@ function underCheck(path, def) {
 function testChangesUnder(base, def) {
   return base.changedPaths.filter((p) => underCheck(p, def) && isTestPath(p, base.testLayout, base.diffs?.get(p)));
 }
+function isTestCommandCheck(def) {
+  return def !== void 0 && def.kind === "command" && checkCategory(def) === "test";
+}
 function newTestSupport(contract, snapshot2, base) {
   const baseStatus = new Map((base.checks ?? []).map((c) => [c.checkId, c.status]));
   const testsOf = /* @__PURE__ */ new Map();
@@ -39868,10 +39871,7 @@ function newTestSupport(contract, snapshot2, base) {
   return contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
     const withTests = ids.filter((id) => tests(id).length > 0);
-    const probeable = withTests.filter((id) => {
-      const def = snapshot2.config.checks[id];
-      return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" && baseStatus.get(id) === "PASSED";
-    });
+    const probeable = withTests.filter((id) => isTestCommandCheck(snapshot2.config.checks[id]) && baseStatus.get(id) === "PASSED");
     return {
       criterionId: c.id,
       flips: ids.filter((id) => baseStatus.get(id) === "FAILED" || baseStatus.get(id) === "TIMEOUT"),
@@ -39910,7 +39910,7 @@ async function objectTypes(repoRoot, rev, paths) {
   });
   return out;
 }
-async function buildProbeTree(repoRoot, base, changes) {
+async function buildProbeTree(repoRoot, base, changes, baseName = FAIL_BEFORE_PROBE.base) {
   const sorted = [...changes].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   for (const c of sorted) {
     if (c.srcMode === GITLINK || c.dstMode === GITLINK) return { refused: `${c.path} is a gitlink (a submodule), which the probe tree cannot take` };
@@ -39923,12 +39923,12 @@ async function buildProbeTree(repoRoot, base, changes) {
   for (const c of added) {
     for (const d of parentsOf(c.path)) {
       const t = types2.get(d);
-      if (t !== null && t !== void 0 && t !== "tree" && !deleted.has(d)) return { refused: `${c.path} needs the directory ${d}, but ${d} is a file on the base revision that the probe keeps (it is not test-owned)` };
+      if (t !== null && t !== void 0 && t !== "tree" && !deleted.has(d)) return { refused: `${c.path} needs the directory ${d}, but ${d} is a file on ${baseName} that the probe keeps (it is not test-owned)` };
     }
     if (types2.get(c.path) === "tree") {
       const inside = (await git2(repoRoot, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", base, "--", `:(literal)${c.path}`])).split("\0").filter((p) => p.length > 0);
       const kept = inside.filter((p) => !deleted.has(p));
-      if (kept.length > 0) return { refused: `${c.path} is a directory on the base revision whose files the probe keeps (${kept[0]}${kept.length > 1 ? ` and ${kept.length - 1} more` : ""}), so a test-owned file cannot replace it` };
+      if (kept.length > 0) return { refused: `${c.path} is a directory on ${baseName} whose files the probe keeps (${kept[0]}${kept.length > 1 ? ` and ${kept.length - 1} more` : ""}), so a test-owned file cannot replace it` };
     }
   }
   const scratch = mkdtempSync5(join28(tmpdir10(), "orbit-probe-index-"));
@@ -39950,11 +39950,11 @@ async function commitProbeTree(repoRoot, o) {
   await git2(repoRoot, ["update-ref", o.ref, commit]);
   return commit;
 }
-function probeRef(runId, seq2) {
-  return `refs/orbit/${runId}/fail-before/${seq2}`;
+function probeRef(runId, seq2, flavour = FAIL_BEFORE_PROBE, part = null) {
+  return `refs/orbit/${runId}/${flavour.name}/${seq2}${part === null ? "" : `-${part}`}`;
 }
-function probeEvidenceDir(runDir2, seq2) {
-  return join28(candidateEvidenceDir(runDir2, seq2), "fail-before");
+function probeEvidenceDir(runDir2, seq2, flavour = FAIL_BEFORE_PROBE) {
+  return join28(candidateEvidenceDir(runDir2, seq2), flavour.name);
 }
 function toCheckRun2(r) {
   const status2 = r.status;
@@ -40045,11 +40045,13 @@ function probeDirs(runDir2) {
     }
   };
   for (const seq2 of subdirs(join28(runDir2, "evidence"))) {
-    const root = join28(runDir2, "evidence", seq2, "fail-before");
-    for (const name of subdirs(root)) {
-      const dir = join28(root, name);
-      const intent = readJsonFile(shimPath(dir, "intent"));
-      if (intent && typeof intent.checkRunId === "string") found.set(intent.checkRunId, { dir, intent });
+    for (const flavour of FLAVOURS) {
+      const root = join28(runDir2, "evidence", seq2, flavour.name);
+      for (const name of subdirs(root)) {
+        const dir = join28(root, name);
+        const intent = readJsonFile(shimPath(dir, "intent"));
+        if (intent && typeof intent.checkRunId === "string") found.set(intent.checkRunId, { dir, intent });
+      }
     }
   }
   return found;
@@ -40079,9 +40081,9 @@ function probeAttemptOpen(db, probeId) {
 function listedPaths(paths) {
   return { paths: paths.slice(0, MAX_LISTED_PATHS), count: paths.length };
 }
-function reusable(db, runId, probeTree, policyHash, configHashes) {
+function reusable(db, runId, kind, probeTree, policyHash, configHashes) {
   const out = /* @__PURE__ */ new Map();
-  for (const d of listDecisions(db, runId, { kind: FAIL_BEFORE_DECISION_KIND })) {
+  for (const d of listDecisions(db, runId, { kind })) {
     const data = d.data;
     if (!data || data.probe_tree !== probeTree || data.policy_hash !== policyHash || !Array.isArray(data.checks)) continue;
     for (const c of data.checks) {
@@ -40102,6 +40104,7 @@ function runRelative(runDir2, p) {
 async function runFailBeforeProbe(req) {
   const { runner, candidate } = req;
   const { db, snapshot: snapshot2, clock, runDir: runDir2 } = runner;
+  const flavour = req.flavour ?? FAIL_BEFORE_PROBE;
   const checkIds = req.checks.map((c) => c.checkId);
   const testPaths = req.changes.map((c) => c.path).sort();
   const result2 = (probeTree2, checks2, probeId2 = null, reused = false) => ({ probeId: probeId2, probeTree: probeTree2, baseRevision: req.baseRev, testPaths, checks: checks2, reused });
@@ -40110,12 +40113,12 @@ async function runFailBeforeProbe(req) {
     const why = interrupted.kept.map((k) => `${k.checkId} (${k.why})`).join("; ");
     return result2(null, notEstablished(checkIds, "interrupted", (id) => `${id} was not probed: an earlier fail-before probe attempt may still be running: ${why}; the probe runs again once it has ended`));
   }
-  const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes);
+  const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes, flavour.base);
   if ("refused" in built) return result2(null, notEstablished(checkIds, "refused-tree", (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
   const defs = new Map(checkIds.map((id) => [id, snapshot2.config.checks[id]]));
   const configHashes = new Map(checkIds.map((id) => [id, configHashFor(snapshot2, defs.get(id))]));
-  const earlier = reusable(db, runner.run.id, probeTree, runner.run.policyHash, configHashes);
+  const earlier = reusable(db, runner.run.id, flavour.decisionKind, probeTree, runner.run.policyHash, configHashes);
   const toRun = checkIds.filter((id) => !earlier.has(id));
   const reusedChecks = checkIds.filter((id) => earlier.has(id)).map((id) => earlier.get(id).check);
   if (toRun.length === 0) return result2(probeTree, reusedChecks, earlier.get(checkIds[0]).probeId, true);
@@ -40124,7 +40127,7 @@ async function runFailBeforeProbe(req) {
     return result2(probeTree, [...reusedChecks, ...notEstablished(toRun, "budget", (id) => `${id} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`)]);
   }
   const probeId = newId("probe");
-  const commit = await commitProbeTree(req.repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(runner.run.id, candidate.seq), message: `orbit fail-before probe ${runner.run.id}/${candidate.seq}
+  const commit = await commitProbeTree(req.repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(runner.run.id, candidate.seq, flavour, req.refPart ?? null), message: `orbit ${flavour.name} probe ${runner.run.id}/${candidate.seq}
 
 base: ${req.baseRev}
 candidate: ${candidate.commitSha}
@@ -40136,7 +40139,7 @@ tree: ${probeTree}
   const checkout = realpathSync12(req.checkoutDir);
   const deadline = clock.now() + req.timeoutMs;
   const ctx = { ...runner, checkoutDir: checkout, records: probeRecords(probeId) };
-  const subject = { candidateId: candidate.id, bindingId: `fail-before:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir2, candidate.seq), source: "check" };
+  const subject = { candidateId: candidate.id, bindingId: `${flavour.name}:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir2, candidate.seq, flavour), source: "check" };
   const attemptOf = (row, def) => {
     const base = { attempt: attemptNumber(db, row.id), status: row.status, exitCode: row.exitCode, log: runRelative(runDir2, row.logPath) };
     const scan = scanProbeLog(readProbeLog(row.logPath), {
@@ -40228,7 +40231,7 @@ tree: ${probeTree}
         ran.push({ checkId: id, outcome: "not-established", cause: "error", reason: `${id} could not be run on the probe tree: ${refused}`, attempts });
         continue;
       }
-      let judged = judgeProbeAttempts(id, attempts);
+      let judged = judgeProbeAttempts(id, attempts, flavour.where);
       const outOfTime = attempts.length === 0 || judged.cause === "once" || judged.cause === "timeout" && bounded;
       if (judged.outcome === "not-established" && outOfTime && clock.now() >= deadline - 1e3) {
         judged = { ...judged, cause: "budget", reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out` };
@@ -40258,7 +40261,7 @@ tree: ${probeTree}
       test_paths: listedPaths(testPaths),
       checks: fresh.map((c) => ({ check_id: c.checkId, check_config_hash: configHashes.get(c.checkId), outcome: c.outcome, ...c.cause ? { cause: c.cause } : {}, reason: c.reason, criteria: criteria.get(c.checkId) ?? [], attempts: c.attempts.map((a) => ({ attempt: a.attempt, status: a.status, exit_code: a.exitCode, signals: a.signals, ...a.unscanned === void 0 ? {} : { unscanned: a.unscanned }, log: a.log })) }))
     };
-    req.decide({ id: `dec-${runner.run.id}-fail-before-${probeId}`, kind: FAIL_BEFORE_DECISION_KIND, summary: probeSummary(data.checks), data });
+    req.decide({ id: `dec-${runner.run.id}-${flavour.name}-${probeId}`, kind: flavour.decisionKind, summary: probeSummary(data.checks), data });
   }
   return result2(probeTree, checks, probeId, false);
 }
@@ -40354,7 +40357,7 @@ function probeLogExcerpt(path, max = PROBE_EXCERPT_CHARS) {
     return "";
   }
 }
-var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, DEFAULT_PROBE_STOP_GRACE_MS, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
+var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, REPAIR_PROBE_DECISION_KIND, FAIL_BEFORE_PROBE, REPAIR_PROBE, REPAIR_CONTROL, REPAIR_REPAIRED, FLAVOURS, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, DEFAULT_PROBE_STOP_GRACE_MS, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
 var init_fail_before = __esm({
   "src/evidence/fail-before.ts"() {
     "use strict";
@@ -40374,6 +40377,12 @@ var init_fail_before = __esm({
     init_runner();
     NEVER_ACCEPTED = /* @__PURE__ */ new Set(["environment", "error", "install"]);
     FAIL_BEFORE_DECISION_KIND = "verification.fail-before";
+    REPAIR_PROBE_DECISION_KIND = "review.repair-probe";
+    FAIL_BEFORE_PROBE = Object.freeze({ name: "fail-before", decisionKind: FAIL_BEFORE_DECISION_KIND, base: "the base revision", where: "on the base revision with the new tests" });
+    REPAIR_PROBE = Object.freeze({ name: "repair-probe", decisionKind: REPAIR_PROBE_DECISION_KIND, base: "the pre-repair tree", where: "on the pre-repair tree with the tests named for the finding" });
+    REPAIR_CONTROL = Object.freeze({ name: "repair-probe", decisionKind: REPAIR_PROBE_DECISION_KIND, base: "the pre-repair tree", where: "on the pre-repair tree without the tests named for findings" });
+    REPAIR_REPAIRED = Object.freeze({ name: "repair-probe", decisionKind: REPAIR_PROBE_DECISION_KIND, base: "the pre-repair tree", where: "on the repaired tree in the probe checkout" });
+    FLAVOURS = [FAIL_BEFORE_PROBE, REPAIR_PROBE];
     CLASSIFIER_LINES = 2e5;
     WINDOW_STRIDE = CLASSIFIER_LINES / 2;
     OUTPUT_DROPPED = /^\[orbit: output truncated: \d+ bytes dropped/m;
@@ -42374,6 +42383,21 @@ function runWorktreeRoot(ctx) {
 }
 function worktreeRootFor(orbitHome, run) {
   return join30(orbitHome, "worktrees", repoKey(run.repoRoot), run.id);
+}
+function checkRunnerFor(ctx) {
+  return {
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    detachSignal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf2(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx)
+  };
 }
 var DEFAULT_TIMING, CANDIDATE_EVENT, UNBOUNDED;
 var init_context2 = __esm({
@@ -49219,6 +49243,19 @@ function candidateEnvironmentFailures(run) {
     return null;
   }
 }
+function declinedLedger(run) {
+  try {
+    const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
+    if (!Array.isArray(o?.ledger_declined)) return [];
+    return o.ledger_declined.flatMap((d) => {
+      const r = d !== null && typeof d === "object" ? d : {};
+      if (typeof r.question_id !== "string" || !Array.isArray(r.ledger_ids)) return [];
+      return [{ questionId: r.question_id, ledgerIds: r.ledger_ids.filter((x) => typeof x === "string") }];
+    });
+  } catch {
+    return [];
+  }
+}
 function freshReviewSpent(run) {
   try {
     const o = run.outcomeJson ? JSON.parse(run.outcomeJson) : null;
@@ -49246,6 +49283,12 @@ function newRunNeeded(db, run) {
   if (run.state !== "BLOCKED") return null;
   const frozen = frozenPolicySetting(run);
   if (frozen !== null) return `its frozen policy (${frozen}) causes the block${frozenPolicyForceHelps(frozen) ? '; if what you fixed is outside the policy, "orbit resume --force" is the other way forward' : ""}`;
+  const declined = declinedLedger(run);
+  if (declined.length > 0) {
+    const ids = declined.flatMap((d) => d.ledgerIds);
+    const asked = declined.map((d) => d.questionId);
+    return `a person declined needs-decision assumption ledger ${ids.length === 1 ? "entry" : "entries"} ${ids.join(", ")} (${asked.length === 1 ? "question" : "questions"} ${asked.join(", ")}), and a run cannot succeed with a decision a person declined`;
+  }
   const failures = candidateEnvironmentFailures(run);
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";
@@ -49599,6 +49642,9 @@ function sanitizeReason(text2) {
 function nextAction(input) {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
+  if (run.state === "BLOCKED" && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {
+    return `Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`;
+  }
   if (first !== void 0) {
     const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
     return remote ? `${local}, or comment "/orbit answer ${first} <choice>" on ${remote.where}.` : `${local}, then run orbit resume ${run.id}.`;
@@ -50943,6 +50989,21 @@ function evaluateEvidence(input) {
   };
   const journeyIds = new Set(snapshot2.config.ui?.journey_check_ids ?? []);
   const isBrowserCheck = (id) => snapshot2.config.checks[id]?.kind === "playwright" || journeyIds.has(id) || ui.has(id);
+  const citedBy2 = /* @__PURE__ */ new Map();
+  for (const c of contract.acceptance_criteria) for (const id of new Set(c.check_ids ?? [])) citedBy2.set(id, [...citedBy2.get(id) ?? [], c.id]);
+  const runOf = (id) => {
+    if (isBrowserCheck(id)) return `the journeys ${id} runs`;
+    const def = snapshot2.config.checks[id];
+    return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" ? `the tests ${id} runs` : `what ${id} checks`;
+  };
+  const checkWide = (ids) => {
+    const shared = [...new Set(ids)].filter((id) => (citedBy2.get(id)?.length ?? 0) > 1).sort();
+    return shared.length === 0 ? void 0 : `check-wide: ${shared.map((id) => `${runOf(id)}, shared by ${citedBy2.get(id).join(", ")}`).join("; ")}`;
+  };
+  for (const [id, e] of failBeforeOf) {
+    const wide = checkWide(e.checks.map((x) => x.id));
+    if (wide !== void 0) failBeforeOf.set(id, { ...e, check_wide: wide });
+  }
   const criteria = contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
     let status2;
@@ -50988,7 +51049,8 @@ function evaluateEvidence(input) {
       note3(unverified, `optional criterion ${c.id}: ${status2}${why ? ` (${why})` : ""}`);
     }
     const entry = failBeforeOf.get(c.id);
-    return { criterion_id: c.id, status: status2, artifacts, ...why ? { note: why } : {}, ...entry ? { fail_before: entry } : {} };
+    const wide = checkWide(ids);
+    return { criterion_id: c.id, status: status2, artifacts, ...why ? { note: why } : {}, ...wide !== void 0 ? { check_wide: wide } : {}, ...entry ? { fail_before: entry } : {} };
   });
   if (notRun.length > 0) note3(unverified, `fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: ${notRun.join(", ")}`);
   if (advisoryGaps.length > 0) note3(unverified, `fail-before (advisory): ${advisoryGaps.join("; ")}`);
@@ -51048,6 +51110,7 @@ var init_report = __esm({
     "use strict";
     init_fsx();
     init_hash();
+    init_config();
     init_snapshot();
     init_fail_before();
     init_runner();
@@ -53766,7 +53829,9 @@ function assembleFinalReport(db, run, opts) {
   const ev = (cand ? reports.filter((r) => r.candidateId === cand.id).at(-1) : null) ?? reports.at(-1) ?? null;
   const criteria = (contract?.acceptance_criteria ?? []).map((c) => {
     const e = ev?.report.acceptance_evidence.find((a) => a.criterion_id === c.id);
-    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [] };
+    const fb = e?.fail_before;
+    const failBefore = fb ? { mode: fb.mode, outcome: fb.outcome, ...fb.cause ? { cause: fb.cause } : {}, reason: fb.reason, ...fb.check_wide ? { check_wide: fb.check_wide } : {} } : void 0;
+    return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [], ...e?.check_wide ? { check_wide: e.check_wide } : {}, ...failBefore ? { fail_before: failBefore } : {} };
   });
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [d.data.review_id, d.data]));
@@ -54017,7 +54082,7 @@ function renderMarkdown(r) {
   out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
   out.push("## Original goal", "", r.original_goal, "");
   if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
-  out.push("## Criterion evidence", "", list3(r.criteria.map((c) => `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`)), "");
+  out.push("## Criterion evidence", "", list3(r.criteria.map(criterionLine)), "");
   out.push("## Checks", "", list3(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ""}${c.flaky ? ", flaky" : ""}, log ${c.log}`)), "");
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
   out.push("## Reviews", "");
@@ -54045,6 +54110,15 @@ function renderMarkdown(r) {
   out.push("## Residual risks", "", list3(r.residual_risks), "");
   out.push("## Next action", "", r.next_action, "");
   return redact(`${out.join("\n")}`);
+}
+function criterionLine(c) {
+  const fb = c.fail_before;
+  const wide = c.check_wide ?? fb?.check_wide;
+  return [
+    `${c.id}${c.mandatory ? "" : " (optional)"} [${c.status}]: ${c.statement}${c.artifacts.length ? ` (evidence: ${c.artifacts.join(", ")})` : ""}`,
+    ...fb ? [`fail-before (${fb.mode}): ${fb.outcome}${fb.cause ? ` (cause ${fb.cause})` : ""}: ${fb.reason}`] : [],
+    ...wide ? [wide] : []
+  ].join("; ");
 }
 function depthOf(d) {
   return d ? { tool_calls: d.tool_calls, reasoning_tokens: d.reasoning_tokens } : {};
@@ -55837,6 +55911,8 @@ function completionGate(db, input) {
   if (!g.ok) reasons.push(...g.reasons);
   const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
   if (blocked.length > 0) reasons.push(`${blocked.join(", ")} ${blocked.length === 1 ? "is" : "are"} blocked by open question(s) ${waiting.map((q) => q.id).join(", ")} waiting for a person`);
+  const undecided = listLedger(db, input.run.id, { status: "needs-decision" }).map((e) => e.id);
+  if (undecided.length > 0) reasons.push(`assumption ledger ${undecided.length === 1 ? "entry" : "entries"} ${undecided.join(", ")} ${undecided.length === 1 ? "needs" : "need"} a person's decision`);
   if (input.deliveredTree === null) reasons.push("no delivered commit to compare with the reviewed tree");
   else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
   else evidence.push(`delivered tree ${input.deliveredTree}`);
@@ -55858,6 +55934,7 @@ var init_gates = __esm({
     init_store();
     init_errors();
     init_questions();
+    init_store4();
     FAILURE_BEHAVIOUR = {
       intake: "reject-contract",
       environment: "block-unattended",
@@ -56845,35 +56922,56 @@ async function collectFailBefore(ctx, cand, input) {
     return evidence(null, { cause: "not-acceptable", reason: "the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)" });
   }
   const baseRev = ctx.run.baseRevision;
-  const repoRoot = ctx.run.repoRoot;
-  const changes = await changesBetween(repoRoot, baseRev, cand.commitSha);
-  const layout = await loadTestLayout(gitTreeReader((args) => git2(repoRoot, args)), baseRev, cand.commitSha, changes.map((c) => c.path), { allDotnetOwners: true });
-  const owned = changes.filter((c) => isTestOwnedPath(c.path, layout));
+  const { owned, manifests } = await probeChanges(ctx.run.repoRoot, baseRev, cand.commitSha);
   if (owned.length === 0) {
     return evidence(null, { cause: "content-only", reason: "the probe did not run: the new tests are tests only by their content (such as a #[test] added to a Rust source), which the probe tree cannot take without the production code around them" });
   }
-  const manifests = [.../* @__PURE__ */ new Set([...await dependencyManifestsChangedBetween(repoRoot, baseRev, cand.commitSha, changes), ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
   if (manifests.length > 0) {
     return evidence(null, { cause: "manifest", reason: `not probed: the candidate changes ${manifests.join(", ")}, a dependency manifest or lockfile outside test-owned paths, so a test could fail or pass on the base revision for a dependency rather than for the change` });
   }
-  let wallRemainingMs = null;
-  if (ctx.ledger) {
-    const wall = ctx.ledger.syncWall();
-    wallRemainingMs = Math.max(0, wall.hard_cap - wall.used);
-  }
   const probe2 = await runFailBeforeProbe({
     runner: input.runner,
-    repoRoot,
+    repoRoot: ctx.run.repoRoot,
     baseRev,
     candidate: cand,
     checks: [...byCheck].sort(([a], [b]) => a.localeCompare(b)).map(([checkId, criteria]) => ({ checkId, criteria })),
     changes: owned,
     checkoutDir: join52(runWorktreeRoot(ctx), `fail-before-${cand.seq}`),
     timeoutMs: timeoutSeconds * 1e3,
-    wallRemainingMs,
+    wallRemainingMs: wallRemaining(ctx),
     decide: (d) => decide2(ctx, d)
   });
   return evidence(probe2);
+}
+async function probeChanges(repoRoot, from, to) {
+  const changes = await changesBetween(repoRoot, from, to);
+  const layout = await loadTestLayout(gitTreeReader((args) => git2(repoRoot, args)), from, to, changes.map((c) => c.path), { allDotnetOwners: true });
+  const owned = changes.filter((c) => isTestOwnedPath(c.path, layout));
+  const manifests = [.../* @__PURE__ */ new Set([...await dependencyManifestsChangedBetween(repoRoot, from, to, changes), ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
+  return { owned, manifests, all: changes };
+}
+function wallRemaining(ctx) {
+  if (!ctx.ledger) return null;
+  const wall = ctx.ledger.syncWall();
+  return Math.max(0, wall.hard_cap - wall.used);
+}
+async function runRepairProbe(ctx, cand, req) {
+  const { timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
+  const part = req.repaired ? "repaired" : req.tests === null ? "control" : hashObject([...req.tests].sort()).slice(7, 19);
+  return runFailBeforeProbe({
+    runner: checkRunnerFor(ctx),
+    repoRoot: ctx.run.repoRoot,
+    baseRev: req.preRepair,
+    candidate: cand,
+    checks: [...req.checks].sort((a, b) => a.checkId.localeCompare(b.checkId)).map((c) => ({ checkId: c.checkId, criteria: [...c.findings] })),
+    changes: req.changes,
+    checkoutDir: join52(runWorktreeRoot(ctx), `repair-probe-${cand.seq}`),
+    timeoutMs: timeoutSeconds * 1e3,
+    wallRemainingMs: wallRemaining(ctx),
+    decide: (d) => decide2(ctx, d),
+    flavour: req.repaired ? REPAIR_REPAIRED : req.tests === null ? REPAIR_CONTROL : REPAIR_PROBE,
+    refPart: `${req.attempt}-${part}`
+  });
 }
 function requests(ctx) {
   return listDecisions(ctx.db, ctx.run.id, { kind: FAIL_BEFORE_REQUEST_KIND }).map((d) => d.data);
@@ -57054,22 +57152,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const { checkoutDir, scope } = opts;
   const gate = (g) => opts.onGate?.(g);
   const checkpoint = async () => opts.checkpoint ? opts.checkpoint() : null;
-  const runner = {
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    snapshot: snapshot2,
-    isolation: ctx.isolation(),
-    checkoutDir,
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    // The signal means "stop supervising" (lease lost, shutdown, watchdog), never "cancel": the checks keep running
-    // for the run's next owner. A durable cancellation reaches the runner through the run row.
-    detachSignal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf2(ctx.deps),
-    toolchainCacheRoot: toolchainCacheRootFor(ctx)
-  };
+  const runner = { ...checkRunnerFor(ctx), checkoutDir };
   const install = await installDependencies({ ...runner, candidate: cand });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
   const results = [...install.results];
@@ -59761,6 +59844,142 @@ var init_release2 = __esm({
   }
 });
 
+// src/controller/undecided-ledger.ts
+function askedRecords(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: LEDGER_ASKED_KIND }).map((d) => d.data);
+}
+function recordAsked(ctx, data, summary) {
+  const id = `dec-${ctx.run.id}-ledger-asked-${hashObject(data).slice(7, 23)}`;
+  if (!getDecision(ctx.db, id)) decide2(ctx, { id, kind: LEDGER_ASKED_KIND, summary, data });
+}
+function recordAskedLedger(ctx, triggerKey, ledger, questions) {
+  const marker = `trigger:${triggerKey}`;
+  const ids = [...new Set(ledger.filter((e) => e.status === "needs-decision" && e.evidence.some((x) => x.ref === marker)).map((e) => e.id))].sort();
+  const asked = [...new Set(questions.map((q) => q.id))].sort();
+  if (ids.length === 0 || asked.length === 0) return;
+  recordAsked(ctx, { ledger_ids: ids, question_ids: asked, settles_on: "any" }, `${ids.join(", ")} asked about through question(s) ${asked.join(", ")} (inquiry ${triggerKey})`.slice(0, 1e3));
+}
+function declinesLedger(db, runId, questionId, answer) {
+  if (answer.trim().toLowerCase() === ACCEPT_LEDGER_DECISIONS) return false;
+  return listDecisions(db, runId, { kind: LEDGER_ASKED_KIND }).some((d) => {
+    const a = d.data;
+    return a?.settles_on === "accept" && Array.isArray(a.question_ids) && a.question_ids.includes(questionId);
+  });
+}
+function ledgerQuestionId(runId, ledgerIds) {
+  return `q-ledger-${hashObject({ run: runId, entries: [...ledgerIds].sort() }).slice(7, 19)}`;
+}
+function answeredByPerson(q) {
+  return q !== null && q.status === "answered" && q.answer !== null && q.answeredBy !== null && isHumanActor(q.answeredBy);
+}
+function accepts(q) {
+  return (q.answer ?? "").trim().toLowerCase() === ACCEPT_LEDGER_DECISIONS;
+}
+function settle2(ctx, e, q) {
+  try {
+    transitionAssumption(ctx.db, e.id, "supported", [{ kind: "decision", ref: answerDecisionId(q.id), note: `${q.answeredBy} answered ${q.id}: ${q.answer.slice(0, 200)}` }], ctx.clock, "controller");
+    return true;
+  } catch {
+    return false;
+  }
+}
+function ask2(ctx, entries) {
+  const ids = entries.map((e) => e.id);
+  const id = ledgerQuestionId(ctx.run.id, ids);
+  const named2 = ids.join(", ");
+  const q = findQuestion(ctx.db, id) ?? insertQuestion(
+    ctx.db,
+    {
+      id,
+      runId: ctx.run.id,
+      mode: "decision-record",
+      question: `Accept the ${ids.length === 1 ? "decision" : "decisions"} this run recorded without a person: ${named2}?`,
+      evidence: [
+        "only a person may settle a needs-decision entry of the assumption ledger, and the run cannot succeed while one is open",
+        ...entries.map((e) => `${e.id} (${e.source}; ${e.reversibility}; if wrong: ${e.consequence ?? "not stated"}): ${e.claim.slice(0, 500)}`)
+      ],
+      options: [
+        { label: ACCEPT_LEDGER_DECISIONS, description: `Accept ${named2} as recorded, for this run`, consequences: "each entry is settled on your answer and reported as supported; the run goes on to delivery after orbit resume" },
+        { label: DECLINE_LEDGER_DECISIONS, description: `Do not accept ${named2}`, consequences: "the run cannot succeed with these decisions and stays blocked; cancel it and start a new run whose goal states the decision" }
+      ],
+      changes: ["implementation"],
+      recommendation: { option: DECLINE_LEDGER_DECISIONS, reason: "each entry is a choice the run made without a person; accept only the ones you have read and agree with" },
+      safeDefault: { exists: true, option: DECLINE_LEDGER_DECISIONS, reason: "declining delivers nothing that rests on a choice nobody made" },
+      material: true,
+      affected: [],
+      unblocked: []
+    },
+    ctx.clock,
+    "controller"
+  );
+  recordAsked(ctx, { ledger_ids: [...ids].sort(), question_ids: [q.id], settles_on: "accept" }, `asked a person to decide ${named2} (question ${q.id})`.slice(0, 1e3));
+  return q;
+}
+async function blockOnUndecidedLedger(ctx, stage) {
+  const open2 = listLedger(ctx.db, ctx.run.id, { status: "needs-decision" });
+  if (open2.length === 0) return null;
+  const records = askedRecords(ctx);
+  const left = [];
+  const unasked = [];
+  const waiting = /* @__PURE__ */ new Map();
+  const declined = /* @__PURE__ */ new Map();
+  const add = (into, q2, id) => into.set(q2.id, { q: q2, ids: [...into.get(q2.id)?.ids ?? [], id] });
+  for (const e of open2) {
+    const asked = records.filter((r) => r.ledger_ids.includes(e.id)).flatMap((r) => r.question_ids.map((id) => ({ q: findQuestion(ctx.db, id), settlesOn: r.settles_on })));
+    const decided = asked.find(({ q: q2, settlesOn }) => answeredByPerson(q2) && (settlesOn === "any" || accepts(q2)));
+    if (decided && answeredByPerson(decided.q) && settle2(ctx, e, decided.q)) continue;
+    left.push(e);
+    const pending = asked.filter(({ q: q2 }) => q2?.status === "open");
+    const refused = asked.find(({ q: q2, settlesOn }) => settlesOn === "accept" && answeredByPerson(q2) && !accepts(q2));
+    if (pending.length > 0) for (const { q: q2 } of pending) add(waiting, q2, e.id);
+    else if (refused) add(declined, refused.q, e.id);
+    else unasked.push(e);
+  }
+  if (left.length === 0) return null;
+  const claim = (id) => `${id} (${left.find((e) => e.id === id).claim.slice(0, 160)})`;
+  const entries = (n3) => `needs-decision assumption ledger ${n3 === 1 ? "entry" : "entries"}`;
+  const ledgerDeclined = [...declined.values()].map((d) => ({ question_id: d.q.id, ledger_ids: d.ids }));
+  if (declined.size > 0) {
+    const n3 = ledgerDeclined.reduce((sum, d) => sum + d.ledger_ids.length, 0);
+    const parts2 = [
+      ...[...declined.values()].map((d) => `${d.ids.map(claim).join("; ")} (question ${d.q.id}, answered "${(d.q.answer ?? "").slice(0, 80)}" by ${d.q.answeredBy})`),
+      ...[...waiting.values()].map((w) => `${w.ids.map(claim).join("; ")} also ${w.ids.length === 1 ? "waits" : "wait"} for question ${w.q.id} (${w.q.question.slice(0, 160)})`),
+      ...unasked.length > 0 ? [`${unasked.map((e) => claim(e.id)).join("; ")} also ${unasked.length === 1 ? "needs" : "need"} a person's decision`] : []
+    ];
+    return finishRun(
+      ctx,
+      "BLOCKED",
+      `a person declined ${n3} ${entries(n3)} recorded during the run, so it cannot reach ${stage}: ${parts2.join("; ")}. The run cannot succeed with a decision a person declined, and orbit resume would only block again on it: cancel the run (orbit cancel ${ctx.run.id}) and start a new run whose goal states the decision.`,
+      { outcome: { ledger_entries: left.map((e) => e.id), questions: [...waiting.keys(), ...declined.keys()], ledger_declined: ledgerDeclined } }
+    );
+  }
+  const q = unasked.length > 0 ? ask2(ctx, unasked) : null;
+  const parts = [
+    ...q ? [`question ${q.id} asks a person to decide ${unasked.map((e) => claim(e.id)).join("; ")}`] : [],
+    ...[...waiting.values()].map((w) => `${w.ids.map(claim).join("; ")} ${w.ids.length === 1 ? "waits" : "wait"} for question ${w.q.id} (${w.q.question.slice(0, 160)})`)
+  ];
+  const answers = [...q ? [`orbit decide ${ctx.run.id} ${q.id} ${ACCEPT_LEDGER_DECISIONS} (or ${DECLINE_LEDGER_DECISIONS})`] : [], ...[...waiting.keys()].map((id) => `orbit decide ${ctx.run.id} ${id} <answer>`)];
+  const n2 = left.length;
+  return finishRun(ctx, "BLOCKED", `${n2} ${entries(n2)} recorded during the run ${n2 === 1 ? "waits" : "wait"} for a person before ${stage}: ${parts.join("; ")}. Answer with ${answers.join(" and ")}, then orbit resume ${ctx.run.id}.`, {
+    outcome: { ledger_entries: left.map((e) => e.id), questions: [...q ? [q.id] : [], ...waiting.keys()] }
+  });
+}
+var LEDGER_ASKED_KIND, ACCEPT_LEDGER_DECISIONS, DECLINE_LEDGER_DECISIONS;
+var init_undecided_ledger = __esm({
+  "src/controller/undecided-ledger.ts"() {
+    "use strict";
+    init_hash();
+    init_actors();
+    init_ledger();
+    init_store4();
+    init_decisions();
+    init_common();
+    LEDGER_ASKED_KIND = "inquisition.ledger-asked";
+    ACCEPT_LEDGER_DECISIONS = "accept";
+    DECLINE_LEDGER_DECISIONS = "decline";
+  }
+});
+
 // src/review/packet.ts
 function assertProviderEligible(snapshot2, provider) {
   const cfg = snapshot2.config.providers[provider];
@@ -61459,7 +61678,7 @@ function authorizedOnce(ctx, op, treeHash) {
   return grantFor(ctx, op, treeHash).state === "granted";
 }
 function requestAuthorization(ctx, op, cand) {
-  return ask2(
+  return ask3(
     ctx,
     op,
     {
@@ -61475,7 +61694,7 @@ function requestAuthorization(ctx, op, cand) {
 }
 function requestAttemptAuthorization(ctx, op, n2, worker) {
   const subject = attemptSubject(n2);
-  return ask2(
+  return ask3(
     ctx,
     op,
     {
@@ -61489,7 +61708,7 @@ function requestAttemptAuthorization(ctx, op, n2, worker) {
     { id: `dec-${ctx.run.id}-authreq-${op.key}-a${n2}`, summary: `asked a person to authorize once: ${op.summary} (attempt ${n2})`, data: { subject, attempt: n2, worker_id: worker.id } }
   );
 }
-function ask2(ctx, op, text2, request2) {
+function ask3(ctx, op, text2, request2) {
   const q = {
     question: text2.question,
     changes: ["authority"],
@@ -62728,7 +62947,7 @@ function sameProviderQuestionId(runId) {
 function sameProviderApprovalDecisionId(runId) {
   return `dec-${runId}-review-same-provider-approved`;
 }
-function ask3(ctx, sel) {
+function ask4(ctx, sel) {
   const id = sameProviderQuestionId(ctx.run.id);
   const why = sel.independentUnavailable ?? "no independent reviewer was usable";
   return findQuestion(ctx.db, id) ?? insertQuestion(
@@ -62763,7 +62982,7 @@ function ask3(ctx, sel) {
   );
 }
 function sameProviderApproval(ctx, sel) {
-  const q = ask3(ctx, sel);
+  const q = ask4(ctx, sel);
   if (q.status === "open") return { state: "pending", questionId: q.id };
   const by = q.answeredBy;
   if (q.status !== "answered" || (q.answer ?? "").trim().toLowerCase() !== ALLOW_SAME_PROVIDER || !by || !isHumanActor(by)) return { state: "declined", questionId: q.id, by };
@@ -63066,10 +63285,21 @@ async function resolveAndDecide(ctx, cand) {
   const repairs2 = reviewRepairs(ctx);
   const repaired = /* @__PURE__ */ new Map();
   for (const r of repairs2) for (const f of r.findings) for (const id of f.member_ids) repaired.set(id, r);
-  const evidence = await repairEvidence(ctx, cand, repairs2);
+  const closed = new Set([...state.findings, ...state.previousFindings].filter((f) => f.status === "resolved" || f.status === "rejected").map((f) => f.id));
+  const raisedOn = /* @__PURE__ */ new Map();
+  for (const f of [...state.findings, ...state.previousFindings]) {
+    const fp = findingFingerprint(f);
+    raisedOn.set(fp, (raisedOn.get(fp) ?? /* @__PURE__ */ new Set()).add(f.treeHash));
+  }
+  const { evidence, unresolved, repairedBy, probed } = await repairEvidence(ctx, cand, repairs2, { raisedAgain: new Set(state.findings.map((f) => findingFingerprint(f))), raisedOn, closed });
+  if (probed) {
+    const stop = await safePoint(ctx);
+    if (stop) return stop;
+  }
   const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
-  markRepaired(resolution, repaired);
+  markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
+  noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
@@ -63250,16 +63480,51 @@ function materialSemantics(ctx, d, t) {
   }
   return reasons;
 }
-async function repairEvidence(ctx, cand, repairs2) {
+function namesId(text2, id) {
+  return new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "i").test(text2);
+}
+function namesFinding(text2, f) {
+  return [f.fingerprint, f.external_id].some((id) => typeof id === "string" && id.length > 0 && namesId(text2, id));
+}
+function findingsNamed(text2, among, cited) {
+  const out = /* @__PURE__ */ new Map();
+  for (const f of among) if (f.fingerprint.length > 0 && namesId(text2, f.fingerprint)) out.set(f.fingerprint, f);
+  const ids = new Set(among.flatMap((f) => typeof f.external_id === "string" && f.external_id.length > 0 && namesId(text2, f.external_id) ? [f.external_id] : []));
+  for (const id of ids) {
+    const sharing = among.filter((f) => f.external_id === id);
+    const pinned = sharing.filter((f) => cited.has(f.fingerprint));
+    for (const f of pinned.length > 0 ? pinned : sharing) out.set(f.fingerprint, f);
+  }
+  return [...out.values()];
+}
+async function repairEvidence(ctx, cand, repairs2, seen) {
   const out = [];
+  const unresolved = /* @__PURE__ */ new Map();
+  const result2 = { evidence: out, unresolved, repairedBy: /* @__PURE__ */ new Map(), probed: false };
+  const because = (fingerprint, why) => {
+    const list3 = unresolved.get(fingerprint) ?? [];
+    if (!list3.includes(why)) list3.push(why);
+    unresolved.set(fingerprint, list3);
+  };
   const pending = repairs2.filter((r) => r.tree_hash !== cand.treeHash);
-  if (pending.length === 0) return out;
+  if (pending.length === 0) return result2;
+  const tree = cand.treeHash.slice(0, 12);
   const required = new Set(assertContract(ctx).required_check_ids);
-  const passed = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id }).filter((c) => required.has(c.checkId) && c.status === "PASSED" && c.treeHash === cand.treeHash);
-  if (passed.length === 0) return out;
-  const check = passed[0];
+  const checks = ctx.snapshot.config.checks;
+  const passed = /* @__PURE__ */ new Map();
+  for (const c of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
+    if (required.has(c.checkId) && c.status === "PASSED" && c.treeHash === cand.treeHash && isTestCommandCheck(checks[c.checkId])) passed.set(c.checkId, c);
+  }
+  const holders = (path) => [...passed.keys()].filter((id) => underCheck(path, checks[id])).sort();
   const reports = listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.state === "SUCCEEDED" && w.resultJson);
-  for (const r of pending) {
+  const everyFinding = repairs2.flatMap((r) => r.findings);
+  const attemptOf = /* @__PURE__ */ new Map();
+  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf.set(c.treeHash, Math.max(attemptOf.get(c.treeHash) ?? 0, c.attempt));
+  const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf.get(t) ?? 0) >= attempt) ?? null;
+  const judged = /* @__PURE__ */ new Set();
+  for (const r of [...pending].reverse()) {
+    const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id) => seen.closed.has(id)));
+    if (findings.length === 0) continue;
     let changed2;
     try {
       changed2 = new Set((await git2(ctx.run.repoRoot, ["diff", "--name-only", "-z", "--no-renames", r.commit, cand.commitSha, "--"])).split("\0").filter((p) => p.length > 0));
@@ -63278,10 +63543,138 @@ async function repairEvidence(ctx, cand, repairs2) {
       for (const e of o.evidence_refs) named2.push({ path: e.ref.trim(), attempt: w.attempt ?? r.attempt, text: `${e.ref} ${e.note}` });
       for (const t of o.tests_added) named2.push({ path: t.path.trim(), attempt: w.attempt ?? r.attempt, text: `${t.path} ${t.name}` });
     }
-    for (const f of r.findings) {
-      const ids = [f.fingerprint, f.external_id].filter((x) => typeof x === "string" && x.length > 0).map((x) => x.toLowerCase());
-      const hit = named2.find((n2) => changed2.has(n2.path) && ids.some((id) => n2.text.toLowerCase().includes(id)));
+    const cited = /* @__PURE__ */ new Map();
+    for (const x of named2) for (const g of everyFinding) if (g.fingerprint.length > 0 && namesId(x.text, g.fingerprint)) cited.set(x.path, (cited.get(x.path) ?? /* @__PURE__ */ new Set()).add(g.fingerprint));
+    const namedFor = /* @__PURE__ */ new Map();
+    for (const x of named2) {
+      if (!changed2.has(x.path)) continue;
+      const m = namedFor.get(x.path) ?? /* @__PURE__ */ new Map();
+      for (const g of findingsNamed(x.text, everyFinding, cited.get(x.path) ?? /* @__PURE__ */ new Set())) m.set(g.fingerprint, { name: g.external_id ?? g.finding_id, attempt: Math.min(m.get(g.fingerprint)?.attempt ?? x.attempt, x.attempt) });
+      if (m.size > 0) namedFor.set(x.path, m);
+    }
+    const testsFor = /* @__PURE__ */ new Map();
+    for (const f of findings) {
+      const paths = [...namedFor].filter(([, m]) => m.has(f.fingerprint));
+      if (paths.length === 0) continue;
+      judged.add(f.fingerprint);
+      const tests = [];
+      for (const [path, m] of paths) {
+        const { attempt } = m.get(f.fingerprint);
+        const others = [...new Set([...m].filter(([fp]) => fp !== f.fingerprint).map(([, v]) => v.name))].sort();
+        const held = heldBy(f.fingerprint, attempt);
+        if (others.length > 0) because(f.fingerprint, `${path} is named for ${others.join(" and ")} too, so a failure in it cannot be tied to this finding; a test in a file of its own can resolve it`);
+        else if (held === null) tests.push({ path, attempt });
+        else because(f.fingerprint, `${path}: a review of tree ${held.slice(0, 12)}, which already had it, raised the finding again`);
+      }
+      if (tests.length > 0) testsFor.set(f.fingerprint, tests);
+    }
+    if (testsFor.size === 0) continue;
+    if (passed.size === 0) {
+      for (const fp of testsFor.keys()) because(fp, `no required command check of category test passed on tree ${tree}, so no test can resolve it`);
+      continue;
+    }
+    let plan;
+    try {
+      plan = await probeChanges(ctx.run.repoRoot, r.commit, cand.commitSha);
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      for (const fp of testsFor.keys()) because(fp, `not probed: the repair's changes could not be read (${err.message})`);
+      continue;
+    }
+    if (plan.manifests.length > 0) {
+      for (const fp of testsFor.keys()) because(fp, `not probed: the repair changes ${plan.manifests.join(", ")}, a dependency manifest or lockfile outside test-owned paths, so its test could fail on the pre-repair tree for a dependency rather than for the repair`);
+      continue;
+    }
+    const owned = new Map(plan.owned.map((c) => [c.path, c]));
+    const forFindings = new Set(named2.filter((x) => everyFinding.some((f) => namesFinding(x.text, f))).map((x) => x.path));
+    const control = plan.owned.filter((c) => !forFindings.has(c.path));
+    const before = /* @__PURE__ */ new Map();
+    for (const c of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: r.candidate_id })) if (c.treeHash === r.tree_hash) before.set(c.checkId, c);
+    const plans = /* @__PURE__ */ new Map();
+    for (const f of findings) {
+      const tests = [];
+      const ids = /* @__PURE__ */ new Set();
+      for (const t of testsFor.get(f.fingerprint) ?? []) {
+        if (!owned.has(t.path)) {
+          because(f.fingerprint, `${t.path} is a test only by its content (not a test-owned file), which the probe tree cannot take without the repair's production code`);
+          continue;
+        }
+        tests.push(t);
+        const holding = holders(t.path);
+        if (holding.length === 0) because(f.fingerprint, `no required command check of category test that passed on tree ${tree} holds ${t.path} under its directory`);
+        for (const id of holding) {
+          const b = before.get(id);
+          if (b?.status === "PASSED" && !b.flaky) ids.add(id);
+          else because(f.fingerprint, `${id} is not probed: it did not pass cleanly on the pre-repair tree ${r.tree_hash.slice(0, 12)} (${b === void 0 ? "it has no recorded run there" : b.status === "PASSED" ? "its pass there needed a rerun" : `its run there ended ${b.status}`}), so a failure there could not be tied to the repair's test`);
+        }
+      }
+      if (tests.length > 0 && ids.size > 0) plans.set(f.fingerprint, { name: f.external_id ?? f.finding_id, tests, checks: [...ids].sort() });
+    }
+    if (plans.size === 0) continue;
+    const probe2 = async (changes, tests, byCheck, fps, repaired = false) => {
+      try {
+        const p = await runRepairProbe(ctx, cand, { attempt: r.attempt, preRepair: r.commit, changes, tests, checks: [...byCheck].map(([checkId, names]) => ({ checkId, findings: [...names] })), repaired });
+        if (!p.reused && p.checks.some((c) => c.attempts.length > 0)) result2.probed = true;
+        return p;
+      } catch (err) {
+        if (!isOrbitError(err) || err.code === "CANCELLED") throw err;
+        for (const fp of fps) because(fp, `not probed: ${err.message}`);
+        return null;
+      }
+    };
+    const under = (p, id) => p.tests.filter((t) => underCheck(t.path, checks[id]));
+    const controlChecks = /* @__PURE__ */ new Map();
+    for (const p of plans.values()) for (const id of p.checks) controlChecks.set(id, [...controlChecks.get(id) ?? [], p.name]);
+    const base = await probe2(control, null, controlChecks, [...plans.keys()]);
+    if (!base) continue;
+    const afterChecks = new Map([...controlChecks].filter(([id]) => base.checks.some((c) => c.checkId === id && c.outcome === "passed-before")));
+    const after = afterChecks.size > 0 ? await probe2(plan.all, null, afterChecks, [...plans.keys()], true) : null;
+    if (afterChecks.size > 0 && !after) continue;
+    const keyOf2 = (p) => p.tests.map((t) => t.path).sort().join("\0");
+    const groups = /* @__PURE__ */ new Map();
+    for (const [fp, p] of plans) {
+      for (const id of p.checks) {
+        const c = base.checks.find((x) => x.checkId === id);
+        const label = under(p, id).map((t) => t.path).join(", ");
+        if (c?.outcome === "failed-before") {
+          because(fp, `${label}: ${id} fails on the pre-repair tree without the finding's tests too, so its failure cannot be tied to them (${c.reason})`);
+          continue;
+        }
+        if (c?.outcome !== "passed-before") {
+          because(fp, `${label}: whether it tells the trees apart is not established: ${c?.reason ?? `${id} was not probed`}`);
+          continue;
+        }
+        const a = after?.checks.find((x) => x.checkId === id);
+        if (a?.outcome !== "passed-before") {
+          because(fp, `${label}: ${id} did not pass on the repaired tree in the probe checkout (${a?.reason ?? `${id} was not probed`}), so what the finding's tests tell apart may be the probe checkout rather than the repair`);
+          continue;
+        }
+        const g = groups.get(keyOf2(p)) ?? { tests: p.tests.map((t) => t.path).sort(), checks: /* @__PURE__ */ new Map(), fps: [] };
+        g.checks.set(id, [...g.checks.get(id) ?? [], p.name]);
+        if (!g.fps.includes(fp)) g.fps.push(fp);
+        groups.set(keyOf2(p), g);
+      }
+    }
+    const verdicts = /* @__PURE__ */ new Map();
+    for (const [key2, g] of groups) {
+      const p = await probe2([...control, ...g.tests.map((path) => owned.get(path))], g.tests, g.checks, g.fps);
+      if (p) verdicts.set(key2, p);
+    }
+    for (const f of findings) {
+      const p = plans.get(f.fingerprint);
+      const theirs = p ? verdicts.get(keyOf2(p)) : void 0;
+      if (!p || !theirs) continue;
+      let hit = null;
+      for (const id of p.checks) {
+        const c = theirs.checks.find((x) => x.checkId === id);
+        if (!c) continue;
+        const tests2 = under(p, id);
+        const label = tests2.map((t) => t.path).join(", ");
+        if (c.outcome === "failed-before") hit ??= { tests: tests2, check: passed.get(id), reason: c.reason, control: base.checks.find((x) => x.checkId === id).reason, repaired: after.checks.find((x) => x.checkId === id).reason };
+        else because(f.fingerprint, c.outcome === "passed-before" ? `${label}: ${NOT_APART} (${c.reason})` : `${label}: whether it tells the trees apart is not established: ${c.reason}`);
+      }
       if (!hit) continue;
+      const { tests, check } = hit;
       out.push({
         findingId: f.finding_id,
         fingerprint: f.fingerprint,
@@ -63292,11 +63685,19 @@ async function repairEvidence(ctx, cand, repairs2) {
         flaky: check.flaky,
         exercisesClaim: true,
         checkId: check.checkId,
-        ref: `${hit.path} (written in attempt ${hit.attempt} for this finding; ${check.checkId} passed on tree ${cand.treeHash.slice(0, 12)}${check.logSha256 ? `, log sha256 ${check.logSha256.slice(0, 12)}` : ""})`
+        ref: `${tests.map((t) => t.path).join(", ")} (written in attempt ${[...new Set(tests.map((t) => t.attempt))].join(" and ")} for this finding; ${hit.reason}, ${hit.control}, and ${hit.repaired}: pre-repair tree ${r.tree_hash.slice(0, 12)}, probe tree ${theirs.probeTree.slice(0, 12)}, control tree ${base.probeTree.slice(0, 12)}; and ${check.checkId} passed on tree ${tree}${check.logSha256 ? `; log sha256 ${check.logSha256.slice(0, 12)}` : ""})`
       });
+      for (const id of f.member_ids) result2.repairedBy.set(id, r);
     }
   }
-  return out;
+  return result2;
+}
+function noteUnresolvedRepairTests(resolution, unresolved) {
+  for (const d of resolution.dispositions) {
+    const why = unresolved.get(d.fingerprint);
+    if (!why || !(d.status === "accepted" || d.status === "claim_pending" || d.status === "open")) continue;
+    d.reason += `; the repair's test does not resolve it on tree ${resolution.treeHash.slice(0, 12)}: ${why.join("; ")}`;
+  }
 }
 function claimsTriggerKey(cand, claims) {
   return `review:${cand.treeHash}:${claims.map((c) => c.findingId).sort().join(",")}`.slice(0, 500);
@@ -63344,13 +63745,13 @@ ${a.record.reason}`));
   }
   return undecided;
 }
-function markRepaired(resolution, repaired) {
+function markRepaired(resolution, repaired, repairedBy) {
   for (const d of resolution.dispositions) {
     if (d.status !== "rejected" || d.evidenceRefs.length === 0) continue;
-    const rec2 = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
+    const rec2 = d.memberIds.map((id) => repairedBy.get(id)).find((x) => x !== void 0) ?? d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
     if (!rec2) continue;
     d.status = "resolved";
-    d.reason = `repaired in attempt ${rec2.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
+    d.reason = `repaired in attempt ${rec2.attempt}: the test written for it fails on the pre-repair tree and passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
   }
   resolution.rejected = resolution.dispositions.filter((d) => d.status === "rejected");
   resolution.resolved = resolution.dispositions.filter((d) => d.status === "resolved");
@@ -63361,7 +63762,7 @@ function openFindings(list3) {
 function blockedCriteriaIn(d, t, blocked) {
   if (blocked.length === 0) return [];
   const text2 = [d.claim, d.location ?? "", t?.evidence ?? "", t?.suggestedValidation ?? ""].join("\n");
-  return blocked.filter((id) => new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "i").test(text2));
+  return blocked.filter((id) => namesId(text2, id));
 }
 function stalledReviewRepair(ctx, cand) {
   const latest = currentAttempt(ctx);
@@ -63447,7 +63848,7 @@ function reviewBrief(ctx, d, validation, t, contract) {
       `Stay within the allowed paths: ${contract.allowed_paths.join(", ")}.`,
       "Do not weaken, skip or delete existing tests or assertions.",
       ...contract.non_goals.slice(0, 10).map((g) => `Non-goal: ${g}`),
-      `Report the validation test in evidence_refs as { criterion_id: null, ref: "<test file path>", note: "validation for finding ${name} (${d.fingerprint})" }.`
+      `Report the validation test in evidence_refs as { criterion_id: null, ref: "<test file path>", note: "validation for finding ${name} (${d.fingerprint})" }, naming there only the tests that check this finding, each in a test file of its own: a file named for more than one finding resolves none of them. Orbit runs the required test checks on the current candidate's tree with only your test files changed, first without the tests you name for findings, where a check must pass, then with the tests you name for this finding, where it must fail, and the check must pass on the repaired tree, in the same checkout and as the candidate: only then does the test resolve the finding. A test that is skipped, that the check's command does not run, or that passes without the repair leaves the finding open, and so does a check that fails without the tests you name.`
     ],
     finding_ids: d.memberIds,
     severity: d.severity
@@ -63567,7 +63968,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync45(checkout) || readdirSync13(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -63588,6 +63989,7 @@ var init_reviewing = __esm({
     init_store();
     init_git();
     init_fail_before();
+    init_fail_before2();
     init_model_outputs();
     init_heuristics();
     init_repair();
@@ -63621,6 +64023,7 @@ var init_reviewing = __esm({
     FRESH_REVIEW_KIND = "review.fresh";
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
+    NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";
   }
 });
 
@@ -63639,6 +64042,8 @@ async function deliveringStep(ctx) {
   }
   const waiting = await blockOnOpenQuestions(ctx, "delivery");
   if (waiting) return waiting;
+  const undecided = await blockOnUndecidedLedger(ctx, "delivery");
+  if (undecided) return undecided;
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
     const tree = await treeOf(ctx.run.repoRoot, cand.commitSha);
@@ -63776,6 +64181,8 @@ async function deliveryGateOrBlock(ctx, ev, review, deliveredTree) {
   return finishRun(ctx, "BLOCKED", `delivery gate: ${gate.reasons.join("; ")}`, { outcome: { gate: gate.reasons, code: gate.details.code } });
 }
 async function complete(ctx, deliveredTree, outcome, notes = []) {
+  const undecided = await blockOnUndecidedLedger(ctx, "success");
+  if (undecided) return undecided;
   const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now() });
   recordGate(ctx, gate);
   if (!gate.passed) return finishRun(ctx, "BLOCKED", `completion gate: ${gate.reasons.join("; ")}`, { outcome: { ...outcome, gate: gate.reasons } });
@@ -63835,6 +64242,7 @@ var init_delivering = __esm({
     init_git2();
     init_context2();
     init_gates();
+    init_undecided_ledger();
     init_common();
     init_reviewing();
     init_preflight();
@@ -64097,6 +64505,7 @@ async function inquisitionStep(ctx) {
     signal: ctx.signal
   }).finally(account);
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
+  recordAskedLedger(ctx, trigger.key, result2.ledger ?? [], result2.questions ?? []);
   if (patch) atomicWriteJson(join67(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
@@ -64148,6 +64557,7 @@ var init_inquisition = __esm({
     init_workers2();
     init_workers();
     init_store3();
+    init_undecided_ledger();
     init_common();
     init_implementing();
     init_verifying();
@@ -65746,6 +66156,7 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
       if (open2.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
+      else if (fresh !== null && declinedLedger(run).length > 0) line(ctx.io, `resuming would only block again (${fresh}): "orbit cancel ${run.id}" and start a new run whose goal states the decision, with "orbit run"`);
       else if (fresh !== null) line(ctx.io, `resuming would only block again (${fresh}): fix it, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else line(ctx.io, `resolve the reason above, then "${next}"`);
     }
@@ -66131,7 +66542,9 @@ async function decideCommand(args, ctx) {
     if (amendment) line(ctx.io, describeAmendment(amendment));
     if (result2.unblocks.length > 0) line(ctx.io, `unblocks: ${result2.unblocks.join(", ")}`);
     if (remaining.length > 0) line(ctx.io, `${remaining.length} question(s) still open: ${remaining.map((x) => x.id).join(", ")}`);
-    if (run.state === "BLOCKED") line(ctx.io, `The run is BLOCKED. Continue it with: ${continueCommand(db, run.id, ctx.clock.now())}`);
+    if (run.state === "BLOCKED" && declinesLedger(db, run.id, q.id, answer)) {
+      line(ctx.io, `The run cannot succeed with a decision a person declined, so resuming would only block again: "orbit cancel ${run.id}" and start a new run whose goal states the decision, with "orbit run".`);
+    } else if (run.state === "BLOCKED") line(ctx.io, `The run is BLOCKED. Continue it with: ${continueCommand(db, run.id, ctx.clock.now())}`);
     else line(ctx.io, "A controller picks the answer up at the run's next inquiry; nothing else is needed.");
     return EXIT.OK;
   });
@@ -66206,6 +66619,7 @@ var init_decide = __esm({
     init_errors();
     init_states();
     init_run_store();
+    init_undecided_ledger();
     init_start();
     init_inquisition2();
     init_events();
@@ -69085,6 +69499,7 @@ checks:
 #     category: typecheck
 #   unit-tests:
 #     command: [npm, test]
+#     category: test
 #     flaky_reruns: 1
 #   build:
 #     command: "npm run build && test -f dist/index.js"
@@ -69096,6 +69511,7 @@ checks:
 #   ui-journeys:
 #     command: [npx, playwright, test, --reporter=json, --update-snapshots=none]
 #     kind: playwright
+#     category: ui
 #     timeout_seconds: 1200
 # example-checks:end
 

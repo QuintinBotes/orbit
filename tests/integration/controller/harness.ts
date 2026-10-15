@@ -63,6 +63,23 @@ export const REPO_FILES: Record<string, string> = {
   ].join('\n'),
 };
 
+/**
+ * tests/run.mjs as a real test runner prints its results: each test file it ran and passed, by path. Orbit reads no test
+ * output to decide evidence (ADR 0015): a review finding is resolved by a repair's test only when a check fails on the
+ * pre-repair tree with it and passes after, so what this runner prints changes nothing.
+ */
+export const NAMING_RUNNER = [
+  "import { existsSync, readdirSync } from 'node:fs';",
+  "const here = new URL('.', import.meta.url);",
+  "if (existsSync(new URL('slow.flag', here))) await new Promise((r) => setTimeout(r, 60_000));",
+  "for (const f of readdirSync(here).filter((n) => n.endsWith('.test.mjs')).sort()) {",
+  '  await import(new URL(f, here));',
+  '  console.log(`ok - tests/${f}`);',
+  '}',
+  "console.log('all tests passed');",
+  '',
+].join('\n');
+
 export function labConfig(tweak?: (c: OrbitConfig) => void): OrbitConfig {
   const c = defaultConfig('autonomous');
   c.isolation = { provider: 'none', allow_unisolated: true, container: null };

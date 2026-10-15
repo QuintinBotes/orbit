@@ -10,7 +10,7 @@ import type { OrbitDb } from '../../storage/db.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import { Controller, buildFinalReport, defaultControllerDeps } from '../../controller/index.ts';
 import { getRun, setPaused, type RunRecord } from '../../controller/run-store.ts';
-import { missingTargetChecks, newRunNeeded } from '../../controller/resume.ts';
+import { declinedLedger, missingTargetChecks, newRunNeeded } from '../../controller/resume.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { continueCommand, expireLeaseOfDeadOwner, liveLease, type CliContext } from '../context.ts';
@@ -251,6 +251,8 @@ function announceEnd(ctx: CliContext, db: OrbitDb, run: RunRecord, exitCode: num
       // A missing target the contract does not name has three causes and a fix of the config is only one of them: the reason above ends with the advice by cause.
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
+      // A declined decision has nothing to fix in this run: the new run's goal states the decision.
+      else if (fresh !== null && declinedLedger(run).length > 0) line(ctx.io, `resuming would only block again (${fresh}): "orbit cancel ${run.id}" and start a new run whose goal states the decision, with "orbit run"`);
       else if (fresh !== null) line(ctx.io, `resuming would only block again (${fresh}): fix it, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else line(ctx.io, `resolve the reason above, then "${next}"`);
     }

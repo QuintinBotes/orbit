@@ -22,9 +22,11 @@ describe('buildEvidenceReport: the PASS path', () => {
     const r = build();
     expect(r.verdict).toBe('PASS');
     expect(r.unverified).toEqual([]);
+    // Both criteria cite `tests`, so each says its support is that check's whole run (`lint` is AC-2's alone).
+    const wide = 'check-wide: the tests tests runs, shared by AC-1, AC-2';
     expect(r.acceptance_evidence).toEqual([
-      { criterion_id: 'AC-1', status: 'supported', artifacts: ['tests.log'] },
-      { criterion_id: 'AC-2', status: 'supported', artifacts: ['tests.log', 'lint.log'] },
+      { criterion_id: 'AC-1', status: 'supported', artifacts: ['tests.log'], check_wide: wide },
+      { criterion_id: 'AC-2', status: 'supported', artifacts: ['tests.log', 'lint.log'], check_wide: wide },
     ]);
     expect(r).toMatchObject({ task_id: 'ORB-001', run_id: 'orb-test-1', attempt: 1, candidate_revision: 'c0ffee', tree_hash: 'tree-a', policy_hash: snapshotHash(snapshot) });
     expect(r.checks).toEqual([

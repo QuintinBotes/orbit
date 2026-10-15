@@ -24,6 +24,7 @@ import type { BudgetPhase } from '../../scheduling/types.ts';
 import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
+import { recordAskedLedger } from '../undecided-ledger.ts';
 import { assertContract, budgetPhaseOf, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
@@ -114,6 +115,8 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     signal: ctx.signal,
   }).finally(account);
   const patch = hashObject(result.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result.contract), contractHash: hashObject(result.contract) } : undefined;
+  // A needs-decision entry this inquiry derived went to a person with its questions; one it did not ask about is asked before success.
+  recordAskedLedger(ctx, trigger.key, result.ledger ?? [], result.questions ?? []);
   if (patch) atomicWriteJson(join(ctx.runDir, 'contract.json'), result.contract);
   const after = await safePoint(ctx);
   if (after) return after;

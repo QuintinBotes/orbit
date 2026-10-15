@@ -239,8 +239,12 @@ describe('a finding confirmed on an earlier tree and carried forward', () => {
 });
 
 describe('a repair that named its validation test', () => {
-  it.each([['a'.repeat(64)], [null]])('closes the finding when the named test changed, the required check passed on the new tree, and the reviewer no longer raises it (log %s)', async (logSha) => {
-    const { cand, repo } = await setup();
+  it.each([['a'.repeat(64)], [null]])('closes the finding when the named test changed, fails on the pre-repair tree, the required check passed on the new tree, and the reviewer no longer raises it (log %s)', async (logSha) => {
+    // The unit check runs every test file, the repair's among them: on the pre-repair tree mul('a', 2) is NaN, so the
+    // repair's test fails there, and without it the check passes there (ADR 0015).
+    const { cand, repo } = await setup({ tweak: (c) => void (c.checks.unit!.command = [process.execPath, '--test']) });
+    // The unit check passed cleanly on the reviewed candidate, as a probe needs.
+    lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, started_at) VALUES ('cr-0', ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', 'PASSED', 0, 1)", lab.runId, cand.id, cand.treeHash);
     // First round: the reviewer asks for a repair of COR-1.
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
     await run();
@@ -248,14 +252,17 @@ describe('a repair that named its validation test', () => {
     const fp = JSON.parse(lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = ?", lab.runId, REVIEW_REPAIR_EVENT)!.data_json).findings[0].fingerprint as string;
     // The repair attempt adds a test and the candidate changes.
     mkdirSync(join(repo.worktree, 'tests'), { recursive: true });
-    writeFileSync(join(repo.worktree, 'tests', 'mul.test.mjs'), 'export {};\n');
+    writeFileSync(join(repo.worktree, 'tests', 'mul.test.mjs'), "import { mul } from '../apps/calc.mjs';\nlet threw = false;\ntry { mul('a', 2); } catch { threw = true; }\nif (!threw) process.exit(1);\n");
     writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => { if (typeof a !== "number") throw new TypeError("a"); return a * b; };\n');
     const c2 = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: repo.base, attempt: 2, workerId: null });
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2, candidate_id: c2.id }));
     addEvidence(lab, c2, { attempt: 2 });
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
-    const row = (id: string, status: string) => lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, log_sha256, started_at) VALUES (?, ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', ?, 0, ?, 1)", id, lab.runId, c2.id, c2.treeHash, status, logSha);
+    // What the unit check printed on the repaired tree is not read: only exit statuses decide.
+    const log = join(lab.base, 'unit-2.log');
+    writeFileSync(log, 'done\n');
+    const row = (id: string, status: string) => lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, log_path, log_sha256, started_at) VALUES (?, ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', ?, 0, ?, ?, 1)", id, lab.runId, c2.id, c2.treeHash, status, log, logSha);
     row('cr-1', 'PASSED');
     // The implementer's report names the test for the finding by its id.
     const w = planWorker(lab.db, { id: 'wrk-impl-2', runId: lab.runId, role: 'implementer', provider: 'claude', workerDir: join(lab.base, 'wi2'), cwd: repo.worktree, attempt: 2 }, lab.clock, OWNER);
@@ -279,6 +286,8 @@ describe('a repair that named its validation test', () => {
     expect(state()).toBe('DELIVERING');
     const closed = listFindings(lab.db, lab.runId).find((f) => f.externalId === 'COR-1');
     expect(closed?.status).toBe('resolved');
+    expect(closed?.resolution).toContain('unit failed on the pre-repair tree with the tests named for the finding (exit 1, 2 attempts), unit passed on the pre-repair tree without the tests named for findings, and unit passed on the repaired tree in the probe checkout');
+    if (logSha) expect(closed?.resolution).toContain(`log sha256 ${logSha.slice(0, 12)}`);
   });
 
   it('a repair whose commit cannot be diffed is skipped, and a candidate without a passing required check proves nothing', async () => {

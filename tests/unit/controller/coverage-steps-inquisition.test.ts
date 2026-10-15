@@ -216,6 +216,24 @@ describe('inquisitionStep', () => {
     expect(hooks.runInquisition).toHaveBeenCalledTimes(1);
   });
 
+  it('records that the needs-decision entries it derived went to a person with its questions, and nothing for an inquiry that asked none', async () => {
+    const { insertLedgerEntry, insertQuestion } = await import('../../../src/inquisition/store.ts');
+    const { listDecisions } = await import('../../../src/storage/decisions.ts');
+    const { LEDGER_ASKED_KIND } = await import('../../../src/controller/undecided-ledger.ts');
+    setup();
+    const derived = insertLedgerEntry(lab.db, { runId: lab.runId, claim: 'a hidden decision; the behaviour chosen is acceptable.', source: 'diff and contract', confidence: 'low', consequence: 'c', reversibility: 'irreversible', experiment: null, status: 'needs-decision', evidence: [{ kind: 'inspection', ref: 'trigger:k:1', note: 'raised by hidden_decision', at: 0 }] }, lab.clock);
+    const own = insertLedgerEntry(lab.db, { runId: lab.runId, claim: 'Round half to even.', source: 'inquisitor autonomous decision', confidence: 'low', consequence: 'c', reversibility: 'costly-to-reverse', experiment: null, status: 'needs-decision' }, lab.clock);
+    const q = insertQuestion(lab.db, { runId: lab.runId, mode: 'clarify', question: 'Which rounding?', evidence: [], options: [], changes: [], recommendation: { option: 'a', reason: 'r' }, safeDefault: { exists: false, option: null, reason: 'none' }, material: true, affected: ['AC-1'], unblocked: [] }, lab.clock);
+    hooks.runInquisition.mockResolvedValue(result({ disposition: 'ask', questions: [q], ledger: [derived, own] }));
+    await inquisitionStep(lab.ctx());
+    expect(listDecisions(lab.db, lab.runId, { kind: LEDGER_ASKED_KIND }).map((d) => d.data)).toEqual([{ ledger_ids: [derived.id], question_ids: [q.id], settles_on: 'any' }]);
+    lab.cleanup();
+    setup();
+    hooks.runInquisition.mockResolvedValue(result({ ledger: [] }));
+    await inquisitionStep(lab.ctx());
+    expect(listDecisions(lab.db, lab.runId, { kind: LEDGER_ASKED_KIND })).toEqual([]);
+  });
+
   it('an inquiry that would return to REVIEWING after the last review round starts no inquisitor: the run ends EXHAUSTED', async () => {
     setup({ candidate: true, from: 'VERIFYING' });
     initLedger(lab);

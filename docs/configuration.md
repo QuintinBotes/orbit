@@ -583,13 +583,16 @@ only check ids defined here; a command written by a model is never executed.
 checks:
   lint:
     command: [npm, run, lint]
+    category: lint
     timeout_seconds: 300
   unit-tests:
     command: [npm, test]
+    category: test
     flaky_reruns: 1
   build:
     command: "npm run build && test -f dist/index.js"
     shell: true
+    category: build
   ui-journeys:
     command: [npx, playwright, test, --reporter=json, --update-snapshots=none]
     kind: playwright
@@ -607,6 +610,62 @@ checks:
 | `mandatory` | default true; a run cannot succeed while it fails. A check marked false runs only in a run whose contract requires it (a criterion cites it as proof), and then as a mandatory one does: on the base revision before any change, where it blocks the run when it cannot run ([ADR 0012](decisions/0012-contract-checks-and-judged-trees.md)), so marking a check optional does not make one that cannot run in the sandbox harmless |
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
+| `category` | what the check evidences: `test` (default), `lint`, `typecheck`, `build`, `sast`, `ui` (the default of a `playwright` check) or `other`. Only a command check of category `test` is run by the [fail-before probe](#verification) and by the repair probe, so only such a check can show that a test a repair wrote for a review finding tells the repaired tree from the one before; `sast` checks feed the static security gate |
+
+Set `category` on every check that is not a test suite.
+A check without a category is treated as `test` and is probed: a lint or
+typecheck check written without one is run on the base revision with the new
+tests as if it were a test suite, and its result shows up in each criterion's
+`fail_before` entry. `orbit init` writes the category of every check it
+proposes.
+
+A review finding a repair addressed is resolved by the repair's test only
+when the finding's own test tells the repaired tree from the one before it
+([ADR 0015](decisions/0015-repair-evidence.md)). The finding's tests are the
+ones the implementer's report names for it by its fingerprint or its id as a
+whole word (a test named for `TEST-10` is not one for `TEST-1`). A test file
+named for more than one finding resolves none of them, since a check runs whole
+files: put each finding's test in a file of its own. Each required command
+check of category `test` that passed on the repaired tree, whose `cwd` holds
+such a test, and whose latest run on the pre-repair candidate passed without a
+rerun, runs on three probe trees in one probe checkout. Two are built from the
+pre-repair candidate's tree, its production code left as it was: the control
+tree, with the repair's test-owned files (as the
+[fail-before probe](#verification) takes them) in their repaired state except
+every test named for a finding, and the finding's tree, the control tree with
+the finding's tests. The third is the repaired tree itself, so the tests fail
+before and pass after in the same checkout. A failing run is repeated once. The
+finding is resolved only when such a check passed on the control tree and on
+the repaired tree in the probe checkout, failed on the finding's tree on every
+attempt, with no environment signal and its logs read whole, and passed on the
+repaired candidate, so the failure is the finding's own tests'.
+Exit statuses alone decide: Orbit reads no test output to tell which tests
+ran, so any test reporter works. A test that is skipped, that the check's
+command does not run (`node --test "tests/unit/*.test.mjs"` at the root runs
+nothing under `tests/integration`), or that does not check the fix passes on
+both trees, and the finding stays open and blocking with the resolution "the
+repair's test passes on the pre-repair tree too, so it does not tell the trees
+apart". A check that fails on the control tree (another finding's test, a
+test change named for nothing, or a pre-repair tree that fails by itself)
+leaves it open with "fails on the pre-repair tree without the finding's tests
+too, so its failure cannot be tied to them", and a check that did not pass
+cleanly on the pre-repair candidate is not probed. Anything not established
+leaves it open too, with the cause: a timeout, an `ERROR`, an environment
+signal, a log that cannot be read whole, the probe's bound, or a repair that
+changes a dependency manifest or lockfile outside test-owned files. As with
+the fail-before probe, a test that fails to load on the pre-repair tree (it
+imports a symbol the repair adds) counts as failing: the probe shows that the
+test depends on the repair, not that each assertion checks it. A test can also
+fail on a probe tree for a reason that is neither the fix nor the repair (the
+probe commits and their refs differ, and a test can read them; the checkout's
+directory cannot be that reason, since the repaired tree runs there too), and
+exit statuses cannot tell. The
+review of the repaired tree is the only defence against both. A reviewer who
+raises the finding again on the repaired tree, or on any later tree that has
+the test, keeps it open whatever the probe showed, and that test never
+resolves it on a later tree. The repair probe runs whatever
+`verification.fail_before` says, within `verification.fail_before_timeout_seconds`
+for each probe tree, and its attempts are recorded apart from the run's checks.
 
 ### Checks that `orbit init` proposes
 
@@ -1243,7 +1302,10 @@ probe costs one install and one or two runs of each affected check per
 candidate, and its time counts against `wall_minutes`: it is skipped (not
 established) when less wall time is left than `fail_before_timeout_seconds`.
 Its attempts are recorded apart from the run's checks, and a later candidate
-with the same probe tree (a repair of production code only) reuses them.
+with the same probe tree (a repair of production code only) reuses them. The
+same probe judges a review repair's test on the pre-repair tree (see
+[checks](#checks)), within the same bound for each probe tree and whatever the
+mode.
 
 In every mode, a review finding is a note if and only if the reviewer files it
 under the category `evidence-classification`, no check confirms it and no

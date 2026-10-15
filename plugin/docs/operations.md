@@ -157,7 +157,17 @@ Whether new tests fail without the change is the fail-before probe's question
 each test check a criterion cites is run on the base tree with the candidate's
 test files, and each criterion in `report.json` carries a `fail_before` entry
 (`mode`, `outcome`, `checks` with every attempt's status, exit code and log,
-`probe_tree`, `test_paths`, `reason`). The probe's logs are under
+`probe_tree`, `test_paths`, `reason`). The final report carries the same
+outcome for each criterion: `final.json` and `orbit report --json` as
+`fail_before` (`mode`, `outcome`, `cause` when it is not established,
+`reason`), and `orbit report` on the criterion's line under "Criterion
+evidence". Evidence is per check, not per test: a criterion's support and its
+fail-before outcome are the whole run of each check it cites, so where another
+criterion cites the same check, `report.json`, `final.json` and the criterion's
+line say so in `check_wide` ("check-wide: the tests unit runs, shared by AC-1,
+AC-2"). A criterion such as "existing behaviour is unchanged" that cites the
+check the new tests run in reads failed-before for that reason, not because a
+test of its own failed. The probe's logs are under
 `evidence/<n>/fail-before/`, its tree is pinned under
 `refs/orbit/<run>/fail-before/<n>`, and `orbit timeline` shows a
 `verification.fail-before` line per probe, such as "unit failed on the base
@@ -188,6 +198,38 @@ at the `review_rounds` cap, the run ends `BLOCKED` naming the findings; a
 resume would only block again, so `orbit status` and the report say to start a
 new run.
 
+A review finding a repair addressed is resolved by the repair's test only when
+the finding's own test tells the trees apart
+([ADR 0015](decisions/0015-repair-evidence.md)): each test check that passed
+on the repaired tree, whose `cwd` holds the test, and that passed cleanly on
+the pre-repair candidate, runs on the pre-repair candidate's tree with the
+repair's test files twice: without the tests named for findings, where it must
+pass, and with the tests named for this finding, where it must fail on every
+attempt. It must also pass on the repaired tree, both in that probe checkout and
+as the candidate. A test file named for more than one finding resolves none of
+them. Only exit statuses decide, never
+what the tests print. A test that passes on both trees (skipped, not run by
+the check's command, or not checking the fix), a check that fails without the
+finding's tests (another finding's test, an unnamed test change, or a
+pre-repair tree that fails by itself), or a probe that is not established,
+leaves the finding open, and its resolution says why ("the repair's test
+passes on the pre-repair tree too, so it does not tell the trees apart", "unit
+fails on the pre-repair tree without the finding's tests too, so its failure
+cannot be tied to them", or the cause). A test that fails only for the probe
+checkout's path fails on the repaired tree there too ("did not pass on the
+repaired tree in the probe checkout"); one that reads the probe commits' git
+metadata to fail is not caught, and the review of the repaired tree is the
+only defence against it. The repair probe's logs
+are under `evidence/<n>/repair-probe/`, its trees are pinned under
+`refs/orbit/<run>/repair-probe/<n>-<attempt>-control`,
+`refs/orbit/<run>/repair-probe/<n>-<attempt>-repaired` and
+`refs/orbit/<run>/repair-probe/<n>-<attempt>-<id>` (one per finding's tests),
+and `orbit timeline` shows a `review.repair-probe` line per probe tree, such as
+"unit passed on the pre-repair tree without the tests named for findings:
+COR-1", "unit passed on the repaired tree in the probe checkout: COR-1" and
+"unit failed on the pre-repair tree with the tests named for the
+finding (exit 1, 2 attempts): COR-1".
+
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
 reason. Given a description instead of a run id, it starts a new run with the
@@ -197,6 +239,21 @@ Orbit Inquisition is not a command. The controller runs it for unclear goals,
 weak evidence and repeated failures, and `/orbit:inquisition` runs it
 interactively inside Claude Code. Questions it persists appear in
 `orbit questions` and are answered with `orbit decide`.
+
+A choice the Inquisition will not make on its own (a decision it refused, a
+hidden decision, sources of equal authority that disagree) is recorded in the
+run's assumption ledger as `needs-decision`, and only a person settles it. A
+run does not deliver or succeed while one is open: before delivery each entry
+goes to a person, as CONTRACTING does for a needs-decision assumption. An entry
+an inquiry raised together with questions to a person is settled by the
+answer to one of them; every other open entry is named in one question
+("Accept the decisions this run recorded without a person: as-..., as-...?"),
+and the run blocks on it. `orbit decide <run-id> <question-id> accept` settles
+each named entry for this run and `orbit resume` delivers; any other answer
+keeps the run from success, and the way forward is a new run whose goal states
+the decision: `orbit decide`, the closing line of `orbit resume`, `orbit
+status` and the report say so, and the run's outcome lists the declined
+question and its entries under `ledger_declined`.
 
 ### Where a run's result goes
 

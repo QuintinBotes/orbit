@@ -46,6 +46,7 @@ const REVIEW_REPAIR = {
 describe.skipIf(!canStripTypes)('controller: routing back down after a solved diagnosis', () => {
   it('the escalated attempt fixes the fault, and the routine follow-up routes back to the starting tier with the superseded route recorded', async () => {
     // At threshold 1 one failure is the repeated equivalent failure that justifies escalation.
+    // The review repair's test fails on the pre-repair tree and passes after, so it closes its finding (ADR 0015).
     const l = makeLab({ tweak: (c) => void (c.scheduler.repeated_failure_threshold = 1) });
     labs.push(l);
     writeScenario(

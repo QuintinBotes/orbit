@@ -85,6 +85,24 @@ export function candidateEnvironmentFailures(run: Pick<RunRecord, 'outcomeJson'>
 }
 
 /**
+ * The needs-decision ledger entries a person declined, as the block on them recorded them (undecided-ledger.ts
+ * blockOnUndecidedLedger, `ledger_declined`): one question each, and the entries it stood for. Empty for every other block.
+ */
+export function declinedLedger(run: Pick<RunRecord, 'outcomeJson'>): { questionId: string; ledgerIds: string[] }[] {
+  try {
+    const o = run.outcomeJson ? (JSON.parse(run.outcomeJson) as { ledger_declined?: unknown }) : null;
+    if (!Array.isArray(o?.ledger_declined)) return [];
+    return o.ledger_declined.flatMap((d: unknown) => {
+      const r = d !== null && typeof d === 'object' ? (d as { question_id?: unknown; ledger_ids?: unknown }) : {};
+      if (typeof r.question_id !== 'string' || !Array.isArray(r.ledger_ids)) return [];
+      return [{ questionId: r.question_id, ledgerIds: r.ledger_ids.filter((x): x is string => typeof x === 'string') }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Why a resume of a review block cannot start the fresh review its tree would need (steps/reviewing.ts records
  * `fresh_review` in the outcome), or null when the block is not one or a resume may still bring it back. The tree had its
  * one fresh review and it did not clear it: a resume decides the tree by that review again and starts no other. Or none
@@ -124,9 +142,11 @@ export function policyFixClause(settings: readonly string[]): string {
 }
 
 /**
- * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Four causes:
+ * Why resuming a BLOCKED run cannot clear its block, so that only a new run helps; null when a resume may. Five causes:
  *   - the block comes from the run's frozen policy (a check's definition, an isolation setting): a run keeps the policy
  *     it started with, and a resume is refused for it;
+ *   - a person declined a needs-decision ledger entry the run recorded: the run cannot succeed with a decision a person
+ *     declined, and the question is not asked again, so a resume blocks on it again before delivery;
  *   - a candidate's check could not run for an environment cause, with no baseline exception to approve: the candidate's
  *     evidence and the check configuration it was judged by are recorded with the run, so a resume reads the same
  *     evidence and blocks again, whatever is repaired outside (issue #33). A failure that has a baseline-exception
@@ -148,6 +168,12 @@ export function newRunNeeded(db: OrbitDb, run: RunRecord): string | null {
   // Where a fix outside the policy clears it (a refreshed model catalog), the outcome reason offers a forced resume as well:
   // the stage line must not say a new run is the only way (issue #33).
   if (frozen !== null) return `its frozen policy (${frozen}) causes the block${frozenPolicyForceHelps(frozen) ? '; if what you fixed is outside the policy, "orbit resume --force" is the other way forward' : ''}`;
+  const declined = declinedLedger(run);
+  if (declined.length > 0) {
+    const ids = declined.flatMap((d) => d.ledgerIds);
+    const asked = declined.map((d) => d.questionId);
+    return `a person declined needs-decision assumption ledger ${ids.length === 1 ? 'entry' : 'entries'} ${ids.join(', ')} (${asked.length === 1 ? 'question' : 'questions'} ${asked.join(', ')}), and a run cannot succeed with a decision a person declined`;
+  }
   const failures = candidateEnvironmentFailures(run);
   if (failures !== null && failures.every((f) => f.questionId === null || listQuestions(db, run.id).every((q) => q.id !== f.questionId))) {
     return "the block comes from the environment or a check's definition, which a resume does not change: the run's policy and the check results recorded for its candidate are frozen";

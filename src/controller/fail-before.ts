@@ -11,10 +11,14 @@
  *
  * Only a person's `accept` counts, bound to the candidate tree it was asked for, and the report lists it in `unverified`.
  * Under `advisory` nothing here changes the run: the report carries the outcome.
+ *
+ * REVIEWING runs the same probe for a review repair's tests (docs/decisions/0015-repair-evidence.md, runRepairProbe): on
+ * the pre-repair candidate's tree with the repair's test-owned paths but the tests named for findings, and with the
+ * tests named for one finding as well, whatever `verification.fail_before` says.
  */
 import { join } from 'node:path';
 import { hashObject } from '../core/hash.ts';
-import { acceptableCause, changesBetween, newTestSupport, otherwiseAcceptable, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause } from '../evidence/fail-before.ts';
+import { acceptableCause, changesBetween, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeResult } from '../evidence/fail-before.ts';
 import { git } from '../evidence/git.ts';
 import type { BaseComparison } from '../evidence/report.ts';
 import type { RunnerContext } from '../evidence/runner.ts';
@@ -27,7 +31,7 @@ import { failBeforePolicy } from '../policy/config.ts';
 import { dependencyManifestsChangedBetween, isLockfilePath } from '../policy/scope.ts';
 import { gitTreeReader, isTestOwnedPath, loadTestLayout } from '../policy/test-files.ts';
 import { getDecision, listDecisions } from '../storage/decisions.ts';
-import { runWorktreeRoot, type RunContext } from './context.ts';
+import { checkRunnerFor, runWorktreeRoot, type RunContext } from './context.ts';
 import { decide, finishRun, type StepResult } from './steps/common.ts';
 
 export const FAIL_BEFORE_REQUEST_KIND = 'verification.fail-before-request';
@@ -67,37 +71,100 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
     return evidence(null, { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' });
   }
   const baseRev = ctx.run.baseRevision!;
-  const repoRoot = ctx.run.repoRoot;
-  const changes = await changesBetween(repoRoot, baseRev, cand.commitSha);
-  // A .NET test project owns its whole folder and its project file, so the owner of every changed file is read.
-  const layout = await loadTestLayout(gitTreeReader((args) => git(repoRoot, args)), baseRev, cand.commitSha, changes.map((c) => c.path), { allDotnetOwners: true });
-  const owned = changes.filter((c) => isTestOwnedPath(c.path, layout));
+  const { owned, manifests } = await probeChanges(ctx.run.repoRoot, baseRev, cand.commitSha);
   if (owned.length === 0) {
     return evidence(null, { cause: 'content-only', reason: 'the probe did not run: the new tests are tests only by their content (such as a #[test] added to a Rust source), which the probe tree cannot take without the production code around them' });
   }
-  // From the revisions, never from the scope report verification is given: a person's one-shot grant clears it.
-  const manifests = [...new Set([...(await dependencyManifestsChangedBetween(repoRoot, baseRev, cand.commitSha, changes)), ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
   if (manifests.length > 0) {
     return evidence(null, { cause: 'manifest', reason: `not probed: the candidate changes ${manifests.join(', ')}, a dependency manifest or lockfile outside test-owned paths, so a test could fail or pass on the base revision for a dependency rather than for the change` });
   }
-  let wallRemainingMs: number | null = null;
-  if (ctx.ledger) {
-    const wall = ctx.ledger.syncWall();
-    wallRemainingMs = Math.max(0, wall.hard_cap - wall.used);
-  }
   const probe = await runFailBeforeProbe({
     runner: input.runner,
-    repoRoot,
+    repoRoot: ctx.run.repoRoot,
     baseRev,
     candidate: cand,
     checks: [...byCheck].sort(([a], [b]) => a.localeCompare(b)).map(([checkId, criteria]) => ({ checkId, criteria })),
     changes: owned,
     checkoutDir: join(runWorktreeRoot(ctx), `fail-before-${cand.seq}`),
     timeoutMs: timeoutSeconds * 1000,
-    wallRemainingMs,
+    wallRemainingMs: wallRemaining(ctx),
     decide: (d) => decide(ctx, d),
   });
   return evidence(probe);
+}
+
+/** What a probe from `from` to `to` may take, and what keeps it from running at all (ADR 0014 section 2). */
+export interface ProbeChanges {
+  /** The test-owned changes: what the probe tree takes from `to`. */
+  owned: ProbeChange[];
+  /** Dependency manifests and lockfiles `to` changes outside test-owned paths: with any, nothing is probed. */
+  manifests: string[];
+  /** Every change from `from` to `to`, which builds the repaired tree in the probe checkout. */
+  all: ProbeChange[];
+}
+
+/** The changes from `from` to `to` a probe tree may take, and the manifests or lockfiles that stop it, read from the revisions. */
+export async function probeChanges(repoRoot: string, from: string, to: string): Promise<ProbeChanges> {
+  const changes = await changesBetween(repoRoot, from, to);
+  // A .NET test project owns its whole folder and its project file, so the owner of every changed file is read.
+  const layout = await loadTestLayout(gitTreeReader((args) => git(repoRoot, args)), from, to, changes.map((c) => c.path), { allDotnetOwners: true });
+  const owned = changes.filter((c) => isTestOwnedPath(c.path, layout));
+  // From the revisions, never from the scope report verification is given: a person's one-shot grant clears it.
+  const manifests = [...new Set([...(await dependencyManifestsChangedBetween(repoRoot, from, to, changes)), ...changes.map((c) => c.path).filter(isLockfilePath)])].filter((p) => !isTestOwnedPath(p, layout)).sort();
+  return { owned, manifests, all: changes };
+}
+
+/** What is left of the run's wall-time budget, which a probe must fit its bound into; null before the budget exists. */
+function wallRemaining(ctx: RunContext): number | null {
+  if (!ctx.ledger) return null;
+  const wall = ctx.ledger.syncWall();
+  return Math.max(0, wall.hard_cap - wall.used);
+}
+
+export interface RepairProbeRequest {
+  /** The repair attempt whose tests are probed, which tells its probes of this candidate apart from another repair's. */
+  attempt: number;
+  /** The commit of the candidate the repair was sent to repair: the probe tree starts from its tree. */
+  preRepair: string;
+  /** The repair's test-owned changes from `preRepair` to the candidate (probeChanges) that the probe tree takes. */
+  changes: readonly ProbeChange[];
+  /**
+   * The tests named for the findings judged on this tree, which it takes beside the control tree's changes; null for the
+   * control tree, which takes none of the tests named for findings.
+   */
+  tests: readonly string[] | null;
+  /** The checks to probe, each with the findings whose resolution rests on it. */
+  checks: readonly { checkId: string; findings: readonly string[] }[];
+  /** The repaired tree: `changes` are every change of the repair and `tests` is null (REPAIR_REPAIRED). */
+  repaired?: boolean;
+}
+
+/**
+ * A probe of a review repair's tests (ADR 0015): each given check, a required command check of category test that
+ * passed on the repaired candidate and cleanly on the pre-repair one, runs on the pre-repair candidate's tree with the
+ * given test-owned changes, with the candidate's runner context, a failing run once more, within
+ * `verification.fail_before_timeout_seconds` for the tree. Its attempts are recorded like the fail-before probe's, never
+ * in check_runs or failures, and a completed probe is one `review.repair-probe` decision whose decisive results a later
+ * call for the same tree reuses. The tree is pinned under refs/orbit/<run>/repair-probe/<seq>-<attempt>-control for the
+ * control tree, or -<attempt>-<id of the finding's tests>.
+ */
+export async function runRepairProbe(ctx: RunContext, cand: CandidateRecord, req: RepairProbeRequest): Promise<ProbeResult> {
+  const { timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
+  const part = req.repaired ? 'repaired' : req.tests === null ? 'control' : hashObject([...req.tests].sort()).slice(7, 19);
+  return runFailBeforeProbe({
+    runner: checkRunnerFor(ctx),
+    repoRoot: ctx.run.repoRoot,
+    baseRev: req.preRepair,
+    candidate: cand,
+    checks: [...req.checks].sort((a, b) => a.checkId.localeCompare(b.checkId)).map((c) => ({ checkId: c.checkId, criteria: [...c.findings] })),
+    changes: req.changes,
+    checkoutDir: join(runWorktreeRoot(ctx), `repair-probe-${cand.seq}`),
+    timeoutMs: timeoutSeconds * 1000,
+    wallRemainingMs: wallRemaining(ctx),
+    decide: (d) => decide(ctx, d),
+    flavour: req.repaired ? REPAIR_REPAIRED : req.tests === null ? REPAIR_CONTROL : REPAIR_PROBE,
+    refPart: `${req.attempt}-${part}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
