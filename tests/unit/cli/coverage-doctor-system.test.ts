@@ -737,10 +737,10 @@ describe('delivery', () => {
   it('fails when gh is missing or no scoped token is set for the controller', async () => {
     const w = world();
     const noGh = await doctor(w, { config: cfg(delivering), ctx: { env: ghEnv(w) } });
-    expect(noGh.delivery).toMatchObject({ status: 'fail', summary: 'the gh CLI was not found', missing: 'the gh executable on PATH', fix: 'install GitHub CLI (https://cli.github.com)' });
+    expect(noGh.delivery).toMatchObject({ status: 'fail', summary: 'the gh CLI was not found', missing: 'the gh executable on PATH', fix: expect.stringMatching(/^install GitHub CLI \(https:\/\/cli\.github\.com\), or, to run without delivery, set mode: autonomous and actions\.\w+/) });
     exe(w.bin, 'gh');
     const noToken = await doctor(w, { config: cfg(delivering), ctx: { env: ghEnv(w) } });
-    expect(noToken.delivery).toMatchObject({ status: 'fail', summary: 'GH_TOKEN is not set for the controller', fix: 'export GH_TOKEN in the environment the controller or service runs in' });
+    expect(noToken.delivery).toMatchObject({ status: 'fail', summary: 'GH_TOKEN is not set for the controller', fix: expect.stringMatching(/^export GH_TOKEN in the environment the controller or service runs in, or, to run without delivery, set mode: autonomous and actions\.\w+/) });
     expect(noToken.delivery!.missing).toContain('fine-grained GH_TOKEN');
   });
 
