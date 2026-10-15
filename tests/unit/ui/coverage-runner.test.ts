@@ -461,6 +461,20 @@ describe('starting the application', () => {
     await expect(runUiChecks(input(p, c, denied))).rejects.toMatchObject({ code: 'POLICY_DENIED' });
   });
 
+  // ADR 0016: the fail-before ui probe aborts a run that outlives its bound, and an application that never becomes ready
+  // must stop at once rather than hold the probe for its whole ready timeout.
+  it('stops an application that is not ready yet as soon as the run is aborted, rather than waiting out its ready timeout', async () => {
+    const p = policy({ ui: (u) => { u.environment.start_command = ['node', '-e', 'setInterval(() => {}, 1000)']; u.environment.ready_timeout_seconds = 120; } });
+    const c = candidate();
+    const inner = fakePlaywright(() => ({ report: report([ok('x')]) }));
+    const aborted = new AbortController();
+    aborted.abort();
+    const result = await runUiChecks({ ...input(p, c, inner.provider), abortSignal: aborted.signal });
+    expect(result.verdict).toBe('ERROR');
+    expect(result.reasons[0]).toMatch(/^the application did not start: the application was stopped before it became ready: /);
+    expect(result.notExecuted).toEqual([expect.objectContaining({ stage: 'application' })]);
+  }, 30_000);
+
   it('starts the application with the base URL, port and test-data flag in its environment, and stops it afterwards', async () => {
     // A real server on a free port, so readiness is real.
     const { createServer } = await import('node:net');

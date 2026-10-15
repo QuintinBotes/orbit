@@ -116,6 +116,12 @@ if (step.forbiddenWrite) {
   assistant([{ type: 'tool_use', id: 'toolu_forbidden', name: 'Bash', input: { command: `echo x > ${r.path}` } }]);
   toolResult('toolu_forbidden', r.written ? 'written' : `denied: ${r.error}`, !r.written);
 }
+// A session looks at the repository once, as the fake Codex runs git diff --stat: a review that answers from the packet
+// alone (no tool call, ADR 0016) is a step with inspect: false.
+if (step.inspect !== false) {
+  assistant([{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: 'README.md' } }]);
+  toolResult('toolu_read', 'ok');
+}
 if (step.crash) crashMidEdit(cwd, step.crash);
 if (step.sleepMs) await sleep(step.sleepMs);
 if (interrupted) process.exit(0);

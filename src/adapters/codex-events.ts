@@ -114,6 +114,20 @@ export function classifyCodexTranscript(input: CodexClassifyInput): CodexTaskRes
   return end('succeeded', 'success', null, parsed, message);
 }
 
+/**
+ * The final answer a session gave, as the provider reported it, whether or not Orbit accepted the session:
+ * classification leaves `structured` null when it rejects one (a non-zero exit, invalid JSON, a schema mismatch),
+ * and the output budget is judged against the answer the worker gave (ADR 0016), so the answer is read back before
+ * acceptance. The last-message text the caller read from the file the CLI writes comes first, then the last agent
+ * message in the transcript, not only one before a completed turn: a process that exits after giving its answer but
+ * without completing the turn still gave that answer. The text counts as its JSON value when it parses, else as the
+ * text itself. Undefined when the session gave no final answer at all.
+ */
+export function codexRawFinalAnswer(events: Record<string, unknown>[], lastMessageText?: string | null): unknown {
+  const text = lastMessageText !== null && lastMessageText !== undefined && lastMessageText.trim() !== '' ? lastMessageText : lastAgentMessage(events);
+  return text === null || text.trim() === '' ? undefined : parsedOrText(text);
+}
+
 /** Token usage from turn.completed; null fields when the turn did not complete. Codex reports no cost. */
 export function codexUsage(events: Record<string, unknown>[], model: string | null): UsageReport {
   const done = events.findLast((e) => e.type === 'turn.completed');
@@ -232,4 +246,13 @@ function num(v: unknown): number | null {
 
 function clip(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}...` : s;
+}
+
+/** A final answer given as text: its JSON value when the text parses, else the text itself. */
+function parsedOrText(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
 }

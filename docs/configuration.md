@@ -1081,6 +1081,13 @@ and `sandbox-runtime`, else `claude-sandbox`; see [installation](installation.md
 and a setting that silently did nothing would read as confinement that is not
 there. A config without the key (an older snapshot) reads as `auto`.
 
+An approval whose recorded review depth shows no tool call does not clear the
+tree (ADR 0016): the review answered from the packet alone. The tree gets its
+one fresh review at `high` effort, told to open the changed files and tests
+before its verdict; if that review inspects nothing either, or no review round
+is left, the run blocks and says so. A review whose depth was not recorded is
+unaffected.
+
 `providers.<id>.review_reasoning_effort` is the reasoning effort of the Codex
 reviewer's sessions (`low`, `medium`, `high`, `xhigh` or `max`; default
 `medium`). Orbit passes it to the Codex CLI as `model_reasoning_effort`. At the
@@ -1180,6 +1187,10 @@ reports "Claude's response exceeded the N output token maximum"), the unit is
 retried once with the cap doubled, up to 32000, and the decision is recorded as
 `worker.output-cap-raised`. A unit is raised once; a second overflow, or a cap
 already at 32000, fails the unit as any other failed session would.
+The `usage.output-budget-exceeded` event compares the final structured output,
+estimated from its JSON at about four characters a token, with the budget. A
+session's total output counts every response and every file it writes, so it is
+recorded with the event but never judged against the budget (ADR 0016).
 
 `redact_patterns` are JavaScript regular expressions (compiled with the `u`
 flag). From the moment a run's policy is frozen or verified, every redaction
@@ -1306,6 +1317,29 @@ with the same probe tree (a repair of production code only) reuses them. The
 same probe judges a review repair's test on the pre-repair tree (see
 [checks](#checks)), within the same bound for each probe tree and whatever the
 mode.
+
+Browser journeys are probed too (ADR 0016). A journey check (`ui.journey_check_ids`,
+or a check of kind `playwright`) whose directory holds a journey the candidate adds
+or changes runs on the base revision with the candidate's test-owned changes,
+through the same ui runner and app fixture as verification. The baseline runs
+command checks only, so the probe first runs the journeys on the base revision
+alone, once per run (reused by the base tree), and a failure counts only after
+that control passed. Only a failed journey is a failure (a skipped one is not),
+a browser that never started or a process that never reached the repository's
+code establishes nothing, one deadline covers the control and each attempt, and
+with no `ui.environment.start_command` the journeys are not probed, since they
+would run against a server Orbit did not start from the probe's checkout.
+
+A criterion that states its tests fail on the base revision, and an assumption
+that a check runs the new tests, are Orbit's to establish, so the probe decides
+them (ADR 0016). Such a criterion is supported only when its fail-before outcome
+is failed-before, never by a passing log; such an assumption is supported only
+when each check it names (or every probed check, when it names none) failed
+before, and one that names a check that is not configured stays unverified. An
+unverified one blocks under `required` and is a residual risk under `advisory`
+or `off`. The wording only selects these statements, and only to make Orbit
+stricter: a negated statement is not one of them. A changed assumption makes the
+evidence stale.
 
 In every mode, a review finding is a note if and only if the reviewer files it
 under the category `evidence-classification`, no check confirms it and no

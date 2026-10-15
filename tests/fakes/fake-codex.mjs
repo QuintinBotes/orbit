@@ -122,7 +122,8 @@ if (step.forbiddenWrite) {
   const r = attemptWrite(cwd, step.forbiddenWrite);
   out({ type: 'item.completed', item: { id: 'item_fw', type: 'command_execution', command: `echo x > ${r.path}`, aggregated_output: r.written ? '' : r.error, exit_code: r.written ? 0 : 1, status: r.written ? 'completed' : 'failed' } });
 }
-out({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc "git diff --stat"', aggregated_output: '', exit_code: 0, status: 'completed' } });
+// A review that answers from the packet alone (no tool call, ADR 0016) is a step with inspect: false.
+if (step.inspect !== false) out({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc "git diff --stat"', aggregated_output: '', exit_code: 0, status: 'completed' } });
 if (step.sleepMs) await sleep(step.sleepMs);
 
 const usage = { input_tokens: 1234, cached_input_tokens: 1000, cache_write_input_tokens: 0, output_tokens: 56, reasoning_output_tokens: 7, ...(step.usage ?? {}) };

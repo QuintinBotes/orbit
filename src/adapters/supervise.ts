@@ -283,10 +283,23 @@ export function timeToFirstEventMs(exit: ExitRecord | null): number | null {
  * task launched under (launch.json meta), so overruns can be recorded
  * wherever the usage is.
  */
-export function withWorkerTelemetry(usage: UsageReport, workerDir: string): UsageReport {
+export function withWorkerTelemetry(usage: UsageReport, workerDir: string, finalAnswer?: unknown): UsageReport {
   const meta = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE))?.meta;
   const budget = meta && typeof meta.outputBudgetTokens === 'number' ? meta.outputBudgetTokens : null;
-  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget };
+  // The final answer the caller measured (an accepted structured output, or the raw answer of a session Orbit
+  // rejected), else the result the collect step stored (both providers write result.json).
+  const final = finalOutputTokens(finalAnswer !== undefined ? finalAnswer : readJsonIfExists<{ structured?: unknown }>(join(workerDir, 'result.json'))?.structured);
+  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget, finalOutputTokens: final };
+}
+
+/**
+ * A final answer's size in tokens, estimated from its JSON at about four characters a token; a text answer is
+ * measured as a string. Null when there is no final answer to measure.
+ */
+export function finalOutputTokens(finalAnswer: unknown): number | null {
+  if (finalAnswer === undefined || finalAnswer === null) return null;
+  const json = JSON.stringify(finalAnswer);
+  return json === undefined ? null : Math.ceil(json.length / 4);
 }
 
 export type TaskState =

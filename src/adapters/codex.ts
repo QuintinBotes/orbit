@@ -31,7 +31,7 @@
  * the role prompt followed by the review packet, on stdin from a file, so
  * exec reads it to EOF and starts (an open stdin pipe would hang it).
  */
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
@@ -47,7 +47,7 @@ import type { CodexTierSetting } from '../policy/types.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { parseCodexCatalog } from '../routing/registry.ts';
 import { snapshotFileHash } from './claude.ts';
-import { CODEX_END_REASONS, classifyCodexTranscript, codexEvents, codexUsage, type CodexTaskResult } from './codex-events.ts';
+import { CODEX_END_REASONS, classifyCodexTranscript, codexEvents, codexRawFinalAnswer, codexUsage, type CodexTaskResult } from './codex-events.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, codexEnvCredential, passThrough } from './env.ts';
 import { outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
@@ -388,13 +388,17 @@ export class CodexAdapter implements ProviderAdapter {
     } else {
       result = classifyCodexTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, model });
     }
-    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
+    // The estimate measures the raw final answer, not only an accepted one: classification leaves structured null
+    // when it rejects a session, and an oversized answer counts against the budget either way (ADR 0016).
+    const raw = codexRawFinalAnswer(log.events, lastMessageText(handle.workerDir));
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir, raw !== undefined ? raw : (result.structured ?? null)) };
     atomicWriteJson(join(handle.workerDir, CODEX_RESULT_FILE), result, 0o600);
     return result;
   }
 
   async reportUsage(handle: TaskHandle): Promise<UsageReport> {
-    return withWorkerTelemetry(codexUsage(existsSync(handle.logPath) ? readLogLines(handle.logPath).events : [], launchModel(handle.workerDir)), handle.workerDir);
+    const events = existsSync(handle.logPath) ? readLogLines(handle.logPath).events : [];
+    return withWorkerTelemetry(codexUsage(events, launchModel(handle.workerDir)), handle.workerDir, codexRawFinalAnswer(events, lastMessageText(handle.workerDir)));
   }
 
   reattach(workerDir: string): TaskHandle | null {
@@ -555,4 +559,16 @@ export function parseDoctorChecks(stdout: string): Record<string, string> | null
 function launchModel(workerDir: string): string | null {
   const meta = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE))?.meta;
   return meta && typeof meta.model === 'string' ? meta.model : null;
+}
+
+/**
+ * The text of the last-message file, when one was written for this attempt. A launch removes an earlier attempt's
+ * file (and an archived attempt takes its file with it), so a file that is present is this session's.
+ */
+function lastMessageText(workerDir: string): string | null {
+  try {
+    return readFileSync(join(workerDir, CODEX_LAST_MESSAGE_FILE), 'utf8');
+  } catch {
+    return null;
+  }
 }

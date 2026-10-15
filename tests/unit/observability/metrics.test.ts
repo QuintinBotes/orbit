@@ -219,7 +219,7 @@ describe('spend per accepted task, tokens and cache', () => {
     const s = new Seed();
     s.run('ok', 'SUCCEEDED');
     const clock = new ManualClock(T0);
-    recordUsage(s.db, { runId: 'ok', workerId: null, role: 'verifier', usage: { provider: 'claude', model: 'm', inputTokens: 1, outputTokens: 5000, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.1, costSource: 'reported', outputBudgetTokens: 3000 }, durationMs: 1 }, clock);
+    recordUsage(s.db, { runId: 'ok', workerId: null, role: 'verifier', usage: { provider: 'claude', model: 'm', inputTokens: 1, outputTokens: 5000, finalOutputTokens: 5000, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.1, costSource: 'reported', outputBudgetTokens: 3000 }, durationMs: 1 }, clock);
     expect(metricsFor(s.db).token_usage.output_budget_overruns).toBe(1);
   });
 });

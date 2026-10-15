@@ -64,6 +64,11 @@ const PROVIDER_SURFACE: Readonly<Record<string, Surface>> = { claude: 'claude-cl
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 /** `max` is left to explicit configuration: it buys little on routine work and can run very long. */
 const EFFORT_CEILING = 'xhigh';
+/**
+ * The most a prediction raises a candidate's effort to (ADR 0016): a complex classification and a planned coupled change
+ * are not observed difficulty, so they stop at high; repeated failures, or critical security impact, may go further.
+ */
+const PREDICTED_EFFORT_CEILING = 'high';
 
 type Output = 'candidate' | 'diagnosis' | 'interpretation' | 'review';
 
@@ -668,7 +673,11 @@ function finish(
     steps += 1;
     notes.push('critical security impact raises effort');
   }
-  const effort = chooseEffort(chosen, baseEffort, steps);
+  // A candidate's effort rises past high only on observed difficulty or critical security impact (ADR 0016).
+  const observed = justification.signals.some((t) => !STATIC_SIGNALS.has(t.signal));
+  const predictedOnly = ctx.profile.output === 'candidate' && !observed && !s.criticalSecurity;
+  if (predictedOnly && effortRank(baseEffort) + steps > effortRank(PREDICTED_EFFORT_CEILING)) notes.push('a prediction raises effort at most to high; only observed difficulty raises it further');
+  const effort = chooseEffort(chosen, baseEffort, steps, predictedOnly ? PREDICTED_EFFORT_CEILING : EFFORT_CEILING);
   const chosenTier = tierOf(chosen) ?? 0;
   const alternatives: RouteAlternative[] = [];
   for (const m of assessment.eligible) {
@@ -765,10 +774,10 @@ function resolveOverride(value: string, registry: RegistryView): { provider: str
   return e ? { provider: e.provider, tier: tierOf(e), modelId: e.modelId } : null;
 }
 
-function chooseEffort(m: ModelEntry, base: string, steps: number): string | null {
+function chooseEffort(m: ModelEntry, base: string, steps: number, ceiling: string = EFFORT_CEILING): string | null {
   const supported = m.capabilities.effortLevels.filter((l) => effortRank(l) >= 0);
   if (supported.length === 0) return null;
-  const desired = Math.min(effortRank(base) + steps, effortRank(EFFORT_CEILING));
+  const desired = Math.min(effortRank(base) + steps, effortRank(ceiling));
   const atOrBelow = supported.filter((l) => effortRank(l) <= desired).sort((a, b) => effortRank(b) - effortRank(a));
   if (atOrBelow[0]) return atOrBelow[0];
   return [...supported].sort((a, b) => effortRank(a) - effortRank(b))[0] ?? null;

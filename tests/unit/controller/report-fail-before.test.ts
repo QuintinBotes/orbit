@@ -41,7 +41,7 @@ const failedBefore = { mode: 'advisory' as const, outcome: 'failed-before' as co
 const evidence: CriterionEvidence[] = [
   { criterion_id: 'AC-1', status: 'supported', artifacts: ['evidence/1/unit.log'], check_wide: CHECK_WIDE, fail_before: { ...failedBefore, check_wide: CHECK_WIDE } },
   { criterion_id: 'AC-2', status: 'supported', artifacts: ['evidence/1/unit.log'], check_wide: CHECK_WIDE, fail_before: { ...failedBefore, check_wide: CHECK_WIDE } },
-  { criterion_id: 'AC-3', status: 'supported', artifacts: ['ui/export.png'], fail_before: { mode: 'advisory', outcome: 'not-established', cause: 'not-probed', checks: [], probe_tree: 'tree-probe', test_paths: { paths: ['tests/e2e/export.spec.ts'], count: 1 }, reason: 'ui is not probed: only a command check of category test that passed on the base revision is' } },
+  { criterion_id: 'AC-3', status: 'supported', artifacts: ['ui/export.png'], fail_before: { mode: 'advisory', outcome: 'not-established', cause: 'not-probed', checks: [], probe_tree: 'tree-probe', test_paths: { paths: ['tests/e2e/export.spec.ts'], count: 1 }, reason: 'ui is not probed: only a command check of category test that passed on the base revision, or a browser check, is' } },
 ];
 
 function build() {
@@ -65,7 +65,7 @@ describe('the final report carries each criterion\'s fail-before outcome', () =>
       check_wide: CHECK_WIDE,
       fail_before: { mode: 'advisory', outcome: 'failed-before', reason: 'unit failed on the base revision with the new tests (exit 1, 2 attempts)', check_wide: CHECK_WIDE },
     });
-    expect(r.criteria[2]!.fail_before).toEqual({ mode: 'advisory', outcome: 'not-established', cause: 'not-probed', reason: 'ui is not probed: only a command check of category test that passed on the base revision is' });
+    expect(r.criteria[2]!.fail_before).toEqual({ mode: 'advisory', outcome: 'not-established', cause: 'not-probed', reason: 'ui is not probed: only a command check of category test that passed on the base revision, or a browser check, is' });
     expect(r.criteria[2]).not.toHaveProperty('check_wide');
   });
 
@@ -74,7 +74,58 @@ describe('the final report carries each criterion\'s fail-before outcome', () =>
     const section = md.slice(md.indexOf('## Criterion evidence'), md.indexOf('## Checks'));
     expect(section).toContain('- AC-1 [supported]: bulk_price discounts every price (evidence: evidence/1/unit.log); fail-before (advisory): failed-before: unit failed on the base revision with the new tests (exit 1, 2 attempts); check-wide: the tests unit runs, shared by AC-1, AC-2');
     expect(section).toContain('- AC-2 [supported]: existing behaviour is unchanged (evidence: evidence/1/unit.log); fail-before (advisory): failed-before: unit failed on the base revision with the new tests (exit 1, 2 attempts); check-wide: the tests unit runs, shared by AC-1, AC-2');
-    expect(section).toContain('- AC-3 (optional) [supported]: the export journey downloads a file (evidence: ui/export.png); fail-before (advisory): not-established (cause not-probed): ui is not probed: only a command check of category test that passed on the base revision is');
+    expect(section).toContain('- AC-3 (optional) [supported]: the export journey downloads a file (evidence: ui/export.png); fail-before (advisory): not-established (cause not-probed): ui is not probed: only a command check of category test that passed on the base revision, or a browser check, is');
+  });
+
+  it('shows the evaluated status and reason for a flagged assumption, and the contract status for the others', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const cand = addCandidate(lab);
+    const withAssumptions: GoalContract = {
+      ...contractOf(),
+      assumptions: [
+        { id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'unverified' },
+        { id: 'AS-2', statement: 'Prices are in euros', status: 'unverified' },
+        { id: 'AS-3', statement: 'The unit check discovers tests/test_pricing.py', status: 'supported' },
+      ],
+    };
+    lab.db.run('UPDATE runs SET contract_json = ? WHERE id = ?', JSON.stringify(withAssumptions), lab.runId);
+    addEvidence(lab, cand, {
+      acceptance_evidence: evidence,
+      assumptions: [
+        { assumption_id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests)', checks: ['unit'] },
+        { assumption_id: 'AS-3', statement: 'The unit check discovers tests/test_pricing.py', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)', checks: ['unit'] },
+      ],
+    });
+    const run = getRun(lab.db, lab.runId);
+    const r = buildFinalReport(lab.db, run, { runDir: join(lab.repo, '.orbit', 'runs', lab.runId), clock: lab.clock, snapshot: verifySnapshot(run.policyPath, run.policyHash) });
+    expect(r.assumptions).toEqual([
+      { id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests)' },
+      { id: 'AS-2', statement: 'Prices are in euros', status: 'unverified' },
+      { id: 'AS-3', statement: 'The unit check discovers tests/test_pricing.py', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)' },
+    ]);
+    const md = renderMarkdown(r);
+    expect(md).toContain('- AS-1 [supported]: The unit check runs pytest over tests/ with src on the path (unit: failed-before (unit failed on the base revision with the new tests))');
+    expect(md).toContain('- AS-2 [unverified]: Prices are in euros\n');
+  });
+
+  it('an evaluated assumption whose statement changed in the contract shows the contract status, not the evaluated one', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const cand = addCandidate(lab);
+    const amended: GoalContract = {
+      ...contractOf(),
+      assumptions: [{ id: 'AS-1', statement: 'The lint check runs the new tests', status: 'unverified' }],
+    };
+    lab.db.run('UPDATE runs SET contract_json = ? WHERE id = ?', JSON.stringify(amended), lab.runId);
+    addEvidence(lab, cand, {
+      acceptance_evidence: evidence,
+      assumptions: [
+        { assumption_id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests)', checks: ['unit'] },
+      ],
+    });
+    const run = getRun(lab.db, lab.runId);
+    const r = buildFinalReport(lab.db, run, { runDir: join(lab.repo, '.orbit', 'runs', lab.runId), clock: lab.clock, snapshot: verifySnapshot(run.policyPath, run.policyHash) });
+    expect(r.assumptions).toEqual([{ id: 'AS-1', statement: 'The lint check runs the new tests', status: 'unverified' }]);
+    expect(renderMarkdown(r)).toContain('- AS-1 [unverified]: The lint check runs the new tests\n');
   });
 
   it('a criterion with no fail-before entry reads as before', () => {

@@ -171,6 +171,20 @@ describe('tier selection with an incomplete registry', () => {
     expect(d.effort).toBe('high');
   });
 
+  // ADR 0016: the 0.3.1 retest's ui implementer ran at xhigh on predictions alone (a complex classification and a
+  // planned coupled change with no eligible opus), took 11 minutes and hit its turn cap.
+  it('raises a routine implementer at most to high on predictions alone, and further only on observed difficulty', () => {
+    const predicted = route({ workKind: 'routine-code', signals: signals({ coupled: true, difficulty: 'complex' }), registry: fake([haiku, sonnet]), policy: policy() });
+    expect(predicted.model).toBe('s-1');
+    expect(predicted.effort).toBe('high');
+    expect(predicted.reason).toMatch(/a prediction raises effort at most to high; only observed difficulty raises it further/);
+    const observed = route({ workKind: 'routine-code', signals: signals({ coupled: true, difficulty: 'complex', repeatedFingerprints: 2, evidence: ['fail-1'], previousRoute: { provider: 'claude', model: 's-1', outcome: 'failed' } }), registry: fake([haiku, sonnet]), policy: policy() });
+    expect(observed.effort).toBe('xhigh');
+    // Critical security impact keeps its own raise.
+    const security = route({ workKind: 'routine-code', signals: signals({ coupled: true, difficulty: 'complex', criticalSecurity: true }), registry: fake([haiku, sonnet]), policy: policy() });
+    expect(security.effort).toBe('xhigh');
+  });
+
   it('names the nearest model it can find when the starting tier has no eligible model at all', () => {
     const d = route({ workKind: 'routine-code', signals: signals({ coupled: true }), registry: fake([haiku, opus]), policy: policy() });
     expect(d.model).toBe('o-1');

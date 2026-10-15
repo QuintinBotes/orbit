@@ -44,6 +44,22 @@ describe('isFresh and staleReasons', () => {
     const r = { ...report(), run_id: 'orb-other' };
     expect(staleReasons(r, { candidate: { ...CANDIDATE, treeHash: 'tree-z' }, snapshot })).toHaveLength(2);
   });
+
+  it('a report that evaluated an assumption is stale once that assumption statement changes, and fresh while it stands', () => {
+    const seen = contract({ assumptions: [{ id: 'AS-1', statement: 'The tests check runs the new tests', status: 'unverified' }] });
+    const r = buildEvidenceReport({ contract: seen, candidate: CANDIDATE, checkResults: [result(snapshot, 'tests'), result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot });
+    expect(r.assumptions_hash).toBeDefined();
+    expect(isFresh(r, { ...ctx, contract: seen })).toBe(true);
+    expect(staleReasons(r, { ...ctx, contract: seen })).toEqual([]);
+    const amended = contract({ assumptions: [{ id: 'AS-1', statement: 'The lint check runs the new tests', status: 'unverified' }] });
+    expect(isFresh(r, { ...ctx, contract: amended })).toBe(false);
+    expect(staleReasons(r, { ...ctx, contract: amended })).toEqual(["the contract's assumptions changed after the evidence was recorded"]);
+    // Without a contract in the context the hash is not judged, as before.
+    expect(isFresh(r, ctx)).toBe(true);
+    // A report without the hash is unaffected by a contract in the context.
+    expect(report().assumptions_hash).toBeUndefined();
+    expect(isFresh(report(), { ...ctx, contract: amended })).toBe(true);
+  });
 });
 
 describe('invalidateEvidence', () => {

@@ -46,7 +46,7 @@ import { bashGrant } from '../policy/role-grants.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './claude-settings.ts';
-import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeModelRequests, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
+import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeModelRequests, claudeRawFinalAnswer, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
 import { STRICT_PLUGIN_POLICY, needsPluginList, parsePluginList, pluginPolicyOf, type InstalledPlugin, type PluginPolicy } from './claude-plugins.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough, claudeEnvCredential } from './env.ts';
@@ -381,14 +381,18 @@ export class ClaudeAdapter implements ProviderAdapter {
       const stderr = result.reason === 'crashed' ? stderrTail(handle.workerDir) : null;
       if (stderr) result = { ...result, error: `${result.error ?? 'crashed'}; stderr: ${stderr}` };
     }
-    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
+    // The estimate measures the raw final answer, not only an accepted one: classification leaves structured null
+    // when it rejects a session, and an oversized answer counts against the budget either way (ADR 0016).
+    const raw = claudeRawFinalAnswer(log.events);
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir, raw !== undefined ? raw : (result.structured ?? null)) };
     atomicWriteJson(join(handle.workerDir, RESULT_FILE), result, 0o600);
     return result;
   }
 
   async reportUsage(handle: TaskHandle): Promise<UsageReport> {
     if (!existsSync(handle.logPath)) return emptyUsage(this.id);
-    return withWorkerTelemetry(claudeUsage(readLogLines(handle.logPath).events), handle.workerDir);
+    const events = readLogLines(handle.logPath).events;
+    return withWorkerTelemetry(claudeUsage(events), handle.workerDir, claudeRawFinalAnswer(events));
   }
 
   /**

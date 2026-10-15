@@ -69,6 +69,12 @@ export function readReviewDepth(worker: Pick<WorkerRecord, 'provider' | 'workerD
   return family === 'codex' ? codexDepth(events) : claudeDepth(events);
 }
 
+/** The recorded depth of a review, or null when none was recorded (an older run, or a review not started by a session). */
+export function reviewDepthOf(ctx: Pick<RunContext, 'db' | 'run'>, reviewId: string): ReviewDepth | null {
+  const d = getDecision(ctx.db, `dec-${ctx.run.id}-review-depth-${reviewId}`);
+  return d ? (d.data as ReviewDepth) : null;
+}
+
 /** Record the depth of a review session once; a restart that records the review again finds the decision and keeps it. */
 export function recordReviewDepth(ctx: RunContext, worker: Pick<WorkerRecord, 'id' | 'provider' | 'model' | 'workerDir'>, reviewId: string): void {
   const id = `dec-${ctx.run.id}-review-depth-${reviewId}`;

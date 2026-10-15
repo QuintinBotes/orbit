@@ -149,6 +149,12 @@ export interface UsageReport {
   timeToFirstEventMs?: number | null;
   /** The output token budget the task launched under; absent when it ran without one or the record predates budgets. */
   outputBudgetTokens?: number | null;
+  /**
+   * The final answer's size in tokens, estimated from its JSON (about four characters a token): what the output
+   * budget instructs (ADR 0016). Measured from the provider's raw final answer, so a session Orbit rejected is measured
+   * too. Absent or null when the session gave no final answer.
+   */
+  finalOutputTokens?: number | null;
 }
 
 export interface ProviderAdapter {

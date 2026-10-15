@@ -26,6 +26,8 @@ import type { ProviderEvent, TaskResult, TaskStatus, UsageReport } from './types
 export const CLAUDE_AUTH_ERRORS: readonly string[] = ['authentication_failed', 'oauth_org_not_allowed', 'account_on_hold'];
 /** Values worth an infrastructure retry with backoff. */
 export const CLAUDE_TRANSIENT_ERRORS: readonly string[] = ['rate_limit', 'overloaded', 'server_error'];
+/** The call a worker makes to hand back the structured answer its output schema asks for. */
+const STRUCTURED_OUTPUT_TOOL = 'StructuredOutput';
 
 /** Why a Claude task ended, finer than TaskStatus, for the evidence record and routing. */
 export const CLAUDE_END_REASONS = [
@@ -171,6 +173,36 @@ export function classifyClaudeTranscript(input: ClassifyInput): ClaudeTaskResult
     return end('malformed_output', 'structured_output_invalid', `structured output does not match the role schema: ${problems.slice(0, 5).join('; ')}`);
   }
   return end('succeeded', 'success', null, result.structured_output);
+}
+
+/**
+ * The final answer a session gave, as the provider reported it, whether or not Orbit accepted the session:
+ * classification leaves `structured` null when it rejects one (a non-zero exit, a schema mismatch, a session that ran
+ * unsafely), and the output budget is judged against the answer the worker gave (ADR 0016), so the answer is read
+ * back before acceptance. The last result line's structured_output comes first, then its result text (its JSON value
+ * when the text parses, else the text itself), then the input of the last structured output call, which is all a
+ * session that ended before a result line, or exhausted its retries, leaves of its answer. An error result's text is
+ * the provider's error, not an answer, so it is never measured. Undefined when the transcript carries no final
+ * answer at all.
+ */
+export function claudeRawFinalAnswer(events: Record<string, unknown>[]): unknown {
+  const result = lastOf(events, (e) => e.type === 'result');
+  if (result && 'structured_output' in result && result.structured_output !== undefined) return result.structured_output;
+  const text = result && result.is_error !== true ? str(result.result) : null;
+  if (text !== null && text.trim() !== '') return parsedOrText(text);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type !== 'assistant' || !isObject(e.message)) continue;
+    const content = (e.message as Record<string, unknown>).content;
+    if (!Array.isArray(content)) continue;
+    for (let j = content.length - 1; j >= 0; j--) {
+      const block = content[j];
+      if (!isObject(block)) continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'tool_use' && b.name === STRUCTURED_OUTPUT_TOOL && b.input !== undefined) return b.input;
+    }
+  }
+  return undefined;
 }
 
 const NO_PLUGINS: PluginCheck = { policy: STRICT_PLUGIN_POLICY, installed: null };
@@ -410,4 +442,13 @@ function num(v: unknown): number | null {
 
 function clip(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}...` : s;
+}
+
+/** A final answer given as text: its JSON value when the text parses, else the text itself. */
+function parsedOrText(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
 }

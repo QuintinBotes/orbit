@@ -68,7 +68,7 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   if (cand.status === 'INVALIDATED') return violatingCandidate(ctx, cand);
   const existing = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   // A person's fail-before answer, or a resume after a probe that was not established, makes the probe's part stale.
-  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot }) && !failBeforeStale(ctx, cand, existing)) return act(ctx, cand, existing);
+  if (existing && isFresh(existing.report, { candidate: cand, snapshot: ctx.snapshot, contract }) && !failBeforeStale(ctx, cand, existing)) return act(ctx, cand, existing);
 
   // 1. Implementation scope: the gate the hooks only assist.
   let scope = cand.scope ?? (await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths }));

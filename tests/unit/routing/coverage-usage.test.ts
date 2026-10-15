@@ -41,18 +41,18 @@ describe('recordUsage details', () => {
   it('takes the output budget from the report and names the role found for the worker', () => {
     const { db, clock } = setup();
     db.run("INSERT INTO workers (id, run_id, role, provider, state, worker_dir, cwd, created_at) VALUES ('w-impl', 'run-1', 'implementer', 'claude', 'running', '/w', '/c', 1)");
-    const r = recordUsage(db, { runId: 'run-1', workerId: 'w-impl', usage: report({ outputTokens: 50, outputBudgetTokens: 10 }), durationMs: null }, clock);
+    const r = recordUsage(db, { runId: 'run-1', workerId: 'w-impl', usage: report({ finalOutputTokens: 50, outputBudgetTokens: 10 }), durationMs: null }, clock);
     expect(r.outputBudgetExceeded).toBe(true);
-    expect(r.notes).toContain('output 50 tokens exceeded the 10 token budget for implementer');
+    expect(r.notes).toContain('final output about 50 tokens exceeded the 10 token budget for implementer');
   });
 
   it('records an overrun without a role when none is known, and honours a null budget override', () => {
     const { db, clock } = setup();
-    const over = recordUsage(db, { runId: 'run-1', workerId: 'w-unknown', usage: report({ outputTokens: 50 }), outputBudgetTokens: 10, durationMs: null }, clock);
-    expect(over.notes).toContain('output 50 tokens exceeded the 10 token budget');
-    const none = recordUsage(db, { runId: 'run-1', workerId: null, usage: report({ outputTokens: 50, outputBudgetTokens: 10 }), outputBudgetTokens: null, durationMs: null }, clock);
+    const over = recordUsage(db, { runId: 'run-1', workerId: 'w-unknown', usage: report({ finalOutputTokens: 50 }), outputBudgetTokens: 10, durationMs: null }, clock);
+    expect(over.notes).toContain('final output about 50 tokens exceeded the 10 token budget');
+    const none = recordUsage(db, { runId: 'run-1', workerId: null, usage: report({ finalOutputTokens: 50, outputBudgetTokens: 10 }), outputBudgetTokens: null, durationMs: null }, clock);
     expect(none.outputBudgetExceeded).toBe(false);
-    const zero = recordUsage(db, { runId: 'run-1', workerId: null, usage: report({ outputTokens: 50 }), outputBudgetTokens: 0, durationMs: null }, clock);
+    const zero = recordUsage(db, { runId: 'run-1', workerId: null, usage: report({ finalOutputTokens: 50 }), outputBudgetTokens: 0, durationMs: null }, clock);
     expect(zero.outputBudgetExceeded).toBe(false);
   });
 

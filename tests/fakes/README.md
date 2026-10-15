@@ -72,6 +72,7 @@ A step:
 | `forbiddenWrite` | `{ "path", "content"? }`: tries a write the worker must not be able to make and reports the outcome in the transcript (`denied: EPERM` under the os-sandbox tier) instead of failing |
 | `crash` | `{ "path", "content" }`: writes the first half of the content, then exits 137 (a crash mid-edit) |
 | `sleepMs` | waits before finishing (cancellation and timeout tests) |
+| `inspect` | `false` makes the session answer without a tool call: no `Read` (fake Claude) and no `git diff --stat` (fake Codex), the packet-only review ADR 0016 refuses to let clear a tree |
 | `ignoreSignals` | ignores SIGINT and SIGTERM, so only SIGKILL ends it |
 | `grandchildPidFile` | (Claude) starts `/bin/sleep 600` in the same process group and writes its pid here |
 | `detachedChild` | (Claude) starts a real detached Node child for a containment test: `{pidFile, markerPath, writePath, waitMs?, intervalMs?}`. It creates its own session, writes `writePath` until stopped, and writes its pid and startup marker first. |
