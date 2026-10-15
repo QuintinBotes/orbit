@@ -2,8 +2,8 @@
 // starts. A criterion resting on a new journey under a browser check is probed on the base revision with the
 // candidate's test-owned changes, after a control run of the base revision alone, once per run, shows the journeys
 // pass there. The scripted runner tells the control from the probe by the checkout it is given.
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkRunnerFor } from '../../../src/controller/context.ts';
 import { collectFailBefore } from '../../../src/controller/fail-before.ts';
@@ -56,11 +56,17 @@ interface Script {
   error?: string;
   notExecuted?: UiNotExecuted[];
   reasons?: string[];
+  /** The application log (app/app.log under the run's output directory) as the runner leaves it, when scripted. */
+  appLog?: string;
 }
 
 function uiRun(input: UiRunInput, s: Script): UiRunResult {
   const status = s.journeyStatus ?? 'PASSED';
   const verdict = s.verdict ?? (status === 'PASSED' ? 'PASS' : 'FAIL');
+  if (s.appLog !== undefined) {
+    mkdirSync(join(input.outDir, 'app'), { recursive: true });
+    writeFileSync(join(input.outDir, 'app', 'app.log'), s.appLog);
+  }
   return {
     verdict,
     passed: verdict === 'PASS',
@@ -112,7 +118,7 @@ interface BrowserLab {
   comparison: BaseComparison;
 }
 
-async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds?: number } = {}): Promise<BrowserLab> {
+async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds?: number; installCommand?: string[] } = {}): Promise<BrowserLab> {
   const lab = makeUnitLab({
     tweak: (c) => {
       c.checks.journeys = { ...defaultCheck('journeys'), kind: 'playwright', category: 'ui', command: ['npx', 'playwright', 'test'] };
@@ -120,6 +126,9 @@ async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds
       c.ui = { ...ui, journey_check_ids: ['journeys'], environment: { ...ui.environment, start_command: opts.startCommand === undefined ? ['node', 'server.mjs'] : opts.startCommand } };
       c.verification.fail_before = 'required';
       if (opts.timeoutSeconds !== undefined) c.verification.fail_before_timeout_seconds = opts.timeoutSeconds;
+      // The locked install the probe runs in each checkout, scripted as the command probe's tests script it:
+      // a real dependencies.install_command the runner executes (a marker it leaves, or a failure it exits with).
+      if (opts.installCommand !== undefined) c.dependencies.install_command = opts.installCommand;
     },
   });
   labs.push(lab);
@@ -162,7 +171,7 @@ describe('the fail-before ui probe', () => {
     const check = probed(evidence);
     expect(check).toMatchObject({ outcome: 'failed-before' });
     expect(check.attempts.map((a) => a.status)).toEqual(['FAILED', 'FAILED']);
-    expect(check.attempts[0]!.log).toContain('evidence/1/fail-before/ui/probe-1/');
+    expect(check.attempts[0]!.log).toMatch(/evidence\/1\/fail-before\/ui\/probe-[^/]+\/probe-1\//);
     const ctx = b.lab.ctx();
     const support = newTestSupport(ctx.contract!, ctx.snapshot, b.comparison)[0]!;
     expect(criterionFailBefore(support, evidence)).toMatchObject({ outcome: 'failed-before', checks: [{ id: 'journeys', outcome: 'failed-before' }] });
@@ -184,6 +193,24 @@ describe('the fail-before ui probe', () => {
     const s = scripted({}, { journeyStatus: 'SKIPPED', verdict: 'FAIL' });
     const evidence = await collect(b, s.runner);
     expect(probed(evidence)).toMatchObject({ outcome: 'passed-before' });
+  }, 60_000);
+
+  // A confirm review of the fetch-failure scan: the application appends to app.log, and a resumed probe of the same
+  // candidate reused the same output directory, so the scan found the earlier refusal and kept the run blocked after the
+  // environment was fixed. Each probe now writes under a directory of its own.
+  it('a resumed probe after a fetch failure reads a fresh application log, so it recovers once the environment is fixed', async () => {
+    const b = await browserLab();
+    let refused = true;
+    const runner: UiRunner = async (input) => {
+      const control = input.checkoutDir.endsWith('fail-before-ui-control');
+      const log = join(input.outDir, 'app', 'app.log');
+      mkdirSync(dirname(log), { recursive: true });
+      appendFileSync(log, refused && !control ? 'npm error code E403\nnpm error 403 403 Forbidden - GET https://registry.npmjs.org/acme-widget\n' : 'listening\n');
+      return control ? uiRun(input, {}) : uiRun(input, { journeyStatus: 'FAILED' });
+    };
+    expect(probed(await collect(b, runner))).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    refused = false;
+    expect(probed(await collect(b, runner))).toMatchObject({ outcome: 'failed-before' });
   }, 60_000);
 
   it('a failing control establishes nothing: the journeys do not pass on the base revision', async () => {
@@ -281,6 +308,109 @@ describe('the fail-before ui probe', () => {
     expect(probed(evidence)).toMatchObject({ outcome: 'failed-before' });
   }, 60_000);
 
+  // The install the command probe gives its probe tree: each ui checkout gets it before its journeys, so a journey
+  // process never fetches its own tooling from a registry the sandbox refuses.
+  it('the control and the probe checkouts are installed before the journeys run', async () => {
+    const install = [process.execPath, '-e', "require('node:fs').writeFileSync('installed.marker', 'installed\\n')"];
+    const b = await browserLab({ installCommand: install });
+    const installed: boolean[] = [];
+    const runner: UiRunner = async (input) => {
+      installed.push(existsSync(join(input.checkoutDir, 'installed.marker')));
+      return uiRun(input, input.checkoutDir.endsWith('fail-before-ui-control') ? {} : { journeyStatus: 'FAILED' });
+    };
+    const evidence = await collect(b, runner);
+    // The control, then the failing probe run and its repeat: every checkout the runner saw was installed first.
+    expect(installed).toEqual([true, true, true]);
+    expect(probed(evidence)).toMatchObject({ outcome: 'failed-before' });
+  }, 60_000);
+
+  it('a failing install stops the ui probe as an install cause, and the journeys never run', async () => {
+    const install = [process.execPath, '-e', "console.error('registry unreachable'); process.exit(3)"];
+    const b = await browserLab({ installCommand: install });
+    const s = scripted({}, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(0);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'install' });
+    expect(check.reason).toMatch(/the locked install \(orbit-install\) ended FAILED for the ui control on the base revision/);
+  }, 60_000);
+
+  it('a control whose output shows a registry refusal is an environment cause, not the journeys failing on the base revision, and is not reused', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright';
+    const b = await browserLab();
+    const s = scripted({ journeyStatus: 'FAILED', error: refused }, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(1);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
+    expect(check.reason).not.toMatch(/the journeys do not pass on the base revision/);
+    // Not cached for a later candidate: its probe runs the control again.
+    writeFileSync(join(b.worktree, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => b * a;\n');
+    const cand2 = await snapshotCandidate({ db: b.lab.db, clock: b.lab.clock, repoRoot: b.lab.repo, worktree: b.worktree, runId: b.lab.runId, baseRev: b.base, attempt: 2, workerId: null });
+    await collect(b, s.runner, cand2);
+    expect(s.controls).toHaveLength(2);
+  }, 60_000);
+
+  it('a probe attempt whose output shows a registry refusal is an environment cause, not a journey failure', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright';
+    const b = await browserLab();
+    const s = scripted({}, { journeyStatus: 'FAILED', error: refused });
+    const evidence = await collect(b, s.runner);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.outcome).not.toBe('failed-before');
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
+  }, 60_000);
+
+  // The application started, so no notExecuted entry names its log: a refusal recorded only in app/app.log must
+  // still keep a failing control from reading as the journeys failing on the base revision.
+  it('a control whose application log shows a registry refusal is an environment cause, not the journeys failing on the base revision, and is not reused', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright\n';
+    const b = await browserLab();
+    const s = scripted({ journeyStatus: 'FAILED', appLog: refused }, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(1);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.cause).not.toBe('base-failed');
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
+    expect(check.reason).not.toMatch(/the journeys do not pass on the base revision/);
+    // Not cached for a later candidate: its probe runs the control again.
+    writeFileSync(join(b.worktree, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => b * a;\n');
+    const cand2 = await snapshotCandidate({ db: b.lab.db, clock: b.lab.clock, repoRoot: b.lab.repo, worktree: b.worktree, runId: b.lab.runId, baseRev: b.base, attempt: 2, workerId: null });
+    await collect(b, s.runner, cand2);
+    expect(s.controls).toHaveLength(2);
+  }, 60_000);
+
+  it('a probe attempt whose application log shows a registry refusal is an environment cause, not a journey failure', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright\n';
+    const b = await browserLab();
+    const s = scripted({}, { journeyStatus: 'FAILED', appLog: refused });
+    const evidence = await collect(b, s.runner);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.outcome).not.toBe('failed-before');
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
+  }, 60_000);
+
+  // An install command behind a shell pipeline can mask its status: it exits 0 with an incomplete install, and
+  // only its log shows the refusal (as `npm ci 2>&1 | tee install.log` would leave it).
+  it('an install that exits 0 but whose log shows a registry refusal stops the ui probe as an environment cause', async () => {
+    const masked = [process.execPath, '-e', "console.error('npm error code E403'); console.error('npm error 403 Forbidden - GET https://registry.npmjs.org/playwright')"];
+    const b = await browserLab({ installCommand: masked });
+    const s = scripted({}, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(0);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.reason).toMatch(/the locked install \(orbit-install\) for the ui control on the base revision shows that a dependency could not be fetched or installed/);
+  }, 60_000);
+
   it('a command check criterion is probed as before, and the ui runner is never called', async () => {
     const lab = makeUnitLab({ tweak: (c) => void (c.verification.fail_before = 'advisory') });
     labs.push(lab);
@@ -302,5 +432,38 @@ describe('the fail-before ui probe', () => {
     expect(s.controls).toHaveLength(0);
     expect(s.probes).toHaveLength(0);
     expect(evidence.probe!.checks).toEqual([{ checkId: 'unit', outcome: 'passed-before', reason: 'unit passed on the base revision with the new tests', attempts: [expect.objectContaining({ status: 'PASSED', exitCode: 0 })] }]);
+  }, 120_000);
+
+  // The install step is shared with the command probe: a masked status must not pass there either, or a check
+  // failing on an incomplete install would count as failed-before.
+  it('an install that exits 0 but whose log shows a registry refusal stops the command probe as an environment cause', async () => {
+    const masked = [process.execPath, '-e', "console.error('npm error code E403'); console.error('npm error 403 Forbidden - GET https://registry.npmjs.org/playwright')"];
+    const lab = makeUnitLab({
+      tweak: (c) => {
+        c.verification.fail_before = 'advisory';
+        c.dependencies.install_command = masked;
+      },
+    });
+    labs.push(lab);
+    const { base, tree, worktree } = await giveRepository(lab);
+    setContract(lab, { baseline_revision: base });
+    writeFileSync(join(worktree, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n');
+    writeFileSync(join(worktree, 'tests/mul.test.mjs'), 'export {};\n');
+    const cand = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree, runId: lab.runId, baseRev: base, attempt: 1, workerId: null });
+    const s = scripted({}, {});
+    const ctx = lab.ctx();
+    const evidence = await collectFailBefore(ctx, cand, {
+      contract: ctx.contract!,
+      base: { treeHash: tree, checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['apps/calc.mjs', 'tests/mul.test.mjs'] },
+      results: [result(ctx.snapshot, 'unit')],
+      installOk: true,
+      runner: { ...checkRunnerFor(ctx), checkoutDir: worktree },
+      uiRunner: s.runner,
+    });
+    expect(s.controls).toHaveLength(0);
+    expect(s.probes).toHaveLength(0);
+    const check = evidence.probe!.checks.find((c) => c.checkId === 'unit')!;
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.reason).toMatch(/the locked install \(orbit-install\) on the probe tree shows that a dependency could not be fetched or installed/);
   }, 120_000);
 });

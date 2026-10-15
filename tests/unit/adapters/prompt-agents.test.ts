@@ -61,10 +61,17 @@ describe('agents/*.md', () => {
         expect(body).toMatch(/A denied (call|action) is final/);
       });
 
-      it.runIf(['planner', 'reviewer', 'inquisitor', 'curator'].includes(role))('states that it has no shell and uses file-reading tools', () => {
+      it.runIf(['planner', 'inquisitor', 'curator'].includes(role))('states that it has no shell and uses file-reading tools', () => {
         expect(String(fm.tools)).not.toContain('Bash');
         expect(text).toContain('You have no shell; use Read, Grep and Glob');
         expect(text).not.toContain('your shell is for reading only');
+      });
+
+      // A reviewer runs on Claude or Codex, whose tools differ: the role prompt names none, the review task does.
+      it.runIf(role === 'reviewer')('leaves the inspection tools to its task, and never edits', () => {
+        expect(String(fm.tools)).not.toContain('Bash');
+        expect(text).toContain('with the read-only tools your task names');
+        expect(text).not.toContain('You have no shell');
       });
 
       it('ends with an example of exactly the structured output the role schema requires', () => {

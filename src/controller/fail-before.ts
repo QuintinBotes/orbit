@@ -108,6 +108,7 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
       checks: browserChecks,
       timeoutMs: timeoutSeconds * 1000,
       wallRemainingMs: wallRemaining(ctx),
+      runner: input.runner,
       ...(input.uiRunner ? { uiRunner: input.uiRunner } : {}),
     });
     probe =

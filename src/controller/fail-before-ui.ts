@@ -4,25 +4,30 @@
  * revision with the candidate's test-owned changes, through the same ui runner and app fixture verification uses.
  * The baseline runs command checks only, so a browser check has no result on the base revision to stand for the
  * probe's control: the same journeys run on the base revision alone first, once per run (reused by the base tree),
- * and a failure on the probe tree is the new journeys' only when that control passed. A process that never reached
- * the repository's code (the application or the browser did not start) is an environment cause and establishes
- * nothing. The outcome is merged into the probe's checks (controller/fail-before.ts collectFailBefore), so the
- * report treats a browser check like any probed check. Evidence goes under the candidate's fail-before/ui/.
+ * and a failure on the probe tree is the new journeys' only when that control passed. Both checkouts get the locked
+ * install the command probe gives its probe tree (evidence/fail-before.ts installProbeCheckout) before the journeys
+ * run there, and an install or a journey run that fails because a dependency could not be fetched or installed is
+ * the environment's, never a journey failure. A process that never reached the repository's code (the application
+ * or the browser did not start) is an environment cause and establishes nothing. The outcome is merged into the
+ * probe's checks (controller/fail-before.ts collectFailBefore), so the report treats a browser check like any
+ * probed check. Evidence goes under the candidate's fail-before/ui/.
  */
+import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { isOrbitError } from '../core/errors.ts';
 import { hashObject } from '../core/hash.ts';
 import { newId } from '../core/ids.ts';
 import { redact } from '../core/redact.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
-import { buildProbeTree, commitProbeTree, FAIL_BEFORE_PROBE, judgeProbeAttempts, probeEvidenceDir, probeRef, type CheckProbe, type NotEstablishedCause, type ProbeAttempt, type ProbeChange } from '../evidence/fail-before.ts';
+import { buildProbeTree, commitProbeTree, dependencyFetchLine, FAIL_BEFORE_PROBE, installProbeCheckout, judgeProbeAttempts, probeEvidenceDir, probeRef, type CheckProbe, type NotEstablishedCause, type ProbeAttempt, type ProbeChange, type ProbeInstallStop, type ProbeRequest } from '../evidence/fail-before.ts';
 import { resolveCommit, treeOf } from '../evidence/git.ts';
 import type { CandidateRecord } from '../evidence/store.ts';
 import type { CheckStatus } from '../evidence/types.ts';
 import { listDecisions } from '../storage/decisions.ts';
+import { APP_LOG_FILE } from '../ui/app-fixture.ts';
 import { runUiChecks, type UiRunInput } from '../ui/runner.ts';
 import type { UiJourneyResult, UiRunResult } from '../ui/types.ts';
-import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from './context.ts';
+import { checkRunnerFor, homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { decide } from './steps/common.ts';
 
 /** The ui runner the probe drives; tests inject one that answers scripted results and starts no browser. */
@@ -44,6 +49,8 @@ export interface UiProbeRequest {
   wallRemainingMs: number | null;
   /** The ui runner; absent, the one verification uses (ui/runner.ts runUiChecks). */
   uiRunner?: UiRunner;
+  /** The candidate's runner context, which runs the locked install in each checkout; absent, the run's own (checkRunnerFor). */
+  runner?: ProbeRequest['runner'];
 }
 
 export interface UiProbeResult {
@@ -60,6 +67,8 @@ interface ControlData {
   verdict: string;
   passed: boolean;
   environment: boolean;
+  /** The line that shows a dependency could not be fetched or installed, when the control run's output shows one. */
+  dependency_failure?: string | null;
   reasons: string[];
 }
 
@@ -83,8 +92,9 @@ function runRelative(runDir: string, p: string): string {
 const sameIds = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 
 /** The control's outcome from its recorded run: PASS establishes, anything else leaves every browser check open. */
-function judgeControl(data: Pick<ControlData, 'verdict' | 'passed' | 'environment' | 'reasons'>): ControlOutcome {
+function judgeControl(data: Pick<ControlData, 'verdict' | 'passed' | 'environment' | 'dependency_failure' | 'reasons'>): ControlOutcome {
   if (data.passed) return { passed: true, cause: 'base-failed', reason: 'the journeys pass on the base revision' };
+  if (data.dependency_failure) return { passed: false, cause: 'environment', reason: `a dependency could not be fetched or installed on the base revision (${data.dependency_failure})` };
   const detail = data.reasons.length > 0 ? data.reasons.join('; ') : `the ui run ended ${data.verdict}`;
   const reason = `the journeys do not pass on the base revision (${detail})`;
   if (data.environment) return { passed: false, cause: 'environment', reason };
@@ -115,14 +125,42 @@ function browserNotStarted(journeys: readonly UiJourneyResult[]): string | null 
   return null;
 }
 
+/** A journey or application log as written, or null when there is none: a fetch failure may show only in it. */
+function logText(path: string | null | undefined): string | null {
+  try {
+    return path && existsSync(path) ? readFileSync(path, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The line that shows a dependency could not be fetched or installed in one ui run, or null. */
+function dependencyFetchFailure(result: UiRunResult, journeys: readonly UiJourneyResult[]): string | null {
+  // The application's log (app/app.log under the run's output directory, APP_LOG_FILE) is read whether or not the
+  // application started: a server that fetches a package as it starts can record the refusal only there while its
+  // journeys then fail as ordinary assertions. When the application never started, the same file is already read
+  // as a notExecuted log. Reading it can only make the probe stricter (see dependencyFetchLine in
+  // evidence/fail-before.ts, the one definition both probes use).
+  const texts = [...result.reasons, ...journeys.flatMap((j) => [j.error?.message, j.errorContext?.errorDetails]), ...result.notExecuted.map((x) => x.environment), ...result.checks.map((c) => logText(c.logPath)), ...result.notExecuted.map((x) => logText(x.logPath)), logText(join(result.outDir, 'app', APP_LOG_FILE))];
+  for (const text of texts) {
+    const line = dependencyFetchLine(text);
+    if (line !== null) return line;
+  }
+  return null;
+}
+
 /** One attempt's standing for a check: its journeys' worst result, or the environment cause that kept them from running. */
 function attemptOf(ctx: RunContext, result: UiRunResult, checkId: string, n: number): { attempt: ProbeAttempt } | { environment: string } {
+  const journeys = result.journeys.filter((j) => j.checkId === checkId);
+  // The run's output and logs, the application's included, are read for a fetch failure first, whether or not the
+  // application started: such a failure is the environment's, never a journey result.
+  const fetchLine = dependencyFetchFailure(result, journeys);
+  if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
   const notRun = result.notExecuted.find((x) => x.checkId === null || x.checkId === checkId);
   if (notRun) {
     const what = notRun.stage === 'application' ? 'the application' : `the journey process of ${checkId}`;
     return { environment: notRun.environment ?? `${what} never ran the repository's code` };
   }
-  const journeys = result.journeys.filter((j) => j.checkId === checkId);
   const notStarted = browserNotStarted(journeys);
   if (notStarted) return { environment: notStarted };
   const status: CheckStatus =
@@ -149,6 +187,7 @@ function attemptOf(ctx: RunContext, result: UiRunResult, checkId: string, n: num
  */
 export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecord, req: UiProbeRequest): Promise<UiProbeResult> {
   const runner = req.uiRunner ?? runUiChecks;
+  const probeRunner = req.runner ?? checkRunnerFor(ctx);
   const probeId = newId('probe');
   const checks = [...req.checks].sort((a, b) => a.checkId.localeCompare(b.checkId));
   const checkIds = checks.map((c) => c.checkId);
@@ -197,7 +236,9 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
-  const uiDir = join(probeEvidenceDir(ctx.runDir, cand.seq), 'ui');
+  // A directory of this probe's own: an application appends to its log (app/app.log), and the log is read whole for a
+  // fetch failure, so a resumed probe of the same candidate must not find an earlier run's refusal in it.
+  const uiDir = join(probeEvidenceDir(ctx.runDir, cand.seq), 'ui', probeId);
   // The runner binds its evidence to the candidate it is given and checks the checkout against it, so each tree
   // gets the candidate record of its own commit: the base revision for the control, the probe commit for the probe.
   const runJourneys = (checkoutDir: string, commitSha: string, treeHash: string, parentSha: string, outDir: string): Promise<UiRunResult> =>
@@ -211,29 +252,40 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   if (!control) {
     let ran: UiRunResult | null = null;
     let controlThrown: string | null = null;
+    let controlInstall: ProbeInstallStop | null = null;
     const checkout = join(runWorktreeRoot(ctx), 'fail-before-ui-control');
     await cleanupCandidateCheckout(repoRoot, checkout).catch(() => {});
     try {
       await materializeCandidate(repoRoot, baseCommit, checkout, { readOnly: false });
-      ran = await runJourneys(checkout, baseCommit, baseTree, baseCommit, join(uiDir, 'control'));
+      // The locked install first, as the command probe installs its probe tree: without it the journeys fetch
+      // their own tooling, and a registry the sandbox refuses reads as the journeys failing on the base revision.
+      controlInstall = await installProbeCheckout({ runner: probeRunner, probeId, candidateId: cand.id, treeHash: baseTree, bindingId: `fail-before-ui-control:${baseTree}`, evidenceDir: uiDir, checkoutDir: checkout, deadline, timeoutMs: req.timeoutMs, where: 'for the ui control on the base revision' });
+      if (controlInstall === null) ran = await runJourneys(checkout, baseCommit, baseTree, baseCommit, join(uiDir, 'control'));
     } catch (err) {
       controlThrown = err instanceof Error ? err.message : String(err);
     } finally {
       await cleanupCandidateCheckout(repoRoot, checkout).catch(() => {});
     }
+    // An install that stopped the control is the environment's or the install's, not the journeys': no control is
+    // recorded for reuse, so a later candidate's probe tries the install and the control again.
+    if (controlInstall !== null) return done(null, notEstablished(checkIds, controlInstall.cause, controlInstall.reason));
+    const fetchLine = ran !== null ? dependencyFetchFailure(ran, ran.journeys) : null;
     control = {
       base_revision: req.baseRev,
       base_tree: baseTree,
       checks: [...checkIds],
       verdict: ran?.verdict ?? 'ERROR',
-      passed: ran !== null && ran.verdict === 'PASS',
-      environment: (ran?.notExecuted.length ?? 0) > 0 || (ran !== null && browserNotStarted(ran.journeys) !== null),
+      passed: ran !== null && ran.verdict === 'PASS' && fetchLine === null,
+      environment: (ran?.notExecuted.length ?? 0) > 0 || (ran !== null && browserNotStarted(ran.journeys) !== null) || fetchLine !== null,
+      dependency_failure: fetchLine,
       reasons: ran !== null ? [...ran.reasons] : [`the journeys could not run on the base revision: ${controlThrown ?? 'no result'}`],
     };
     // A control the bound cut short says nothing about the base revision, so it is not recorded for reuse: a later
-    // candidate's probe, with a bound of its own, runs the control again.
+    // candidate's probe, with a bound of its own, runs the control again. A control that failed for an environment
+    // or install cause says nothing reusable either: the cause may be fixed by the next candidate's probe.
     controlCut = boundRanOut();
-    if (!controlCut) {
+    const freshOutcome = judgeControl(control);
+    if (!controlCut && freshOutcome.cause !== 'environment' && freshOutcome.cause !== 'install') {
       decide(ctx, {
         id: `dec-${ctx.run.id}-fail-before-ui-control-${hashObject({ tree: baseTree, checks: [...checkIds] }).slice(7, 19)}`,
         kind: UI_CONTROL_DECISION_KIND,
@@ -265,8 +317,18 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   } catch (err) {
     thrown = { cause: 'error', message: err instanceof Error ? err.message : String(err) };
   }
+  // The probe checkout gets the same locked install before its journeys run; a stop here is no journey's failure.
+  let probeInstall: ProbeInstallStop | null = null;
+  if (thrown === null) {
+    try {
+      probeInstall = await installProbeCheckout({ runner: probeRunner, probeId, candidateId: cand.id, treeHash: probeTree, bindingId: `fail-before-ui:${probeTree}`, evidenceDir: uiDir, checkoutDir: checkout, deadline, timeoutMs: req.timeoutMs, where: 'on the ui probe tree' });
+    } catch (err) {
+      if (boundRanOut()) probeInstall = { cause: 'budget', reason: boundReason };
+      else thrown = { cause: isOrbitError(err, 'CANCELLED') ? 'cancelled' : 'error', message: err instanceof Error ? err.message : String(err) };
+    }
+  }
   try {
-    for (let n = 1; thrown === null && n <= 2; n++) {
+    for (let n = 1; thrown === null && probeInstall === null && n <= 2; n++) {
       if (boundRanOut()) break;
       let result: UiRunResult;
       try {
@@ -298,6 +360,7 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   }
   const probed = checkIds.map((id): CheckProbe => {
     const mine = attempts.get(id)!;
+    if (probeInstall !== null) return { checkId: id, outcome: 'not-established', cause: probeInstall.cause, reason: probeInstall.reason(id), attempts: mine };
     const environment = environments.get(id);
     if (environment !== undefined) return { checkId: id, outcome: 'not-established', cause: 'environment', reason: `${id} could not run on the base revision with the new tests: ${environment}, not a journey result`, attempts: mine };
     if (thrown !== null) return { checkId: id, outcome: 'not-established', cause: thrown.cause, reason: `${id} could not be run on the probe tree: ${thrown.message}`, attempts: mine };
