@@ -442,7 +442,7 @@ describe('a failure the finding\'s own test file cannot be tied to (review of th
     await run();
     const f = listFindings(lab.db, lab.runId).find((x) => x.externalId === 'TEST-1' && x.reviewId === 'rev-2')!;
     expect(f.resolution ?? '').not.toContain('is named for');
-    expect(f.status).toBe('resolved');
+    expect(f.status, f.resolution ?? '').toBe('resolved');
     expect(f.resolution).toContain(test);
   });
 
@@ -499,7 +499,7 @@ describe('a test is named for a finding by its whole id', () => {
     const OVERFLOW: IngestedFinding = { ...TEST_1, externalId: 'TEST-1', claim: 'add ignores overflow handling entirely (TEST-1)', evidence: 'add(MAX, 1) wraps', suggestedValidation: 'Add a test for add overflow' };
     const MUL_10: IngestedFinding = { ...TEST_1, externalId: 'TEST-10', claim: 'mul accepts a string and returns NaN instead of throwing a TypeError (TEST-10)' };
     const { raised } = await repairFlow({ findings: [OVERFLOW, MUL_10], files: { 'tests/unit/mul10.test.mjs': nodeTest('mul rejects a string (TEST-10)', "assert.throws(() => mul('a', 2), TypeError)") }, named: { 'TEST-10': ['tests/unit/mul10.test.mjs'] } });
-    expect(raised('TEST-10').status).toBe('resolved');
+    expect(raised('TEST-10').status, raised('TEST-10').resolution ?? '').toBe('resolved');
     expect(raised('TEST-1').status).not.toBe('resolved');
     expect(raised('TEST-1').resolution ?? '').not.toContain('mul10');
   });
