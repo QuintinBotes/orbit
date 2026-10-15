@@ -381,7 +381,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       const stderr = result.reason === 'crashed' ? stderrTail(handle.workerDir) : null;
       if (stderr) result = { ...result, error: `${result.error ?? 'crashed'}; stderr: ${stderr}` };
     }
-    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir, result.structured ?? null) };
     atomicWriteJson(join(handle.workerDir, RESULT_FILE), result, 0o600);
     return result;
   }

@@ -283,10 +283,19 @@ export function timeToFirstEventMs(exit: ExitRecord | null): number | null {
  * task launched under (launch.json meta), so overruns can be recorded
  * wherever the usage is.
  */
-export function withWorkerTelemetry(usage: UsageReport, workerDir: string): UsageReport {
+export function withWorkerTelemetry(usage: UsageReport, workerDir: string, structured?: unknown): UsageReport {
   const meta = readJsonIfExists<LaunchRecord>(join(workerDir, LAUNCH_FILE))?.meta;
   const budget = meta && typeof meta.outputBudgetTokens === 'number' ? meta.outputBudgetTokens : null;
-  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget };
+  // The collected result when there is one, else the result the collect step stored (both providers write result.json).
+  const final = finalOutputTokens(structured !== undefined ? structured : readJsonIfExists<{ structured?: unknown }>(join(workerDir, 'result.json'))?.structured);
+  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget, finalOutputTokens: final };
+}
+
+/** A final structured output's size in tokens, estimated from its JSON at about four characters a token; null when there is none. */
+export function finalOutputTokens(structured: unknown): number | null {
+  if (structured === undefined || structured === null) return null;
+  const json = JSON.stringify(structured);
+  return json === undefined ? null : Math.ceil(json.length / 4);
 }
 
 export type TaskState =

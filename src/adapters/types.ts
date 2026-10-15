@@ -149,6 +149,11 @@ export interface UsageReport {
   timeToFirstEventMs?: number | null;
   /** The output token budget the task launched under; absent when it ran without one or the record predates budgets. */
   outputBudgetTokens?: number | null;
+  /**
+   * The final structured output's size in tokens, estimated from its JSON (about four characters a token): what the
+   * output budget instructs (ADR 0016). Absent or null when there is no structured output to measure.
+   */
+  finalOutputTokens?: number | null;
 }
 
 export interface ProviderAdapter {

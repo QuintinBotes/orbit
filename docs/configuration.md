@@ -1180,6 +1180,10 @@ reports "Claude's response exceeded the N output token maximum"), the unit is
 retried once with the cap doubled, up to 32000, and the decision is recorded as
 `worker.output-cap-raised`. A unit is raised once; a second overflow, or a cap
 already at 32000, fails the unit as any other failed session would.
+The `usage.output-budget-exceeded` event compares the final structured output,
+estimated from its JSON at about four characters a token, with the budget. A
+session's total output counts every response and every file it writes, so it is
+recorded with the event but never judged against the budget (ADR 0016).
 
 `redact_patterns` are JavaScript regular expressions (compiled with the `u`
 flag). From the moment a run's policy is frozen or verified, every redaction

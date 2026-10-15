@@ -211,21 +211,26 @@ describe('G29: registry latency from time to first event', () => {
 describe('G28: output budget overruns are recorded', () => {
   const overruns = (db: ReturnType<typeof setup>['db']) => db.all<{ data_json: string }>("SELECT data_json FROM events WHERE type = 'usage.output-budget-exceeded' ORDER BY id").map((r) => JSON.parse(r.data_json) as Record<string, unknown>);
 
-  it('records an event and a note when reported output exceeds the budget, and not otherwise', () => {
+  // ADR 0016: the budget is an instruction about the final structured output, so the overrun is judged on that output,
+  // never on the session's total, which counts every file the session writes (the 0.3.1 retest's ui implementer wrote
+  // 45,643 output tokens and was reported over a 24,000 budget its final output never came near).
+  it('records an event and a note when the final output exceeds the budget, and not for a session that wrote a lot', () => {
     const { db, clock } = setup();
-    const within = recordUsage(db, { runId: 'run-1', workerId: 'w1', usage: report({ outputTokens: 3000, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
+    const busy = recordUsage(db, { runId: 'run-1', workerId: 'w0', role: 'implementer', usage: report({ outputTokens: 45643, finalOutputTokens: 1800, outputBudgetTokens: 24000 }), durationMs: 1 }, clock);
+    expect(busy.outputBudgetExceeded).toBe(false);
+    const within = recordUsage(db, { runId: 'run-1', workerId: 'w1', usage: report({ outputTokens: 9000, finalOutputTokens: 3000, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
     expect(within.outputBudgetExceeded).toBe(false);
     expect(overruns(db)).toEqual([]);
-    const over = recordUsage(db, { runId: 'run-1', workerId: 'w2', role: 'verifier', usage: report({ outputTokens: 4200, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
+    const over = recordUsage(db, { runId: 'run-1', workerId: 'w2', role: 'verifier', usage: report({ outputTokens: 9000, finalOutputTokens: 4200, outputBudgetTokens: 3000 }), durationMs: 1 }, clock);
     expect(over.outputBudgetExceeded).toBe(true);
-    expect(over.notes).toContain('output 4200 tokens exceeded the 3000 token budget for verifier');
-    expect(overruns(db)).toEqual([expect.objectContaining({ worker_id: 'w2', role: 'verifier', output_tokens: 4200, budget_tokens: 3000, over_by: 1200 })]);
+    expect(over.notes).toContain('final output about 4200 tokens exceeded the 3000 token budget for verifier');
+    expect(overruns(db)).toEqual([expect.objectContaining({ worker_id: 'w2', role: 'verifier', output_tokens: 4200, budget_tokens: 3000, over_by: 1200, session_output_tokens: 9000, estimated: true })]);
   });
 
-  it('cannot judge an unreported output or an absent budget', () => {
+  it('cannot judge an unknown final output or an absent budget', () => {
     const { db, clock } = setup();
-    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ outputTokens: null, outputBudgetTokens: 10 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
-    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ outputTokens: 99999 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
+    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ outputTokens: 99999, outputBudgetTokens: 10 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
+    expect(recordUsage(db, { runId: 'run-1', workerId: 'w', usage: report({ finalOutputTokens: 99999 }), durationMs: 1 }, clock).outputBudgetExceeded).toBe(false);
     expect(overruns(db)).toEqual([]);
   });
 });

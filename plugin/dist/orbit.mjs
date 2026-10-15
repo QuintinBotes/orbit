@@ -28515,10 +28515,16 @@ function timeToFirstEventMs(exit) {
   if (!exit || typeof exit.firstOutputAt !== "number" || typeof exit.startedAt !== "number") return null;
   return Math.max(0, exit.firstOutputAt - exit.startedAt);
 }
-function withWorkerTelemetry(usage, workerDir) {
+function withWorkerTelemetry(usage, workerDir, structured) {
   const meta = readJsonIfExists(join13(workerDir, LAUNCH_FILE))?.meta;
   const budget = meta && typeof meta.outputBudgetTokens === "number" ? meta.outputBudgetTokens : null;
-  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget };
+  const final = finalOutputTokens(structured !== void 0 ? structured : readJsonIfExists(join13(workerDir, "result.json"))?.structured);
+  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget, finalOutputTokens: final };
+}
+function finalOutputTokens(structured) {
+  if (structured === void 0 || structured === null) return null;
+  const json3 = JSON.stringify(structured);
+  return json3 === void 0 ? null : Math.ceil(json3.length / 4);
 }
 function taskState(handle) {
   const pid = readPidRecord(handle.workerDir);
@@ -29081,7 +29087,7 @@ ${outputBudgetInstruction(outputTokens)}
           const stderr = result2.reason === "crashed" ? stderrTail(handle.workerDir) : null;
           if (stderr) result2 = { ...result2, error: `${result2.error ?? "crashed"}; stderr: ${stderr}` };
         }
-        result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir) };
+        result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir, result2.structured ?? null) };
         atomicWriteJson(join14(handle.workerDir, RESULT_FILE), result2, 384);
         return result2;
       }
@@ -30590,7 +30596,7 @@ ${outputBudgetInstruction(outputTokens)}
         } else {
           result2 = classifyCodexTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, model });
         }
-        result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir) };
+        result2 = { ...result2, usage: withWorkerTelemetry(result2.usage, handle.workerDir, result2.structured ?? null) };
         atomicWriteJson(join16(handle.workerDir, CODEX_RESULT_FILE), result2, 384);
         return result2;
       }
@@ -35132,12 +35138,12 @@ function recordUsage(db, input, clock) {
   );
   const budget = count(input.outputBudgetTokens !== void 0 ? input.outputBudgetTokens : u?.outputBudgetTokens);
   const role = input.role ?? (input.workerId ? db.get("SELECT role FROM workers WHERE id = ?", input.workerId)?.role ?? null : null);
-  const outputTokens = tokens3.outputTokens;
+  const outputTokens = count(u?.finalOutputTokens);
   let overrun = false;
   if (budget !== null && budget > 0 && outputTokens !== null && outputTokens > budget) {
     overrun = true;
-    notes.push(`output ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ""}`);
-    appendEvent(db, input.runId, "usage.output-budget-exceeded", "usage", { worker_id: input.workerId, role, provider, model, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
+    notes.push(`final output about ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ""}`);
+    appendEvent(db, input.runId, "usage.output-budget-exceeded", "usage", { worker_id: input.workerId, role, provider, model, session_output_tokens: tokens3.outputTokens, estimated: true, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
   }
   const latency = input.timeToFirstEventMs !== void 0 ? input.timeToFirstEventMs : u?.timeToFirstEventMs ?? null;
   if (model && latency !== null && latency !== void 0) new ModelRegistry(db, clock).recordLatency(model, latency);
@@ -44298,7 +44304,10 @@ function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, note
     steps += 1;
     notes.push("critical security impact raises effort");
   }
-  const effort = chooseEffort(chosen, baseEffort, steps);
+  const observed = justification.signals.some((t) => !STATIC_SIGNALS.has(t.signal));
+  const predictedOnly = ctx.profile.output === "candidate" && !observed && !s.criticalSecurity;
+  if (predictedOnly && effortRank(baseEffort) + steps > effortRank(PREDICTED_EFFORT_CEILING)) notes.push("a prediction raises effort at most to high; only observed difficulty raises it further");
+  const effort = chooseEffort(chosen, baseEffort, steps, predictedOnly ? PREDICTED_EFFORT_CEILING : EFFORT_CEILING);
   const chosenTier = tierOf(chosen) ?? 0;
   const alternatives = [];
   for (const m of assessment.eligible) {
@@ -44387,10 +44396,10 @@ function resolveOverride(value, registry) {
   const e = registry.get(value.trim());
   return e ? { provider: e.provider, tier: tierOf(e), modelId: e.modelId } : null;
 }
-function chooseEffort(m, base, steps) {
+function chooseEffort(m, base, steps, ceiling = EFFORT_CEILING) {
   const supported = m.capabilities.effortLevels.filter((l) => effortRank(l) >= 0);
   if (supported.length === 0) return null;
-  const desired = Math.min(effortRank(base) + steps, effortRank(EFFORT_CEILING));
+  const desired = Math.min(effortRank(base) + steps, effortRank(ceiling));
   const atOrBelow = supported.filter((l) => effortRank(l) <= desired).sort((a, b) => effortRank(b) - effortRank(a));
   if (atOrBelow[0]) return atOrBelow[0];
   return [...supported].sort((a, b) => effortRank(a) - effortRank(b))[0] ?? null;
@@ -44432,7 +44441,7 @@ function round3(n2) {
 function uniq4(xs) {
   return [...new Set(xs)];
 }
-var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE, EFFORT_ORDER, EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, BASIS_RANK;
+var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE, EFFORT_ORDER, EFFORT_CEILING, PREDICTED_EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, BASIS_RANK;
 var init_router = __esm({
   "src/routing/router.ts"() {
     "use strict";
@@ -44447,6 +44456,7 @@ var init_router = __esm({
     PROVIDER_SURFACE = { claude: "claude-cli", codex: "codex-cli" };
     EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"];
     EFFORT_CEILING = "xhigh";
+    PREDICTED_EFFORT_CEILING = "high";
     PROFILES = {
       extraction: { startTier: 1, baseEffort: "low", output: "interpretation", tokens: { input: 2e4, output: 2e3, cacheReadShare: 0, cacheWriteShare: 0 }, routine: true },
       "log-classification": { startTier: 1, baseEffort: "low", output: "interpretation", tokens: { input: 15e3, output: 1e3, cacheReadShare: 0, cacheWriteShare: 0 }, routine: true },

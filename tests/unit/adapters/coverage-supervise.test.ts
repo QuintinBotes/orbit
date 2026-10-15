@@ -266,6 +266,18 @@ describe('telemetry', () => {
     writeJson(dir, LAUNCH_FILE, { meta: { outputBudgetTokens: 'lots' } });
     expect(withWorkerTelemetry(usage, dir).outputBudgetTokens).toBeNull();
   });
+
+  it('estimates the final structured output from the collected result, or the stored one, at four characters a token', () => {
+    const dir = tmp();
+    const usage = { provider: 'claude', model: 'm', inputTokens: 1, outputTokens: 45643, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: null, costSource: 'unavailable' as const };
+    expect(withWorkerTelemetry(usage, dir).finalOutputTokens).toBeNull();
+    const structured = { summary: 'x'.repeat(390) };
+    expect(withWorkerTelemetry(usage, dir, structured).finalOutputTokens).toBe(Math.ceil(JSON.stringify(structured).length / 4));
+    writeJson(dir, 'result.json', { structured: { summary: 'y'.repeat(30) } });
+    expect(withWorkerTelemetry(usage, dir).finalOutputTokens).toBe(Math.ceil(JSON.stringify({ summary: 'y'.repeat(30) }).length / 4));
+    // A collected result with no structured output measures nothing, whatever an older stored result says.
+    expect(withWorkerTelemetry(usage, dir, null).finalOutputTokens).toBeNull();
+  });
 });
 
 describe('taskState', () => {

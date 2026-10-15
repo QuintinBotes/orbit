@@ -116,12 +116,14 @@ export function recordUsage(db: OrbitDb, input: RecordUsageInput, clock: Clock):
 
   const budget = count(input.outputBudgetTokens !== undefined ? input.outputBudgetTokens : u?.outputBudgetTokens);
   const role = input.role ?? (input.workerId ? (db.get<{ role: string }>('SELECT role FROM workers WHERE id = ?', input.workerId)?.role ?? null) : null);
-  const outputTokens = tokens.outputTokens;
+  // The budget instructs the final structured output (ADR 0016): the session's total output counts every file the
+  // session writes, so it is kept for the record and never judged against the budget.
+  const outputTokens = count(u?.finalOutputTokens);
   let overrun = false;
   if (budget !== null && budget > 0 && outputTokens !== null && outputTokens > budget) {
     overrun = true;
-    notes.push(`output ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ''}`);
-    appendEvent(db, input.runId, 'usage.output-budget-exceeded', 'usage', { worker_id: input.workerId, role, provider, model, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
+    notes.push(`final output about ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ''}`);
+    appendEvent(db, input.runId, 'usage.output-budget-exceeded', 'usage', { worker_id: input.workerId, role, provider, model, session_output_tokens: tokens.outputTokens, estimated: true, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
   }
 
   const latency = input.timeToFirstEventMs !== undefined ? input.timeToFirstEventMs : (u?.timeToFirstEventMs ?? null);

@@ -302,6 +302,11 @@ a realistic contract, file write or review. A response that still exceeds its
 cap is retried once with the cap doubled, up to 32k, and the controller records
 a `worker.output-cap-raised` decision.
 
+Effort rises the same way the tier does. A prediction (a complex classification,
+a planned coupled change) raises an implementer's effort at most to `high`; only
+observed difficulty (repeated equivalent failures) or critical security impact
+raises it further (ADR 0016).
+
 Mechanics that keep tokens down:
 
 - Deterministic parsing, policy and scoring in code; a model is called only

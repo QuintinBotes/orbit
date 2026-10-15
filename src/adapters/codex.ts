@@ -388,7 +388,7 @@ export class CodexAdapter implements ProviderAdapter {
     } else {
       result = classifyCodexTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, model });
     }
-    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir) };
+    result = { ...result, usage: withWorkerTelemetry(result.usage, handle.workerDir, result.structured ?? null) };
     atomicWriteJson(join(handle.workerDir, CODEX_RESULT_FILE), result, 0o600);
     return result;
   }
