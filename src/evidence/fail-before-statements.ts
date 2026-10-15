@@ -18,7 +18,7 @@ function sentences(statement: string): string[] {
 }
 
 /** A negation of the verb that follows it: a negated statement is not the statement these rules apply to. */
-const NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not)`;
+const NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not|[A-Za-z]+n['’]t)`;
 const PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
 
 /**
@@ -76,8 +76,12 @@ const TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpyte
  * configured check id), then one of those verbs, then the tests or a test file. A check that merely passes, a test
  * runner with no object, and the application running tests are not it.
  */
-/** A verb that, right after a check's name, makes it the subject of a clause of its own rather than another agent. */
-const FINITE_VERB = /^\s*(?:runs?|ran|is|are|was|were|passes|passed|fails|failed|checks|lints|executes|does|did|has|have|had|will|would|can|could|should|must|may|reports|uses|covers|builds|stays|remains|keeps)\b/i;
+/**
+ * What may follow a joined agent's name for it to be an agent: nothing, or a preposition ("the unit-tests check with
+ * coverage"). Anything else (a verb, an adverb before one) makes the check the subject of a clause of its own: listing
+ * what may follow, not the verbs that may not, so an unlisted verb cannot make a clause an agent.
+ */
+const AGENT_TAIL = /^\s*(?:$|(?:with|on|in|for|using|over|under|at|from|via|through|against)\b)/i;
 
 /** What an agent joined by "and" or "or" starts as: a check named as such, the test command or the test runner. */
 const AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
@@ -114,7 +118,7 @@ function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly stri
   for (const part of joined) {
     const named = AGENT_START.exec(part) ?? [...new Set(checkIds)].map((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])(?:\s+checks?\b)?`, 'i').exec(part)).find((m) => m !== null) ?? null;
     // A check followed by a verb of its own ("and the lint check runs eslint") is the subject of a new clause, not an agent.
-    if (named === null || FINITE_VERB.test(part.slice(named[0].length))) break;
+    if (named === null || !AGENT_TAIL.test(part.slice(named[0].length))) break;
     agent += ` and ${part}`;
   }
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);

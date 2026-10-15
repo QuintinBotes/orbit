@@ -116,6 +116,12 @@ describe('fail-before statement wording', () => {
     expect(statesCheckRunsTests('The new tests are run by CI and the lint check runs eslint', ids)).toBeNull();
     expect(statesCheckRunsTests('The new tests are run by CI and the lint check passes', ids)).toBeNull();
     expect(statesCheckRunsTests('The new tests are run by CI and the unit-tests check with coverage', ids)).toEqual(['unit-tests']);
+    // Only nothing, or a preposition, may follow a joined agent's name; any verb, with or without an adverb, starts a clause.
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check only runs eslint', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check validates formatting', ids)).toBeNull();
+    // Contracted negations, straight or curly.
+    expect(statesCheckRunsTests("The new tests couldn't be run by the lint check", ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests wouldn’t be run by the lint check', ids)).toBeNull();
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);
