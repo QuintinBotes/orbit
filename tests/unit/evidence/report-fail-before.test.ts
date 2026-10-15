@@ -112,6 +112,10 @@ describe('fail-before statement wording', () => {
     // Two agents joined in one clause: the check is one of the agents.
     expect(statesCheckRunsTests('The new tests are run by CI and the unit-tests check', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The new tests are run by the unit-tests check or the test runner', ids)).toEqual(['unit-tests']);
+    // A check after "and" with a verb of its own starts a new clause, comma or not.
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check runs eslint', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check passes', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the unit-tests check with coverage', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);

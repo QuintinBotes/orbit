@@ -76,6 +76,9 @@ const TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpyte
  * configured check id), then one of those verbs, then the tests or a test file. A check that merely passes, a test
  * runner with no object, and the application running tests are not it.
  */
+/** A verb that, right after a check's name, makes it the subject of a clause of its own rather than another agent. */
+const FINITE_VERB = /^\s*(?:runs?|ran|is|are|was|were|passes|passed|fails|failed|checks|lints|executes|does|did|has|have|had|will|would|can|could|should|must|may|reports|uses|covers|builds|stays|remains|keeps)\b/i;
+
 /** What an agent joined by "and" or "or" starts as: a check named as such, the test command or the test runner. */
 const AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
 
@@ -109,8 +112,9 @@ function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly stri
   const [first, ...joined] = clause.split(/\b(?:and|or)\b/i);
   let agent = first ?? '';
   for (const part of joined) {
-    const startsAsAgent = AGENT_START.test(part) || [...new Set(checkIds)].some((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])`, 'i').test(part));
-    if (!startsAsAgent) break;
+    const named = AGENT_START.exec(part) ?? [...new Set(checkIds)].map((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])(?:\s+checks?\b)?`, 'i').exec(part)).find((m) => m !== null) ?? null;
+    // A check followed by a verb of its own ("and the lint check runs eslint") is the subject of a new clause, not an agent.
+    if (named === null || FINITE_VERB.test(part.slice(named[0].length))) break;
     agent += ` and ${part}`;
   }
   return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
