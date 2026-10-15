@@ -108,12 +108,16 @@ function runCheck(fx: Fixture, cand: CandidateRecord, status: 'PASSED' | 'FAILED
   );
 }
 
-export function worker(fx: Fixture, id: string, role: 'implementer' | 'reviewer' | 'planner', provider: string, model: string, attempt: number | null, seconds: number, state: 'SUCCEEDED' | 'FAILED', cost: number | null): void {
+/**
+ * A worker that runs for 40 s and records its usage. Its charge is marked as a 0.3.1 controller marks it: its cost, or
+ * `ceiling` for a session that reported none (a session neither has is left uncharged).
+ */
+export function worker(fx: Fixture, id: string, role: 'implementer' | 'reviewer' | 'planner', provider: string, model: string, attempt: number | null, seconds: number, state: 'SUCCEEDED' | 'FAILED', cost: number | null, ceiling: number | null = null): void {
   fx.at(seconds, () => planWorker(fx.db, { id, runId: fx.runId, role, provider, model, attempt, workerDir: `${fx.runDir}/workers/${id}`, cwd: fx.runDir }, fx.clock));
   fx.at(seconds + 1, () => markWorkerRunning(fx.db, id, { pid: 4000 + seconds, pgid: 4000 + seconds, procStart: null }, fx.clock));
   fx.at(seconds + 40, () => {
     finishWorker(fx.db, id, { state, exitCode: state === 'SUCCEEDED' ? 0 : 1, resultStatus: state === 'SUCCEEDED' ? 'succeeded' : 'max_turns', ...(state === 'FAILED' ? { error: 'ran out of turns' } : {}) }, fx.clock);
-    recordUsage(
+    const usage = recordUsage(
       fx.db,
       {
         runId: fx.runId,
@@ -124,6 +128,8 @@ export function worker(fx: Fixture, id: string, role: 'implementer' | 'reviewer'
       },
       fx.clock,
     );
+    const charged = cost ?? ceiling;
+    if (charged !== null) appendEvent(fx.db, fx.runId, 'budget.usage-charged', 'controller', { worker_id: id, role, usage_ids: [usage.id], charged_usd: charged, basis: cost === null ? 'ceiling' : 'reported', source: 'collected' }, fx.clock.now());
   });
 }
 
@@ -209,7 +215,7 @@ export function buildFullRun(lab: Lab): Fixture {
     justification: { signals: [{ signal: 'repeated-failure', detail: 'fp-mul-undefined seen twice', evidence: ['chk:unit-tests'] }], evidence: ['chk:unit-tests', 'cand:1'], ignored: [] },
   });
   fx.event('implementation.attempt', { attempt: 2, route: 'dec-route-attempt-2', spend_cap_usd: 3 }, 130);
-  worker(fx, 'w-impl-2', 'implementer', 'claude', 'claude-opus-4-8', 2, 131, 'SUCCEEDED', null);
+  worker(fx, 'w-impl-2', 'implementer', 'claude', 'claude-opus-4-8', 2, 131, 'SUCCEEDED', null, 1);
   fx.event('budget.cost-ceiling-charged', { role: 'implementer', ceiling_usd: 1 }, 171);
   const c2 = fx.at(172, () => candidate(fx, 2, 'w-impl-2', 'tree2222222222'));
   fx.at(173, () => fx.to('VERIFYING', 'repair attempt 2 produced candidate 2'));

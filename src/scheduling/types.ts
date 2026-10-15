@@ -125,6 +125,49 @@ export interface CostMeasurement {
   note: string;
 }
 
+/**
+ * What the cost budget charged and what that charge is made of, so the report, the timeline and status explain one
+ * figure instead of showing several. `charged_usd` is the figure the cost cap is checked against.
+ */
+export interface SpendBreakdown {
+  /**
+   * `current` for a run started on 0.3.1 or later, whose every charge names the usage record it covers. `legacy` for a
+   * run started before, accounted under the rules of the version that started it: its session figures are its usage
+   * records as recorded, its stand-in charges are in `legacy_charges`, and nothing is matched between them.
+   */
+  accounting: 'current' | 'legacy';
+  /** cost_usd as the budget charged it; null before PLANNING creates the budget. */
+  charged_usd: number | null;
+  /** Spend the providers reported. */
+  reported_usd: number;
+  reported_sessions: number;
+  /** Priced from tokens and list pricing, for sessions that reported no cost. */
+  estimated_usd: number;
+  estimated_sessions: number;
+  /** Conservative stand-ins charged for sessions that reported no cost and could not be priced. */
+  ceiling_usd: number;
+  ceiling_sessions: number;
+  /** Sessions with no reported cost that nothing priced or charged. */
+  unpriced_sessions: number;
+  /**
+   * Every session whose spend no provider measured, oldest first: those charged at a ceiling (`charged_usd`, what was
+   * charged) and those with no reported cost that no charge names (`charged_usd` null).
+   */
+  unmeasured_sessions: { usage_id: number; worker_id: string | null; role: string | null; charged_usd: number | null }[];
+  /** The part of the charge spent before PLANNING and charged when the budget was created. */
+  precharged_usd: number;
+  /** Charged beyond every recorded session: a session charged again after a controller restart. Null for a `legacy` run with a budget, whose charges name no session. */
+  unmatched_usd: number | null;
+  /** Recorded spend the budget has not charged; all of it before PLANNING creates the budget. Null for a `legacy` run with a budget. */
+  uncharged_usd: number | null;
+  /** For a `legacy` run only: the stand-in charges for sessions that reported no cost, as its budget recorded them. */
+  legacy_charges?: { ceiling_usd: number; ceiling_charges: number; token_estimated_usd: number; token_estimated_charges: number };
+  /** Why nothing is charged while the run has no budget (blocked or ended before PLANNING created it, or not there yet); null once it has one. */
+  uncharged_reason: string | null;
+  /** Which figure is the charge and what it adds to the reported spend, in one sentence. */
+  explanation: string;
+}
+
 /** Work admitted earlier whose cost has not been charged yet. */
 export interface CommittedWork {
   estimatedCostUsd?: number | null;

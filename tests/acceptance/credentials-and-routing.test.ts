@@ -199,7 +199,7 @@ describe.skipIf(!READY)('acceptance: credentials and routing', () => {
     expect(w!.model).toBe(impl.model);
     const usage = l.db().all<{ cost_usd: number | null }>('SELECT cost_usd FROM usage WHERE run_id = ?', run.id);
     expect(usage.length).toBeGreaterThanOrEqual(3);
-    expect(readFileSync(join(l.runDir(run.id), 'final.md'), 'utf8')).toMatch(/## Budget consumption[\s\S]*model cost: \$/);
+    expect(readFileSync(join(l.runDir(run.id), 'final.md'), 'utf8')).toMatch(/## Budget consumption[\s\S]*spend: \$[\d.]+ charged to the cost budget/);
     assertRunInvariants(l, run.id);
   }, 180_000);
 

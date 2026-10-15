@@ -290,11 +290,34 @@ scheduler:
 
 Hard limits are copied into the policy snapshot and never change during a run.
 `worker_turns_per_session` is passed to every Claude worker session as
-`--max-turns`; the curator also keeps its smaller six-turn cap. Reports show
-each measured session's `num_turns` and the maximum reported count across
-sessions, rather than a sum. Claude can report cap plus one when the limit
-ends a session. Missing counts are unavailable, never an assumed zero. The
-Codex adapter does not enforce this turn cap or report session turns.
+`--max-turns`; the curator also keeps its smaller six-turn cap. Every attempt
+is a new session, never a resumed one, so the cap applies to each session
+whole. A turn is a model request, which is what `--max-turns` counts. Reports
+show each session's model requests, counted from its transcript, and the
+largest count across sessions, rather than a sum. The CLI's own `num_turns`
+counts the prompt and every tool result, so a session that calls tools in
+parallel reports far more (a session that kept to `--max-turns 30` reported
+61). A result recorded before 0.3.1 has no request count, and 0.3.0 recorded its
+`num_turns` as the session's turns: its requests are counted from its transcript
+and replace that record, once, recorded as `budget.session-turns-recounted`.
+Only a session whose transcript is gone (its run's artifacts were pruned) keeps
+its `num_turns`, listed apart as `num_turns:<session>` (`num_turns_sessions` in
+the report's budget and the status JSON), never compared with the cap and never
+the run's largest count. A session the cap ended, or one whose model requests
+went past the cap, adds a `budget.exhausted` event for the session. Missing
+counts are unavailable, never an assumed zero. The Codex adapter does not enforce this turn cap or
+report session turns.
+
+Once `review_rounds` is spent and the last review did not clear the candidate,
+the run ends `EXHAUSTED` at that point: neither a repair attempt nor an
+Inquisition into the review's findings starts, because nothing either produced
+could be reviewed again. Two model sessions can still start. One is an inquiry
+into review claims on a tree that an approving review is on: if the inquiry
+refutes the claims, the tree is cleared without another round, so that inquiry
+still runs, and when it does not, the run ends `EXHAUSTED` after it. The other
+is the curator, which records what the run learned once the run has ended,
+whatever the outcome: it changes nothing in the candidate, runs only when the
+closing reserve can pay for it, and is capped at `knowledge.curator_budget_usd`.
 
 Starting allowances must fit under `implementation_attempts`. One more attempt
 is granted only with measurable progress and a new, evidence-backed hypothesis,
@@ -338,8 +361,65 @@ otherwise, for a provider that reports tokens but no cost
 (Codex under a ChatGPT login), what those tokens would cost at the model's price
 in the registry (the dearest listed price when the model has none), recorded as
 `budget.cost-token-estimated`; otherwise, with no usable token counts, the
-ceiling. The report says how much of the spend is measured and how much is
-estimated, so the cap bounds spend but is not an exact spend guarantee.
+ceiling. Inquisitor sessions are charged the same way, by the same rules: the
+Inquisition records their usage itself, and the controller charges it when the
+inquiry settles or fails. Every charge marks the usage record it covers
+(`budget.usage-charged`, with the amount and whether it was the reported cost,
+an estimate or a ceiling) in the transaction that charges it, whichever path
+charged it, and a marked record is never charged again. A session whose result
+was stored with no usage record (one reconciliation collected after a controller
+restart, or one the watchdog stopped) has its usage recorded from that result
+and charged once, at the start of the next step at the latest, and for a run
+that has ended when the controller next starts, with the report written again; a
+launched session stopped with nothing to collect is recorded unmeasured the same
+way. A worker the controller stops is charged as it stops: mid-run (obsolete
+review or verification, a cancelled unit, an exploration out of time), before
+the next session is funded, and as the run ends, so the run's end leaves no
+session out. One with nothing to collect is charged as unmeasured, its spend
+cap, and one that never started is no session and costs nothing. A lost
+worker that reconciliation restarts has what the lost attempt spent recorded
+with the restart and charged before the next step, and a lost session with
+nothing to collect is charged as unmeasured: its spend cap, at most the role's
+ceiling. This accounting applies to runs started on 0.3.1 or later, which record
+it when they are created (`accounting` in the `run.created` event). A run
+started before 0.3.1 keeps the accounting of the version that started it when a
+later version resumes it: a session is charged and then recorded, nothing is
+marked, recorded from a stored result or settled at the run's end, and its
+precharge stands as it was. The session whose
+charge crosses the reserve or the cap is recorded with its usage before the run
+ends `EXHAUSTED`, so the spend line names it. An authentication failure still
+blocks on credentials when its charge reaches the cap. Spend from before PLANNING creates the
+budget (the contracting planner, say) is charged when PLANNING completes, in one
+transaction with its marks, so a controller that dies part way charges nothing
+twice when PLANNING resumes. A
+run that stops before then has measured spend and nothing charged, and the
+spend line says why (`uncharged_reason` in the report's `budget.spend` and the
+status JSON's `spend`): a run blocked before PLANNING created the budget has
+that spend charged if it is resumed, and a run that ended before then never
+charges it.
+
+The report, `orbit status` and the timeline give one spend line: the amount
+charged to the cost budget, which is the figure the cap is checked against,
+and what it is made of: what providers reported, what was estimated from tokens
+for sessions that reported no cost, and the ceilings charged for sessions that
+could not be priced. Each session counts as the charge its usage record's mark
+names, so a lost attempt and its restart, two sessions of one worker, are
+counted apart, and every session no provider measured (charged at a ceiling, or
+with no reported cost) is named. So the cap bounds spend but is not an exact
+spend guarantee, and the line says how far the charge is from the reported
+spend. A run started before 0.3.1 recorded no marks: its line gives the figures
+as recorded, what its usage records say and the stand-in charges its budget
+recorded, matched to nothing, and says the run is accounted under the rules of
+the version that started it.
+
+An inquisitor is admitted like any other session before it starts, and runs
+under a spend cap of its own (`worker.spend-cap`). An inquiry that returns to
+REVIEWING belongs to that stage: like a reviewer, its inquisitor is admitted and
+charged in the closing phase, which may spend the reserve; any other inquiry
+leaves the reserve held. With no budget left for it, no inquisitor starts and
+the run ends `EXHAUSTED` saying why. Before PLANNING creates the budget there is
+nothing to admit against, and an inquisitor then runs without a spend cap, as
+the contracting planner does.
 
 Each Claude session also gets its own spend cap (`--max-budget-usd`). The CLI
 checks it after each request, so a session can overshoot it by one request, and

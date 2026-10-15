@@ -34,6 +34,7 @@ import { validateModelOutput, type ImplementerOutput } from '../../contract/mode
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
 import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
+import { marksCharges } from '../../scheduling/accounting.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import { failBeforePolicy } from '../../policy/config.ts';
@@ -50,9 +51,9 @@ import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, M
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
 import type { WorkUnit } from '../../scheduling/types.ts';
-import { stopWorker } from '../../recovery/reconcile.ts';
 import { listActiveWorkers } from '../../storage/workers.ts';
-import { recordSpendCap, sessionSpendCap, workersFor } from '../workers.ts';
+import { stopWorker } from '../../recovery/reconcile.ts';
+import { recordSpendCap, sessionSpendCap, stopAndSettle, workersFor } from '../workers.ts';
 import { runningUnits } from './implementing.ts';
 import { obtain } from './obtain.ts';
 import { checkEnvironment, IMPLEMENTER_PROVIDER, recordGate } from './preflight.ts';
@@ -339,7 +340,10 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
 
 /**
  * Stop read-only work bound to a revision that is no longer current (spec section 8): reviewers, verifiers and
- * explorers of another tree, through the scheduler's obsolescence rule. Returns the stopped worker ids.
+ * explorers of another tree, through the scheduler's obsolescence rule. Returns the stopped worker ids. Each is charged
+ * as it is stopped (no step asks for its purpose again, and it no longer counts as committed spend); a charge that
+ * exhausts the budget is raised once every obsolete worker is stopped. A run started before 0.3.1 keeps 0.3.0's
+ * accounting, which only stopped them.
  */
 export async function cancelObsoleteWork(ctx: RunContext, currentTree: string): Promise<string[]> {
   const scheduler = schedulerFor(ctx);
@@ -347,12 +351,26 @@ export async function cancelObsoleteWork(ctx: RunContext, currentTree: string): 
   const active = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => (w.role === 'reviewer' || w.role === 'verifier' || w.role === 'explorer') && w.candidateId !== null);
   const units: WorkUnit[] = active.map((w) => ({ id: w.id, role: w.role, writer: false, ownedPaths: [], dependsOn: [], revision: trees.get(w.candidateId!) ?? null, cancelWhen: ['revision-changed'], budget: {}, provider: w.provider, status: 'running' }));
   const stopped: string[] = [];
+  let refused: unknown = null;
+  const settles = marksCharges(ctx.db, ctx.run.id);
   for (const o of scheduler.obsolete(units, currentTree)) {
     const w = active.find((x) => x.id === o.unit.id)!;
-    await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+    if (!settles) {
+      await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+      stopped.push(w.id);
+      continue;
+    }
+    try {
+      // A reviewer spends from the closing reserve, as it was admitted; the others from ordinary work.
+      await stopAndSettle(ctx, w, `obsolete: ${o.reason}`, w.role === 'reviewer' ? 'final' : 'work');
+    } catch (err) {
+      if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+      refused ??= err;
+    }
     stopped.push(w.id);
   }
   if (stopped.length > 0) note(ctx, 'workers.obsolete-cancelled', { current_tree: currentTree, workers: stopped });
+  if (refused) throw refused;
   return stopped;
 }
 
@@ -428,7 +446,11 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
         subjects: [],
         key: `review:${cand.treeHash}:${inquire.map((x) => x.d.fingerprint).sort().join(',')}`.slice(0, 500),
       };
-      if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+      if (!handledTriggerKeys(ctx).has(trigger.key)) {
+        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(repairable)}`, { open_findings: openFindings(repairable) });
+        if (spent) return spent;
+        return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+      }
     }
     return routeToRepair(ctx, cand, repairable, resolution, texts, { held, criteria: waiting.criteria, questions: waiting.questions.map((q) => q.id) });
   }
@@ -442,7 +464,16 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       subjects: [],
       key: claimsTriggerKey(cand, resolution.claimsToTest),
     };
-    if (!handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+    if (!handledTriggerKeys(ctx).has(trigger.key)) {
+      // With an approving review on this tree, an inquiry that refutes the claims clears it with no further round,
+      // so only without one does the spent round cap end the run here.
+      if (!gate.details.approved) {
+        const claims = resolution.dispositions.filter((d) => resolution.claimsToTest.some((c) => c.findingId === d.findingId));
+        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(claims)}`, { open_findings: openFindings(claims) });
+        if (spent) return spent;
+      }
+      return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
+    }
   }
   // A review that asked for repair only through notes (findings filed under evidence-classification that no check
   // confirmed: they dispute Orbit's own evidence classification) approves nothing, and no repair can answer it. It gets
@@ -779,6 +810,19 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord): NonProgres
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, sent.id)) return null;
   const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
   return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: 'EXHAUSTED' };
+}
+
+/**
+ * Whatever an inquiry decides about findings that need repair has to be reviewed again, so with no review round left
+ * no inquisitor starts and the run ends here, EXHAUSTED, as a repair without a round does (0.3.0 retest: the last
+ * Inquisition ran after review_rounds 4 of 4, and the run then ended EXHAUSTED anyway). The one exception, decided by
+ * the caller: claims on a tree an approving review cleared, which an inquiry that refutes them clears without another
+ * round. Null while a round is left.
+ */
+async function reviewRoundsSpent(ctx: RunContext, open: string, outcome: Record<string, unknown>): Promise<StepResult | null> {
+  const rounds = ctx.ledger!.state('review_rounds');
+  if (rounds.used < rounds.allowance) return null;
+  return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
 
 function describeFindings(list: readonly Disposition[]): string {

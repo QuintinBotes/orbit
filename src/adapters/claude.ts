@@ -46,7 +46,7 @@ import { bashGrant } from '../policy/role-grants.ts';
 import { snapshotHash, verifySnapshot } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { assertClaudeSettings, renderClaudeSettings, type ClaudeTier } from './claude-settings.ts';
-import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
+import { CLAUDE_AUTH_ERRORS, classifyClaudeTranscript, claudeEvents, claudeModelRequests, claudeUsage, emptyUsage, type ClaudeTaskResult } from './claude-transcript.ts';
 import { STRICT_PLUGIN_POLICY, needsPluginList, parsePluginList, pluginPolicyOf, type InstalledPlugin, type PluginPolicy } from './claude-plugins.ts';
 import { defaultOrbitCommands } from './commands.ts';
 import { buildWorkerEnv, passThrough, claudeEnvCredential } from './env.ts';
@@ -367,6 +367,8 @@ export class ClaudeAdapter implements ProviderAdapter {
         models: [],
         permissionDenials: [],
         numTurns: null,
+        // The requests it made before it was lost still count against the turn cap.
+        modelRequests: claudeModelRequests(log.events),
         terminalReason: null,
       };
     } else {

@@ -5,6 +5,7 @@ import { faultPoint } from '../core/faults.ts';
 import { canTransition, isRunState, isTerminal, type RunState } from './states.ts';
 import { appendEvent } from '../storage/events.ts';
 import type { RunMode } from '../policy/types.ts';
+import { RUN_ACCOUNTING_VERSION } from '../scheduling/accounting.ts';
 
 export { appendEvent };
 export type { RunMode };
@@ -132,7 +133,9 @@ export function createRun(db: OrbitDb, input: NewRun, clock: Clock, actor = 'cli
       now,
       now,
     );
-    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}) }, now, null, 'CREATED');
+    // The accounting the run is charged by for its whole life (RUN_ACCOUNTING_VERSION): a run created before 0.3.1 names
+    // none and keeps the rules of the version that started it when a later one resumes it.
+    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}), accounting: RUN_ACCOUNTING_VERSION }, now, null, 'CREATED');
     return getRun(db, input.id);
   });
 }

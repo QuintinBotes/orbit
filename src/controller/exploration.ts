@@ -25,8 +25,7 @@ import { recordFailure } from '../evidence/store.ts';
 import { exploreUi, explorationConfigOf, explorationFollowUps, renderExplorationReport, type ExplorationResult, type ExplorerRun, type SpecResponse } from '../ui/explore.ts';
 import type { UiConfig } from '../policy/types.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
-import { accountWorker, ensureWorker, routeFor, storedResult, type WorkerRequest } from './workers.ts';
-import { stopWorker } from '../recovery/reconcile.ts';
+import { ensureWorker, routeFor, stopAndSettle, type WorkerRequest } from './workers.ts';
 import { assertContract, decide, policySummary } from './steps/common.ts';
 
 /** Structured output of the spec-writing call. */
@@ -149,9 +148,8 @@ async function runToEnd(ctx: RunContext, req: WorkerRequest, timeoutMs: number, 
     const st = await ensureWorker(ctx, req);
     if (st.status === 'finished') return st.result;
     if (ctx.clock.now() >= deadline) {
-      // Out of time: the session is stopped (and charged), not left running beside the rest of the run.
-      const stopped = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, st.worker, `${req.purpose} exceeded its ${Math.round(timeoutMs / 1000)} s allowance`);
-      accountWorker(ctx, stopped, storedResult(stopped));
+      // Out of time: the session is stopped and charged in one transaction, not left running beside the rest of the run.
+      await stopAndSettle(ctx, st.worker, `${req.purpose} exceeded its ${Math.round(timeoutMs / 1000)} s allowance`, req.phase ?? 'work');
       return null;
     }
     await new Promise((r) => setTimeout(r, Math.max(50, ctx.timing.checkPollMs)));

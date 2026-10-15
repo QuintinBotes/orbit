@@ -41,7 +41,8 @@ const used = (): number => lab.ctx().ledger!.state('cost_usd').used;
 const zeroEvents = (): unknown[] => lab.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.cost-zero-no-model'", lab.runId);
 
 describe('reported worker turns', () => {
-  const withTurns = (numTurns: number | null): TaskResult & { numTurns: number | null } => ({ ...result({ usage: usage({ costUsd: 0, costSource: 'reported' }) }), numTurns });
+  // A current Claude result: its model requests, which is what the turn cap counts, beside the CLI's num_turns.
+  const withTurns = (numTurns: number | null): TaskResult & { numTurns: number | null; modelRequests: number | null } => ({ ...result({ usage: usage({ costUsd: 0, costSource: 'reported' }) }), numTurns, modelRequests: numTurns });
 
   it.each(['claude-review', 'claude_review'])('records turn counts for supported provider alias %s', (provider) => {
     setup(30);
@@ -80,7 +81,7 @@ describe('reported worker turns', () => {
     expect(budget.sessions.map((c) => c.used).sort()).toEqual([3, 7]);
     const ctx = lab.ctx();
     const report = buildFinalReport(lab.db, ctx.run, { runDir: ctx.runDir, clock: lab.clock, snapshot: ctx.snapshot });
-    expect(renderMarkdown(report)).toContain('worker_turns_per_session: 7 maximum reported turns; Claude CLI cap 30 per session');
+    expect(renderMarkdown(report)).toContain('worker_turns_per_session: 7 model requests at most in one session; cap 30 per session, enforced by the Claude CLI (--max-turns)');
   });
 
   it('records the real reported count even when Claude reports cap plus one', () => {

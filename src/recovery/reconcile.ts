@@ -16,6 +16,8 @@ import { EXIT_FILE, REGISTRATION_FILE, readExitRecord, readPidRecord, readRegist
 import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, isShimCommandLine, launchedShimState, stopLaunchedShim, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
+import { recordUsage } from '../routing/usage.ts';
+import { marksCharges } from '../scheduling/accounting.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimIntent } from '../evidence/check-shim.ts';
@@ -629,8 +631,15 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
   if (stop) return giveUp('cancelled', 'CANCELLED');
   if (w.role === 'inquisitor') {
     // The Inquisition engine owns its worker: the INQUISITION step starts a fresh one (counting what this one
-    // spent) when it resumes, so recovery neither restarts it nor spends recovery budget on it.
-    const row = finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+    // spent) when it resumes, so recovery neither restarts it nor spends recovery budget on it. With nothing collected,
+    // what it spent is unknown: an unmeasured usage record, in the same transaction, has it charged its cap or ceiling
+    // as any other lost session is (the engine records one for an inquisitor it gives up on, too). A run started before
+    // 0.3.1 keeps 0.3.0's accounting, which recorded nothing here.
+    const row = db.tx(() => {
+      const done = finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      if (!partial && marksCharges(db, run.id)) recordLostUsage(ctx, run, w, null);
+      return done;
+    });
     rep.state = row.state;
     rep.detail = `${lostDetail}; the inquisition step starts its own worker when it resumes`;
     return;
@@ -664,9 +673,14 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
   try {
     db.tx(() => {
       finish(ctx, w.id, { state: 'LOST', resultStatus: 'lost', exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      // The restart reuses the row and clears its result, so what the lost attempt spent is recorded now, with the
+      // restart that would otherwise lose it; the event names the record as the earlier attempt's, and the controller
+      // charges it before the next step funds anything. A run started before 0.3.1 keeps 0.3.0's accounting, which
+      // recorded nothing for the lost attempt.
+      const usageId = marksCharges(db, run.id) ? recordLostUsage(ctx, run, w, partial) : null;
       spendRecoveryAttempt(db, run.id, clock, { ledgerFor: ctx.opts.ledgerFor, fallbackMax: ctx.opts.fallbackRecoveries, actor: ctx.ownerId, why: `restart of lost worker ${w.id}` });
       const row = planWorkerRestart(db, w.id, clock, ctx.ownerId);
-      appendEvent(db, run.id, 'recovery.worker-restart', ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd }, clock.now());
+      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, ...(usageId === null ? {} : { usage_id: usageId }) }, clock.now());
     });
     rep.restartPlanned = true;
     rep.state = 'PLANNED';
@@ -680,6 +694,20 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
     if (isOrbitError(err, 'CANCELLED') || isOrbitError(err, 'TRANSITION_INVALID')) return giveUp('cancelled', 'LOST');
     throw err;
   }
+}
+
+/**
+ * Names, with the usage record of the lost attempt (`usage_id`), a lost worker restarted on the same row: that record
+ * is an earlier session's, so the restarted session still records its own.
+ */
+export const WORKER_RESTART_EVENT = 'recovery.worker-restart';
+
+/**
+ * Record the usage of a lost session: what its partial result reports, or an unmeasured record when nothing could be
+ * collected (what it spent is unknown, never free). Inside the caller's transaction. Returns the record's id.
+ */
+function recordLostUsage(ctx: Ctx, run: RunRecord, w: WorkerRecord, partial: TaskResult | null): number {
+  return recordUsage(ctx.db, { runId: run.id, workerId: w.id, provider: w.provider, model: partial?.usage?.model ?? w.model, usage: partial?.usage ?? null, durationMs: partial?.durationMs ?? null }, ctx.clock).id;
 }
 
 /** The recovery budget refused a restart: the run ends EXHAUSTED (reason recovery_attempts) unless it already ended. */
@@ -733,6 +761,7 @@ export async function stopWorker(
   ctx: { db: OrbitDb; clock: Clock; ownerId: string; adapters: Readonly<Record<string, ProviderAdapter>>; graceMs?: number },
   worker: WorkerRecord,
   reason: string,
+  opts: { finish?: (outcome: WorkerOutcome, result: TaskResult | null) => WorkerRecord } = {},
 ): Promise<WorkerRecord> {
   requestWorkerCancel(ctx.db, worker.id, ctx.clock, ctx.ownerId, reason);
   const fromPid = handleFromWorkerDir(worker.provider, worker.workerDir);
@@ -761,7 +790,9 @@ export async function stopWorker(
       throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
     }
   }
-  return finishWorker(ctx.db, worker.id, { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: reason }, ctx.clock, ctx.ownerId);
+  const outcome: WorkerOutcome = { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: reason };
+  // A controller records the session's usage and charge with its result, in one transaction (opts.finish).
+  return opts.finish ? opts.finish(outcome, result) : finishWorker(ctx.db, worker.id, outcome, ctx.clock, ctx.ownerId);
 }
 
 export type LaunchStop = 'none' | 'gone' | 'stopped' | 'unknown';

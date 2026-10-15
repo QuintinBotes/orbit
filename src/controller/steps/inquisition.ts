@@ -8,6 +8,7 @@
  * keyboard input.
  */
 import { join } from 'node:path';
+import { OrbitError } from '../../core/errors.ts';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { hashObject } from '../../core/hash.ts';
 import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
@@ -19,9 +20,11 @@ import { currentEvidenceReport } from '../../evidence/store.ts';
 import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
-import { accountWorkerTurns, adapterFor, collectIfFinished, routeFor, storedResult, systemPromptFor } from '../workers.ts';
+import type { BudgetPhase } from '../../scheduling/types.ts';
+import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
-import { assertContract, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
+import { listReviews } from '../../review/store.ts';
+import { assertContract, budgetPhaseOf, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
 
@@ -34,9 +37,31 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
 
+  // An inquiry spends from the budget of the stage it returns to: one that returns to review or delivery may use the
+  // closing reserve, as that stage's own workers are admitted and charged, and any other leaves the reserve held.
+  const phase: BudgetPhase = budgetPhaseOf(resume);
   // An inquisitor a crashed controller left behind is collected first; the engine refuses to start a second one.
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === 'inquisitor')) {
-    if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);
+    if (await collectIfFinished(ctx, w, phase)) return WAIT(`inquisitor ${w.id} is still running`);
+  }
+  // The engine records its inquisitors' usage itself; the controller charges it, like every other worker's: what an
+  // earlier pass left uncharged now, and this inquiry's afterwards, even when the inquiry ends in an error. An
+  // inquisitor reconciliation collected on restart has a stored result and no usage record: its usage is recorded from
+  // that result here, before the engine reuses it.
+  const account = (): void => {
+    for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) chargeRecordedUsage(ctx, w, phase);
+  };
+  account();
+  // An inquiry that returns to REVIEWING needs another review round for whatever it decides; with none left no
+  // inquisitor starts and the run ends here (0.3.0: the last Inquisition ran after review_rounds 4 of 4, then EXHAUSTED).
+  // REVIEWING sends an inquiry on at the cap only where an approving review is on the tree, so refuting the claims it
+  // asks about clears it with no further round.
+  const rounds = resume === 'REVIEWING' ? ctx.ledger?.state('review_rounds') : undefined;
+  const approved = ctx.candidate !== null && listReviews(ctx.db, ctx.run.id, { treeHash: ctx.candidate.treeHash }).some((r) => r.verdict === 'APPROVE');
+  if (rounds && rounds.used >= rounds.allowance && !approved) {
+    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2000), {
+      data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap },
+    });
   }
 
   const route = routeFor(ctx, `inquire:${hashObject(trigger.key).slice(7, 19)}`, 'routine-code', { difficulty: (ctx.run.difficulty ?? 'medium') as 'simple' | 'medium' | 'complex', attempt: 1, repeatedFingerprints: 0 });
@@ -44,6 +69,22 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const env = ctx.deps.hostEnv ?? process.env;
   const home = homeOf(ctx.deps);
   const workerDir = join(ctx.runDir, 'workers');
+  // An inquisitor is admitted and capped like any other session, when the engine is about to start one: against the
+  // budget in this inquiry's phase, and under its own --max-budget-usd, recorded as worker.spend-cap. Before PLANNING
+  // creates the budget there is nothing to admit against, as for the contracting planner; PLANNING charges that spend.
+  const admit = (purpose: string): number | null => {
+    const ledger = ctx.ledger;
+    if (!ledger) return null;
+    // An earlier attempt of this inquiry (regenerating malformed output) is charged first, so this one is admitted
+    // against what it spent. Inside the engine's transaction: a refusal rolls this back, and the finally charges it.
+    account();
+    const cap = sessionSpendCap(ctx, route.model, 'inquisitor', phase);
+    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase });
+    const d = ledger.admit({ role: 'inquisitor', phase, estimatedCostUsd: cap.capUsd });
+    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase });
+    if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
+    return cap.capUsd;
+  };
   const supported = ctx.candidate ? (currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? []) : [];
   const result = await runInquisition({
     trigger,
@@ -67,12 +108,12 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
         pollMs: 250,
         fence: () => assertLeaseHeld(ctx.db, ctx.run.id, ctx.ownerId, ctx.clock.now()),
+        admit,
       },
     },
     signal: ctx.signal,
-  });
+  }).finally(account);
   const patch = hashObject(result.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result.contract), contractHash: hashObject(result.contract) } : undefined;
-  for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'inquisitor' })) accountWorkerTurns(ctx, w, storedResult(w));
   if (patch) atomicWriteJson(join(ctx.runDir, 'contract.json'), result.contract);
   const after = await safePoint(ctx);
   if (after) return after;

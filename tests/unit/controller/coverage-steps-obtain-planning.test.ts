@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskSpec } from '../../../src/adapters/types.ts';
@@ -10,7 +10,9 @@ import { planWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { START_CHARGE_EVENT, chargeOnce, latestAttempt, obtain, type ObtainOptions } from '../../../src/controller/steps/obtain.ts';
 import { planningStep } from '../../../src/controller/steps/planning.ts';
+import { chargeRecordedUsage } from '../../../src/controller/workers.ts';
 import { spendRecoveryAttempt } from '../../../src/recovery/budget.ts';
+import { BudgetLedger } from '../../../src/scheduling/budget.ts';
 import { PLANNER_FILE } from '../../../src/controller/steps/contracting.ts';
 import { PLANNER_OUTPUT, plannerPractices } from '../../integration/controller/harness.ts';
 import { ENGINEERING_PRACTICES } from '../../../src/contract/practices.ts';
@@ -278,14 +280,51 @@ describe('planningStep', () => {
     prepare();
     recordUsage(lab.db, { runId: lab.runId, workerId: null, provider: 'claude', model: 'm', usage, durationMs: 1 }, lab.clock);
     const w = planWorker(lab.db, { id: 'wrk-plan', runId: lab.runId, role: 'planner', provider: 'claude', workerDir: join(lab.base, 'wp'), cwd: lab.repo }, lab.clock, OWNER);
-    lab.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify({ status: 'failed', numTurns: 4 }), w.id);
+    lab.db.run('UPDATE workers SET result_json = ? WHERE id = ?', JSON.stringify({ status: 'failed', numTurns: 9, modelRequests: 4 }), w.id);
     recordUsage(lab.db, { runId: lab.runId, workerId: w.id, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.3 }, durationMs: 1 }, lab.clock);
     await planningStep(lab.ctx());
     const ledger = lab.ctx().ledger!;
     expect(ledger.state('cost_usd').used).toBeCloseTo(0.5, 6);
     expect(ledger.state('worker_turns_per_session').used).toBe(4);
     const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", lab.runId);
-    expect(JSON.parse(ev!.data_json)).toEqual({ usage_rows: 2, charged_usd: 0.5 });
+    expect(JSON.parse(ev!.data_json)).toMatchObject({ usage_rows: 2, charged_usd: 0.5 });
+  });
+
+  it('an inquisitor the engine recorded before the budget existed is charged by PLANNING, and never again by the inquiry\'s charge pass', async () => {
+    prepare();
+    const w = planWorker(lab.db, { id: 'wrk-inq', runId: lab.runId, role: 'inquisitor', provider: 'claude', workerDir: join(lab.base, 'wi'), cwd: lab.repo }, lab.clock, OWNER);
+    recordUsage(lab.db, { runId: lab.runId, workerId: w.id, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.04 }, durationMs: 1 }, lab.clock);
+    await planningStep(lab.ctx());
+    expect(lab.ctx().ledger!.state('cost_usd').used).toBeCloseTo(0.04, 6);
+    chargeRecordedUsage(lab.ctx(), w);
+    expect(lab.ctx().ledger!.state('cost_usd').used).toBeCloseTo(0.04, 6);
+  });
+
+  // Adversarial review of fix/031-budget: each record's charge committed on its own and the precharge mark came after
+  // them, so a controller that died in between charged them all again when PLANNING resumed ($0.40 charged $0.80).
+  it('a precharge interrupted part way charges each record once when PLANNING resumes', async () => {
+    prepare();
+    const inq = planWorker(lab.db, { id: 'wrk-inq', runId: lab.runId, role: 'inquisitor', provider: 'claude', workerDir: join(lab.base, 'wi'), cwd: lab.repo }, lab.clock, OWNER);
+    recordUsage(lab.db, { runId: lab.runId, workerId: inq.id, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.4 }, durationMs: 1 }, lab.clock);
+    recordUsage(lab.db, { runId: lab.runId, workerId: null, provider: 'claude', model: 'm', usage: { ...usage, costUsd: 0.1 }, durationMs: 1 }, lab.clock);
+    spendRecoveryAttempt(lab.db, lab.runId, lab.clock, { actor: OWNER, why: 'resume after a block' });
+    const original = BudgetLedger.prototype.consumeCost;
+    let calls = 0;
+    const crash = vi.spyOn(BudgetLedger.prototype, 'consumeCost').mockImplementation(function (this: BudgetLedger, ...args: Parameters<BudgetLedger['consumeCost']>) {
+      // The controller dies while charging the second record, after the first one's charge.
+      if (++calls === 2) throw new Error('controller killed');
+      return original.apply(this, args);
+    });
+    await expect(planningStep(lab.ctx())).rejects.toThrow('controller killed');
+    crash.mockRestore();
+    expect(getRun(lab.db, lab.runId).state).toBe('PLANNING');
+    await planningStep(lab.ctx());
+    const ledger = lab.ctx().ledger!;
+    expect(ledger.state('cost_usd').used).toBeCloseTo(0.5, 6);
+    expect(ledger.state('recovery_attempts').used).toBe(1);
+    expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'budget.precharged'", lab.runId)).toHaveLength(1);
+    chargeRecordedUsage(lab.ctx(), inq);
+    expect(lab.ctx().ledger!.state('cost_usd').used).toBeCloseTo(0.5, 6);
   });
 
   it('counts recovery attempts spent before the budget existed, once, so the report does not say 0 used (Nm8)', async () => {

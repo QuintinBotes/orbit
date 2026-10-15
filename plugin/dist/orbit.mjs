@@ -24517,6 +24517,19 @@ var init_events = __esm({
   }
 });
 
+// src/scheduling/accounting.ts
+function marksCharges(db, runId) {
+  const v = db.get("SELECT json_extract(data_json, '$.accounting') AS v FROM events WHERE run_id = ? AND type = 'run.created' ORDER BY id LIMIT 1", runId)?.v;
+  return typeof v === "number" && v >= RUN_ACCOUNTING_VERSION;
+}
+var RUN_ACCOUNTING_VERSION;
+var init_accounting = __esm({
+  "src/scheduling/accounting.ts"() {
+    "use strict";
+    RUN_ACCOUNTING_VERSION = 1;
+  }
+});
+
 // src/controller/run-store.ts
 function toRecord2(r) {
   if (!isRunState(r.state)) throw new OrbitError("INTERNAL", `run ${r.id} has unknown state ${r.state}`);
@@ -24566,7 +24579,7 @@ function createRun(db, input, clock, actor = "cli") {
       now,
       now
     );
-    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {} }, now, null, "CREATED");
+    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {}, accounting: RUN_ACCOUNTING_VERSION }, now, null, "CREATED");
     return getRun(db, input.id);
   });
 }
@@ -24704,6 +24717,7 @@ var init_run_store = __esm({
     init_faults();
     init_states();
     init_events();
+    init_accounting();
     PATCH_COLUMNS = {
       outcomeReason: "outcome_reason",
       outcomeJson: "outcome_json",
@@ -26274,7 +26288,7 @@ function classifyClaudeTranscript(input) {
   const { events, exit } = input;
   const result2 = lastOf(events, (e) => e.type === "result");
   const init = events.find((e) => e.type === "system" && e.subtype === "init");
-  const sessionId = str(result2?.session_id) ?? str(init?.session_id) ?? null;
+  const sessionId = claudeSessionId(events);
   const usage = claudeUsage(events);
   const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
   const base = {
@@ -26287,6 +26301,7 @@ function classifyClaudeTranscript(input) {
     models: modelUsageKeys(result2),
     permissionDenials: denials(result2),
     numTurns: num(result2?.num_turns),
+    modelRequests: claudeModelRequests(events),
     terminalReason: str(result2?.terminal_reason),
     ...plugins.length > 0 ? { plugins } : {}
   };
@@ -26442,6 +26457,23 @@ function claudeUsage(events) {
     cacheWrite += num(u.cache_creation_input_tokens) ?? 0;
   }
   return { provider: "claude", model: assistantModel(events), inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, costUsd: null, costSource: "unavailable" };
+}
+function claudeModelRequests(events) {
+  const ids = /* @__PURE__ */ new Set();
+  let messages = 0;
+  for (const e of events) {
+    if (e.type !== "assistant") continue;
+    messages++;
+    if (e.error !== void 0 || e.is_api_error_message === true || typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id.length > 0) continue;
+    const m = isObject(e.message) ? e.message : {};
+    ids.add(str(m.id) ?? `#${messages}`);
+  }
+  return messages === 0 ? null : ids.size;
+}
+function claudeSessionId(events) {
+  const result2 = lastOf(events, (e) => e.type === "result");
+  const init = events.find((e) => e.type === "system" && e.subtype === "init");
+  return str(result2?.session_id) ?? str(init?.session_id) ?? null;
 }
 function emptyUsage(provider = "claude") {
   return { provider, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: "unavailable" };
@@ -29037,6 +29069,8 @@ ${outputBudgetInstruction(outputTokens)}
             models: [],
             permissionDenials: [],
             numTurns: null,
+            // The requests it made before it was lost still count against the turn cap.
+            modelRequests: claudeModelRequests(log.events),
             terminalReason: null
           };
         } else {
@@ -33132,6 +33166,10 @@ function getWorker(db, id) {
   if (!row) throw new OrbitError("NOT_FOUND", `no worker ${id}`);
   return toRecord3(row);
 }
+function findWorker(db, id) {
+  const row = db.get("SELECT * FROM workers WHERE id = ?", id);
+  return row ? toRecord3(row) : null;
+}
 function listWorkers(db, query = {}) {
   const where2 = [];
   const params = [];
@@ -35033,6 +35071,212 @@ var init_actions = __esm({
         return Math.max(hinted, backoff);
       }
     };
+  }
+});
+
+// src/routing/usage.ts
+function recordUsage(db, input, clock) {
+  const provider = input.provider ?? input.usage?.provider;
+  if (!provider) throw new OrbitError("SCHEMA_INVALID", "recordUsage needs a provider");
+  const model = input.model !== void 0 ? input.model : input.usage?.model ?? null;
+  const u = input.usage;
+  const tokens3 = {
+    inputTokens: count(u?.inputTokens),
+    outputTokens: count(u?.outputTokens),
+    cacheReadTokens: count(u?.cacheReadTokens),
+    cacheWriteTokens: count(u?.cacheWriteTokens)
+  };
+  const notes = [];
+  let costUsd = null;
+  let costSource = "unavailable";
+  const given = count(u?.costUsd);
+  if (given !== null && (u?.costSource === "reported" || u?.costSource === "estimated")) {
+    costUsd = given;
+    costSource = u.costSource;
+  } else {
+    if (u && u.costSource !== "unavailable" && given === null) notes.push(`usage claimed cost source '${u.costSource}' without a cost`);
+    const pricing = input.pricing !== void 0 ? input.pricing : model ? new ModelRegistry(db, clock).get(model)?.pricing ?? null : null;
+    if (!u) {
+      notes.push("provider reported no usage");
+    } else {
+      const est = estimateCost(tokens3, pricing, { inputIncludesCacheRead: inputIncludesCacheRead(provider) });
+      if (est.costUsd !== null) {
+        costUsd = est.costUsd;
+        costSource = "estimated";
+        if (est.missing.length) notes.push(`estimate counts unknown ${est.missing.join(", ")} as zero`);
+        notes.push(...est.assumptions);
+      } else {
+        notes.push(`cost unavailable: no ${est.missing.join(", ")}`);
+      }
+    }
+  }
+  const durationMs = count(input.durationMs);
+  const ts = clock.now();
+  const id = db.tx(
+    () => db.run(
+      `INSERT INTO usage (run_id, worker_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, cost_source, duration_ms, ts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.runId,
+      input.workerId,
+      provider,
+      model,
+      tokens3.inputTokens,
+      tokens3.outputTokens,
+      tokens3.cacheReadTokens,
+      tokens3.cacheWriteTokens,
+      costUsd,
+      costSource,
+      durationMs,
+      ts
+    ).lastInsertRowid
+  );
+  const budget = count(input.outputBudgetTokens !== void 0 ? input.outputBudgetTokens : u?.outputBudgetTokens);
+  const role = input.role ?? (input.workerId ? db.get("SELECT role FROM workers WHERE id = ?", input.workerId)?.role ?? null : null);
+  const outputTokens = tokens3.outputTokens;
+  let overrun = false;
+  if (budget !== null && budget > 0 && outputTokens !== null && outputTokens > budget) {
+    overrun = true;
+    notes.push(`output ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ""}`);
+    appendEvent(db, input.runId, "usage.output-budget-exceeded", "usage", { worker_id: input.workerId, role, provider, model, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
+  }
+  const latency = input.timeToFirstEventMs !== void 0 ? input.timeToFirstEventMs : u?.timeToFirstEventMs ?? null;
+  if (model && latency !== null && latency !== void 0) new ModelRegistry(db, clock).recordLatency(model, latency);
+  return { id, provider, model, costUsd, costSource, notes, outputBudgetExceeded: overrun };
+}
+function summarizeUsage(db, runId) {
+  const rows = db.all("SELECT * FROM usage WHERE run_id = ? ORDER BY id", runId);
+  const totals = emptyTotals();
+  const groups = /* @__PURE__ */ new Map();
+  let promptTokens2 = 0;
+  let cachedTokens = 0;
+  const unavailableCost = [];
+  for (const r of rows) {
+    const key2 = `${r.provider}\0${r.model ?? ""}`;
+    let g = groups.get(key2);
+    if (!g) {
+      g = { provider: r.provider, model: r.model, ...emptyTotals(), promptTokens: 0, cachedTokens: 0 };
+      groups.set(key2, g);
+    }
+    const prompt = promptOf(r);
+    for (const t of [totals, g]) addRow(t, r);
+    if (prompt !== null) {
+      promptTokens2 += prompt;
+      cachedTokens += r.cache_read_tokens ?? 0;
+      g.promptTokens += prompt;
+      g.cachedTokens += r.cache_read_tokens ?? 0;
+    }
+    if (r.cost_usd === null || r.cost_source === "unavailable") {
+      unavailableCost.push({ id: r.id, workerId: r.worker_id, provider: r.provider, model: r.model, ts: r.ts });
+    }
+  }
+  totals.cacheHitRatio = ratio(cachedTokens, promptTokens2);
+  const byProviderModel = [...groups.values()].map(({ promptTokens: p, cachedTokens: c, ...rest }) => ({ ...rest, cacheHitRatio: ratio(c, p) }));
+  const costComplete = unavailableCost.length === 0;
+  const note3 = rows.length === 0 ? "no usage recorded" : costComplete ? totals.bySource.estimated > 0 ? `cost includes ${totals.bySource.estimated} estimated record(s) priced from tokens and registry pricing` : "cost reported by providers for every record" : `cost unavailable for ${unavailableCost.length} of ${rows.length} record(s); the total covers measured records only`;
+  return { runId, totals, byProviderModel, unavailableCost, costComplete, note: note3 };
+}
+function emptyTotals() {
+  return {
+    records: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+    reportedCostUsd: 0,
+    estimatedCostUsd: 0,
+    bySource: { reported: 0, estimated: 0, unavailable: 0 },
+    durationMs: 0,
+    cacheHitRatio: null
+  };
+}
+function addRow(t, r) {
+  t.records += 1;
+  t.inputTokens += r.input_tokens ?? 0;
+  t.outputTokens += r.output_tokens ?? 0;
+  t.cacheReadTokens += r.cache_read_tokens ?? 0;
+  t.cacheWriteTokens += r.cache_write_tokens ?? 0;
+  t.durationMs += r.duration_ms ?? 0;
+  const source = r.cost_usd === null ? "unavailable" : r.cost_source;
+  if (source === "reported" || source === "estimated") {
+    t.bySource[source] += 1;
+    t.costUsd = roundUsd(t.costUsd + r.cost_usd);
+    if (source === "reported") t.reportedCostUsd = roundUsd(t.reportedCostUsd + r.cost_usd);
+    else t.estimatedCostUsd = roundUsd(t.estimatedCostUsd + r.cost_usd);
+  } else {
+    t.bySource.unavailable += 1;
+  }
+}
+function promptOf(r) {
+  if (r.input_tokens === null) return null;
+  const cacheWrite = r.cache_write_tokens ?? 0;
+  if (inputIncludesCacheRead(r.provider)) return r.input_tokens + cacheWrite;
+  return r.input_tokens + (r.cache_read_tokens ?? 0) + cacheWrite;
+}
+function ratio(part, whole2) {
+  return whole2 > 0 ? Math.round(part / whole2 * 1e4) / 1e4 : null;
+}
+function count(v) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+function routeStats(db, filter = {}) {
+  const where2 = [];
+  const params = [];
+  if (filter.workKind) {
+    where2.push("work_kind = ?");
+    params.push(filter.workKind);
+  }
+  if (filter.provider) {
+    where2.push("provider = ?");
+    params.push(filter.provider);
+  }
+  if (filter.modelId) {
+    where2.push("model_id = ?");
+    params.push(filter.modelId);
+  }
+  if (filter.sinceMs !== void 0) {
+    where2.push("ts >= ?");
+    params.push(filter.sinceMs);
+  }
+  const rows = db.all(
+    `SELECT work_kind, provider, model_id, COUNT(*) AS samples,
+            SUM(CASE WHEN outcome = 'verified' THEN 1 ELSE 0 END) AS verified,
+            SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
+            SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+            SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
+            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
+       FROM route_outcomes ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""}
+      GROUP BY work_kind, provider, model_id
+      ORDER BY work_kind, provider, model_id`,
+    ...params
+  );
+  return rows.map((r) => {
+    const judged = r.verified + r.failed + r.rejected;
+    return {
+      workKind: r.work_kind,
+      provider: r.provider,
+      modelId: r.model_id,
+      samples: r.samples,
+      verified: r.verified,
+      failed: r.failed,
+      rejected: r.rejected,
+      errors: r.errors,
+      successRate: judged > 0 ? r.verified / judged : null,
+      meanCostUsd: r.mean_cost === null ? null : roundUsd(r.mean_cost),
+      costSamples: r.cost_samples,
+      meanTokens: r.mean_tokens === null ? null : Math.round(r.mean_tokens)
+    };
+  });
+}
+var init_usage = __esm({
+  "src/routing/usage.ts"() {
+    "use strict";
+    init_errors();
+    init_events();
+    init_registry();
+    init_pricing();
+    init_types2();
+    init_pricing();
   }
 });
 
@@ -38828,7 +39072,7 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
       }
       const shim = readShim(dirs.checkDir, token, spawned);
       const now = ctx.clock.now();
-      const settle = async (synthetic) => {
+      const settle2 = async (synthetic) => {
         const why = await reapAll(ctx, dirs.checkDir, token, shim);
         if (why !== null) {
           leftOpen = true;
@@ -38846,7 +39090,7 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
           }
         } else if (shim.pgid !== null) killQuiet(shim.pgid, "SIGTERM");
       }
-      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1e3) return await settle("cancelled");
+      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1e3) return await settle2("cancelled");
       if (cancelSentAt === null && deniedAt === null && shim.pgid !== null && now >= nextDenialScan) {
         nextDenialScan = now + DENIAL_SCAN_MS;
         const denial = findMsbuildNodeDenial(dirs.tmpDir);
@@ -38864,19 +39108,19 @@ async function superviseAttempt(ctx, subject, def, row, wrapped, spawned = null)
         nextShimSearch = now + SHIM_SEARCH_MS;
         if (unnamedShim(dirs.checkDir, token) === null) return finalize(ctx, def, row, dirs, null, "lost");
       }
-      if (now > backstop && cancelSentAt === null) return await settle("timeout");
+      if (now > backstop && cancelSentAt === null) return await settle2("timeout");
       if (shim.pid !== null) {
         if (!checkedIdentity) {
           checkedIdentity = true;
           if (!isAlive(shim.pid, shim.procStart)) {
             const late = readJsonFile(shimPath(dirs.checkDir, "exit"));
             if (late) continue;
-            return await settle("lost");
+            return await settle2("lost");
           }
         } else if (!pidAlive(shim.pid)) {
           const late = readJsonFile(shimPath(dirs.checkDir, "exit"));
           if (late) continue;
-          return await settle(cancelSentAt !== null ? "cancelled" : "lost");
+          return await settle2(cancelSentAt !== null ? "cancelled" : "lost");
         }
       }
       await sleepOrAbort(ctx, poll);
@@ -40842,6 +41086,10 @@ function dearestPricing(all) {
   const top = (k) => Math.max(...priced.map((p) => p[k]));
   return { input: top("input"), output: top("output"), cache_write_5m: top("cache_write_5m"), cache_write_1h: top("cache_write_1h"), cache_read: top("cache_read") };
 }
+function chargeBasis(cost, tokenEstimate) {
+  if (typeof cost.costUsd === "number" && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) return cost.costSource === "estimated" ? "estimated" : "reported";
+  return tokenEstimate && isAmount(tokenEstimate.costUsd) ? "estimated" : "ceiling";
+}
 function extensionDecisionRecord(d) {
   const granted = d.decision !== "deny_extension";
   return {
@@ -40849,6 +41097,138 @@ function extensionDecisionRecord(d) {
     summary: granted ? `${d.counter} allowance ${d.previous_allowance} -> ${d.new_allowance}` : `${d.counter} extension denied at ${d.previous_allowance}`,
     data: d
   };
+}
+function spendBreakdown(db, runId) {
+  const counter = db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  const charged = counter ? roundUsd2(counter.used) : null;
+  const state = db.get("SELECT state FROM runs WHERE id = ?", runId)?.state ?? null;
+  const legacy = !marksCharges(db, runId);
+  const marks = legacy ? /* @__PURE__ */ new Map() : chargeMarks(db, runId);
+  let precharged = 0;
+  for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.precharged'", runId)) precharged += amountOf(parseData(e.data_json).charged_usd);
+  const sum = { reported: 0, reportedN: 0, estimated: 0, estimatedN: 0, ceiling: 0, ceilingN: 0, unpriced: 0 };
+  const unmeasured = [];
+  for (const u of db.all("SELECT u.id, u.worker_id, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id", runId)) {
+    const mark = marks.get(u.id);
+    const own = u.cost_usd === null ? null : chargeBasis({ costUsd: u.cost_usd, costSource: u.cost_source });
+    const basis = mark ? mark.basis ?? own ?? "ceiling" : own;
+    const usd4 = mark?.usd ?? u.cost_usd ?? 0;
+    if (basis === null) {
+      sum.unpriced++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: null });
+    } else if (basis === "ceiling") {
+      sum.ceiling += usd4;
+      sum.ceilingN++;
+      unmeasured.push({ usage_id: u.id, worker_id: u.worker_id, role: u.role, charged_usd: roundUsd2(usd4) });
+    } else if (basis === "estimated") {
+      sum.estimated += usd4;
+      sum.estimatedN++;
+    } else {
+      sum.reported += usd4;
+      sum.reportedN++;
+    }
+  }
+  const parts = roundUsd2(sum.reported + sum.estimated + sum.ceiling);
+  const reconciled = !legacy || charged === null;
+  const s = {
+    accounting: legacy ? "legacy" : "current",
+    charged_usd: charged,
+    reported_usd: roundUsd2(sum.reported),
+    reported_sessions: sum.reportedN,
+    estimated_usd: roundUsd2(sum.estimated),
+    estimated_sessions: sum.estimatedN,
+    ceiling_usd: roundUsd2(sum.ceiling),
+    ceiling_sessions: sum.ceilingN,
+    unpriced_sessions: sum.unpriced,
+    unmeasured_sessions: unmeasured,
+    precharged_usd: roundUsd2(precharged),
+    unmatched_usd: reconciled ? charged === null ? 0 : roundUsd2(Math.max(0, charged - parts)) : null,
+    uncharged_usd: reconciled ? roundUsd2(Math.max(0, parts - (charged ?? 0))) : null,
+    uncharged_reason: charged === null ? withoutBudget(state) : null,
+    ...legacy ? { legacy_charges: legacyCharges(db, runId) } : {}
+  };
+  return { ...s, explanation: explainSpend(s, state) };
+}
+function chargeMarks(db, runId) {
+  const marks = /* @__PURE__ */ new Map();
+  for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", runId, USAGE_CHARGED_EVENT)) {
+    const d = parseData(e.data_json);
+    const ids = Array.isArray(d.usage_ids) ? d.usage_ids.filter((id) => typeof id === "number") : [];
+    const basis = d.basis === "reported" || d.basis === "estimated" || d.basis === "ceiling" ? d.basis : null;
+    for (const id of ids) marks.set(id, { usd: ids.length === 1 && typeof d.charged_usd === "number" && Number.isFinite(d.charged_usd) ? d.charged_usd : null, basis });
+  }
+  return marks;
+}
+function legacyCharges(db, runId) {
+  const out = { ceiling_usd: 0, ceiling_charges: 0, token_estimated_usd: 0, token_estimated_charges: 0 };
+  for (const e of db.all("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged') ORDER BY id", runId)) {
+    const d = parseData(e.data_json);
+    if (e.type === "budget.cost-ceiling-charged") {
+      out.ceiling_usd += amountOf(d.ceiling_usd);
+      out.ceiling_charges++;
+    } else {
+      out.token_estimated_usd += amountOf(d.charged_usd);
+      out.token_estimated_charges++;
+    }
+  }
+  return { ...out, ceiling_usd: roundUsd2(out.ceiling_usd), token_estimated_usd: roundUsd2(out.token_estimated_usd) };
+}
+function parseData(json3) {
+  if (!json3) return {};
+  try {
+    const d = JSON.parse(json3);
+    return d !== null && typeof d === "object" ? d : {};
+  } catch {
+    return {};
+  }
+}
+function withoutBudget(state) {
+  if (state === "BLOCKED") return "the run blocked before PLANNING created the budget";
+  if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `the run ended ${state} before PLANNING created the budget`;
+  return "PLANNING has not created the budget yet";
+}
+function explainSpend(s, state) {
+  const sessions = (n2) => `${n2} ${n2 === 1 ? "session" : "sessions"}`;
+  const named2 = (list3) => {
+    const labels2 = list3.slice(0, NAMED_SESSIONS).map((u) => `${u.role ?? "session"} ${u.worker_id ?? `of usage record ${u.usage_id}`}`);
+    return list3.length === 0 ? "" : ` (${labels2.join(", ")}${list3.length > NAMED_SESSIONS ? ` and ${list3.length - NAMED_SESSIONS} more` : ""})`;
+  };
+  const atCeiling = s.unmeasured_sessions.filter((u) => u.charged_usd !== null);
+  const unpricedList = s.unmeasured_sessions.filter((u) => u.charged_usd === null);
+  const reported = s.reported_sessions > 0 ? [`$${usd(s.reported_usd)} reported by providers (${sessions(s.reported_sessions)})`] : [];
+  const estimated = s.estimated_sessions > 0 ? [`$${usd(s.estimated_usd)} estimated from tokens for ${sessions(s.estimated_sessions)} that reported no cost`] : [];
+  const parts = [...reported, ...estimated, ...s.ceiling_sessions > 0 ? [`$${usd(s.ceiling_usd)} at conservative ceilings for ${sessions(s.ceiling_sessions)} that reported no cost and could not be priced${named2(atCeiling)}`] : []];
+  const unpriced = s.unpriced_sessions > 0 ? `${sessions(s.unpriced_sessions)} with no reported cost${named2(unpricedList)}` : null;
+  const legacy = s.accounting === "legacy" ? `; ${LEGACY_ACCOUNTING}` : "";
+  if (s.charged_usd === null) {
+    const spent = [...parts, ...unpriced ? [unpriced] : []].join(" and ");
+    if (spent.length === 0) return `no usage recorded yet${legacy}`;
+    if (state === "BLOCKED") return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend is measured and not charged; PLANNING charges it if the run is resumed: ${spent}${legacy}`;
+    if (state !== null && isRunState(state) && TERMINAL_STATES.has(state)) return `nothing charged to the cost budget: ${s.uncharged_reason}, so this spend was measured and never charged: ${spent}${legacy}`;
+    return `nothing charged to the cost budget yet: PLANNING creates it and then charges what was spent before; spent so far: ${spent}${legacy}`;
+  }
+  const precharged = s.precharged_usd >= SPEND_CENT ? [`$${usd(s.precharged_usd)} of it was spent before PLANNING and charged when the budget was created`] : [];
+  const head = `$${usd(s.charged_usd)} charged to the cost budget (the figure the cost cap is checked against)`;
+  if (s.legacy_charges) {
+    const c = s.legacy_charges;
+    const records = [...reported, ...estimated, ...unpriced ? [unpriced] : []];
+    const standIns = [
+      ...c.ceiling_charges > 0 ? [`$${usd(c.ceiling_usd)} at conservative ceilings (${c.ceiling_charges} ${c.ceiling_charges === 1 ? "charge" : "charges"})`] : [],
+      ...c.token_estimated_charges > 0 ? [`$${usd(c.token_estimated_usd)} estimated from tokens (${c.token_estimated_charges} ${c.token_estimated_charges === 1 ? "charge" : "charges"})`] : []
+    ];
+    const notes2 = [`recorded usage: ${records.length > 0 ? records.join(", ") : "none"}`, ...standIns.length > 0 ? [`charged for sessions that reported no cost: ${standIns.join(", ")}`] : [], ...precharged, LEGACY_ACCOUNTING];
+    return `${head}; ${notes2.join("; ")}`;
+  }
+  if ((s.unmatched_usd ?? 0) >= SPEND_CENT) parts.push(`$${usd(s.unmatched_usd ?? 0)} charged with no matching usage record`);
+  const notes = [];
+  if (parts.length === 0 && unpriced === null) notes.push("no usage recorded yet");
+  notes.push(...precharged);
+  if ((s.uncharged_usd ?? 0) >= SPEND_CENT) notes.push(`$${usd(s.uncharged_usd ?? 0)} of the recorded spend was never charged to the budget`);
+  if (unpriced) notes.push(`${unpriced} ${s.unpriced_sessions === 1 ? "was" : "were"} never charged`);
+  return `${head}${parts.length > 0 ? `: ${parts.join(" + ")}` : ""}${notes.map((n2) => `; ${n2}`).join("")}`;
+}
+function amountOf(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 function capsFrom(policy) {
   const hl = policy.scheduler?.hard_limits;
@@ -40976,11 +41356,13 @@ function usd(v) {
 function mins(ms) {
   return `${Math.round(ms / 6e4 * 10) / 10} min`;
 }
-var ROLE_COST_CEILING_USD, MAX_CEILING_FRACTION_OF_CAP, MIN_SESSION_CEILING_USD, ROLE_WALL_CEILING_MS, RESERVE_SHARES, EXPERIMENTS_PER_ATTEMPT, PROGRESS_KINDS, EPS, BudgetLedger;
+var ROLE_COST_CEILING_USD, MAX_CEILING_FRACTION_OF_CAP, MIN_SESSION_CEILING_USD, ROLE_WALL_CEILING_MS, RESERVE_SHARES, EXPERIMENTS_PER_ATTEMPT, PROGRESS_KINDS, EPS, NUM_TURNS_COUNTER, SESSION_RECOUNT_EVENT, BudgetLedger, USAGE_CHARGED_EVENT, SPEND_CENT, NAMED_SESSIONS, LEGACY_ACCOUNTING;
 var init_budget = __esm({
   "src/scheduling/budget.ts"() {
     "use strict";
     init_errors();
+    init_run_states();
+    init_accounting();
     init_types5();
     ROLE_COST_CEILING_USD = {
       planner: 2,
@@ -41006,6 +41388,8 @@ var init_budget = __esm({
     EXPERIMENTS_PER_ATTEMPT = 2;
     PROGRESS_KINDS = ["newly_supported_criteria", "fixed_checks", "eliminated_hypotheses", "localized_fault", "resolved_ambiguity"];
     EPS = 1e-9;
+    NUM_TURNS_COUNTER = "num_turns";
+    SESSION_RECOUNT_EVENT = "budget.session-turns-recounted";
     BudgetLedger = class {
       db;
       clock;
@@ -41067,17 +41451,74 @@ var init_budget = __esm({
       maxTurnsPerSession() {
         return this.state(SESSION_COUNTER).hard_cap;
       }
-      /** Record a provider's cumulative session count, idempotently. The CLI enforces the cap; observed overshoot is retained. */
-      recordSessionTurns(sessionId, turns) {
+      /**
+       * Record a session's turns, idempotently: the model requests it made, which is what the CLI's --max-turns counts.
+       * The CLI enforces the cap; a session the cap stopped (`endedByCap`), or one recorded past it, leaves one
+       * budget.exhausted event, so a count over the cap is never silent. Observed overshoot is retained.
+       *
+       * `recount`: the count comes from the transcript of a session recorded before 0.3.1, which recorded its num_turns as
+       * its turns. The count replaces that record (and the run's maximum is taken again), once marked as
+       * budget.session-turns-recounted, so a later rebuild without the transcript keeps it.
+       */
+      recordSessionTurns(sessionId, turns, opts = {}) {
         if (!sessionId || !Number.isSafeInteger(turns) || turns < 0) throw new OrbitError("SCHEMA_INVALID", "session turns need a session id and a non-negative integer count");
         const { runId } = this.bound();
         const key2 = `${SESSION_COUNTER}:${sessionId}`;
+        const now = this.clock.now();
         return this.db.tx(() => {
           const base = this.row(runId, SESSION_COUNTER);
-          this.db.run("INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)", runId, key2, turns, base.hard_cap, base.hard_cap);
-          this.db.run("UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?", turns, runId, SESSION_COUNTER);
-          return toState(this.row(runId, key2));
+          if (opts.recount) {
+            const before = this.db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?", runId, key2)?.used ?? null;
+            this.db.run("INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = excluded.used", runId, key2, turns, base.hard_cap, base.hard_cap);
+            this.db.run("DELETE FROM budget_counters WHERE run_id = ? AND counter = ?", runId, `${NUM_TURNS_COUNTER}:${sessionId}`);
+            if (!this.recounted(runId, sessionId)) this.event(runId, SESSION_RECOUNT_EVENT, { session: sessionId, model_requests: turns, recorded_before: before }, now);
+            this.retakeSessionMaximum(runId);
+          } else {
+            this.db.run("INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)", runId, key2, turns, base.hard_cap, base.hard_cap);
+            this.db.run("UPDATE budget_counters SET used = MAX(used, ?) WHERE run_id = ? AND counter = ?", turns, runId, SESSION_COUNTER);
+          }
+          const row = this.row(runId, key2);
+          const endedByCap = opts.endedByCap === true;
+          if ((endedByCap || row.used > row.hard_cap + EPS) && !this.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.exhausted' AND json_extract(data_json, '$.session') = ? LIMIT 1", runId, sessionId)) {
+            this.event(runId, "budget.exhausted", { counter: SESSION_COUNTER, session: sessionId, used: row.used, allowance: row.allowance, hard_cap: row.hard_cap, limit: "hard_cap", ended_by_cap: endedByCap }, now);
+          }
+          return toState(row);
         });
+      }
+      /**
+       * Keep the num_turns of a session recorded before 0.3.1 whose transcript is gone, so its model requests cannot be
+       * counted. num_turns counts the prompt and every tool result, not what --max-turns limits, so it is kept apart (as
+       * `num_turns:<session>`), never compared with the cap and never the run's maximum, and leaves no event. What 0.3.0
+       * recorded as this session's turns was that num_turns, so it moves there. A session already counted from its
+       * transcript keeps that count. Returns the kept record, or null when the session's requests were counted.
+       */
+      recordSessionNumTurns(sessionId, numTurns) {
+        if (!sessionId || !Number.isSafeInteger(numTurns) || numTurns < 0) throw new OrbitError("SCHEMA_INVALID", "session turns need a session id and a non-negative integer count");
+        const { runId } = this.bound();
+        const label = `${NUM_TURNS_COUNTER}:${sessionId}`;
+        return this.db.tx(() => {
+          if (this.recounted(runId, sessionId)) return null;
+          const base = this.row(runId, SESSION_COUNTER);
+          const moved = this.db.run("DELETE FROM budget_counters WHERE run_id = ? AND counter = ?", runId, `${SESSION_COUNTER}:${sessionId}`).changes > 0;
+          this.db.run("INSERT INTO budget_counters (run_id, counter, used, allowance, hard_cap) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, counter) DO UPDATE SET used = MAX(used, excluded.used)", runId, label, numTurns, base.hard_cap, base.hard_cap);
+          if (moved) this.retakeSessionMaximum(runId);
+          return toState(this.row(runId, label));
+        });
+      }
+      recounted(runId, sessionId) {
+        return this.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.session') = ? LIMIT 1", runId, SESSION_RECOUNT_EVENT, sessionId) !== void 0;
+      }
+      /** The run's figure for worker_turns_per_session: the most model requests any one session made. */
+      retakeSessionMaximum(runId) {
+        const prefix = `${SESSION_COUNTER}:`;
+        this.db.run(
+          "UPDATE budget_counters SET used = COALESCE((SELECT MAX(used) FROM budget_counters WHERE run_id = ? AND substr(counter, 1, ?) = ?), 0) WHERE run_id = ? AND counter = ?",
+          runId,
+          prefix.length,
+          prefix,
+          runId,
+          SESSION_COUNTER
+        );
       }
       consume(counter, amount, opts = {}) {
         assertCounter(counter);
@@ -41104,13 +41545,14 @@ var init_budget = __esm({
         }
         if (typeof cost.costUsd === "number" && Number.isFinite(cost.costUsd) && cost.costUsd >= 0) {
           const r2 = this.consumeMeasured("cost_usd", cost.costUsd, phase);
-          return { charged: cost.costUsd, basis: cost.costSource === "estimated" ? "estimated" : "reported", state: r2.state };
+          return { charged: cost.costUsd, basis: chargeBasis(cost), state: r2.state };
         }
+        const worker = opts.workerId ? { worker_id: opts.workerId } : {};
         const est = opts.tokenEstimate;
         if (est && isAmount(est.costUsd)) {
           const r2 = this.consumeMeasured("cost_usd", est.costUsd, phase, {
             type: "budget.cost-token-estimated",
-            data: { role, charged_usd: est.costUsd, basis: est.basis, model: est.model }
+            data: { role, charged_usd: est.costUsd, basis: est.basis, model: est.model, ...worker }
           });
           return { charged: est.costUsd, basis: "estimated", state: r2.state };
         }
@@ -41118,7 +41560,7 @@ var init_budget = __esm({
         const ceiling = sessionCap ?? this.costCeiling(role);
         const r = this.consumeMeasured("cost_usd", ceiling, phase, {
           type: "budget.cost-ceiling-charged",
-          data: { role, ceiling_usd: ceiling, ceiling_basis: sessionCap !== null ? "session-cap" : "role-ceiling" }
+          data: { role, ceiling_usd: ceiling, ceiling_basis: sessionCap !== null ? "session-cap" : "role-ceiling", ...worker }
         });
         return { charged: ceiling, basis: "ceiling", state: r.state };
       }
@@ -41139,10 +41581,12 @@ var init_budget = __esm({
         const { runId } = this.bound();
         const rows = this.db.all("SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter", runId);
         const order = new Map(BUDGET_COUNTERS.map((c, i) => [c, i]));
+        const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
         return {
           run_id: runId,
           counters: rows.filter((r) => order.has(r.counter)).sort((a, b) => order.get(a.counter) - order.get(b.counter)).map(toState),
           sessions: rows.filter((r) => r.counter.startsWith(`${SESSION_COUNTER}:`)).map(toState),
+          ...numTurns.length > 0 ? { num_turns_sessions: numTurns } : {},
           reserve: this.reserve(),
           cost_measurement: this.costMeasurement()
         };
@@ -41448,6 +41892,10 @@ var init_budget = __esm({
         this.db.run("INSERT INTO events (run_id, ts, type, from_state, to_state, actor, data_json) VALUES (?, ?, ?, NULL, NULL, ?, ?)", runId, ts, type, "budget", JSON.stringify(data));
       }
     };
+    USAGE_CHARGED_EVENT = "budget.usage-charged";
+    SPEND_CENT = 5e-3;
+    NAMED_SESSIONS = 5;
+    LEGACY_ACCOUNTING = "this run was started before Orbit 0.3.1 and is accounted under the rules of the version that started it, which did not record the session each charge covers, so these figures are as recorded";
   }
 });
 
@@ -42955,7 +43403,11 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   };
   if (stop) return giveUp("cancelled", "CANCELLED");
   if (w.role === "inquisitor") {
-    const row = finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+    const row = db.tx(() => {
+      const done = finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      if (!partial && marksCharges(db, run.id)) recordLostUsage(ctx, run, w, null);
+      return done;
+    });
     rep.state = row.state;
     rep.detail = `${lostDetail}; the inquisition step starts its own worker when it resumes`;
     return;
@@ -42985,9 +43437,10 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   try {
     db.tx(() => {
       finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      const usageId = marksCharges(db, run.id) ? recordLostUsage(ctx, run, w, partial) : null;
       spendRecoveryAttempt(db, run.id, clock, { ledgerFor: ctx.opts.ledgerFor, fallbackMax: ctx.opts.fallbackRecoveries, actor: ctx.ownerId, why: `restart of lost worker ${w.id}` });
       const row = planWorkerRestart(db, w.id, clock, ctx.ownerId);
-      appendEvent(db, run.id, "recovery.worker-restart", ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd }, clock.now());
+      appendEvent(db, run.id, WORKER_RESTART_EVENT, ctx.ownerId, { worker_id: w.id, restart_count: row.restartCount, cwd_preserved: w.cwd, ...usageId === null ? {} : { usage_id: usageId } }, clock.now());
     });
     rep.restartPlanned = true;
     rep.state = "PLANNED";
@@ -43000,6 +43453,9 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
     if (isOrbitError(err, "CANCELLED") || isOrbitError(err, "TRANSITION_INVALID")) return giveUp("cancelled", "LOST");
     throw err;
   }
+}
+function recordLostUsage(ctx, run, w, partial) {
+  return recordUsage(ctx.db, { runId: run.id, workerId: w.id, provider: w.provider, model: partial?.usage?.model ?? w.model, usage: partial?.usage ?? null, durationMs: partial?.durationMs ?? null }, ctx.clock).id;
 }
 function exhaust(ctx, run, why) {
   try {
@@ -43037,7 +43493,7 @@ function stillRunning(handle) {
   const after = taskState(handle);
   return after.state === "running" || after.state === "lost" && after.orphans;
 }
-async function stopWorker(ctx, worker, reason) {
+async function stopWorker(ctx, worker, reason, opts = {}) {
   requestWorkerCancel(ctx.db, worker.id, ctx.clock, ctx.ownerId, reason);
   const fromPid = handleFromWorkerDir(worker.provider, worker.workerDir);
   let result2 = null;
@@ -43062,7 +43518,8 @@ async function stopWorker(ctx, worker, reason) {
       throw new OrbitError("TRANSITION_INVALID", `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
     }
   }
-  return finishWorker(ctx.db, worker.id, { state: "CANCELLED", resultStatus: "cancelled", exitCode: result2?.exitCode ?? null, result: result2, error: reason }, ctx.clock, ctx.ownerId);
+  const outcome = { state: "CANCELLED", resultStatus: "cancelled", exitCode: result2?.exitCode ?? null, result: result2, error: reason };
+  return opts.finish ? opts.finish(outcome, result2) : finishWorker(ctx.db, worker.id, outcome, ctx.clock, ctx.ownerId);
 }
 async function stopLaunch(graceMs, workerDir) {
   return (await settleLaunch(graceMs, workerDir)).outcome;
@@ -43208,7 +43665,7 @@ function flagActions(ctx, run) {
   }
   return out;
 }
-var DEFAULT_LEASE_TTL_MS, DEFAULT_GRACE_MS2, DEFAULT_MAX_WORKER_RESTARTS, DEFAULT_START_GRACE_MS, DEFAULT_SCAN_WINDOW_MS, TERMINAL, isRunTerminal;
+var DEFAULT_LEASE_TTL_MS, DEFAULT_GRACE_MS2, DEFAULT_MAX_WORKER_RESTARTS, DEFAULT_START_GRACE_MS, DEFAULT_SCAN_WINDOW_MS, TERMINAL, isRunTerminal, WORKER_RESTART_EVENT;
 var init_reconcile = __esm({
   "src/recovery/reconcile.ts"() {
     "use strict";
@@ -43225,6 +43682,8 @@ var init_reconcile = __esm({
     init_shim();
     init_supervise();
     init_actions();
+    init_usage();
+    init_accounting();
     init_store();
     init_fail_before();
     init_check_shim();
@@ -43241,6 +43700,7 @@ var init_reconcile = __esm({
     DEFAULT_SCAN_WINDOW_MS = 24 * 60 * 60 * 1e3;
     TERMINAL = TERMINAL_STATES;
     isRunTerminal = (state) => TERMINAL.has(state);
+    WORKER_RESTART_EVENT = "recovery.worker-restart";
   }
 });
 
@@ -43993,212 +44453,6 @@ var init_router = __esm({
     HANDOFF_TOKENS = 2e4;
     STATIC_SIGNALS = /* @__PURE__ */ new Set(["coupled-change", "ambiguity", "security-sensitive-interpretation", "visual-complexity"]);
     BASIS_RANK = { configured: 0, evaluation: 1, "provider-default": 2, tier: 3 };
-  }
-});
-
-// src/routing/usage.ts
-function recordUsage(db, input, clock) {
-  const provider = input.provider ?? input.usage?.provider;
-  if (!provider) throw new OrbitError("SCHEMA_INVALID", "recordUsage needs a provider");
-  const model = input.model !== void 0 ? input.model : input.usage?.model ?? null;
-  const u = input.usage;
-  const tokens3 = {
-    inputTokens: count(u?.inputTokens),
-    outputTokens: count(u?.outputTokens),
-    cacheReadTokens: count(u?.cacheReadTokens),
-    cacheWriteTokens: count(u?.cacheWriteTokens)
-  };
-  const notes = [];
-  let costUsd = null;
-  let costSource = "unavailable";
-  const given = count(u?.costUsd);
-  if (given !== null && (u?.costSource === "reported" || u?.costSource === "estimated")) {
-    costUsd = given;
-    costSource = u.costSource;
-  } else {
-    if (u && u.costSource !== "unavailable" && given === null) notes.push(`usage claimed cost source '${u.costSource}' without a cost`);
-    const pricing = input.pricing !== void 0 ? input.pricing : model ? new ModelRegistry(db, clock).get(model)?.pricing ?? null : null;
-    if (!u) {
-      notes.push("provider reported no usage");
-    } else {
-      const est = estimateCost(tokens3, pricing, { inputIncludesCacheRead: inputIncludesCacheRead(provider) });
-      if (est.costUsd !== null) {
-        costUsd = est.costUsd;
-        costSource = "estimated";
-        if (est.missing.length) notes.push(`estimate counts unknown ${est.missing.join(", ")} as zero`);
-        notes.push(...est.assumptions);
-      } else {
-        notes.push(`cost unavailable: no ${est.missing.join(", ")}`);
-      }
-    }
-  }
-  const durationMs = count(input.durationMs);
-  const ts = clock.now();
-  const id = db.tx(
-    () => db.run(
-      `INSERT INTO usage (run_id, worker_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, cost_source, duration_ms, ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      input.runId,
-      input.workerId,
-      provider,
-      model,
-      tokens3.inputTokens,
-      tokens3.outputTokens,
-      tokens3.cacheReadTokens,
-      tokens3.cacheWriteTokens,
-      costUsd,
-      costSource,
-      durationMs,
-      ts
-    ).lastInsertRowid
-  );
-  const budget = count(input.outputBudgetTokens !== void 0 ? input.outputBudgetTokens : u?.outputBudgetTokens);
-  const role = input.role ?? (input.workerId ? db.get("SELECT role FROM workers WHERE id = ?", input.workerId)?.role ?? null : null);
-  const outputTokens = tokens3.outputTokens;
-  let overrun = false;
-  if (budget !== null && budget > 0 && outputTokens !== null && outputTokens > budget) {
-    overrun = true;
-    notes.push(`output ${outputTokens} tokens exceeded the ${budget} token budget${role ? ` for ${role}` : ""}`);
-    appendEvent(db, input.runId, "usage.output-budget-exceeded", "usage", { worker_id: input.workerId, role, provider, model, output_tokens: outputTokens, budget_tokens: budget, over_by: outputTokens - budget }, ts);
-  }
-  const latency = input.timeToFirstEventMs !== void 0 ? input.timeToFirstEventMs : u?.timeToFirstEventMs ?? null;
-  if (model && latency !== null && latency !== void 0) new ModelRegistry(db, clock).recordLatency(model, latency);
-  return { id, provider, model, costUsd, costSource, notes, outputBudgetExceeded: overrun };
-}
-function summarizeUsage(db, runId) {
-  const rows = db.all("SELECT * FROM usage WHERE run_id = ? ORDER BY id", runId);
-  const totals = emptyTotals();
-  const groups = /* @__PURE__ */ new Map();
-  let promptTokens2 = 0;
-  let cachedTokens = 0;
-  const unavailableCost = [];
-  for (const r of rows) {
-    const key2 = `${r.provider}\0${r.model ?? ""}`;
-    let g = groups.get(key2);
-    if (!g) {
-      g = { provider: r.provider, model: r.model, ...emptyTotals(), promptTokens: 0, cachedTokens: 0 };
-      groups.set(key2, g);
-    }
-    const prompt = promptOf(r);
-    for (const t of [totals, g]) addRow(t, r);
-    if (prompt !== null) {
-      promptTokens2 += prompt;
-      cachedTokens += r.cache_read_tokens ?? 0;
-      g.promptTokens += prompt;
-      g.cachedTokens += r.cache_read_tokens ?? 0;
-    }
-    if (r.cost_usd === null || r.cost_source === "unavailable") {
-      unavailableCost.push({ id: r.id, workerId: r.worker_id, provider: r.provider, model: r.model, ts: r.ts });
-    }
-  }
-  totals.cacheHitRatio = ratio(cachedTokens, promptTokens2);
-  const byProviderModel = [...groups.values()].map(({ promptTokens: p, cachedTokens: c, ...rest }) => ({ ...rest, cacheHitRatio: ratio(c, p) }));
-  const costComplete = unavailableCost.length === 0;
-  const note3 = rows.length === 0 ? "no usage recorded" : costComplete ? totals.bySource.estimated > 0 ? `cost includes ${totals.bySource.estimated} estimated record(s) priced from tokens and registry pricing` : "cost reported by providers for every record" : `cost unavailable for ${unavailableCost.length} of ${rows.length} record(s); the total covers measured records only`;
-  return { runId, totals, byProviderModel, unavailableCost, costComplete, note: note3 };
-}
-function emptyTotals() {
-  return {
-    records: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    costUsd: 0,
-    reportedCostUsd: 0,
-    estimatedCostUsd: 0,
-    bySource: { reported: 0, estimated: 0, unavailable: 0 },
-    durationMs: 0,
-    cacheHitRatio: null
-  };
-}
-function addRow(t, r) {
-  t.records += 1;
-  t.inputTokens += r.input_tokens ?? 0;
-  t.outputTokens += r.output_tokens ?? 0;
-  t.cacheReadTokens += r.cache_read_tokens ?? 0;
-  t.cacheWriteTokens += r.cache_write_tokens ?? 0;
-  t.durationMs += r.duration_ms ?? 0;
-  const source = r.cost_usd === null ? "unavailable" : r.cost_source;
-  if (source === "reported" || source === "estimated") {
-    t.bySource[source] += 1;
-    t.costUsd = roundUsd(t.costUsd + r.cost_usd);
-    if (source === "reported") t.reportedCostUsd = roundUsd(t.reportedCostUsd + r.cost_usd);
-    else t.estimatedCostUsd = roundUsd(t.estimatedCostUsd + r.cost_usd);
-  } else {
-    t.bySource.unavailable += 1;
-  }
-}
-function promptOf(r) {
-  if (r.input_tokens === null) return null;
-  const cacheWrite = r.cache_write_tokens ?? 0;
-  if (inputIncludesCacheRead(r.provider)) return r.input_tokens + cacheWrite;
-  return r.input_tokens + (r.cache_read_tokens ?? 0) + cacheWrite;
-}
-function ratio(part, whole2) {
-  return whole2 > 0 ? Math.round(part / whole2 * 1e4) / 1e4 : null;
-}
-function count(v) {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
-}
-function routeStats(db, filter = {}) {
-  const where2 = [];
-  const params = [];
-  if (filter.workKind) {
-    where2.push("work_kind = ?");
-    params.push(filter.workKind);
-  }
-  if (filter.provider) {
-    where2.push("provider = ?");
-    params.push(filter.provider);
-  }
-  if (filter.modelId) {
-    where2.push("model_id = ?");
-    params.push(filter.modelId);
-  }
-  if (filter.sinceMs !== void 0) {
-    where2.push("ts >= ?");
-    params.push(filter.sinceMs);
-  }
-  const rows = db.all(
-    `SELECT work_kind, provider, model_id, COUNT(*) AS samples,
-            SUM(CASE WHEN outcome = 'verified' THEN 1 ELSE 0 END) AS verified,
-            SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
-            SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-            SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
-            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
-       FROM route_outcomes ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""}
-      GROUP BY work_kind, provider, model_id
-      ORDER BY work_kind, provider, model_id`,
-    ...params
-  );
-  return rows.map((r) => {
-    const judged = r.verified + r.failed + r.rejected;
-    return {
-      workKind: r.work_kind,
-      provider: r.provider,
-      modelId: r.model_id,
-      samples: r.samples,
-      verified: r.verified,
-      failed: r.failed,
-      rejected: r.rejected,
-      errors: r.errors,
-      successRate: judged > 0 ? r.verified / judged : null,
-      meanCostUsd: r.mean_cost === null ? null : roundUsd(r.mean_cost),
-      costSamples: r.cost_samples,
-      meanTokens: r.mean_tokens === null ? null : Math.round(r.mean_tokens)
-    };
-  });
-}
-var init_usage = __esm({
-  "src/routing/usage.ts"() {
-    "use strict";
-    init_errors();
-    init_events();
-    init_registry();
-    init_pricing();
-    init_types2();
-    init_pricing();
   }
 });
 
@@ -46276,8 +46530,8 @@ async function ensureWorker(ctx, req) {
 }
 async function observe(ctx, w, req) {
   if (w.cancelRequested) {
-    const stopped = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, "cancellation requested");
-    return { status: "finished", worker: stopped, result: accountFinished(ctx, stopped, req.phase) };
+    const stopped = await stopAndSettle(ctx, w, "cancellation requested", req.phase ?? "work");
+    return { status: "finished", worker: stopped, result: storedResult(stopped) };
   }
   if (w.state === "PLANNED") {
     return spawn4(ctx, w, req);
@@ -46290,8 +46544,8 @@ async function observe(ctx, w, req) {
   }
   const result2 = await adapter.collectResult(handle, { outputSchema: req.outputSchema ?? schemaFor2(w.role) });
   if (!result2) return { status: "running", worker: w };
-  const row = finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId);
-  return { status: "finished", worker: row, result: accountFinished(ctx, row, req.phase, result2) };
+  const row = settleSession(ctx, w, result2, req.phase ?? "work", { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
+  return { status: "finished", worker: row, result: result2 };
 }
 function handleOf(adapter, w) {
   const reattach = adapter.reattach;
@@ -46485,42 +46739,302 @@ function emptyUsage2(provider) {
   return { provider, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: "unavailable" };
 }
 function accountWorker(ctx, w, result2, phase = "work") {
+  settleSession(ctx, w, result2, phase);
+}
+function settleSession(ctx, w, result2, phase, opts = {}) {
+  const out = settle(ctx, w, result2, phase, opts);
+  if (out.refused) throw out.refused;
+  return out.row;
+}
+function finishAndSettle(ctx, w, result2, outcome, phase = "work") {
+  const finish4 = () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId);
+  if (result2 === null && !marksCharges(ctx.db, ctx.run.id)) return finish4();
+  return settleSession(ctx, w, result2 ?? endedWithoutResult(w, outcome), phase, { finish: finish4 });
+}
+async function stopAndSettle(ctx, w, reason, phase = "work") {
+  let refused = null;
+  const marked = marksCharges(ctx.db, ctx.run.id);
+  const row = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason, {
+    finish: (outcome, result2) => {
+      const finish4 = () => finishWorker(ctx.db, w.id, outcome, ctx.clock, ctx.ownerId);
+      if (result2 === null && marked && !everStarted(w)) return finish4();
+      const out = settle(ctx, w, result2 ?? endedWithoutResult(w, outcome), phase, { finish: finish4 });
+      refused = out.refused;
+      return out.row;
+    }
+  });
+  if (refused) throw refused;
+  return row;
+}
+function everStarted(w) {
+  return w.pid !== null || existsSync31(join37(w.workerDir, LAUNCH_FILE));
+}
+function endedSession(w) {
+  return !isWorkerActive(w.state) && (w.pid !== null || hasCollectedResult(w));
+}
+function endedWithoutResult(w, outcome) {
+  return { status: outcome.resultStatus ?? "lost", structured: null, text: null, error: outcome.error ?? null, exitCode: outcome.exitCode ?? null, usage: emptyUsage2(w.provider), durationMs: null };
+}
+function settle(ctx, w, result2, phase, opts = {}) {
+  if (!marksCharges(ctx.db, ctx.run.id)) return settleAsBefore031(ctx, w, result2, phase, opts);
   accountWorkerTurns(ctx, w, result2);
-  if (ctx.db.get("SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1", ctx.run.id, w.id)) return;
+  if (!hasUsage(ctx, w.id)) {
+    try {
+      ingestWorkerDenials({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir, actor: ctx.ownerId }, w);
+    } catch (err) {
+      ctx.log.warn("could not read the worker transcript for policy denials", { worker_id: w.id, error: messageOf3(err) });
+    }
+  }
+  const ledger = opts.charge === false ? null : ctx.ledger;
+  const out = ctx.db.tx(() => {
+    const row = opts.finish ? opts.finish() : w;
+    let fresh = null;
+    if (!hasUsage(ctx, w.id)) {
+      const usage = measuredUsage(ctx, row, result2.status, result2.usage ?? emptyUsage2(w.provider));
+      fresh = { id: recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result2.durationMs }, ctx.clock).id, usage };
+    }
+    let refused = null;
+    let charged = 0;
+    if (ledger) {
+      for (const r of unchargedUsageRows(ctx, " AND u.worker_id = ?", w.id)) {
+        const e = chargeUsageRow(ctx, ledger, r, phase, { status: result2.status, usage: r.id === fresh?.id ? fresh.usage : null, source: r.id === fresh?.id ? "collected" : "recorded" });
+        refused ??= e;
+        charged++;
+      }
+    }
+    return { row, usage: fresh?.usage ?? null, changed: fresh !== null || charged > 0, refused };
+  });
+  markObserved(ctx, w, out.usage?.model ?? null, result2.status);
+  return { row: out.row, changed: out.changed, refused: out.refused };
+}
+function markObserved(ctx, w, observed, status2) {
+  if (!observed || status2 !== "succeeded") return;
+  try {
+    if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, w.provider.startsWith("codex") ? "codex-cli" : "claude-cli", true, `observed in worker ${w.id}`);
+  } catch {
+  }
+}
+function settleAsBefore031(ctx, w, result2, phase, opts) {
+  accountWorkerTurns(ctx, w, result2);
+  const row = opts.finish ? ctx.db.tx(opts.finish) : w;
+  if (opts.charge === false || ctx.db.get("SELECT 1 AS x FROM usage WHERE run_id = ? AND worker_id = ? LIMIT 1", ctx.run.id, w.id)) return { row, changed: false, refused: null };
   try {
     ingestWorkerDenials({ db: ctx.db, clock: ctx.clock, runId: ctx.run.id, runDir: ctx.runDir, actor: ctx.ownerId }, w);
   } catch (err) {
     ctx.log.warn("could not read the worker transcript for policy denials", { worker_id: w.id, error: messageOf3(err) });
   }
-  let usage = result2.usage ?? emptyUsage2(w.provider);
-  if (ZERO_COST_STATUSES.has(result2.status) && usage.costUsd === null && sessionSpentNothing(w, usage)) {
-    usage = { ...usage, costUsd: 0, costSource: "reported" };
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "budget.cost-zero-no-model", ctx.ownerId, { worker_id: w.id, role: w.role, status: result2.status, provider: w.provider }, ctx.clock.now()));
-  }
+  const usage = measuredUsage(ctx, row, result2.status, result2.usage ?? emptyUsage2(w.provider));
   if (ctx.ledger) {
-    const cap = spendCapOf(ctx, w.id);
-    const ceilingUsd = cap === null ? null : result2.status === "lost" ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
     try {
-      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd, tokenEstimate: tokenEstimateFor(ctx, w, usage) });
+      ctx.ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, w.role, { phase, ceilingUsd: sessionCeilingUsd(ctx, w, result2.status), tokenEstimate: tokenEstimateFor(ctx, w, usage) });
     } catch (err) {
-      if (!(result2.status === "auth_failed" && isOrbitError(err, "BUDGET_EXHAUSTED"))) throw err;
-      ctx.log.warn("budget exhausted while charging an auth-failed session; blocking on credentials", { worker_id: w.id });
+      if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+      if (!blocksOnCredentials(ctx, w, result2.status)) return { row, changed: true, refused: err };
     }
   }
   recordUsage(ctx.db, { runId: ctx.run.id, workerId: w.id, provider: w.provider, model: usage.model ?? w.model, usage, durationMs: result2.durationMs }, ctx.clock);
-  const observed = usage.model;
-  if (observed && result2.status === "succeeded") {
-    try {
-      if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, w.provider.startsWith("codex") ? "codex-cli" : "claude-cli", true, `observed in worker ${w.id}`);
-    } catch {
-    }
-  }
+  markObserved(ctx, w, usage.model, result2.status);
+  return { row, changed: true, refused: null };
+}
+function hasUsage(ctx, workerId) {
+  const earlier = lostAttemptUsageIds(ctx.db, ctx.run.id, workerId);
+  return ctx.db.all("SELECT id FROM usage WHERE run_id = ? AND worker_id = ?", ctx.run.id, workerId).some((r) => !earlier.has(r.id));
+}
+function lostAttemptUsageIds(db, runId, workerId) {
+  const rows = db.all(
+    `SELECT json_extract(data_json, '$.usage_id') AS id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.usage_id') IS NOT NULL${workerId === void 0 ? "" : " AND json_extract(data_json, '$.worker_id') = ?"}`,
+    runId,
+    WORKER_RESTART_EVENT,
+    ...workerId === void 0 ? [] : [workerId]
+  );
+  return new Set(rows.map((r) => r.id).filter((id) => typeof id === "number"));
+}
+function measuredUsage(ctx, w, status2, usage) {
+  if (!(ZERO_COST_STATUSES.has(status2) && usage.costUsd === null && sessionSpentNothing(w, usage))) return usage;
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "budget.cost-zero-no-model", ctx.ownerId, { worker_id: w.id, role: w.role, status: status2, provider: w.provider }, ctx.clock.now()));
+  return { ...usage, costUsd: 0, costSource: "reported" };
+}
+function sessionCeilingUsd(ctx, w, status2) {
+  const cap = spendCapOf(ctx, w.id);
+  if (cap === null || !ctx.ledger) return null;
+  return status2 === "lost" ? Math.min(cap.ceilingUsd, ctx.ledger.roleCostCeiling(w.role)) : cap.ceilingUsd;
+}
+function blocksOnCredentials(ctx, w, status2) {
+  if (status2 !== "auth_failed") return false;
+  ctx.log.warn("budget exhausted while charging an auth-failed session; blocking on credentials", { worker_id: w.id });
+  return true;
 }
 function accountWorkerTurns(ctx, w, result2) {
-  const { numTurns: turns, sessionId } = result2;
-  if (ctx.ledger && /^claude(?:$|[-_])/.test(w.provider) && typeof turns === "number" && Number.isSafeInteger(turns) && turns >= 0) {
-    const session = typeof sessionId === "string" && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`;
-    ctx.ledger.recordSessionTurns(`${w.id}:${session}`, turns);
+  const ledger = ctx.ledger;
+  const { numTurns, modelRequests, sessionId } = result2;
+  if (!ledger || !/^claude(?:$|[-_])/.test(w.provider) || numTurns === void 0) return;
+  const session = `${w.id}:${typeof sessionId === "string" && sessionId.length > 0 ? sessionId : `restart-${w.restartCount}`}`;
+  const endedByCap = result2.status === "max_turns";
+  if (isCount2(modelRequests)) {
+    ledger.recordSessionTurns(session, modelRequests, { endedByCap });
+    return;
+  }
+  const counted = transcriptModelRequests(w, sessionId ?? null);
+  if (isCount2(counted)) ledger.recordSessionTurns(session, counted, { endedByCap, recount: true });
+  else if (isCount2(numTurns)) ledger.recordSessionNumTurns(session, numTurns);
+}
+function transcriptModelRequests(w, sessionId) {
+  const [current, ...archived] = workerLogs(w);
+  for (const p of sessionId ? [current, ...archived] : [current]) {
+    if (!existsSync31(p)) continue;
+    const { events } = readLogLines(p);
+    if (sessionId && claudeSessionId(events) !== sessionId) continue;
+    return claudeModelRequests(events);
+  }
+  return null;
+}
+function workerLogs(w) {
+  const logs = [join37(w.workerDir, LOG_FILE)];
+  for (let n2 = 1; existsSync31(join37(w.workerDir, "attempts", String(n2))); n2++) logs.push(join37(w.workerDir, "attempts", String(n2), LOG_FILE));
+  return logs;
+}
+function isCount2(n2) {
+  return typeof n2 === "number" && Number.isSafeInteger(n2) && n2 >= 0;
+}
+function usageRows(ctx, where2 = "", ...params) {
+  return ctx.db.all(
+    `SELECT u.id, u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ?${where2} ORDER BY u.id`,
+    ctx.run.id,
+    ...params
+  );
+}
+function unchargedUsageRows(ctx, where2 = "", ...params) {
+  const charged = chargedUsageIds(ctx);
+  return usageRows(ctx, where2, ...params).filter((r) => !charged.has(r.id));
+}
+function chargedUsageIds(ctx) {
+  return markedUsageIds(ctx.db, ctx.run.id);
+}
+function markedUsageIds(db, runId) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ?", runId, USAGE_CHARGED_EVENT)) {
+    const d = e.data_json ? JSON.parse(e.data_json) : {};
+    for (const id of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id === "number") ids.add(id);
+  }
+  return ids;
+}
+function chargeUsageRows(ctx, ledger, rows, phase, source) {
+  let refused = null;
+  for (const r of rows) {
+    const e = chargeUsageRow(ctx, ledger, r, phase, { source });
+    refused ??= e;
+  }
+  return refused;
+}
+function chargeUsageRow(ctx, ledger, r, phase, opts) {
+  const w = r.worker_id === null ? null : findWorker(ctx.db, r.worker_id);
+  const lostAttempt = r.worker_id !== null && lostAttemptUsageIds(ctx.db, ctx.run.id, r.worker_id).has(r.id);
+  const status2 = lostAttempt ? "lost" : opts.status ?? (w ? storedResult(w).status : null);
+  return ctx.db.tx(() => {
+    let usage = opts.usage ?? { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: r.cost_usd, costSource: r.cost_source };
+    if (!opts.usage && w && status2 !== null) {
+      usage = measuredUsage(ctx, w, status2, usage);
+      if (usage.costUsd !== r.cost_usd) ctx.db.run("UPDATE usage SET cost_usd = ?, cost_source = ? WHERE id = ?", usage.costUsd, usage.costSource, r.id);
+    }
+    let charged = null;
+    let refused = null;
+    const tokenEstimate = tokenEstimateFor(ctx, r, usage);
+    let basis = chargeBasis({ costUsd: usage.costUsd, costSource: usage.costSource }, tokenEstimate);
+    try {
+      const c = ledger.consumeCost({ costUsd: usage.costUsd, costSource: usage.costSource }, r.role ?? "planner", {
+        phase,
+        ceilingUsd: w && status2 !== null ? sessionCeilingUsd(ctx, w, status2) : null,
+        tokenEstimate,
+        workerId: r.worker_id
+      });
+      charged = c.charged;
+      basis = c.basis;
+    } catch (err) {
+      if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+      const requested = err.details?.requested;
+      charged = typeof requested === "number" ? requested : null;
+      refused = w && status2 !== null && blocksOnCredentials(ctx, w, status2) ? null : err;
+    }
+    appendEvent(ctx.db, ctx.run.id, USAGE_CHARGED_EVENT, ctx.ownerId, { worker_id: r.worker_id, role: r.role, usage_ids: [r.id], charged_usd: charged === null ? null : Math.round(charged * 1e6) / 1e6, basis, source: opts.source }, ctx.clock.now());
+    return refused;
+  });
+}
+function chargeRecordedUsage(ctx, w, phase = "work") {
+  if (!marksCharges(ctx.db, ctx.run.id)) return accountWorkerTurns(ctx, w, storedResult(w));
+  if (!hasUsage(ctx, w.id) && !hasCollectedResult(w)) return;
+  settleSession(ctx, w, storedResult(w), phase);
+}
+function recordStoredUsage(ctx, w) {
+  if (!marksCharges(ctx.db, ctx.run.id) || hasUsage(ctx, w.id) || !hasCollectedResult(w)) return;
+  settleSession(ctx, w, storedResult(w), "work", { charge: false });
+}
+function settleRunUsage(ctx, phase = "final") {
+  if (!marksCharges(ctx.db, ctx.run.id)) return false;
+  let changed2 = false;
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
+    if (!hasUsage(ctx, w.id) && !endedSession(w)) continue;
+    try {
+      changed2 = settle(ctx, w, storedResult(w), phase).changed || changed2;
+    } catch (err) {
+      ctx.log.warn("could not record or charge a session's usage", { worker_id: w.id, error: messageOf3(err) });
+    }
+  }
+  try {
+    changed2 = chargeOutstanding(ctx, phase).changed || changed2;
+  } catch (err) {
+    ctx.log.warn("could not charge the run's recorded usage", { error: messageOf3(err) });
+  }
+  return changed2;
+}
+function settleUnsettledSessions(ctx, phase = "work") {
+  if (!ctx.ledger || !hasUnsettledSessions(ctx.db, ctx.run.id)) return;
+  let refused = null;
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) {
+    if (!endedSession(w) || hasUsage(ctx, w.id)) continue;
+    refused ??= settle(ctx, w, storedResult(w), phase).refused;
+  }
+  refused ??= chargeOutstanding(ctx, phase).refused;
+  if (refused) throw refused;
+}
+function chargeOutstanding(ctx, phase) {
+  const ledger = ctx.ledger;
+  if (!ledger) return { changed: false, refused: null };
+  return ctx.db.tx(() => {
+    const rows = unchargedUsageRows(ctx);
+    return { changed: rows.length > 0, refused: rows.length > 0 ? chargeUsageRows(ctx, ledger, rows, phase, "recorded") : null };
+  });
+}
+function hasUnsettledSessions(db, runId) {
+  if (!marksCharges(db, runId)) return false;
+  const unrecorded = db.get(
+    `SELECT 1 AS x FROM workers w
+     WHERE w.run_id = ? AND w.state NOT IN ('PLANNED', 'RUNNING')
+       AND (w.pid IS NOT NULL OR (w.result_json IS NOT NULL AND (CASE WHEN json_valid(w.result_json) THEN json_type(w.result_json, '$.status') END) = 'text'))
+       AND NOT EXISTS (
+         SELECT 1 FROM usage u WHERE u.run_id = w.run_id AND u.worker_id = w.id
+           AND u.id NOT IN (SELECT json_extract(e.data_json, '$.usage_id') FROM events e WHERE e.run_id = w.run_id AND e.type = ? AND json_extract(e.data_json, '$.usage_id') IS NOT NULL))
+     LIMIT 1`,
+    runId,
+    WORKER_RESTART_EVENT
+  );
+  if (unrecorded) return true;
+  if (!db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", runId)) return false;
+  const unmarked = db.get(
+    `SELECT 1 AS x FROM usage u WHERE u.run_id = ?
+       AND NOT EXISTS (SELECT 1 FROM events e, json_each(e.data_json, '$.usage_ids') j WHERE e.run_id = u.run_id AND e.type = ? AND j.value = u.id)
+     LIMIT 1`,
+    runId,
+    USAGE_CHARGED_EVENT
+  );
+  return unmarked !== void 0;
+}
+function hasCollectedResult(w) {
+  if (isWorkerActive(w.state) || w.resultJson === null) return false;
+  try {
+    const r = JSON.parse(w.resultJson);
+    return r !== null && typeof r === "object" && typeof r.status === "string";
+  } catch {
+    return false;
   }
 }
 function tokenEstimateFor(ctx, w, usage) {
@@ -46538,9 +47052,7 @@ function tokenEstimateFor(ctx, w, usage) {
 }
 function sessionSpentNothing(w, usage) {
   if ((usage.inputTokens ?? 0) > 0 || (usage.outputTokens ?? 0) > 0) return false;
-  const logs = [join37(w.workerDir, LOG_FILE)];
-  for (let n2 = 1; existsSync31(join37(w.workerDir, "attempts", String(n2))); n2++) logs.push(join37(w.workerDir, "attempts", String(n2), LOG_FILE));
-  const present = logs.filter((p) => existsSync31(p));
+  const present = workerLogs(w).filter((p) => existsSync31(p));
   if (present.length === 0) return typeof readExitRecord(w.workerDir)?.firstOutputAt !== "number";
   return present.every((p) => transcriptSpentNothing(readLogLines(p).events));
 }
@@ -46622,9 +47134,15 @@ function dollars(v) {
 }
 async function stopActiveWorkers(ctx, reason) {
   const failed = [];
+  const settles2 = marksCharges(ctx.db, ctx.run.id);
   for (const w of listActiveWorkers(ctx.db, ctx.run.id)) {
     try {
-      await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason);
+      if (!settles2) await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, reason);
+      else {
+        await stopAndSettle(ctx, w, reason, "final").catch((err) => {
+          if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+        });
+      }
     } catch (err) {
       failed.push(`${w.id}: ${messageOf3(err)}`);
     }
@@ -46683,7 +47201,7 @@ function unvalidatedChoice(ctx, signals) {
 function messageOf3(err) {
   return err instanceof Error ? err.message : String(err);
 }
-async function collectIfFinished(ctx, w) {
+async function collectIfFinished(ctx, w, phase = "work") {
   if (w.state === "PLANNED") {
     if (!existsSync31(join37(w.workerDir, LAUNCH_FILE))) {
       finishWorker(ctx.db, w.id, { state: "CANCELLED", resultStatus: "cancelled", error: "never started before the controller restarted" }, ctx.clock, ctx.ownerId);
@@ -46692,19 +47210,19 @@ async function collectIfFinished(ctx, w) {
     if (!handleOf(adapterFor(ctx, w.provider), w)) return true;
     const h = handleOf(adapterFor(ctx, w.provider), w);
     markWorkerRunning(ctx.db, w.id, { pid: h.pid, pgid: h.pgid, procStart: h.procStart }, ctx.clock, ctx.ownerId);
-    return collectIfFinished(ctx, getWorker(ctx.db, w.id));
+    return collectIfFinished(ctx, getWorker(ctx.db, w.id), phase);
   }
   if (w.state !== "RUNNING") return false;
   const adapter = adapterFor(ctx, w.provider);
   const handle = handleOf(adapter, w);
   if (!handle) {
-    finishWorker(ctx.db, w.id, { state: "LOST", resultStatus: "lost", error: "the worker directory has no pid.json" }, ctx.clock, ctx.ownerId);
+    const outcome = { state: "LOST", resultStatus: "lost", error: "the worker directory has no pid.json" };
+    finishAndSettle(ctx, w, null, outcome, phase);
     return false;
   }
   const result2 = await adapter.collectResult(handle, { outputSchema: schemaFor2(w.role) });
   if (!result2) return true;
-  const row = finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId);
-  accountWorker(ctx, row, result2);
+  settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
   return false;
 }
 var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES;
@@ -46717,6 +47235,7 @@ var init_workers2 = __esm({
     init_events();
     init_decisions();
     init_workers();
+    init_claude_transcript();
     init_supervise();
     init_shim();
     init_prompt();
@@ -46728,6 +47247,7 @@ var init_workers2 = __esm({
     init_registry();
     init_usage();
     init_budget();
+    init_accounting();
     init_pricing();
     init_config();
     init_context2();
@@ -52293,9 +52813,11 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId("wrk");
   const workerDir = join43(opts.workerDir, workerId);
-  db.tx(() => {
+  const maxBudgetUsd = db.tx(() => {
     opts.fence?.();
+    const cap = opts.admit?.(workerPurpose(trigger)) ?? null;
     planWorker(db, { id: workerId, runId: ctx.runId, role: "inquisitor", purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
+    return cap;
   });
   mkdirSync15(workerDir, { recursive: true });
   const spec = {
@@ -52317,7 +52839,8 @@ async function runWorker(adapter, ctx, opts, trigger, prompt, attempt, signal) {
     // The adapters set the guard hook's variables themselves from policyPath, policyHash and cwd, and refuse a
     // task environment that names them: nothing a caller passes may point the guard at another policy.
     policyHash: snapshotHash(ctx.snapshot),
-    env: {}
+    env: {},
+    ...maxBudgetUsd === null ? {} : { maxBudgetUsd }
   };
   const started = clock.now();
   let handle;
@@ -53253,17 +53776,27 @@ function assembleFinalReport(db, run, opts) {
   const outcomeJson = parseJson5(run.outcomeJson);
   let budget = null;
   const usage = summarizeUsage(db, run.id);
+  const spend = spendBreakdown(db, run.id);
   if (opts.snapshot && db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
     try {
       const ledger = new BudgetLedger(db, opts.clock).attach(run.id, opts.snapshot);
       for (const w of listWorkers(db, { runId: run.id })) accountWorkerTurns({ ledger }, w, storedResult(w));
       const snap = ledger.snapshot();
-      budget = { counters: snap.counters, sessions: snap.sessions, cost_measurement: snap.cost_measurement.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+      budget = {
+        counters: snap.counters,
+        sessions: snap.sessions,
+        ...snap.num_turns_sessions ? { num_turns_sessions: snap.num_turns_sessions } : {},
+        cost_measurement: snap.cost_measurement.note,
+        cost_usd: usage.totals.costUsd,
+        cost_complete: usage.costComplete,
+        tokens: tokens(usage.totals),
+        spend
+      };
     } catch {
       budget = null;
     }
   }
-  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals) };
+  if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
   const unverified = [...ev?.report.unverified ?? []];
   for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
   const risks = [];
@@ -53503,8 +54036,10 @@ function renderMarkdown(r) {
   out.push("## Revision, branch and pull request", "", list3([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, ...rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : [], rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
   if (r.budget) {
     const b = r.budget;
-    const counters = b.counters.map((c) => c.counter === "worker_turns_per_session" ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round2(c.used)} maximum reported turns` : "usage unavailable"}; Claude CLI cap ${round2(c.hard_cap)} per session` : `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`);
-    out.push("## Budget consumption", "", list3([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} reported turns`), `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
+    const counters = b.counters.map((c) => c.counter === "worker_turns_per_session" ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round2(c.used)} model requests at most in one session` : "usage unavailable"}; cap ${round2(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)` : `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`);
+    const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`;
+    const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
+    out.push("## Budget consumption", "", list3([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
   }
   out.push("## Not verified", "", list3(r.unverified), "");
   out.push("## Residual risks", "", list3(r.residual_risks), "");
@@ -53533,6 +54068,7 @@ function parseJson5(json3) {
   }
 }
 async function finalizeRun(ctx) {
+  settleRunUsage(ctx);
   try {
     writeFinalReport(ctx.db, ctx.run.id, { runDir: ctx.runDir, clock: ctx.clock, snapshot: ctx.policyVerified ? ctx.snapshot : null });
   } catch (err) {
@@ -53717,13 +54253,11 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
     await new Promise((res) => setTimeout(res, 200));
   }
   if (ctx && row) {
-    const done = finishWorker(ctx.db, row.id, result2 ? outcomeOf2(result2) : { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" }, ctx.clock, ctx.ownerId);
-    if (result2) {
-      try {
-        accountWorker(ctx, done, result2, "final");
-      } catch (err) {
-        ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
-      }
+    const lost = { state: "LOST", resultStatus: "lost", error: "the curator did not stop after it timed out" };
+    try {
+      finishAndSettle(ctx, row, result2, result2 ? outcomeOf2(result2) : lost, "final");
+    } catch (err) {
+      ctx.log.warn("curator cost could not be charged", { error: err instanceof Error ? err.message : String(err) });
     }
   }
   if (!result2 || timedOut) throw new OrbitError("PROVIDER_UNAVAILABLE", "the curator timed out");
@@ -56257,8 +56791,7 @@ async function runToEnd(ctx, req, timeoutMs, signal) {
     const st = await ensureWorker(ctx, req);
     if (st.status === "finished") return st.result;
     if (ctx.clock.now() >= deadline) {
-      const stopped = await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, st.worker, `${req.purpose} exceeded its ${Math.round(timeoutMs / 1e3)} s allowance`);
-      accountWorker(ctx, stopped, storedResult(stopped));
+      await stopAndSettle(ctx, st.worker, `${req.purpose} exceeded its ${Math.round(timeoutMs / 1e3)} s allowance`, req.phase ?? "work");
       return null;
     }
     await new Promise((r) => setTimeout(r, Math.max(50, ctx.timing.checkPollMs)));
@@ -56280,7 +56813,6 @@ var init_exploration = __esm({
     init_explore();
     init_context2();
     init_workers2();
-    init_reconcile();
     init_common();
     SPEC_OUTPUT_SCHEMA = {
       title: "orbit.exploration-spec",
@@ -57398,6 +57930,10 @@ function progress(ctx, kind, detail) {
   markProgress(ctx.db, ctx.run.id, kind, detail, ctx.clock);
   heartbeatController(ctx.db, ctx.ownerId, ctx.clock, { progress: true });
 }
+function budgetPhaseOf(state, resumeState = null) {
+  const stage = (state === "INQUISITION" || state === "RECOVERING") && resumeState !== null ? resumeState : state;
+  return CLOSING_STATES.has(stage) ? "final" : "work";
+}
 function note2(ctx, type, data) {
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, type, ctx.ownerId, data, ctx.clock.now()));
 }
@@ -57628,7 +58164,7 @@ async function handleWorkerFailure(ctx, failed, opts) {
   if (opts.exhausted) return { retry: false, result: await opts.exhausted() };
   return { retry: false, result: await finishRun(ctx, "BLOCKED", `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ""})`) };
 }
-var WAIT, MOVED, DONE, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
+var WAIT, MOVED, DONE, CLOSING_STATES, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
 var init_common = __esm({
   "src/controller/steps/common.ts"() {
     "use strict";
@@ -57656,6 +58192,7 @@ var init_common = __esm({
     WAIT = (why) => ({ progressed: false, waiting: why });
     MOVED = { progressed: true };
     DONE = { progressed: true, done: true };
+    CLOSING_STATES = /* @__PURE__ */ new Set(["REVIEWING", "DELIVERING"]);
     OUTCOME_REASON_MAX = 2e3;
     DOTNET_WORKER_BUILDS = "- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; ";
     DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here`;
@@ -62503,12 +63040,25 @@ async function cancelObsoleteWork(ctx, currentTree) {
   const active = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => (w.role === "reviewer" || w.role === "verifier" || w.role === "explorer") && w.candidateId !== null);
   const units = active.map((w) => ({ id: w.id, role: w.role, writer: false, ownedPaths: [], dependsOn: [], revision: trees.get(w.candidateId) ?? null, cancelWhen: ["revision-changed"], budget: {}, provider: w.provider, status: "running" }));
   const stopped = [];
+  let refused = null;
+  const settles2 = marksCharges(ctx.db, ctx.run.id);
   for (const o of scheduler.obsolete(units, currentTree)) {
     const w = active.find((x) => x.id === o.unit.id);
-    await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+    if (!settles2) {
+      await stopWorker({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, adapters: ctx.deps.adapters, graceMs: ctx.timing.killGraceMs }, w, `obsolete: ${o.reason}`);
+      stopped.push(w.id);
+      continue;
+    }
+    try {
+      await stopAndSettle(ctx, w, `obsolete: ${o.reason}`, w.role === "reviewer" ? "final" : "work");
+    } catch (err) {
+      if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+      refused ??= err;
+    }
     stopped.push(w.id);
   }
   if (stopped.length > 0) note2(ctx, "workers.obsolete-cancelled", { current_tree: currentTree, workers: stopped });
+  if (refused) throw refused;
   return stopped;
 }
 async function resolveAndDecide(ctx, cand) {
@@ -62569,7 +63119,11 @@ async function resolveAndDecide(ctx, cand) {
         subjects: [],
         key: `review:${cand.treeHash}:${inquire.map((x) => x.d.fingerprint).sort().join(",")}`.slice(0, 500)
       };
-      if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
+      if (!handledTriggerKeys(ctx).has(trigger.key)) {
+        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(repairable)}`, { open_findings: openFindings(repairable) });
+        if (spent) return spent;
+        return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
+      }
     }
     return routeToRepair(ctx, cand, repairable, resolution, texts, { held, criteria: waiting.criteria, questions: waiting.questions.map((q) => q.id) });
   }
@@ -62582,7 +63136,14 @@ async function resolveAndDecide(ctx, cand) {
       subjects: [],
       key: claimsTriggerKey(cand, resolution.claimsToTest)
     };
-    if (!handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
+    if (!handledTriggerKeys(ctx).has(trigger.key)) {
+      if (!gate.details.approved) {
+        const claims = resolution.dispositions.filter((d) => resolution.claimsToTest.some((c) => c.findingId === d.findingId));
+        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(claims)}`, { open_findings: openFindings(claims) });
+        if (spent) return spent;
+      }
+      return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
+    }
   }
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
   const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
@@ -62811,6 +63372,11 @@ function stalledReviewRepair(ctx, cand) {
   const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
   return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" };
 }
+async function reviewRoundsSpent(ctx, open2, outcome) {
+  const rounds = ctx.ledger.state("review_rounds");
+  if (rounds.used < rounds.allowance) return null;
+  return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open2}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+}
 function describeFindings(list3) {
   return list3.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join("; ");
 }
@@ -63026,6 +63592,7 @@ var init_reviewing = __esm({
     init_heuristics();
     init_repair();
     init_budget();
+    init_accounting();
     init_diagnosing();
     init_select();
     init_config();
@@ -63039,8 +63606,8 @@ var init_reviewing = __esm({
     init_common();
     init_globs();
     init_scheduler();
-    init_reconcile();
     init_workers();
+    init_reconcile();
     init_workers2();
     init_implementing();
     init_obtain();
@@ -63470,14 +64037,37 @@ async function inquisitionStep(ctx) {
   const resume = ctx.run.resumeState ?? (ctx.candidate ? "VERIFYING" : "PLANNING");
   const trigger = enteringTrigger(ctx) ?? (ctx.candidate ? await pendingTrigger(ctx, ctx.candidate, null) : null);
   if (!trigger || handledTriggerKeys(ctx).has(trigger.key)) return move2(ctx, resume, trigger ? `inquiry ${trigger.key} already settled; resuming ${resume}` : `nothing left to inquire into; resuming ${resume}`);
+  const phase = budgetPhaseOf(resume);
   for (const w of listActiveWorkers(ctx.db, ctx.run.id).filter((x) => x.role === "inquisitor")) {
-    if (await collectIfFinished(ctx, w)) return WAIT(`inquisitor ${w.id} is still running`);
+    if (await collectIfFinished(ctx, w, phase)) return WAIT(`inquisitor ${w.id} is still running`);
+  }
+  const account = () => {
+    for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: "inquisitor" })) chargeRecordedUsage(ctx, w, phase);
+  };
+  account();
+  const rounds = resume === "REVIEWING" ? ctx.ledger?.state("review_rounds") : void 0;
+  const approved = ctx.candidate !== null && listReviews(ctx.db, ctx.run.id, { treeHash: ctx.candidate.treeHash }).some((r) => r.verdict === "APPROVE");
+  if (rounds && rounds.used >= rounds.allowance && !approved) {
+    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2e3), {
+      data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }
+    });
   }
   const route2 = routeFor(ctx, `inquire:${hashObject(trigger.key).slice(7, 19)}`, "routine-code", { difficulty: ctx.run.difficulty ?? "medium", attempt: 1, repeatedFingerprints: 0 });
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf2(ctx.deps);
   const workerDir = join67(ctx.runDir, "workers");
+  const admit = (purpose) => {
+    const ledger = ctx.ledger;
+    if (!ledger) return null;
+    account();
+    const cap = sessionSpendCap(ctx, route2.model, "inquisitor", phase);
+    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError("BUDGET_EXHAUSTED", `inquisitor not started: ${unfundedSessionReason(ctx, route2.model, "inquisitor", phase)}`, { role: "inquisitor", phase });
+    const d = ledger.admit({ role: "inquisitor", phase, estimatedCostUsd: cap.capUsd });
+    if (!d.admitted) throw new OrbitError("BUDGET_EXHAUSTED", `inquisitor not admitted: ${d.reasons.join("; ")}`.slice(0, 2e3), { role: "inquisitor", phase });
+    if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
+    return cap.capUsd;
+  };
   const supported = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id)?.report.acceptance_evidence.filter((a) => a.status === "supported").map((a) => a.criterion_id) ?? [] : [];
   const result2 = await runInquisition({
     trigger,
@@ -63500,13 +64090,13 @@ async function inquisitionStep(ctx) {
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
         pollMs: 250,
-        fence: () => assertLeaseHeld(ctx.db, ctx.run.id, ctx.ownerId, ctx.clock.now())
+        fence: () => assertLeaseHeld(ctx.db, ctx.run.id, ctx.ownerId, ctx.clock.now()),
+        admit
       }
     },
     signal: ctx.signal
-  });
+  }).finally(account);
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
-  for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: "inquisitor" })) accountWorkerTurns(ctx, w, storedResult(w));
   if (patch) atomicWriteJson(join67(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
@@ -63545,6 +64135,7 @@ function enteringTrigger(ctx) {
 var init_inquisition = __esm({
   "src/controller/steps/inquisition.ts"() {
     "use strict";
+    init_errors();
     init_fsx();
     init_hash();
     init_baseline_exception();
@@ -63556,6 +64147,7 @@ var init_inquisition = __esm({
     init_run_store();
     init_workers2();
     init_workers();
+    init_store3();
     init_common();
     init_implementing();
     init_verifying();
@@ -63748,6 +64340,29 @@ function prechargeUsage(ctx) {
   if (!ledger) return;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) accountWorkerTurns(ctx, w, storedResult(w));
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
+  if (!marksCharges(ctx.db, ctx.run.id)) return prechargeAsBefore031(ctx, ledger);
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) recordStoredUsage(ctx, w);
+  const refusal = ctx.db.tx(() => {
+    const rows = unchargedUsageRows(ctx);
+    const before = ledger.state("cost_usd").used;
+    let refused = chargeUsageRows(ctx, ledger, rows, "work", "precharge");
+    const total = ledger.state("cost_usd").used - before;
+    const init = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
+    const recoveries = Number(ctx.db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?", ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
+    if (recoveries > 0) {
+      try {
+        ledger.consume("recovery_attempts", recoveries);
+      } catch (err) {
+        if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+        refused ??= err;
+      }
+    }
+    note2(ctx, "budget.precharged", { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, usage_marked: true, ...recoveries > 0 ? { recovery_attempts: recoveries } : {} });
+    return refused;
+  });
+  if (refusal) throw refusal;
+}
+function prechargeAsBefore031(ctx, ledger) {
   const rows = ctx.db.all(
     "SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id",
     ctx.run.id
@@ -63755,8 +64370,7 @@ function prechargeUsage(ctx) {
   let total = 0;
   for (const r of rows) {
     const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: "unavailable" }) : null;
-    const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, r.role ?? "planner", { tokenEstimate });
-    total += charge.charged;
+    total += ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, r.role ?? "planner", { tokenEstimate }).charged;
   }
   const init = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
   const recoveries = Number(ctx.db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?", ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
@@ -63767,12 +64381,14 @@ var SECURITY_WORDS;
 var init_planning = __esm({
   "src/controller/steps/planning.ts"() {
     "use strict";
+    init_errors();
     init_fsx();
     init_baseline();
     init_baseline_exception();
     init_store4();
     init_difficulty();
     init_budget();
+    init_accounting();
     init_budget2();
     init_workers2();
     init_workers();
@@ -63814,6 +64430,7 @@ async function step(deps, runId, signal) {
   const fn = STEPS[ctx.run.state];
   if (!fn) throw new OrbitError("INTERNAL", `no step for state ${ctx.run.state}`);
   try {
+    settleUnsettledSessions(ctx, budgetPhaseOf(ctx.run.state, ctx.run.resumeState));
     return await fn(ctx);
   } catch (err) {
     if (signal.aborted || isOrbitError(err, "LEASE_LOST")) throw err;
@@ -63863,6 +64480,7 @@ var init_steps = __esm({
     init_run_store();
     init_report2();
     init_common();
+    init_workers2();
     init_awaiting_ci();
     init_contracting();
     init_delivering();
@@ -64519,7 +65137,10 @@ var init_loop = __esm({
       }
       /**
        * A terminal run whose report was lost to a crash after the transition gets it written now, and so does a run in
-       * `rewrite`: reconciliation released its checkouts after its report was written, so that report is stale.
+       * `rewrite`: reconciliation released its checkouts after its report was written, so that report is stale. And every
+       * recently ended run, reported or not, has the sessions nothing settled recorded and charged, with its report written
+       * again when that changed anything: the curator runs after the report is written, and reconciliation collects a
+       * terminal run's workers (a curator a crash cut short, one whose stop failed) without recording their usage.
        */
       ensureFinalReports(rewrite = /* @__PURE__ */ new Set()) {
         const { db, clock } = this.deps;
@@ -64528,13 +65149,24 @@ var init_loop = __esm({
           try {
             const run = getRun(db, row.id);
             const runDir2 = dirname29(run.policyPath);
-            if (existsSync48(join70(runDir2, "final.md")) && !rewrite.has(run.id)) continue;
+            const reported = existsSync48(join70(runDir2, "final.md")) && !rewrite.has(run.id);
+            const unsettled = hasUnsettledSessions(db, run.id);
+            if (reported && !unsettled) continue;
             let snapshot2 = null;
             try {
               snapshot2 = verifySnapshot(run.policyPath, run.policyHash);
             } catch {
               snapshot2 = null;
             }
+            let settled = false;
+            if (snapshot2) {
+              try {
+                settled = settleRunUsage(loadRunContext(this.deps, run.id, new AbortController().signal));
+              } catch (err) {
+                this.log.warn("could not settle the usage of an ended run", { run_id: run.id, error: messageOf5(err) });
+              }
+            }
+            if (reported && !settled) continue;
             writeFinalReport(db, run.id, { runDir: runDir2, clock, snapshot: snapshot2 });
           } catch (err) {
             this.log.warn("final report repair failed", { run_id: row.id, error: messageOf5(err) });
@@ -70514,11 +71146,19 @@ function buildRunStatus(ctx, db, run) {
   if (db.get("SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1", run.id)) {
     try {
       const snap = new BudgetLedger(db, ctx.clock).attach(run.id, verifySnapshot(run.policyPath, run.policyHash)).snapshot();
-      budgets = { counters: snap.counters, sessions: snap.sessions, reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
+      budgets = { counters: snap.counters, sessions: snap.sessions, ...snap.num_turns_sessions ? { num_turns_sessions: snap.num_turns_sessions } : {}, reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
     } catch {
       const rows = db.all("SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter", run.id);
       const toState2 = (r) => ({ counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: Math.max(0, r.allowance - r.used) });
-      budgets = { counters: rows.filter((r) => !r.counter.includes(":")).map(toState2), sessions: rows.filter((r) => r.counter.includes(":")).map(toState2), reserve: null, cost_measurement: null, verified_policy: false };
+      const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState2);
+      budgets = {
+        counters: rows.filter((r) => !r.counter.includes(":")).map(toState2),
+        sessions: rows.filter((r) => r.counter.includes(":") && !r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState2),
+        ...numTurns.length > 0 ? { num_turns_sessions: numTurns } : {},
+        reserve: null,
+        cost_measurement: null,
+        verified_policy: false
+      };
     }
   }
   const workers = listWorkers(db, { runId: run.id });
@@ -70546,6 +71186,7 @@ function buildRunStatus(ctx, db, run) {
     owner: lease ? { owner_id: lease.ownerId, lease_expires_at: lease.expiresAt } : null,
     heartbeat: hb ? { controller_id: hb.record.id, mode: hb.record.mode, heartbeat_at: hb.record.heartbeatAt, age_ms: hb.age, live: hb.live, last_progress_at: hb.record.lastProgressAt } : null,
     budgets,
+    spend: spendBreakdown(db, run.id),
     workers: { active: workers.filter((w) => w.state === "PLANNED" || w.state === "RUNNING").map(workerSummary), counts },
     questions: {
       open: questions.filter((q) => q.status === "open").map((q) => ({ id: q.id, question: q.question, material: q.material, affected: q.affected })),
@@ -70578,7 +71219,10 @@ function renderRunStatus(s, now) {
     for (const c of s.budgets.counters) out.push(`  ${fmtCounter(c)}`);
     if (s.budgets.reserve) out.push(`  final reserve: $${s.budgets.reserve.cost_usd.toFixed(2)} and ${(s.budgets.reserve.wall_ms / 6e4).toFixed(1)}m held back`);
     if (s.budgets.cost_measurement) out.push(`  cost: ${s.budgets.cost_measurement.note}`);
-  } else out.push("budgets:   not initialized yet (the run has not reached planning)");
+  } else if (s.state === "BLOCKED") {
+    out.push("budgets:   none: the run blocked before PLANNING created them; PLANNING creates them if the run is resumed");
+  } else out.push(finished(s.state) ? "budgets:   none: the run ended before PLANNING created them" : "budgets:   not created yet: PLANNING creates them when it completes");
+  if (s.spend) out.push(`  spend: ${s.spend.explanation}`);
   const counts = Object.entries(s.workers.counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ");
   out.push(`workers:   ${s.workers.active.length} active${counts ? ` (all: ${counts})` : ""}`);
   for (const w of s.workers.active) out.push(`  ${w.id}  ${w.role}  ${w.provider}/${w.model ?? "default"}  ${w.state}${w.spawned_at ? `  started ${ago(now, w.spawned_at)}` : ""}`);
@@ -70824,8 +71468,23 @@ function renderEvent(e, data, l) {
       return { category: "recovery", text: `stall detected in ${str6(data.state) ?? "?"}: no activity for ${duration(num5(data.idle_ms) ?? 0)}` };
     case "step.error":
       return { text: `step error in ${str6(data.state) ?? "?"}${str6(data.code) ? ` (${str6(data.code)})` : ""}: ${str6(data.message) ?? "unknown error"}` };
-    case "budget.exhausted":
-      return { text: `budget exhausted: ${str6(data.counter) ?? "?"} ${num5(data.used) ?? "?"} of ${num5(data.allowance) ?? "?"}${str6(data.limit) ? ` (${str6(data.limit)})` : ""}` };
+    case "budget.exhausted": {
+      const session = str6(data.session);
+      const which3 = session === null ? "" : data.ended_by_cap === true ? `; the cap ended session ${session}` : data.ended_by_cap === false ? `; session ${session} went past the cap` : ` in session ${session}`;
+      return { text: `budget exhausted: ${str6(data.counter) ?? "?"} ${num5(data.used) ?? "?"} of ${num5(data.allowance) ?? "?"}${str6(data.limit) ? ` (${str6(data.limit)})` : ""}${which3}` };
+    }
+    case "budget.session-turns-recounted": {
+      const before = num5(data.recorded_before);
+      return { text: `session ${str6(data.session) ?? "?"} made ${num5(data.model_requests) ?? "?"} model requests, counted from its transcript${before === null ? "" : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
+    }
+    case "budget.usage-charged": {
+      if (data.source === "collected" || data.source === "precharge") return null;
+      const c = num5(data.charged_usd);
+      const role = str6(data.role);
+      const who = [role ?? "a session", str6(data.worker_id)].filter((x) => x !== null).join(" ");
+      const by = role === null || role === "inquisitor" ? "the Inquisition recorded" : "was recorded before it was charged";
+      return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${who}, whose usage ${by}` };
+    }
     case "budget.cost-ceiling-charged": {
       const c = num5(data.ceiling_usd);
       return { category: "cost", text: `charged a ceiling of ${c === null ? "?" : usd3(c)} for ${str6(data.role) ?? "a session"}: no cost was reported` };
@@ -70932,61 +71591,19 @@ function costOf(db, runId) {
     "SELECT id, ts, worker_id, provider, model, input_tokens, output_tokens, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id",
     runId
   );
-  let measured = 0;
-  let estimated = 0;
-  let reported = 0;
-  let estimatedRecords = 0;
-  let unavailable = 0;
-  for (const u of usage) {
-    if (u.cost_usd === null) unavailable++;
-    else if (u.cost_source === "estimated") {
-      estimated += u.cost_usd;
-      estimatedRecords++;
-    } else {
-      measured += u.cost_usd;
-      reported++;
-    }
-  }
-  let tokenEstimates = 0;
-  let ceiling = 0;
-  let ceilingCharges = 0;
-  for (const e of db.all("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged')", runId)) {
-    const d = parse5(e.data_json);
-    if (e.type === "budget.cost-token-estimated") {
-      tokenEstimates++;
-      estimated += num5(d.charged_usd) ?? 0;
-    } else {
-      ceiling += num5(d.ceiling_usd) ?? 0;
-      ceilingCharges++;
-    }
-  }
-  const moved = Math.min(tokenEstimates, unavailable);
-  unavailable -= moved;
-  estimatedRecords += moved;
-  const row = db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  const spend = spendBreakdown(db, runId);
   const cost = {
-    measured_usd: round6(measured),
-    estimated_usd: round6(estimated),
-    charged_usd: row ? round6(row.used) : null,
-    reported_records: reported,
-    estimated_records: estimatedRecords,
-    unavailable_records: unavailable,
-    ceiling_charged_usd: round6(ceiling),
-    note: ""
+    measured_usd: spend.reported_usd,
+    estimated_usd: spend.estimated_usd,
+    charged_usd: spend.charged_usd,
+    reported_records: spend.reported_sessions,
+    estimated_records: spend.estimated_sessions,
+    unavailable_records: spend.ceiling_sessions + spend.unpriced_sessions,
+    // A run started before 0.3.1 has its ceiling charges as its budget recorded them, matched to no session.
+    ceiling_charged_usd: spend.legacy_charges?.ceiling_usd ?? spend.ceiling_usd,
+    note: spend.explanation
   };
-  cost.note = costNote(cost, ceilingCharges);
   return { cost, usage };
-}
-function costNote(c, ceilingCharges) {
-  if (c.reported_records + c.estimated_records + c.unavailable_records === 0 && c.charged_usd === null && ceilingCharges === 0) return "no usage recorded yet";
-  const records = [c.reported_records > 0 ? `${c.reported_records} reported` : null, c.estimated_records > 0 ? `${c.estimated_records} estimated from tokens` : null].filter(Boolean).join(", ");
-  const parts = [`measured ${usd3(c.measured_usd)}${records ? ` (${records})` : ""}`];
-  if (c.estimated_usd > 0) parts.push(`estimated ${usd3(c.estimated_usd)}`);
-  parts.push(c.charged_usd === null ? "nothing charged to the cost budget yet" : `charged ${usd3(c.charged_usd)} to the cost budget`);
-  if (c.unavailable_records > 0) {
-    parts.push(c.ceiling_charged_usd > 0 ? `${usd3(c.ceiling_charged_usd)} of that stands in for ${plural(c.unavailable_records, "session")} with no reported cost` : `${plural(c.unavailable_records, "session")} with no reported cost`);
-  }
-  return parts.join("; ");
 }
 function asEntry(at, key2, event, category, kind, text2, eventId, data) {
   return { key: key2, at, time: new Date(at).toISOString(), event, category, kind, text: text2, event_id: eventId, data };
@@ -71064,6 +71681,7 @@ var HOUSEKEEPING, str6, num5, rec, list2, plural, short2, round6, SEVERITY_ORDER
 var init_timeline = __esm({
   "src/observability/timeline.ts"() {
     "use strict";
+    init_budget();
     HOUSEKEEPING = /* @__PURE__ */ new Set(["progress", "lease.acquired", "lease.released", "check.planned", "check.started", "worker.planned", "worker.start-charged"]);
     str6 = (v) => typeof v === "string" && v.length > 0 ? v : null;
     num5 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;

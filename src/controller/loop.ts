@@ -32,7 +32,7 @@ import { checkRunCredentials, credentialCheckDue, providersForRun } from '../rec
 import { reattachCheck, type RunnerContext } from '../evidence/runner.ts';
 import { getCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { loadRunContext } from './context.ts';
-import { stopActiveWorkers } from './workers.ts';
+import { hasUnsettledSessions, settleRunUsage, stopActiveWorkers } from './workers.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { ControllerDeps } from './context.ts';
@@ -615,7 +615,10 @@ export class Controller {
 
   /**
    * A terminal run whose report was lost to a crash after the transition gets it written now, and so does a run in
-   * `rewrite`: reconciliation released its checkouts after its report was written, so that report is stale.
+   * `rewrite`: reconciliation released its checkouts after its report was written, so that report is stale. And every
+   * recently ended run, reported or not, has the sessions nothing settled recorded and charged, with its report written
+   * again when that changed anything: the curator runs after the report is written, and reconciliation collects a
+   * terminal run's workers (a curator a crash cut short, one whose stop failed) without recording their usage.
    */
   private ensureFinalReports(rewrite: ReadonlySet<string> = new Set()): void {
     const { db, clock } = this.deps;
@@ -624,13 +627,26 @@ export class Controller {
       try {
         const run = getRun(db, row.id);
         const runDir = dirname(run.policyPath);
-        if (existsSync(join(runDir, 'final.md')) && !rewrite.has(run.id)) continue;
+        const reported = existsSync(join(runDir, 'final.md')) && !rewrite.has(run.id);
+        const unsettled = hasUnsettledSessions(db, run.id);
+        if (reported && !unsettled) continue;
         let snapshot = null;
         try {
           snapshot = verifySnapshot(run.policyPath, run.policyHash);
         } catch {
           snapshot = null;
         }
+        // A run the watchdog or reconciliation ended: the sessions they stopped and stored are recorded and charged
+        // before the report says what was spent.
+        let settled = false;
+        if (snapshot) {
+          try {
+            settled = settleRunUsage(loadRunContext(this.deps, run.id, new AbortController().signal));
+          } catch (err) {
+            this.log.warn('could not settle the usage of an ended run', { run_id: run.id, error: messageOf(err) });
+          }
+        }
+        if (reported && !settled) continue;
         writeFinalReport(db, run.id, { runDir, clock, snapshot });
       } catch (err) {
         this.log.warn('final report repair failed', { run_id: row.id, error: messageOf(err) });

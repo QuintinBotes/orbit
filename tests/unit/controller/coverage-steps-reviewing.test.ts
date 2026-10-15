@@ -276,6 +276,44 @@ describe('a review that is already recorded', () => {
     expect(state()).toBe('REPAIRING');
   });
 
+  // 0.3.0 retest: the required run's last Inquisition ($0.04) ran after review_rounds 4 of 4, and the run then ended
+  // EXHAUSTED anyway. With no round left nothing the inquiry decides can be reviewed, so no model session starts.
+  it('at the review_rounds hard cap a finding bound for the inquisition ends the run there: no inquisitor starts', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [finding('BILL-1', { severity: 'high', category: 'billing', claim: 'The invoice total rounds a refund in an undecided way; the product decision on partial refunds is not specified', evidence: 'refund amount is ambiguous' })]);
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
+    expect(await run()).toMatchObject({ done: true });
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(high\)/);
+    expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
+  });
+
+  it('at the review_rounds hard cap a claim that needs a discriminating test ends the run too, instead of an inquiry', async () => {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('CLM-1', { severity: 'medium', category: 'correctness', claim: 'calc may overflow for very large operands in some environments', evidence: 'maybe' })]);
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
+    await run();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1/);
+    expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
+  });
+
+  it('at the cap a claim inquiry still runs where its verdict alone can clear the tree: an approving review is there, and refuting the claim needs no further round', async () => {
+    const { cand } = await setup();
+    record(cand, 'APPROVE', []);
+    record(cand, 'BLOCK', [finding('CLM-2', { severity: 'medium', category: 'correctness', claim: 'calc drops the sign of a negative zero', evidence: 'maybe' })], 'claude');
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
+    await run();
+    expect(state()).toBe('INQUISITION');
+    const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId);
+    const trigger = JSON.parse(ev!.data_json).data.trigger;
+    insertLedgerEntry(lab.db, { runId: lab.runId, claim: 'CLM-2 does not hold: calc keeps -0', source: 'inquisition', confidence: 'high', consequence: null, reversibility: 'reversible', experiment: null, status: 'rejected', evidence: [{ kind: 'inspection', ref: 'apps/calc.mjs:2', at: 1 }] }, lab.ctx().clock);
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'inquisition.completed', 'x', ?)", lab.runId, JSON.stringify({ key: trigger.key }));
+    lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    await run();
+    expect(state()).toBe('DELIVERING');
+  });
+
   it('with the policy switch off the material-semantics check is not consulted', async () => {
     const { cand } = await setup({ tweak: (c) => void (c.ambiguity.block_security_or_data_semantics = false) });
     record(cand, 'REPAIR_REQUIRED', [finding('BILL-1', { severity: 'medium', category: 'billing', claim: 'refund rounding is undecided' })]);

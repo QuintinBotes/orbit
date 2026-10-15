@@ -12,7 +12,8 @@ const { inquisitionStep } = await import('../../../src/controller/steps/inquisit
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { briefPath } = await import('../../../src/controller/steps/implementing.ts');
 const { planWorker, markWorkerRunning, getWorker } = await import('../../../src/storage/workers.ts');
-const { addCandidate, addEvidence, makeUnitLab, setContract, validContract, OWNER } = await import('./coverage-helpers.ts');
+const { recordReview } = await import('../../../src/review/store.ts');
+const { addCandidate, addEvidence, initLedger, makeUnitLab, setContract, validContract, OWNER } = await import('./coverage-helpers.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type Trigger = import('../../../src/inquisition/types.ts').Trigger;
 
@@ -212,6 +213,38 @@ describe('inquisitionStep', () => {
     hooks.runInquisition.mockResolvedValue(result());
     await inquisitionStep(lab.ctx());
     expect(getWorker(lab.db, w.id).state).toBe('LOST');
+    expect(hooks.runInquisition).toHaveBeenCalledTimes(1);
+  });
+
+  it('an inquiry that would return to REVIEWING after the last review round starts no inquisitor: the run ends EXHAUSTED', async () => {
+    setup({ candidate: true, from: 'VERIFYING' });
+    initLedger(lab);
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'review_rounds'", lab.runId);
+    lab.db.run("UPDATE runs SET resume_state = 'REVIEWING' WHERE id = ?", lab.runId);
+    expect(await inquisitionStep(lab.ctx())).toMatchObject({ done: true });
+    expect(hooks.runInquisition).not.toHaveBeenCalled();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\): the inquiry into k:1 would need another review round/);
+  });
+
+  it('at the cap an inquiry into claims on a tree an approving review cleared still goes ahead: refuting them needs no further round', async () => {
+    const { cand } = setup({ candidate: true, from: 'VERIFYING' });
+    initLedger(lab);
+    recordReview(lab.db, { id: 'rev-ok', runId: lab.runId, candidateId: cand!.id, treeHash: cand!.treeHash, round: 1, provider: 'codex', model: null, workerId: null, verdict: 'APPROVE', packetSha256: null, findings: [] }, lab.clock);
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'review_rounds'", lab.runId);
+    lab.db.run("UPDATE runs SET resume_state = 'REVIEWING' WHERE id = ?", lab.runId);
+    hooks.runInquisition.mockResolvedValue(result());
+    await inquisitionStep(lab.ctx());
+    expect(hooks.runInquisition).toHaveBeenCalledTimes(1);
+    expect(state()).toBe('REVIEWING');
+  });
+
+  it('an inquiry that returns to REVIEWING with a round left goes ahead', async () => {
+    setup({ candidate: true, from: 'VERIFYING' });
+    initLedger(lab);
+    lab.db.run("UPDATE runs SET resume_state = 'REVIEWING' WHERE id = ?", lab.runId);
+    hooks.runInquisition.mockResolvedValue(result());
+    await inquisitionStep(lab.ctx());
     expect(hooks.runInquisition).toHaveBeenCalledTimes(1);
   });
 

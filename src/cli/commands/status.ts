@@ -15,8 +15,8 @@ import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { pruneDeadControllers } from '../../controller/service.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
-import { BudgetLedger } from '../../scheduling/budget.ts';
-import type { CostMeasurement, CounterState, ReserveState } from '../../scheduling/types.ts';
+import { BudgetLedger, NUM_TURNS_COUNTER, spendBreakdown } from '../../scheduling/budget.ts';
+import type { CostMeasurement, CounterState, ReserveState, SpendBreakdown } from '../../scheduling/types.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, findRunByPrefix, initialised, liveLease, resolveRepo, withState, type CliContext } from '../context.ts';
@@ -57,10 +57,14 @@ export interface RunStatus {
   budgets: {
     counters: CounterState[];
     sessions: CounterState[];
+    /** Sessions recorded before 0.3.1 whose transcript is gone, by num_turns (not model requests); absent when none. */
+    num_turns_sessions?: CounterState[];
     reserve: ReserveState | null;
     cost_measurement: CostMeasurement | null;
     verified_policy: boolean;
   } | null;
+  /** What the cost budget charged and what that adds to the reported spend; before the budget exists, the spend not yet charged. */
+  spend?: SpendBreakdown;
   workers: { active: WorkerSummary[]; counts: Record<string, number> };
   questions: { open: { id: string; question: string; material: boolean; affected: string[] }[]; answered: number };
 }
@@ -103,12 +107,20 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
   if (db.get('SELECT 1 AS x FROM budget_counters WHERE run_id = ? LIMIT 1', run.id)) {
     try {
       const snap = new BudgetLedger(db, ctx.clock).attach(run.id, verifySnapshot(run.policyPath, run.policyHash)).snapshot();
-      budgets = { counters: snap.counters, sessions: snap.sessions, reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
+      budgets = { counters: snap.counters, sessions: snap.sessions, ...(snap.num_turns_sessions ? { num_turns_sessions: snap.num_turns_sessions } : {}), reserve: snap.reserve, cost_measurement: snap.cost_measurement, verified_policy: true };
     } catch {
       // The snapshot no longer verifies (or is unreadable): show the stored counters and say they are unverified.
       const rows = db.all<{ counter: string; used: number; allowance: number; hard_cap: number }>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter', run.id);
       const toState = (r: (typeof rows)[number]): CounterState => ({ counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: Math.max(0, r.allowance - r.used) });
-      budgets = { counters: rows.filter((r) => !r.counter.includes(':')).map(toState), sessions: rows.filter((r) => r.counter.includes(':')).map(toState), reserve: null, cost_measurement: null, verified_policy: false };
+      const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
+      budgets = {
+        counters: rows.filter((r) => !r.counter.includes(':')).map(toState),
+        sessions: rows.filter((r) => r.counter.includes(':') && !r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState),
+        ...(numTurns.length > 0 ? { num_turns_sessions: numTurns } : {}),
+        reserve: null,
+        cost_measurement: null,
+        verified_policy: false,
+      };
     }
   }
 
@@ -138,6 +150,7 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
     owner: lease ? { owner_id: lease.ownerId, lease_expires_at: lease.expiresAt } : null,
     heartbeat: hb ? { controller_id: hb.record.id, mode: hb.record.mode, heartbeat_at: hb.record.heartbeatAt, age_ms: hb.age, live: hb.live, last_progress_at: hb.record.lastProgressAt } : null,
     budgets,
+    spend: spendBreakdown(db, run.id),
     workers: { active: workers.filter((w) => w.state === 'PLANNED' || w.state === 'RUNNING').map(workerSummary), counts },
     questions: {
       open: questions.filter((q) => q.status === 'open').map((q) => ({ id: q.id, question: q.question, material: q.material, affected: q.affected })),
@@ -173,7 +186,11 @@ export function renderRunStatus(s: RunStatus, now: number): string {
     for (const c of s.budgets.counters) out.push(`  ${fmtCounter(c)}`);
     if (s.budgets.reserve) out.push(`  final reserve: $${s.budgets.reserve.cost_usd.toFixed(2)} and ${(s.budgets.reserve.wall_ms / 60_000).toFixed(1)}m held back`);
     if (s.budgets.cost_measurement) out.push(`  cost: ${s.budgets.cost_measurement.note}`);
-  } else out.push('budgets:   not initialized yet (the run has not reached planning)');
+  } else if (s.state === 'BLOCKED') {
+    // PLANNING creates the counters when it completes; a run blocked at PLANNING has reached it and still has none.
+    out.push('budgets:   none: the run blocked before PLANNING created them; PLANNING creates them if the run is resumed');
+  } else out.push(finished(s.state) ? 'budgets:   none: the run ended before PLANNING created them' : 'budgets:   not created yet: PLANNING creates them when it completes');
+  if (s.spend) out.push(`  spend: ${s.spend.explanation}`);
   const counts = Object.entries(s.workers.counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ');
   out.push(`workers:   ${s.workers.active.length} active${counts ? ` (all: ${counts})` : ''}`);
   for (const w of s.workers.active) out.push(`  ${w.id}  ${w.role}  ${w.provider}/${w.model ?? 'default'}  ${w.state}${w.spawned_at ? `  started ${ago(now, w.spawned_at)}` : ''}`);

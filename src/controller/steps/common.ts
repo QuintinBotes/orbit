@@ -15,6 +15,7 @@ import { heartbeatController } from '../../storage/controllers.ts';
 import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from '../../recovery/credentials.ts';
 import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
+import type { BudgetPhase } from '../../scheduling/types.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { frozenPolicyForceHelps } from '../resume.ts';
 import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
@@ -56,6 +57,18 @@ export function move(ctx: RunContext, to: RunState, reason: string, opts: MoveOp
 export function progress(ctx: RunContext, kind: string, detail: unknown): void {
   markProgress(ctx.db, ctx.run.id, kind, detail, ctx.clock);
   heartbeatController(ctx.db, ctx.ownerId, ctx.clock, { progress: true });
+}
+
+/** Stages whose workers are admitted and charged in the closing phase, which may spend the reserve. */
+const CLOSING_STATES: ReadonlySet<RunState> = new Set(['REVIEWING', 'DELIVERING']);
+
+/**
+ * The budget phase a stage spends from: the closing phase (which may use the reserve) for review and delivery, ordinary
+ * work otherwise. A stage that interrupted another (an inquiry, a recovery) spends from the one it returns to.
+ */
+export function budgetPhaseOf(state: RunState, resumeState: RunState | null = null): BudgetPhase {
+  const stage = (state === 'INQUISITION' || state === 'RECOVERING') && resumeState !== null ? resumeState : state;
+  return CLOSING_STATES.has(stage) ? 'final' : 'work';
 }
 
 export function note(ctx: RunContext, type: string, data: unknown): void {

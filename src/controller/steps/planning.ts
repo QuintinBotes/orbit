@@ -8,16 +8,18 @@
  * amendment, steps/baseline-amendment.ts).
  */
 import { join } from 'node:path';
+import { isOrbitError, type OrbitError } from '../../core/errors.ts';
 import { readJsonIfExists } from '../../core/fsx.ts';
 import { BASELINE_FILE, type BaselineReport } from '../../evidence/baseline.ts';
 import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { classifyDifficulty } from '../../scheduling/difficulty.ts';
 import { BudgetLedger } from '../../scheduling/budget.ts';
+import { marksCharges } from '../../scheduling/accounting.ts';
 import { RECOVERY_ATTEMPT_EVENT } from '../../recovery/budget.ts';
 import type { Coupling } from '../../scheduling/types.ts';
 import type { RunContext } from '../context.ts';
-import { accountWorkerTurns, routeFor, storedResult, tokenEstimateFor } from '../workers.ts';
+import { accountWorkerTurns, chargeUsageRows, recordStoredUsage, routeFor, storedResult, tokenEstimateFor, unchargedUsageRows } from '../workers.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { assertContract, decide, move, note, safePoint, type StepResult } from './common.ts';
 import { amendBaseline } from './baseline-amendment.ts';
@@ -89,28 +91,61 @@ export async function planningStep(ctx: RunContext): Promise<StepResult> {
 }
 
 /**
- * Charge spend recorded before the ledger existed (the contracting planner, and recovery attempts).
- * Marked by an event so it happens once; a crash between the charge and the
- * mark charges again, overstating spend rather than hiding it.
+ * Charge spend recorded before the ledger existed (the contracting planner, inquisitors, and recovery attempts), once.
+ * A session reconciliation collected meanwhile is recorded from its stored result first. Every charge marks its usage
+ * record (budget.usage-charged), and the charges, their marks, the recovery attempts and budget.precharged commit in
+ * one transaction, so a controller that dies part way leaves nothing charged and the resumed PLANNING charges it all
+ * once. A charge that exhausts the budget is raised after that commit. A run started before 0.3.1 is precharged by
+ * 0.3.0's rules (prechargeAsBefore031).
  */
 function prechargeUsage(ctx: RunContext): void {
   const ledger = ctx.ledger;
   if (!ledger) return;
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) accountWorkerTurns(ctx, w, storedResult(w));
   if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'budget.precharged'", ctx.run.id)) return;
+  if (!marksCharges(ctx.db, ctx.run.id)) return prechargeAsBefore031(ctx, ledger);
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id })) recordStoredUsage(ctx, w);
+  const refusal = ctx.db.tx((): OrbitError | null => {
+    // A record an inquiry's charge pass already charged is not charged twice.
+    const rows = unchargedUsageRows(ctx);
+    const before = ledger.state('cost_usd').used;
+    // A session with tokens but no cost is charged what the tokens would cost, not the planner ceiling.
+    let refused = chargeUsageRows(ctx, ledger, rows, 'work', 'precharge');
+    const total = ledger.state('cost_usd').used - before;
+    // Recovery attempts spent before the counters existed (a resume after a block in CONTRACTING, a crash in PREFLIGHT)
+    // were bounded by counting their events; they are part of the run's recovery budget too, or the report says 0 used.
+    const init = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
+    const recoveries = Number(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?', ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
+    if (recoveries > 0) {
+      try {
+        ledger.consume('recovery_attempts', recoveries);
+      } catch (err) {
+        if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+        refused ??= err;
+      }
+    }
+    // usage_marked: each record charged here carries its own mark, which is what later charge passes read.
+    note(ctx, 'budget.precharged', { usage_rows: rows.length, charged_usd: Math.round(total * 1e6) / 1e6, usage_marked: true, ...(recoveries > 0 ? { recovery_attempts: recoveries } : {}) });
+    return refused;
+  });
+  if (refusal) throw refusal;
+}
+
+/**
+ * 0.3.0's precharge, which a run started before 0.3.1 keeps when a later version resumes its PLANNING: every usage
+ * record charged in order, each charge committed on its own, then the recovery attempts and budget.precharged. Nothing
+ * is marked, nothing is recorded from a stored result, and a precharge 0.3.0 cut short is not reinterpreted.
+ */
+function prechargeAsBefore031(ctx: RunContext, ledger: BudgetLedger): void {
   const rows = ctx.db.all<{ worker_id: string | null; provider: string; model: string | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; cost_usd: number | null; cost_source: string; role: string | null }>(
     'SELECT u.worker_id, u.provider, u.model, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens, u.cost_usd, u.cost_source, w.role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id',
     ctx.run.id,
   );
   let total = 0;
   for (const r of rows) {
-    // A session with tokens but no cost is charged what the tokens would cost, not the planner ceiling.
     const tokenEstimate = r.cost_usd === null ? tokenEstimateFor(ctx, r, { provider: r.provider, model: r.model, inputTokens: r.input_tokens, outputTokens: r.output_tokens, cacheReadTokens: r.cache_read_tokens, cacheWriteTokens: r.cache_write_tokens, costUsd: null, costSource: 'unavailable' }) : null;
-    const charge = ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner', { tokenEstimate });
-    total += charge.charged;
+    total += ledger.consumeCost({ costUsd: r.cost_usd, costSource: r.cost_source }, (r.role as 'planner' | null) ?? 'planner', { tokenEstimate }).charged;
   }
-  // Recovery attempts spent before the counters existed (a resume after a block in CONTRACTING, a crash in PREFLIGHT)
-  // were bounded by counting their events; they are part of the run's recovery budget too, or the report says 0 used.
   const init = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", ctx.run.id);
   const recoveries = Number(ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND id < ?', ctx.run.id, RECOVERY_ATTEMPT_EVENT, init?.id ?? 0)?.n ?? 0);
   if (recoveries > 0) ledger.consume('recovery_attempts', recoveries);

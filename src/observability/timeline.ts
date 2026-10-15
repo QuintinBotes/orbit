@@ -10,6 +10,7 @@
  */
 import type { OrbitDb } from '../storage/db.ts';
 import type { RunRecord } from '../controller/run-store.ts';
+import { spendBreakdown } from '../scheduling/budget.ts';
 
 export type TimelineCategory =
   | 'state'
@@ -340,8 +341,29 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       return { category: 'recovery', text: `stall detected in ${str(data.state) ?? '?'}: no activity for ${duration(num(data.idle_ms) ?? 0)}` };
     case 'step.error':
       return { text: `step error in ${str(data.state) ?? '?'}${str(data.code) ? ` (${str(data.code)})` : ''}: ${str(data.message) ?? 'unknown error'}` };
-    case 'budget.exhausted':
-      return { text: `budget exhausted: ${str(data.counter) ?? '?'} ${num(data.used) ?? '?'} of ${num(data.allowance) ?? '?'}${str(data.limit) ? ` (${str(data.limit)})` : ''}` };
+    case 'budget.exhausted': {
+      // A session's turn cap: whether the cap ended the session or the session went past it.
+      const session = str(data.session);
+      const which = session === null ? '' : data.ended_by_cap === true ? `; the cap ended session ${session}` : data.ended_by_cap === false ? `; session ${session} went past the cap` : ` in session ${session}`;
+      return { text: `budget exhausted: ${str(data.counter) ?? '?'} ${num(data.used) ?? '?'} of ${num(data.allowance) ?? '?'}${str(data.limit) ? ` (${str(data.limit)})` : ''}${which}` };
+    }
+    case 'budget.session-turns-recounted': {
+      // A session recorded before 0.3.1, whose turns were its num_turns until its transcript was counted.
+      const before = num(data.recorded_before);
+      return { text: `session ${str(data.session) ?? '?'} made ${num(data.model_requests) ?? '?'} model requests, counted from its transcript${before === null ? '' : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
+    }
+    case 'budget.usage-charged': {
+      // Every charge marks its usage record. One charged as its session was collected says nothing the session's own
+      // cost line does not, and PLANNING's precharge has its own record; only usage charged after another component
+      // recorded it (the Inquisition, for its inquisitors) gets a line.
+      if (data.source === 'collected' || data.source === 'precharge') return null;
+      const c = num(data.charged_usd);
+      const role = str(data.role);
+      const who = [role ?? 'a session', str(data.worker_id)].filter((x): x is string => x !== null).join(' ');
+      // The Inquisition records its inquisitors' usage; reconciliation records a lost attempt's when it restarts the worker.
+      const by = role === null || role === 'inquisitor' ? 'the Inquisition recorded' : 'was recorded before it was charged';
+      return { category: 'cost', text: `charged ${c === null ? '?' : usd(c)} for ${who}, whose usage ${by}` };
+    }
     case 'budget.cost-ceiling-charged': {
       const c = num(data.ceiling_usd);
       return { category: 'cost', text: `charged a ceiling of ${c === null ? '?' : usd(c)} for ${str(data.role) ?? 'a session'}: no cost was reported` };
@@ -452,63 +474,21 @@ function costOf(db: OrbitDb, runId: string): { cost: TimelineCost; usage: { id: 
     'SELECT id, ts, worker_id, provider, model, input_tokens, output_tokens, cost_usd, cost_source FROM usage WHERE run_id = ? ORDER BY id',
     runId,
   );
-  let measured = 0;
-  let estimated = 0;
-  let reported = 0;
-  let estimatedRecords = 0;
-  let unavailable = 0;
-  for (const u of usage) {
-    if (u.cost_usd === null) unavailable++;
-    else if (u.cost_source === 'estimated') {
-      estimated += u.cost_usd;
-      estimatedRecords++;
-    } else {
-      measured += u.cost_usd;
-      reported++;
-    }
-  }
-  // A session charged from its tokens (no cost in its usage row) is an estimate, not unmeasured.
-  let tokenEstimates = 0;
-  let ceiling = 0;
-  let ceilingCharges = 0;
-  for (const e of db.all<{ type: string; data_json: string | null }>("SELECT type, data_json FROM events WHERE run_id = ? AND type IN ('budget.cost-token-estimated', 'budget.cost-ceiling-charged')", runId)) {
-    const d = parse(e.data_json);
-    if (e.type === 'budget.cost-token-estimated') {
-      tokenEstimates++;
-      estimated += num(d.charged_usd) ?? 0;
-    } else {
-      ceiling += num(d.ceiling_usd) ?? 0;
-      ceilingCharges++;
-    }
-  }
-  const moved = Math.min(tokenEstimates, unavailable);
-  unavailable -= moved;
-  estimatedRecords += moved;
-  const row = db.get<{ used: number }>("SELECT used FROM budget_counters WHERE run_id = ? AND counter = 'cost_usd'", runId);
+  // The footer is the spend explanation the report and status give: which figure is the budget's charge and what it
+  // adds to the reported spend.
+  const spend = spendBreakdown(db, runId);
   const cost: TimelineCost = {
-    measured_usd: round6(measured),
-    estimated_usd: round6(estimated),
-    charged_usd: row ? round6(row.used) : null,
-    reported_records: reported,
-    estimated_records: estimatedRecords,
-    unavailable_records: unavailable,
-    ceiling_charged_usd: round6(ceiling),
-    note: '',
+    measured_usd: spend.reported_usd,
+    estimated_usd: spend.estimated_usd,
+    charged_usd: spend.charged_usd,
+    reported_records: spend.reported_sessions,
+    estimated_records: spend.estimated_sessions,
+    unavailable_records: spend.ceiling_sessions + spend.unpriced_sessions,
+    // A run started before 0.3.1 has its ceiling charges as its budget recorded them, matched to no session.
+    ceiling_charged_usd: spend.legacy_charges?.ceiling_usd ?? spend.ceiling_usd,
+    note: spend.explanation,
   };
-  cost.note = costNote(cost, ceilingCharges);
   return { cost, usage };
-}
-
-function costNote(c: TimelineCost, ceilingCharges: number): string {
-  if (c.reported_records + c.estimated_records + c.unavailable_records === 0 && c.charged_usd === null && ceilingCharges === 0) return 'no usage recorded yet';
-  const records = [c.reported_records > 0 ? `${c.reported_records} reported` : null, c.estimated_records > 0 ? `${c.estimated_records} estimated from tokens` : null].filter(Boolean).join(', ');
-  const parts = [`measured ${usd(c.measured_usd)}${records ? ` (${records})` : ''}`];
-  if (c.estimated_usd > 0) parts.push(`estimated ${usd(c.estimated_usd)}`);
-  parts.push(c.charged_usd === null ? 'nothing charged to the cost budget yet' : `charged ${usd(c.charged_usd)} to the cost budget`);
-  if (c.unavailable_records > 0) {
-    parts.push(c.ceiling_charged_usd > 0 ? `${usd(c.ceiling_charged_usd)} of that stands in for ${plural(c.unavailable_records, 'session')} with no reported cost` : `${plural(c.unavailable_records, 'session')} with no reported cost`);
-  }
-  return parts.join('; ');
 }
 
 function asEntry(at: number, key: string, event: string, category: TimelineCategory, kind: string, text: string, eventId: number | null, data: Rec): TimelineEntry {

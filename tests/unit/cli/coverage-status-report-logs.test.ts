@@ -69,7 +69,7 @@ describe('renderRunStatus', () => {
         'progress:  last progress never',
         'owner:     none (no controller currently owns this run)',
         'heartbeat: no controller is running (start one with "orbit service run" or "orbit resume <run-id> --foreground")',
-        'budgets:   not initialized yet (the run has not reached planning)',
+        'budgets:   not created yet: PLANNING creates them when it completes',
         'workers:   0 active',
         'questions: 0 open, 0 answered',
         '',

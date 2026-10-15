@@ -121,6 +121,12 @@ export interface InquisitorWorkerOptions {
    * the run cannot start an inquisitor beside the new owner's.
    */
   fence?: () => void;
+  /**
+   * Admission: called with the worker's purpose inside the transaction that records its intent, after the fence, so
+   * the caller can refuse the session (by throwing; nothing is recorded or started) or bound it. Returns the spend cap
+   * the session runs under (the provider's own budget flag), or null for none.
+   */
+  admit?: (purpose: string) => number | null;
 }
 
 export interface InquisitionContext {
@@ -354,14 +360,16 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId('wrk');
   const workerDir = join(opts.workerDir, workerId);
-  // The intent is fenced by the lease in the same transaction that records it.
-  db.tx(() => {
+  // The intent is fenced by the lease, and admitted, in the same transaction that records it.
+  const maxBudgetUsd = db.tx(() => {
     opts.fence?.();
+    const cap = opts.admit?.(workerPurpose(trigger)) ?? null;
     planWorker(db, { id: workerId, runId: ctx.runId, role: 'inquisitor', purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
+    return cap;
   });
   mkdirSync(workerDir, { recursive: true });
 
-  const spec: TaskSpec = {
+  const spec: TaskSpec & { maxBudgetUsd?: number } = {
     runId: ctx.runId,
     workerId,
     role: 'inquisitor',
@@ -381,6 +389,7 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
     // task environment that names them: nothing a caller passes may point the guard at another policy.
     policyHash: snapshotHash(ctx.snapshot),
     env: {},
+    ...(maxBudgetUsd === null ? {} : { maxBudgetUsd }),
   };
   const started = clock.now();
   let handle;

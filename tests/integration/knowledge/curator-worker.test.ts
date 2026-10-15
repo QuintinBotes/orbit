@@ -69,9 +69,11 @@ describe.skipIf(!canStripTypes)('the curator is a recorded worker of the finishe
     const curatorCost = cost('SELECT SUM(cost_usd) AS c FROM usage WHERE run_id = ? AND worker_id = ?', runId, curator!.id);
     expect(curatorCost).toBeGreaterThan(0);
     const runDir = join(l.repo, '.orbit', 'runs', runId);
-    const report = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { budget: { cost_usd: number } };
+    const report = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { budget: { cost_usd: number; spend: { charged_usd: number; explanation: string } } };
     expect(report.budget.cost_usd).toBeCloseTo(total, 6);
-    expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toContain(`model cost: $${total.toFixed(4)}`);
+    // The spend line names the budget's charge, the curator's included, as status and the timeline do.
+    expect(report.budget.spend.charged_usd).toBeGreaterThanOrEqual(curatorCost);
+    expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toContain(`- spend: ${report.budget.spend.explanation}`);
     // What `orbit report` prints is that file.
     const io = memoryIo('');
     const code = await main(['report', runId, '--json'], { io, cwd: l.repo, homeDir: l.base, orbitHome: l.orbitHome, env: { ...process.env, ORBIT_HOME: l.orbitHome }, user: 'alice' });
