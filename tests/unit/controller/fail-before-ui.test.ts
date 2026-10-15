@@ -2,7 +2,7 @@
 // starts. A criterion resting on a new journey under a browser check is probed on the base revision with the
 // candidate's test-owned changes, after a control run of the base revision alone, once per run, shows the journeys
 // pass there. The scripted runner tells the control from the probe by the checkout it is given.
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkRunnerFor } from '../../../src/controller/context.ts';
@@ -112,7 +112,7 @@ interface BrowserLab {
   comparison: BaseComparison;
 }
 
-async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds?: number } = {}): Promise<BrowserLab> {
+async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds?: number; installCommand?: string[] } = {}): Promise<BrowserLab> {
   const lab = makeUnitLab({
     tweak: (c) => {
       c.checks.journeys = { ...defaultCheck('journeys'), kind: 'playwright', category: 'ui', command: ['npx', 'playwright', 'test'] };
@@ -120,6 +120,9 @@ async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds
       c.ui = { ...ui, journey_check_ids: ['journeys'], environment: { ...ui.environment, start_command: opts.startCommand === undefined ? ['node', 'server.mjs'] : opts.startCommand } };
       c.verification.fail_before = 'required';
       if (opts.timeoutSeconds !== undefined) c.verification.fail_before_timeout_seconds = opts.timeoutSeconds;
+      // The locked install the probe runs in each checkout, scripted as the command probe's tests script it:
+      // a real dependencies.install_command the runner executes (a marker it leaves, or a failure it exits with).
+      if (opts.installCommand !== undefined) c.dependencies.install_command = opts.installCommand;
     },
   });
   labs.push(lab);
@@ -279,6 +282,63 @@ describe('the fail-before ui probe', () => {
     const evidence = await collect(b, s.runner, cand2);
     expect(s.controls).toHaveLength(1);
     expect(probed(evidence)).toMatchObject({ outcome: 'failed-before' });
+  }, 60_000);
+
+  // The install the command probe gives its probe tree: each ui checkout gets it before its journeys, so a journey
+  // process never fetches its own tooling from a registry the sandbox refuses.
+  it('the control and the probe checkouts are installed before the journeys run', async () => {
+    const install = [process.execPath, '-e', "require('node:fs').writeFileSync('installed.marker', 'installed\\n')"];
+    const b = await browserLab({ installCommand: install });
+    const installed: boolean[] = [];
+    const runner: UiRunner = async (input) => {
+      installed.push(existsSync(join(input.checkoutDir, 'installed.marker')));
+      return uiRun(input, input.checkoutDir.endsWith('fail-before-ui-control') ? {} : { journeyStatus: 'FAILED' });
+    };
+    const evidence = await collect(b, runner);
+    // The control, then the failing probe run and its repeat: every checkout the runner saw was installed first.
+    expect(installed).toEqual([true, true, true]);
+    expect(probed(evidence)).toMatchObject({ outcome: 'failed-before' });
+  }, 60_000);
+
+  it('a failing install stops the ui probe as an install cause, and the journeys never run', async () => {
+    const install = [process.execPath, '-e', "console.error('registry unreachable'); process.exit(3)"];
+    const b = await browserLab({ installCommand: install });
+    const s = scripted({}, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(0);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'install' });
+    expect(check.reason).toMatch(/the locked install \(orbit-install\) ended FAILED for the ui control on the base revision/);
+  }, 60_000);
+
+  it('a control whose output shows a registry refusal is an environment cause, not the journeys failing on the base revision, and is not reused', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright';
+    const b = await browserLab();
+    const s = scripted({ journeyStatus: 'FAILED', error: refused }, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(1);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
+    expect(check.reason).not.toMatch(/the journeys do not pass on the base revision/);
+    // Not cached for a later candidate: its probe runs the control again.
+    writeFileSync(join(b.worktree, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => b * a;\n');
+    const cand2 = await snapshotCandidate({ db: b.lab.db, clock: b.lab.clock, repoRoot: b.lab.repo, worktree: b.worktree, runId: b.lab.runId, baseRev: b.base, attempt: 2, workerId: null });
+    await collect(b, s.runner, cand2);
+    expect(s.controls).toHaveLength(2);
+  }, 60_000);
+
+  it('a probe attempt whose output shows a registry refusal is an environment cause, not a journey failure', async () => {
+    const refused = 'npm error code E403\nnpm error 403 Forbidden - GET https://registry.npmjs.org/playwright';
+    const b = await browserLab();
+    const s = scripted({}, { journeyStatus: 'FAILED', error: refused });
+    const evidence = await collect(b, s.runner);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.outcome).not.toBe('failed-before');
+    expect(check.reason).toMatch(/a dependency could not be fetched or installed/);
   }, 60_000);
 
   it('a command check criterion is probed as before, and the ui runner is never called', async () => {

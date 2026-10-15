@@ -713,6 +713,109 @@ function runRelative(runDir: string, p: string | null): string | null {
   return r === '' || r.startsWith('..') || isAbsolute(r) ? p : r.split(sep).join('/');
 }
 
+/** One probe attempt from its recorded row: its log read for an environment signal, however it ended (scanProbeLog). */
+function probeAttemptFromRow(db: OrbitDb, runDir: string, checkout: string, checkoutDir: string, row: CheckRunRecord, def: CheckDefinition): ProbeAttempt {
+  const base = { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, log: runRelative(runDir, row.logPath) };
+  // Every attempt's log is read for an environment signal, a passing one too (a shell pipeline can hide a failing
+  // command's exit status), however long or cut short it is (scanProbeLog).
+  const scan = scanProbeLog(readProbeLog(row.logPath), {
+    exitCode: row.exitCode,
+    command: def.command,
+    shell: def.shell,
+    insideRoots: [checkout, checkoutDir, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])],
+    startFailure: row.status === 'ERROR' && row.excerpt?.startsWith('could not start the check') ? row.excerpt : null,
+  });
+  if (scan.signals.length > 0) db.run('UPDATE fail_before_probes SET signals_json = ? WHERE id = ?', JSON.stringify(scan.signals), row.id);
+  return { ...base, signals: scan.signals, ...(scan.unscanned === undefined ? {} : { unscanned: scan.unscanned }) };
+}
+
+/**
+ * One probe attempt, or why the runner refused to start it (a cwd missing from the probe tree, a tracked file an earlier
+ * attempt rewrote): that check is not established. A cancellation or a stop of supervision is not caught here.
+ */
+async function runProbeAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string): Promise<CheckRunRecord | string> {
+  try {
+    return await runAttempt(ctx, subject, def, configHash);
+  } catch (err) {
+    // An attempt whose check could not be confirmed stopped stays open and ends the probe: nothing else may start beside it.
+    if (!isOrbitError(err) || err.code === 'CANCELLED' || err.details?.mayRun === true) throw err;
+    return err.message;
+  }
+}
+
+/** Why the locked install of a probe checkout stopped the probe, with the reason as it names that checkout. */
+export interface ProbeInstallStop {
+  cause: NotEstablishedCause;
+  reason: (id: string) => string;
+}
+
+/**
+ * The locked install of a probe checkout, as the candidate's checkout had it (ADR 0014 section 2): the install the
+ * policy plans for the checkout's manifests, each definition once and a failing one once more. It keeps to the
+ * probe's one bound like every check: each attempt gets at most what is left of it, and none starts once it has run
+ * out. Null when the install passed or there was nothing to install. An environment signal in any attempt, a
+ * passing install whose log could not be read whole, a bound that ran out, or a failed install stops the probe: on
+ * the candidate a broken install only fails its tests, but on a probe tree a failing test is the evidence. The
+ * command probe shares this step and its judgement with the ui probe (controller/fail-before-ui.ts), which runs it
+ * in its control checkout and its probe checkout before the journeys. `where` names the checkout in a reason, as
+ * "on the probe tree" or "for the ui control on the base revision".
+ */
+export async function installProbeCheckout(o: { runner: ProbeRequest['runner']; probeId: string; candidateId: string; treeHash: string; bindingId: string; evidenceDir: string; checkoutDir: string; deadline: number; timeoutMs: number; where: string }): Promise<ProbeInstallStop | null> {
+  const { snapshot, clock, db, runDir } = o.runner;
+  const checkout = realpathSync(o.checkoutDir);
+  const install = planInstall(snapshot, checkout);
+  if (install.skip) return null;
+  const ctx: RunnerContext = { ...o.runner, checkoutDir: checkout, records: probeRecords(o.probeId) };
+  const subject: CheckSubject = { candidateId: o.candidateId, bindingId: o.bindingId, treeHash: o.treeHash, evidenceDir: o.evidenceDir, source: 'check' };
+  // A bound that ran out is the budget's, not the install's: only an install that failed within it is an install
+  // failure, which is never accepted.
+  const outOfBudget = (id: string): string => `${id} was not probed to the end: the probe's bound of ${Math.floor(o.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
+  for (const def of install.definitions) {
+    const attempts: ProbeAttempt[] = [];
+    let refused: string | null = null;
+    let bounded = false;
+    let outOfTime = false;
+    for (let n = 0; n < 2; n++) {
+      const left = o.deadline - clock.now();
+      if (left <= 0) {
+        outOfTime = true;
+        break;
+      }
+      const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1000)));
+      bounded = timeout < def.timeout_seconds;
+      const row = await runProbeAttempt(ctx, subject, { ...def, timeout_seconds: timeout }, configHashFor(snapshot, def));
+      if (typeof row === 'string') {
+        refused = row;
+        break;
+      }
+      attempts.push(probeAttemptFromRow(db, runDir, checkout, o.checkoutDir, row, def));
+      if (row.status !== 'FAILED') break;
+    }
+    const last = attempts.at(-1);
+    // An environment signal in any install attempt stops the probe, whatever the exit status (ADR 0014).
+    const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
+    if (refused === null && installSignals.length > 0) {
+      return { cause: 'environment', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows an environment cause (${installSignals.join(', ')})${last?.log ? ` (${last.log})` : ''}` };
+    }
+    // A passing install with any attempt's log cut short may have dropped the line that shows such a cause: the tree it
+    // built cannot be trusted to produce evidence, so the probe stops as unscanned (never failed-before).
+    const cut = attempts.find((a) => a.unscanned !== undefined);
+    if (refused === null && last?.status === 'PASSED' && cut !== undefined) {
+      return { cause: 'unscanned', reason: (id) => `${id} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) ${o.where} could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ''}` };
+    }
+    // Otherwise the install is judged by its exit status: a retry that passes after a flaky failure built the tree.
+    if (refused === null && last?.status === 'PASSED') continue;
+    // Only an attempt the bound cut short, or none at all, is the budget's. An install that FAILED once still failed,
+    // even when its retry had no time left or was cut short: that is the install's, never accepted.
+    if (refused === null && !attempts.some((a) => a.status === 'FAILED') && (outOfTime || (last?.status === 'TIMEOUT' && bounded))) {
+      return { cause: 'budget', reason: outOfBudget };
+    }
+    const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? 'without a result'}`;
+    return { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} ${o.where}${last?.log ? ` (${last.log})` : ''}` };
+  }
+  return null;
+}
+
 /**
  * Run the fail-before probe for a candidate (ADR 0014 section 2): build the probe tree, reuse the decisive results of an
  * earlier probe of the same tree, configuration and policy, and run each remaining check on a checkout of the tree after
@@ -757,92 +860,11 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   const deadline = clock.now() + req.timeoutMs;
   const ctx: RunnerContext = { ...runner, checkoutDir: checkout, records: probeRecords(probeId) };
   const subject: CheckSubject = { candidateId: candidate.id, bindingId: `${flavour.name}:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir, candidate.seq, flavour), source: 'check' };
-  const attemptOf = (row: CheckRunRecord, def: CheckDefinition): ProbeAttempt => {
-    const base = { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, log: runRelative(runDir, row.logPath) };
-    // Every attempt's log is read for an environment signal, a passing one too (a shell pipeline can hide a failing
-    // command's exit status), however long or cut short it is (scanProbeLog).
-    const scan = scanProbeLog(readProbeLog(row.logPath), {
-      exitCode: row.exitCode,
-      command: def.command,
-      shell: def.shell,
-      insideRoots: [checkout, req.checkoutDir, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])],
-      startFailure: row.status === 'ERROR' && row.excerpt?.startsWith('could not start the check') ? row.excerpt : null,
-    });
-    if (scan.signals.length > 0) db.run('UPDATE fail_before_probes SET signals_json = ? WHERE id = ?', JSON.stringify(scan.signals), row.id);
-    return { ...base, signals: scan.signals, ...(scan.unscanned === undefined ? {} : { unscanned: scan.unscanned }) };
-  };
-  /**
-   * One attempt, or why the runner refused to start it (a cwd missing from the probe tree, a tracked file an earlier
-   * attempt rewrote): that check is not established. A cancellation or a stop of supervision is not caught here.
-   */
-  const attempt = async (def: CheckDefinition, configHash: string): Promise<CheckRunRecord | string> => {
-    try {
-      return await runAttempt(ctx, subject, def, configHash);
-    } catch (err) {
-      // An attempt whose check could not be confirmed stopped stays open and ends the probe: nothing else may start beside it.
-      if (!isOrbitError(err) || err.code === 'CANCELLED' || err.details?.mayRun === true) throw err;
-      return err.message;
-    }
-  };
   const ran: CheckProbe[] = [];
   let stopped: { cause: NotEstablishedCause; reason: (id: string) => string } | null = null;
   try {
     // The locked install, as the candidate's checkout had it: the probe tree's manifests are the base's.
-    // It keeps to the probe's one bound like every check: each attempt gets at most what is left of it, and none starts
-    // once it has run out. A bound that ran out is the budget's, not the install's: only an install that failed within
-    // it is an install failure, which is never accepted.
-    const outOfBudget = (id: string): string => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
-    const install = planInstall(snapshot, checkout);
-    if (!install.skip) {
-      for (const def of install.definitions) {
-        const attempts: ProbeAttempt[] = [];
-        let refused: string | null = null;
-        let bounded = false;
-        let outOfTime = false;
-        for (let n = 0; n < 2; n++) {
-          const left = deadline - clock.now();
-          if (left <= 0) {
-            outOfTime = true;
-            break;
-          }
-          const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1000)));
-          bounded = timeout < def.timeout_seconds;
-          const row = await attempt({ ...def, timeout_seconds: timeout }, configHashFor(snapshot, def));
-          if (typeof row === 'string') {
-            refused = row;
-            break;
-          }
-          attempts.push(attemptOf(row, def));
-          if (row.status !== 'FAILED') break;
-        }
-        const last = attempts.at(-1);
-        // An environment signal in any install attempt stops the probe, whatever the exit status: on the candidate a
-        // broken install only fails its tests, but on the probe tree a failing test is the evidence (ADR 0014).
-        const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
-        if (refused === null && installSignals.length > 0) {
-          stopped = { cause: 'environment', reason: (id) => `${id} was not probed: the locked install (${def.id}) on the probe tree shows an environment cause (${installSignals.join(', ')})${last?.log ? ` (${last.log})` : ''}` };
-          break;
-        }
-        // A passing install with any attempt's log cut short may have dropped the line that shows such a cause: the tree it
-        // built cannot be trusted to produce evidence, so the probe stops as unscanned (never failed-before).
-        const cut = attempts.find((a) => a.unscanned !== undefined);
-        if (refused === null && last?.status === 'PASSED' && cut !== undefined) {
-          stopped = { cause: 'unscanned', reason: (id) => `${id} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) on the probe tree could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ''}` };
-          break;
-        }
-        // Otherwise the install is judged by its exit status: a retry that passes after a flaky failure built the tree.
-        if (refused === null && last?.status === 'PASSED') continue;
-        // Only an attempt the bound cut short, or none at all, is the budget's. An install that FAILED once still failed,
-        // even when its retry had no time left or was cut short: that is the install's, never accepted.
-        if (refused === null && !attempts.some((a) => a.status === 'FAILED') && (outOfTime || (last?.status === 'TIMEOUT' && bounded))) {
-          stopped = { cause: 'budget', reason: outOfBudget };
-          break;
-        }
-        const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? 'without a result'}`;
-        stopped = { cause: 'install', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} on the probe tree${last?.log ? ` (${last.log})` : ''}` };
-        break;
-      }
-    }
+    stopped = await installProbeCheckout({ runner, probeId, candidateId: candidate.id, treeHash: probeTree, bindingId: subject.bindingId, evidenceDir: subject.evidenceDir, checkoutDir: req.checkoutDir, deadline, timeoutMs: req.timeoutMs, where: 'on the probe tree' });
     for (const id of toRun) {
       if (stopped) break;
       const def = defs.get(id)!;
@@ -855,12 +877,12 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
         const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1000)));
         bounded = timeout < def.timeout_seconds;
         // A shorter timeout keeps the probe inside its bound; the attempt stays bound to the check's own configuration.
-        const row = await attempt({ ...def, timeout_seconds: timeout }, configHashes.get(id)!);
+        const row = await runProbeAttempt(ctx, subject, { ...def, timeout_seconds: timeout }, configHashes.get(id)!);
         if (typeof row === 'string') {
           refused = row;
           break;
         }
-        attempts.push(attemptOf(row, def));
+        attempts.push(probeAttemptFromRow(db, runDir, checkout, req.checkoutDir, row, def));
         if (row.status !== 'FAILED') break;
       }
       if (refused !== null) {
