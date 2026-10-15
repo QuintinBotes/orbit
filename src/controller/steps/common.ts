@@ -19,7 +19,7 @@ import { markProgress, transition, type TransitionRequest } from '../run-store.t
 import { frozenPolicyForceHelps } from '../resume.ts';
 import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
 import { closeMootBaselineQuestions } from './baseline-questions.ts';
-import { releaseRunWorktrees } from '../worktree-cleanup.ts';
+import { releaseRunWorktrees, retainRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
 import { blockingQuestions } from '../gates.ts';
 import { listQuestions, withdrawQuestion } from '../../inquisition/store.ts';
@@ -95,9 +95,12 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
   const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
-  // The result lives in the branch and the candidate refs; a finished run does not keep a checkout. BLOCKED alone keeps it: a person resumes from it.
-  // Released before the report is written: the release saves an unsaved implementer edit as a candidate, and the report names the newest one.
-  if (target !== 'BLOCKED') await releaseRunWorktrees(ctx);
+  // SUCCEEDED and CANCELLED release their checkouts: the result lives in the branch and the candidate refs. EXHAUSTED and
+  // IMPOSSIBLE keep theirs, on record, for the person who continues by hand; orbit gc removes them after retention.
+  // BLOCKED keeps its too: a person resumes from it. Settled before the report is written: a release saves an unsaved
+  // implementer edit as a candidate, and the report names the newest one, and a retention is what the report names too.
+  if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
+  else if (target === 'EXHAUSTED' || target === 'IMPOSSIBLE') await retainRunWorktrees(ctx);
   await finalizeRun(ctx);
   return result;
 }

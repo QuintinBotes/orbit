@@ -14,6 +14,7 @@ import { exceptionExpiryMs } from '../review/resolve.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from './candidate.ts';
+import { activeChecksIn, activeChecksReason } from './active-checks.ts';
 import { resolveCommit, treeOf } from './git.ts';
 import { assertRunPolicy, baselineSubject, candidateSubject, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runCheckSet, type CheckSubject, type RunnerContext } from './runner.ts';
 import { isFinalCheckStatus, listCheckRuns, recordFailure } from './store.ts';
@@ -649,9 +650,17 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
     };
     measured = { report, results };
   } finally {
-    await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+    // A check record still active in the checkout keeps it: a stop that could not be confirmed leaves the record open,
+    // and its detached shim, or its check, may still run there, so removing the checkout would pull it from under it.
+    const active = activeChecksIn(db, run.id, checkoutDir);
+    if (active.length > 0) {
+      const why = activeChecksReason(active);
+      db.tx(() => appendEvent(db, run.id, 'baseline.checkout-kept', 'controller', { checkout: checkoutDir, checks: active, why }, clock.now()));
+    } else {
+      await cleanupCandidateCheckout(input.repoRoot, checkoutDir);
+    }
   }
-  // Judged after the checkout is gone, as the controller always has: what it reads is the check rows and their logs.
+  // Judged after the checkout cleanup above, as the controller always has: what it reads is the check rows and their logs.
   const report = input.settle ? input.settle(measured.report) : measured.report;
   atomicWriteJson(file, report);
   const audit = report.audit ?? null;

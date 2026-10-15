@@ -21,7 +21,7 @@ import { closeInterruptedProbes } from '../evidence/fail-before.ts';
 import { readJsonFile, shimPath, type ShimIntent } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
 import type { Logger } from '../core/log.ts';
-import { releaseEndedRunWorktrees, releaseIfDue } from './release.ts';
+import { releaseIfDue, settleEndedRunWorktrees } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
 import { processOwnership } from './identity.ts';
@@ -131,7 +131,7 @@ export interface RunReconcileReport {
   probes: string[];
   apps: AppReport[];
   actions: ActionReport[];
-  /** This pass released the run's checkouts (a `worktrees.released` event was recorded), so a report written before is stale. */
+  /** This pass settled the run's checkouts (a `worktrees.released` or `worktrees.retained` event was recorded), so a report written before is stale. */
   worktreesReleased: boolean;
 }
 
@@ -184,9 +184,9 @@ export interface ReconcileOptions {
   /** Output schema to validate a worker's result against; default by role (adapters/prompt ROLE_OUTPUT_KIND). */
   outputSchemaFor?: (worker: WorkerRecord) => object;
   /**
-   * The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees released, and
-   * a finished run's checkout kept for a worker that might still be writing is released once the worker is confirmed
-   * stopped; without it they are kept.
+   * The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees retained on
+   * record, and a finished SUCCEEDED or CANCELLED run's checkout kept for a worker that might still be writing is
+   * released once the worker is confirmed stopped; without it they are kept.
    */
   orbitHome?: string;
   log?: Logger;
@@ -367,13 +367,15 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
       actions_flagged: rep.actions.filter((a) => a.flagged).map((a) => a.actionId),
     });
   }
-  // Workers and checks are stopped by now; the run's result lives in its candidate refs, so its checkouts go (finishRun does the same).
+  // Workers and checks are stopped by now; settle the checkouts as the run's end does (finishRun does the same): released
+  // for SUCCEEDED and CANCELLED, retained on record for the EXHAUSTED run this pass ended.
   if (ctx.exhausted.has(run.id)) {
-    rep.worktreesReleased = (await releaseEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log })) !== null;
+    const settled = await settleEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
+    rep.worktreesReleased = settled.released !== null || settled.retained !== null;
   } else if (isRunTerminal(run.state)) {
-    // A release that never completed (the controller died between the terminal transition and the release, or the release
-    // failed) is resumed, and one that kept a checkout is tried again (its worker or check has ended, or its edits may pin
-    // now), under the run's lease.
+    // A release or retention that never completed (the controller died between the terminal transition and it, or it
+    // failed) is resumed, and a release that kept a checkout is tried again (its worker or check has ended, or its edits
+    // may pin now), under the run's lease. An EXHAUSTED or IMPOSSIBLE run is only ever retained here, never released.
     rep.worktreesReleased = await releaseIfDue({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, leaseTtlMs: ctx.leaseTtlMs, log: ctx.opts.log });
   }
   return rep;

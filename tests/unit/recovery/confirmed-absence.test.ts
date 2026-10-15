@@ -200,7 +200,8 @@ describe('a check of an ended run whose shim died while its own process group su
     expect(checkStatus(lab, id)).toBe('RUNNING');
     expect(existsSync(chk)).toBe(true);
     expect(isAlive(group.pid)).toBe(true);
-    expect(released(lab).at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'check-1', cause: 'active-check' })]);
+    expect(released(lab)).toEqual([]);
+    expect(events(lab, 'worktrees.retained').at(-1)).toMatchObject({ worktrees: expect.arrayContaining(['check-1']) });
     expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ check_run_id: id, detail: expect.stringMatching(/could not be confirmed stopped/) })]);
 
     // Signalling works again: the next controller start stops the group, closes the check and releases the checkout.
@@ -208,8 +209,8 @@ describe('a check of an ended run whose shim died while its own process group su
 
     expect(await untilGone(group.pid)).toBe(true);
     expect(checkStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(chk)).toBe(false);
-    expect(released(lab).at(-1)!).toMatchObject({ removed: ['check-1'], kept: [] });
+    expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
+    expect(released(lab)).toEqual([]);
   });
 
   it('keeps it open when the group outlives the stop (terminateGroup reports exited: false)', async () => {
@@ -259,7 +260,7 @@ describe('a check of an ended run whose shim died while its own process group su
     expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'lost', closed: true, terminated: true });
     expect(await untilGone(group.pid)).toBe(true);
     expect(checkStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(chk)).toBe(false);
+    expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 });
 
@@ -309,7 +310,7 @@ describe('a check whose shim was spawned before launch.json named it', () => {
     await reconcile(lab);
 
     expect(checkStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(chk)).toBe(false);
+    expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 });
 
@@ -353,7 +354,7 @@ describe('a check whose shim died between spawning its check and recording it', 
       await reconcile(lab);
 
       expect(checkStatus(lab, id)).toBe('CANCELLED');
-      expect(existsSync(chk)).toBe(false);
+      expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
     });
   }
 
@@ -368,7 +369,7 @@ describe('a check whose shim died between spawning its check and recording it', 
     expect(hooks.findProcessesWithEnv).toHaveBeenCalled();
     expect(rep.runs[0]!.checks[0]).toMatchObject({ checkRunId: id, closed: true });
     expect(checkStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(chk)).toBe(false);
+    expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 
   it('keeps it open when the environments cannot be searched', async () => {
@@ -409,7 +410,7 @@ describe('a check whose shim died between spawning its check and recording it', 
     await reconcile(lab);
 
     expect(checkStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(chk)).toBe(false);
+    expect(existsSync(chk)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 
   it('a live shim that never registered is stopped and the check closed: it never reached the spawn', async () => {
@@ -485,7 +486,8 @@ describe('a fail-before probe attempt that may still run', () => {
     expect(probeStatus(lab, id)).toBe('RUNNING');
     expect(existsSync(probe)).toBe(true);
     expect(isAlive(shim.pid)).toBe(true);
-    expect(released(lab).at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'fail-before-1', cause: 'active-check' })]);
+    expect(released(lab)).toEqual([]);
+    expect(events(lab, 'worktrees.retained').at(-1)).toMatchObject({ worktrees: expect.arrayContaining(['fail-before-1']) });
     expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ fail_before_probe_id: id })]);
 
     kill(shim);
@@ -494,7 +496,7 @@ describe('a fail-before probe attempt that may still run', () => {
 
     expect(again.runs[0]!.probes).toEqual([id]);
     expect(probeStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(probe)).toBe(false);
+    expect(existsSync(probe)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 
   it('stays open while its check runs on after its shim died between the spawn and pid.json', async () => {
@@ -529,7 +531,7 @@ describe('a fail-before probe attempt that may still run', () => {
     expect(await untilGone(shim.pid)).toBe(true);
     expect(await untilGone(group.pid)).toBe(true);
     expect(probeStatus(lab, id)).toBe('CANCELLED');
-    expect(existsSync(probe)).toBe(false);
+    expect(existsSync(probe)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 });
 
@@ -561,7 +563,8 @@ describe('a worker shim spawned before launch.json named it', () => {
     expect(existsSync(wt)).toBe(true);
     // Not registered, so not identified: it is never signalled.
     expect(isAlive(shim.pid)).toBe(true);
-    expect(released(lab).at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'implementer', cause: 'active-worker' })]);
+    expect(released(lab)).toEqual([]);
+    expect(events(lab, 'worktrees.retained').at(-1)).toMatchObject({ worktrees: expect.arrayContaining(['implementer']) });
     expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([expect.objectContaining({ worker_id: 'wrk-1', detail: expect.stringMatching(new RegExp(`process ${shim.pid} carries its launch token`)) })]);
 
     kill(shim);
@@ -569,8 +572,8 @@ describe('a worker shim spawned before launch.json named it', () => {
     await reconcile(lab);
 
     expect(getWorker(lab.db, 'wrk-1')).toMatchObject({ state: 'CANCELLED', error: 'never started: run is EXHAUSTED' });
-    expect(existsSync(wt)).toBe(false);
-    expect(released(lab).at(-1)!).toMatchObject({ removed: ['implementer'], kept: [] });
+    expect(existsSync(wt)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
+    expect(released(lab)).toEqual([]);
   });
 
   it('stops a shim that registered itself, by the identity it registered, before the worker is closed', async () => {
@@ -586,7 +589,7 @@ describe('a worker shim spawned before launch.json named it', () => {
 
     expect(await untilGone(shim.pid)).toBe(true);
     expect(getWorker(lab.db, 'wrk-1')).toMatchObject({ state: 'CANCELLED', error: 'its starting shim was stopped: run is EXHAUSTED' });
-    expect(existsSync(wt)).toBe(false);
+    expect(existsSync(wt)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 
   it('closes a launch whose spawn never happened: no process carries its token', async () => {
@@ -599,7 +602,7 @@ describe('a worker shim spawned before launch.json named it', () => {
 
     expect(hooks.findProcesses).toHaveBeenCalled();
     expect(getWorker(lab.db, 'wrk-1')).toMatchObject({ state: 'CANCELLED', error: 'never started: run is EXHAUSTED' });
-    expect(existsSync(wt)).toBe(false);
+    expect(existsSync(wt)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
   });
 
   it('keeps the worker when the process table cannot be searched', async () => {
@@ -651,7 +654,7 @@ describe('a worker launch whose registration.json cannot be used', () => {
 
       expect(hooks.findProcesses).toHaveBeenCalled();
       expect(getWorker(lab.db, 'wrk-1')).toMatchObject({ state: 'CANCELLED', error: 'never started: run is EXHAUSTED' });
-      expect(existsSync(wt)).toBe(false);
+      expect(existsSync(wt)).toBe(true); // an EXHAUSTED run keeps its checkouts on record (worktrees.retained)
       expect(events(lab, 'recovery.stop-unconfirmed')).toEqual([]);
     });
   }

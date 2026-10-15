@@ -1,5 +1,6 @@
 /**
- * A terminal run releases its checkouts, but never at the cost of work or beneath a process: every implementer checkout
+ * A run that ends SUCCEEDED or CANCELLED releases its checkouts (EXHAUSTED and IMPOSSIBLE keep theirs, on record, until
+ * orbit gc removes them after retention), but never at the cost of work or beneath a process: every implementer checkout
  * of the run (the main one and each parallel unit-* one, found from the worker records) has its unfinished edits pinned
  * in a ref before it is removed, a checkout whose edits could not be pinned is kept, and a checkout a worker may still
  * be writing in (its termination not confirmed) is kept until a later pass confirms it.
@@ -109,6 +110,8 @@ function implementer(l: UnitLab, id: string, cwd: string, purpose: string, how: 
 }
 
 const WALL = 'implementer: the provider kept failing transiently and the wall budget is spent (last: 529)';
+const CANCEL = 'cancelled by request';
+const retainedEvents = (): { worktrees: string[] }[] => lab!.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'worktrees.retained' ORDER BY id", lab!.runId).map((r) => JSON.parse(r.data_json) as { worktrees: string[] });
 
 describe('a terminal run preserves the unfinished edits of every implementer checkout before removing it', () => {
   it('a dirty parallel unit checkout at exhaustion before integration is pinned in an unsaved ref, then removed', async () => {
@@ -123,7 +126,7 @@ describe('a terminal run preserves the unfinished edits of every implementer che
     writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
     writeFileSync(join(u1, 'debug.log'), 'ignored\n');
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
     const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
     expect(hasRef(ref)).toBe(true);
@@ -154,7 +157,7 @@ describe('a terminal run preserves the unfinished edits of every implementer che
     writeFileSync(unreadable, 'export const secret = 1;\n');
     chmodSync(unreadable, 0o000);
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
     expect(existsSync(u1)).toBe(true);
     expect(hasRef(`refs/orbit/${lab.runId}/unsaved/wrk-u1`)).toBe(false);
@@ -188,6 +191,25 @@ describe('a terminal run preserves the unfinished edits of every implementer che
   });
 });
 
+describe('a tracked edit is work, wherever it lies', () => {
+  // Regression (review): the noise filter (node_modules/, .DS_Store) applied to tracked modifications too, so a checkout
+  // whose only change was a tracked file under node_modules/ read as clean and was removed without being saved.
+  it('a tracked edit under a path the noise filter excludes is saved before the release', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    mkdirSync(join(lab.repo, 'node_modules', 'vendor'), { recursive: true });
+    writeFileSync(join(lab.repo, 'node_modules', 'vendor', 'index.js'), 'module.exports = 1;\n');
+    const { main } = await repoWithImplementer(lab);
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    writeFileSync(join(main, 'node_modules', 'vendor', 'index.js'), 'module.exports = 2;\n');
+
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
+
+    const ref = `refs/orbit/${lab.runId}/candidates/1`;
+    expect(git(lab.repo, 'show', `${ref}:node_modules/vendor/index.js`)).toContain('2');
+    expect(existsSync(main)).toBe(false);
+  });
+});
+
 describe('a checkout whose writer may still run is never released', () => {
   it('finishRun keeps the checkout of a worker it could not confirm stopped, and records why', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
@@ -195,9 +217,9 @@ describe('a checkout whose writer may still run is never released', () => {
     implementer(lab, 'wrk-live', main, 'implement:1#1', 'unverifiable');
     writeFileSync(join(main, 'apps', 'wip.mjs'), 'export const wip = true;\n');
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
-    expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).state).toBe('CANCELLED');
     expect(getWorker(lab.db, 'wrk-live').state).toBe('RUNNING');
     expect(existsSync(join(main, 'apps', 'wip.mjs'))).toBe(true);
     // Its edits are not touched while it may still write: no snapshot was taken beneath it.
@@ -208,10 +230,10 @@ describe('a checkout whose writer may still run is never released', () => {
     const next = final().next_action;
     expect(next).toContain(main);
     expect(next).toMatch(/wrk-live/);
-    expect(next).toMatch(/released when a run ends, but for the checkouts kept/);
+    expect(next).toMatch(/A checkout was kept: /);
   });
 
-  it('recovery keeps the checkout of an unverified process it left RUNNING, and a later pass releases it once the process is gone', async () => {
+  it('recovery that ends a run EXHAUSTED keeps its checkouts on record and an unverified process RUNNING; orbit gc pins and removes them once it is gone', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     counters(lab.db, lab.runId, { recovery_attempts: 0 });
     const { base, root, main } = await repoWithImplementer(lab);
@@ -230,21 +252,25 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
     expect(getWorker(lab.db, 'wrk-u1').state).toBe('RUNNING');
     expect(existsSync(u1)).toBe(true);
-    expect(existsSync(main)).toBe(false);
-    const first = released().at(-1)!;
-    expect(first.kept).toEqual(['unit-1-u1']);
-    expect(first.retained).toEqual([expect.objectContaining({ worktree: 'unit-1-u1', cause: 'active-worker' })]);
+    expect(existsSync(main)).toBe(true);
+    expect(released()).toEqual([]);
+    expect(retainedEvents().at(-1)!.worktrees).toEqual(expect.arrayContaining(['implementer', 'unit-1-u1']));
 
-    // Its process is gone now: the next reconciliation confirms it, then preserves the unit's edits and releases the checkout.
+    // Its process is gone now: the next reconciliation confirms it, and the checkouts stay on record until orbit gc,
+    // which pins the unit's unfinished edits before it removes anything.
     lab.db.run('UPDATE workers SET pid = ?, pgid = ?, proc_start = ? WHERE id = ?', DEAD, DEAD, 'x', 'wrk-u1');
     acquireLease(lab.db, lab.runId, OWNER, 60_000, lab.clock);
     await reconcileOnStart({ db: lab.db, ownerId: OWNER, clock: lab.clock, adapters: {}, graceMs: 100, orbitHome: lab.home });
 
     expect(getWorker(lab.db, 'wrk-u1').state).toBe('CANCELLED');
-    expect(existsSync(u1)).toBe(false);
+    expect(existsSync(u1)).toBe(true);
+    lab.db.run('DELETE FROM leases WHERE run_id = ?', lab.runId);
+    lab.clock.advance(60_000);
+    const out = await pruneExpiredRuns(lab.db, { repoRoot: lab.repo, keepDays: 0, clock: lab.clock, orbitHome: lab.home });
+    expect(out.pruned.map((p) => p.runId)).toEqual([lab.runId]);
     const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
     expect(git(lab.repo, 'show', `${ref}:apps/mul.mjs`)).toContain('mul');
-    expect(released().at(-1)!).toMatchObject({ removed: ['unit-1-u1'], kept: [] });
+    expect(existsSync(u1)).toBe(false);
   });
 
   it('recovery does not record a running worker stopped when its group could not be signalled, and keeps its checkout', async () => {
@@ -263,7 +289,8 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
     expect(getWorker(lab.db, 'wrk-run').state).toBe('RUNNING');
     expect(existsSync(join(main, 'apps', 'wip.mjs'))).toBe(true);
-    expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'implementer', cause: 'active-worker' })]);
+    expect(released()).toEqual([]);
+    expect(retainedEvents().at(-1)!.worktrees).toContain('implementer');
   });
 
   it('recovery does not finish a lost worker whose provider outlived its shim and could not be stopped, and keeps its checkout', async () => {
@@ -281,7 +308,8 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
     expect(getWorker(lab.db, 'wrk-orphan').state).toBe('RUNNING');
     expect(existsSync(main)).toBe(true);
-    expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'implementer', cause: 'active-worker' })]);
+    expect(released()).toEqual([]);
+    expect(retainedEvents().at(-1)!.worktrees).toContain('implementer');
   });
 
   it('orbit gc does not prune a finished run while a worker of it is still active', async () => {
@@ -311,7 +339,7 @@ const isAlive = (pid: number): boolean => {
 
 /** The run ends with nothing released, as when its controller died between the terminal transition and the release. */
 function endedWithoutRelease(l: UnitLab): void {
-  transition(l.db, { runId: l.runId, to: 'EXHAUSTED', ownerId: OWNER, reason: WALL }, l.clock);
+  transition(l.db, { runId: l.runId, to: 'CANCELLED', ownerId: OWNER, reason: CANCEL }, l.clock);
 }
 
 describe('a release a crash or a failure interrupted is resumed, and orbit gc never deletes unpinned work', () => {
@@ -396,7 +424,7 @@ describe('a release a crash or a failure interrupted is resumed, and orbit gc ne
     const unreadable = join(u1, 'apps', 'secret.mjs');
     writeFileSync(unreadable, 'export const secret = 1;\n');
     chmodSync(unreadable, 0o000);
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
     expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'unit-1-u1', cause: 'preservation-failed' })]);
     lab.db.run('DELETE FROM leases WHERE run_id = ?', lab.runId);
     lab.clock.advance(60_000);
@@ -426,7 +454,7 @@ describe('an implementer that committed in its checkout', () => {
     writeFileSync(join(u1, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
     const sha = commitAll(u1, 'unit work');
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
     const ref = `refs/orbit/${lab.runId}/unsaved/wrk-u1`;
     expect(git(lab.repo, 'show', `${ref}:apps/mul.mjs`)).toContain('mul');
@@ -482,14 +510,14 @@ describe('a worker whose shim was launched but has not written pid.json yet', ()
     const shim = sleeper();
     starting(lab, 'wrk-starting', u1, shim, lab.clock.now());
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
     expect(isAlive(shim.pid)).toBe(false);
     expect(getWorker(lab.db, 'wrk-starting').state).toBe('CANCELLED');
     expect(existsSync(u1)).toBe(false);
   });
 
-  it('reconciliation that ends a crashed run stops a starting shim before its checkout is released', async () => {
+  it('reconciliation that ends a crashed run EXHAUSTED stops a starting shim and keeps its checkout on record', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     const { base, root } = await repoWithImplementer(lab);
     const u1 = await unitCheckout(lab, root, base, 'u1');
@@ -502,7 +530,8 @@ describe('a worker whose shim was launched but has not written pid.json yet', ()
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
     expect(isAlive(shim.pid)).toBe(false);
     expect(getWorker(lab.db, 'wrk-starting').state).toBe('CANCELLED');
-    expect(existsSync(u1)).toBe(false);
+    expect(existsSync(u1)).toBe(true);
+    expect(retainedEvents().at(-1)!.worktrees).toContain('unit-1-u1');
   });
 
   it('reconciliation stops a shim that never wrote pid.json before it plans a restart beside it', async () => {
@@ -536,7 +565,7 @@ describe('a check still running in its checkout', () => {
       lab.clock.now(),
     );
 
-    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    await finishRun(lab.ctx(), 'CANCELLED', CANCEL);
 
     expect(existsSync(chk)).toBe(true);
     expect(released().at(-1)!.retained).toEqual([expect.objectContaining({ worktree: 'check-1', cause: 'active-check', why: expect.stringMatching(/cr-1/) })]);

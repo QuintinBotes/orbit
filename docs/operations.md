@@ -254,7 +254,7 @@ whose release keeps a checkout is skipped with why. Use `--dry-run` first.
 A pruned run keeps its record for `orbit status` and `orbit stats`, but `orbit
 verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
 its policy, evidence and candidate are gone.
-Runs that end `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` already remove their own worktrees; see
+Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees, and runs that end `EXHAUSTED` or `IMPOSSIBLE` keep theirs until `orbit gc` removes them after retention; see
 [retention](configuration.md#routing-and-retention).
 
 `orbit gc` leaves the repository's toolchain dependency caches
@@ -423,10 +423,11 @@ Files on disk:
 - `<repo>/.orbit/runs/<run-id>/`: the frozen policy, contract, evidence, the final
   report (`final.md`) and `workers/<worker-id>/` with prompt, log, exit record and result.
 - `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`: worker checkouts, outside
-  the repository on purpose. A run that ends `SUCCEEDED`, `CANCELLED`,
-  `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees (a `worktrees.released`
-  event records what was removed, where each unfinished edit was pinned, and
-  each checkout kept with why). The unfinished work of every implementer
+  the repository on purpose. A run that ends `SUCCEEDED` or `CANCELLED`
+  removes its worktrees (a `worktrees.released` event records what was removed, where each unfinished edit was pinned, and
+  each checkout kept with why); a run that ends `EXHAUSTED` or `IMPOSSIBLE`
+  keeps them (a `worktrees.retained` event names each) until `orbit gc` removes
+  them after retention. The unfinished work of every implementer
   checkout (edits, and commits made in it that no ref holds) is pinned first:
   the run's worktree as a candidate, a parallel unit's under
   `refs/orbit/<run>/unsaved/<worker>` (`git checkout <ref>` to continue from

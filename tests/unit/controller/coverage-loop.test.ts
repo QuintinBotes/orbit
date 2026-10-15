@@ -811,7 +811,7 @@ describe('final reports and retention', () => {
     setup(['PREFLIGHT']);
     // The lab's run ended, but its controller died before releasing its checkouts or writing its report.
     store.acquireLease(lab.db, lab.runId, OWNER, 60_000, lab.clock);
-    store.transition(lab.db, { runId: lab.runId, to: 'EXHAUSTED', ownerId: OWNER, reason: 'wall time hard cap reached' }, lab.clock);
+    store.transition(lab.db, { runId: lab.runId, to: 'CANCELLED', ownerId: OWNER, reason: 'cancelled by request' }, lab.clock);
     const root = worktreeRootFor(lab.home, store.getRun(lab.db, lab.runId));
     mkdirSync(join(root, 'review-1'), { recursive: true });
     lab.clock.advance(120_000);

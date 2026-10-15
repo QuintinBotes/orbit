@@ -31,7 +31,7 @@ function lostWorker(): void {
   markWorkerRunning(lab.db, 'w1', { pid: DEAD, pgid: DEAD, procStart: 'x' }, lab.clock);
 }
 
-describe('a run the recovery budget ends EXHAUSTED releases its worktrees, as finishRun does', () => {
+describe('a run the recovery budget ends EXHAUSTED keeps its worktrees on record, as finishRun does', () => {
   it('reconcile: a lost worker the budget cannot restart', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     counters(lab.db, lab.runId, { recovery_attempts: 0 });
@@ -39,8 +39,9 @@ describe('a run the recovery budget ends EXHAUSTED releases its worktrees, as fi
     const dir = checkout();
     await reconcileOnStart({ db: lab.db, ownerId: OWNER, clock: lab.clock, adapters: {}, graceMs: 100, orbitHome: lab.home });
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
-    expect(existsSync(dir)).toBe(false);
-    expect(events('worktrees.released')).toHaveLength(1);
+    expect(existsSync(dir)).toBe(true);
+    expect(events('worktrees.released')).toHaveLength(0);
+    expect(events('worktrees.retained')).toHaveLength(1);
   });
 
   it('reconcile: a crashed controller whose recovery attempts are spent (enterRecovery)', async () => {
@@ -51,8 +52,9 @@ describe('a run the recovery budget ends EXHAUSTED releases its worktrees, as fi
     expect(acquireLease(lab.db, lab.runId, 'ctl-2', 60_000, lab.clock)).toMatchObject({ ownerId: 'ctl-2' });
     await reconcileOnStart({ db: lab.db, ownerId: 'ctl-2', clock: lab.clock, adapters: {}, graceMs: 100, orbitHome: lab.home });
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
-    expect(existsSync(dir)).toBe(false);
-    expect(events('worktrees.released')).toHaveLength(1);
+    expect(existsSync(dir)).toBe(true);
+    expect(events('worktrees.released')).toHaveLength(0);
+    expect(events('worktrees.retained')).toHaveLength(1);
   });
 
   it('watchdog: a stuck step the budget cannot recover', async () => {
@@ -63,8 +65,9 @@ describe('a run the recovery budget ends EXHAUSTED releases its worktrees, as fi
     acquireLease(lab.db, lab.runId, OWNER, 60_000, lab.clock);
     const rep = await watchdogTick({ db: lab.db, clock: lab.clock, ownerId: OWNER, adapters: {}, workerActivityAt: () => null, config: { graceMs: 50 }, orbitHome: lab.home });
     expect(rep.findings[0]).toMatchObject({ action: 'exhausted' });
-    expect(existsSync(dir)).toBe(false);
-    expect(events('worktrees.released')).toHaveLength(1);
+    expect(existsSync(dir)).toBe(true);
+    expect(events('worktrees.released')).toHaveLength(0);
+    expect(events('worktrees.retained')).toHaveLength(1);
   });
 
   it('a run that recovers (budget left) keeps its worktrees', async () => {

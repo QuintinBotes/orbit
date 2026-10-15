@@ -135,11 +135,10 @@ describe.skipIf(!canStripTypes)('controller: complete runs with fake providers',
     expect(done.outcomeReason).toMatch(/hard cap/);
     // Nothing more was spent on a diagnosis that no attempt could use.
     expect(listWorkers(l.db(), { runId: run.id, role: 'verifier' })).toEqual([]);
-    // An EXHAUSTED run releases its worktree; the work stays in its candidate refs.
-    expect(existsSync(done.worktreePath!)).toBe(false);
+    expect(existsSync(join(done.worktreePath!, 'tests', 'mul.test.mjs'))).toBe(true);
     const [ev] = listEvidenceReports(l.db(), run.id);
     expect(ev?.verdict).toBe('FAIL');
     expect(existsSync(ev!.reportPath!)).toBe(true);
-    expect(readFileSync(join(runDir(l, run.id), 'final.md'), 'utf8')).toMatch(/EXHAUSTED[\s\S]*worktree is released when a run ends[\s\S]*the evidence stays under/);
+    expect(readFileSync(join(runDir(l, run.id), 'final.md'), 'utf8')).toMatch(/EXHAUSTED[\s\S]*worktree and evidence are preserved/);
   });
 });

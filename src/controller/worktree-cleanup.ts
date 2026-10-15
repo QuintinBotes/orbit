@@ -3,9 +3,11 @@
  * (the implementer's worktree, a worktree per parallel work unit, the baseline checkout, review and verify checkouts).
  * Nothing used to remove them, so every finished run left an entry in `git worktree list` for good.
  *
- * Removed when a run ends in any terminal state but BLOCKED (SUCCEEDED, CANCELLED, EXHAUSTED, IMPOSSIBLE): the result
- * lives in the run's branch and in its candidate refs (`refs/orbit/<run>/candidates/<n>`), not in the checkout, and
- * none of these states has a way back. Removal never loses work and never deletes beneath a process:
+ * Removed when a run ends SUCCEEDED or CANCELLED: the result lives in the run's branch and in its candidate refs
+ * (`refs/orbit/<run>/candidates/<n>`), not in the checkout. A run that ends EXHAUSTED or IMPOSSIBLE keeps its
+ * checkouts instead (as in 0.3.0): `retainWorktrees` below records a `worktrees.retained` event naming each one, and
+ * `orbit gc` removes them after retention, through the same release, once they expire. Removal never loses work and
+ * never deletes beneath a process:
  *
  * - A checkout in which a worker of the run is still active (PLANNED or RUNNING: stopping it failed, so its
  *   termination is not confirmed and it may still be writing), or a check run or fail-before probe attempt of it is
@@ -41,6 +43,7 @@ import { appendEvent } from '../storage/events.ts';
 import { isWorkerActive, listWorkers, type WorkerRecord } from '../storage/workers.ts';
 
 export const WORKTREES_RELEASED_EVENT = 'worktrees.released';
+export const WORKTREES_RETAINED_EVENT = 'worktrees.retained';
 export const WORKTREE_PRESERVED_EVENT = 'worktree.preserved';
 
 /** Where the unfinished edits of a removed checkout were pinned. */
@@ -71,6 +74,20 @@ export interface WorktreesReleased {
   retained: RetainedCheckout[];
 }
 
+/** One checkout kept because the run ended EXHAUSTED or IMPOSSIBLE. */
+export interface RetainedWorktree {
+  worktree: string;
+  path: string;
+  why: string;
+}
+
+/** The data of a `worktrees.retained` event: the checkouts a run that ended EXHAUSTED or IMPOSSIBLE keeps. */
+export interface WorktreesRetained {
+  state: string;
+  worktrees: string[];
+  retained: RetainedWorktree[];
+}
+
 /**
  * Whether the checkout holds work no ref keeps: files changed or added against its HEAD (ignored files excluded), or a
  * HEAD other than the base that no ref contains. Every checkout starts as a detached HEAD at the base or at a
@@ -81,7 +98,9 @@ async function hasUnsavedWork(worktree: string, repoRoot: string, baseRevision: 
   const admin = await adminDirFor(repoRoot, worktree);
   const opts = { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: '1' } };
   const out = await git(admin.worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], opts);
-  if (out.split('\0').some((e) => e.length > 3 && !/(^|\/)(\.DS_Store|Thumbs\.db)$/.test(e.slice(3)) && !e.slice(3).startsWith('node_modules/'))) return true;
+  // The noise exclusion is for untracked files only: a tracked modification is work, even under a noise path.
+  const isNoise = (p: string): boolean => /(^|\/)(\.DS_Store|Thumbs\.db)$/.test(p) || p.startsWith('node_modules/');
+  if (out.split('\0').some((e) => e.length > 3 && !(e.slice(0, 2) === '??' && isNoise(e.slice(3))))) return true;
   const head = (await git(admin.worktree, ['rev-parse', '--verify', 'HEAD^{commit}'], opts)).trim();
   if (head === baseRevision) return false;
   // Any ref will do (the run's candidates, a branch, a tag): a commit a ref contains outlives the checkout.
@@ -100,13 +119,47 @@ export interface ReleaseWorktreesInput {
   attempt: number;
 }
 
-/** Remove the run's checkouts after a terminal state but BLOCKED. Never throws: a cleanup problem must not change an outcome. */
+/** Remove the run's checkouts after SUCCEEDED or CANCELLED. Never throws: a cleanup problem must not change an outcome. */
 export async function releaseRunWorktrees(ctx: RunContext): Promise<void> {
   try {
     await releaseWorktrees({ db: ctx.db, clock: ctx.clock, log: ctx.log, ownerId: ctx.ownerId, run: ctx.run, orbitHome: ctx.deps.orbitHome, attempt: Math.max(1, ctx.ledger?.state('implementation_attempts').used ?? 1) });
   } catch (err) {
     ctx.log.warn('could not release a finished run\'s worktrees; they are kept', { run_id: ctx.run.id, error: messageOf(err) });
   }
+}
+
+/** Keep the run's checkouts after EXHAUSTED or IMPOSSIBLE, on record. Never throws: a record problem must not change an outcome. */
+export async function retainRunWorktrees(ctx: RunContext): Promise<void> {
+  try {
+    retainWorktrees({ db: ctx.db, clock: ctx.clock, ownerId: ctx.ownerId, run: ctx.run, orbitHome: ctx.deps.orbitHome });
+  } catch (err) {
+    ctx.log.warn('could not record a finished run\'s retained worktrees; they are kept', { run_id: ctx.run.id, error: messageOf(err) });
+  }
+}
+
+/**
+ * Record that a run that ended EXHAUSTED or IMPOSSIBLE keeps its checkouts, naming each one. Nothing is removed:
+ * `orbit gc` releases them through `releaseWorktrees` after retention. Null when the run has no worktree directory;
+ * a second call that would name the same checkouts records nothing and returns what is already on record.
+ */
+export function retainWorktrees(input: { db: OrbitDb; clock: Clock; ownerId: string; run: RunRecord; orbitHome: string }): WorktreesRetained | null {
+  const { run } = input;
+  const root = worktreeRootFor(input.orbitHome, run);
+  if (!existsSync(root)) return null;
+  const why = `the run ended ${run.state}, so the worktree and evidence are preserved; orbit gc removes them after retention`;
+  const names = readdirSync(root).sort();
+  const out: WorktreesRetained = { state: run.state, worktrees: names, retained: names.map((name) => ({ worktree: name, path: join(root, name), why })) };
+  const last = input.db.get<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1', run.id, WORKTREES_RETAINED_EVENT);
+  if (last?.data_json) {
+    try {
+      const prior = JSON.parse(last.data_json) as Partial<WorktreesRetained>;
+      if (JSON.stringify(prior.worktrees ?? []) === JSON.stringify(names)) return { state: typeof prior.state === 'string' ? prior.state : run.state, worktrees: names, retained: prior.retained ?? out.retained };
+    } catch {
+      /* a record that cannot be read does not stand in for this one */
+    }
+  }
+  input.db.tx(() => appendEvent(input.db, run.id, WORKTREES_RETAINED_EVENT, input.ownerId, out, input.clock.now()));
+  return out;
 }
 
 /** What happened to the run's checkouts (also recorded as a `worktrees.released` event); null when it has none. */

@@ -39,7 +39,7 @@ import type { GoalContract } from '../contract/types.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { clipAtWord } from '../core/text.ts';
 import { REVIEW_DEPTH_KIND, describeDepth, type ReviewDepth } from './review-depth.ts';
-import { WORKTREE_PRESERVED_EVENT, WORKTREES_RELEASED_EVENT, type PreservedEdits, type WorktreesReleased } from './worktree-cleanup.ts';
+import { WORKTREE_PRESERVED_EVENT, WORKTREES_RELEASED_EVENT, WORKTREES_RETAINED_EVENT, type PreservedEdits, type WorktreesReleased, type WorktreesRetained } from './worktree-cleanup.ts';
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { learnFromRun, type LearnReport } from '../knowledge/learn.ts';
 import { settleRun } from '../knowledge/feedback.ts';
@@ -110,8 +110,8 @@ export interface FinalReport {
   residual_risks: string[];
   /**
    * The run's checkouts after it ended: where the unfinished edits of each removed implementer checkout were pinned, and
-   * every checkout kept, with why (a worker that may still be writing in it, edits that could not be pinned). Absent
-   * when nothing was released, and in reports written before it existed.
+   * every checkout kept, with why (the run ended EXHAUSTED or IMPOSSIBLE, a worker that may still be writing in it,
+   * edits that could not be pinned). Absent when nothing was released or retained, and in reports written before it existed.
    */
   worktrees?: { preserved: { worktree: string; ref: string }[]; retained: { worktree: string; path: string; why: string }[] };
   next_action: string;
@@ -269,15 +269,16 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
     ...(worktrees ? { worktrees } : {}),
-    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), (worktrees?.retained.length ?? 0) > 0)}${worktreeAdvice(worktrees)}`,
+    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run))}${worktreeAdvice(worktrees)}`,
     generated_at: opts.clock.now(),
   };
 }
 
 /**
- * Every edit a release pinned (`worktree.preserved`, newest per ref) and the checkouts the last release kept, or null
- * when the run's checkouts were never released and nothing was pinned. A release that failed (or was cut short by a
- * crash) after it pinned an edit has no `worktrees.released` event, but its pins are on record and are named.
+ * Every edit a release pinned (`worktree.preserved`, newest per ref) and the checkouts the run kept: the ones its last
+ * release could not remove, and the ones a run that ended EXHAUSTED or IMPOSSIBLE retained (`worktrees.retained`). Null
+ * when the run's checkouts were never released or retained and nothing was pinned. A release that failed (or was cut
+ * short by a crash) after it pinned an edit has no `worktrees.released` event, but its pins are on record and are named.
  */
 function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['worktrees']> | null {
   const data = <T>(type: string): T[] => db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', runId, type).flatMap((r) => {
@@ -285,11 +286,14 @@ function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['workt
     return v === null ? [] : [v];
   });
   const releases = data<Partial<WorktreesReleased>>(WORKTREES_RELEASED_EVENT);
+  const retentions = data<Partial<WorktreesRetained>>(WORKTREES_RETAINED_EVENT);
   const preserved = new Map<string, { worktree: string; ref: string }>();
   for (const p of data<PreservedEdits>(WORKTREE_PRESERVED_EVENT)) preserved.set(p.ref, { worktree: p.worktree, ref: p.ref });
-  if (releases.length === 0 && preserved.size === 0) return null;
-  const retained = (releases.at(-1)?.retained ?? []).map((r) => ({ worktree: r.worktree, path: r.path, why: r.why }));
-  return { preserved: [...preserved.values()], retained };
+  if (releases.length === 0 && retentions.length === 0 && preserved.size === 0) return null;
+  const kept = new Map<string, { worktree: string; path: string; why: string }>();
+  for (const r of retentions.at(-1)?.retained ?? []) kept.set(r.worktree, { worktree: r.worktree, path: r.path, why: r.why });
+  for (const r of releases.at(-1)?.retained ?? []) kept.set(r.worktree, { worktree: r.worktree, path: r.path, why: r.why });
+  return { preserved: [...preserved.values()], retained: [...kept.values()] };
 }
 
 /** The sentences the next action gains from a release: where each pinned edit is, and which checkouts were kept and why. */
@@ -385,7 +389,7 @@ function outcomeHas(run: RunRecord, key: string): boolean {
   }
 }
 
-function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null, checkoutsKept = false): string {
+function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null): string {
   const { branch, candidateRef: ref } = refs;
   // Where no branch was recorded, the reviewed candidate is at its ref (and says so only when there is one).
   const candidate = ref !== null ? `the reviewed candidate at ${ref}` : 'the reviewed candidate';
@@ -408,13 +412,13 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case 'EXHAUSTED': {
-      const advice = exhaustedAdvice(run, ref, checkoutsKept);
+      const advice = exhaustedAdvice(run, ref);
       // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
       const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${clipAtWord(q.question, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
       return `${advice}${asked}`;
     }
     case 'IMPOSSIBLE':
-      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} Revise the goal or the authorization before trying again.`;
+      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} The worktree and evidence are preserved, and orbit gc removes them after retention. Revise the goal or the authorization before trying again.`;
     case 'CANCELLED':
       return 'Nothing further: the run was cancelled on request and its artifacts are preserved.';
     default:
@@ -427,13 +431,12 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
  * budget; a refused extension, a failed diagnosis, a provider outage, spent recovery attempts and the attempt, review
  * and CI repair caps each name their own cause and way forward.
  */
-function exhaustedAdvice(run: RunRecord, candidateRef: string | null, checkoutsKept = false): string {
+function exhaustedAdvice(run: RunRecord, candidateRef: string | null): string {
   const reason = run.outcomeReason ?? 'see decisions';
   const why = `(${reason})`;
-  // The run's worktree is released when it ends (the result lives in the candidate refs), so the way forward starts from those.
+  // An EXHAUSTED run keeps its worktree: the way forward starts from it and from the candidate refs alike.
   const where = candidateRef !== null ? `the work is at ${candidateRef} (earlier candidates under refs/orbit/${run.id}/candidates/)` : 'no candidate was recorded';
-  const released = checkoutsKept ? 'the worktree is released when a run ends, but for the checkouts kept as said at the end' : 'the worktree is released when a run ends';
-  const kept = `${released}; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
+  const kept = `the worktree and evidence are preserved, and orbit gc removes them after retention; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
   const Kept = `${kept[0]!.toUpperCase()}${kept.slice(1)}`;
   const from = candidateRef !== null ? `the candidate at ${candidateRef}` : 'the evidence';
   // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.

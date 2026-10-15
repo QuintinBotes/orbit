@@ -89,10 +89,11 @@ also appends an `events` row. Artifacts live under `.orbit/runs/<run-id>/`:
 Worktrees live outside the repository at `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`
 so a worker's filesystem allowlist never includes `.orbit/` or the main
 checkout. Mutable data never lives in the installed plugin directory. A run that
-ends `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its worktrees
-(`controller/worktree-cleanup.ts`; a run the recovery budget ends `EXHAUSTED` is
-released by `recovery/release.ts`). Its result is the branch and the candidate
-refs, not the checkout. Every implementer checkout, the run's worktree and each
+ends `SUCCEEDED` or `CANCELLED` removes its worktrees
+(`controller/worktree-cleanup.ts`, and `recovery/release.ts` after a crash); its
+result is the branch and the candidate refs, not the checkout. A run that ends
+`EXHAUSTED` or `IMPOSSIBLE` keeps them, recorded in a `worktrees.retained`
+event, until `orbit gc` removes them after retention. Every implementer checkout, the run's worktree and each
 `unit-*` worktree of a parallel attempt (found from the worker records), first
 has its unfinished work pinned in a ref, edits and any commit made in the
 checkout that no ref holds: the run's worktree as a candidate, a unit's under

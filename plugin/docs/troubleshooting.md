@@ -608,10 +608,11 @@ of these settings is the fix, `orbit doctor` prints the same note.
   policy when they start. Start a new run.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and
   ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
-  `SUCCEEDED`, `CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own (the work
-  of an `EXHAUSTED` run is in its candidate refs, `refs/orbit/<run>/candidates/<n>`,
-  the unfinished edits of a parallel unit under `refs/orbit/<run>/unsaved/<worker>`,
-  and its evidence under `.orbit/runs/<id>`). A checkout the report says was kept
+  `SUCCEEDED` or `CANCELLED` removes its own (its work is in its candidate refs,
+  `refs/orbit/<run>/candidates/<n>`, the unfinished edits of a parallel unit under
+  `refs/orbit/<run>/unsaved/<worker>`, and its evidence under `.orbit/runs/<id>`),
+  and a run that ends `EXHAUSTED` or `IMPOSSIBLE` keeps its own, for you to continue
+  from, until `orbit gc` removes them after retention. A checkout the report says was kept
   is either one whose edits could not be pinned (recover them, then
   `git worktree remove` it; `orbit gc` skips the run while it is there) or one a
   worker or a check may still be running in, which the next controller start

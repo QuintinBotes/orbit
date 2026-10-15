@@ -1061,11 +1061,13 @@ its lease. A run whose worktrees are still there is released first, the way its
 end releases it (below), so its unfinished work is pinned in refs before
 anything is deleted; a run whose release keeps a checkout is skipped with why.
 
-Worktrees are separate from retention. A run that ends `SUCCEEDED`,
-`CANCELLED`, `EXHAUSTED` or `IMPOSSIBLE` removes its own worktrees when it ends,
-since its result is the branch and the candidate refs
-(`refs/orbit/<run>/candidates/<n>`), not the checkout, and none of these states
-has a way back. Nothing is lost: every implementer checkout first has its
+Worktrees are separate from retention. A run that ends `SUCCEEDED` or
+`CANCELLED` removes its own worktrees when it ends, since its result is the
+branch and the candidate refs (`refs/orbit/<run>/candidates/<n>`), not the
+checkout. A run that ends `EXHAUSTED` or `IMPOSSIBLE` keeps them for the
+person who continues by hand, with a `worktrees.retained` event naming each,
+and `orbit gc` removes them after retention. Nothing is lost when worktrees are
+removed: every implementer checkout first has its
 unfinished work (tracked changes, untracked files the repository does not
 ignore, and commits made in the checkout that no ref holds) pinned in a ref, the
 run's worktree as a candidate and each parallel unit's worktree under
@@ -1075,9 +1077,10 @@ confirmed) or a check may still run in is kept too, until a later controller
 start confirms the worker stopped or closes the check, and `orbit gc` skips the
 run until then. A release that a crash cut short is finished by the next
 controller start, or by `orbit gc` before it removes anything. The final
-report of an `EXHAUSTED` run therefore sends a person to the latest candidate
-ref and the evidence under `.orbit/runs/<id>`, not to a worktree, and its next
-action names every pinned ref and every kept checkout with why. A run that
+report of an `EXHAUSTED` run says its worktree and evidence are preserved, names
+the latest candidate ref, and says that `orbit gc` removes them after retention;
+every report's next action names every pinned ref and every kept checkout with
+why. A run that
 stops `BLOCKED`, or is paused, keeps its worktrees, because it may resume from
 them; those stay until the run is resumed to an end or cancelled.
 

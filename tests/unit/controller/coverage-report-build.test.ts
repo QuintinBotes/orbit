@@ -204,7 +204,7 @@ describe('what to do next', () => {
     expect(next('BLOCKED')).toBe('The run is blocked. Resolve that, then run `orbit resume orb-unit`.');
     expect(next('EXHAUSTED', 'autonomous', 'cost cap')).toContain('The authorized budget is spent (cost cap).');
     expect(next('EXHAUSTED')).toContain('(see decisions)');
-    expect(next('IMPOSSIBLE', 'autonomous', 'no way')).toBe('no way Revise the goal or the authorization before trying again.');
+    expect(next('IMPOSSIBLE', 'autonomous', 'no way')).toBe('no way The worktree and evidence are preserved, and orbit gc removes them after retention. Revise the goal or the authorization before trying again.');
     expect(next('IMPOSSIBLE')).toContain('No authorized way to meet the contract was found.');
     expect(next('CANCELLED')).toBe('Nothing further: the run was cancelled on request and its artifacts are preserved.');
     expect(next('IMPLEMENTING')).toBe('The run is IMPLEMENTING; this report is provisional.');
