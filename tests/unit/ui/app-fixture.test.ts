@@ -150,10 +150,11 @@ describe('startApp', () => {
   it('gives the app a scrubbed environment: host credentials do not reach it', async () => {
     const out = join(dir, 'env.json');
     const command = [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.env)); setInterval(() => {}, 1000)`];
-    let calls = 0;
+    // Ready only once the app has written its environment, waited for in real time (the manual clock's sleeps are
+    // instant): a fixed 150 ms delay raced the node start on a loaded CI runner, which read env.json before it existed.
     const probe = async () => {
-      if (++calls > 1) await new Promise((r) => setTimeout(r, 150));
-      return calls > 1 ? 200 : null;
+      for (const end = Date.now() + 10_000; !existsSync(out) && Date.now() < end; ) await new Promise((r) => setTimeout(r, 25));
+      return existsSync(out) ? 200 : null;
     };
     const h = await startApp(opts({ command, probe, env: { PORT: '4321' }, hostEnv: { PATH: process.env.PATH, HOME: '/home/acme', GH_TOKEN: 'ghp_secretsecretsecretsecretsecretsecret', ANTHROPIC_API_KEY: 'sk-ant-xyz', SSH_AUTH_SOCK: '/tmp/agent' } }));
     try {
