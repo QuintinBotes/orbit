@@ -60,6 +60,11 @@ jobs:
       - name: Install the Claude Code CLI (plugin validation and the plugin tests)
         run: npm install --global @anthropic-ai/claude-code
 
+      # Before any test: the plugin integration test rebuilds plugin/dist, so a check after the tests always passed and a
+      # stale committed bundle reached main (0.3.1).
+      - name: Committed bundle matches the sources
+        run: npm run check:dist
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -74,9 +79,6 @@ jobs:
 
       - name: Acceptance tests (mock providers)
         run: npm run test:acceptance
-
-      - name: Committed bundle matches the sources
-        run: npm run check:dist
 
       - name: Plugin validation
         run: node scripts/check-plugin.mjs
