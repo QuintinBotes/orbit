@@ -191,6 +191,33 @@ describe('a terminal run preserves the unfinished edits of every implementer che
   });
 });
 
+describe('a retained run that orbit gc pruned', () => {
+  // Regression (review): the report merged the last retention with the last release, so after orbit gc removed an
+  // EXHAUSTED run's retained checkouts, a rebuilt report still listed them as kept and still called them preserved.
+  it('reports neither kept checkouts nor a preserved worktree once orbit gc has removed them', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
+    const { root, main } = await repoWithImplementer(lab);
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    await finishRun(lab.ctx(), 'EXHAUSTED', WALL);
+    expect(retainedEvents()).toHaveLength(1);
+    lab.db.run('DELETE FROM leases WHERE run_id = ?', lab.runId);
+    lab.clock.advance(60_000);
+
+    const out = await pruneExpiredRuns(lab.db, { repoRoot: lab.repo, keepDays: 0, clock: lab.clock, orbitHome: lab.home });
+    expect(out.pruned.map((p) => p.runId)).toEqual([lab.runId]);
+    expect(existsSync(root)).toBe(false);
+
+    // orbit report rebuilds the report of a pruned run from its record.
+    const runDir = join(lab.repo, '.orbit', 'runs', lab.runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFinalReport(lab.db, lab.runId, { runDir, clock: lab.clock, snapshot: null });
+    const report = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { next_action: string; worktrees?: { retained: unknown[] } };
+    expect(report.worktrees?.retained ?? []).toEqual([]);
+    expect(report.next_action).not.toMatch(/worktree and evidence are preserved/);
+    expect(report.next_action).toMatch(/orbit gc removed/);
+  });
+});
+
 describe('a tracked edit is work, wherever it lies', () => {
   // Regression (review): the noise filter (node_modules/, .DS_Store) applied to tracked modifications too, so a checkout
   // whose only change was a tracked file under node_modules/ read as clean and was removed without being saved.

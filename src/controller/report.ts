@@ -235,6 +235,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const branch = delivery?.branch ?? outcomeJson?.branch ?? createdBranch(db, run);
   const candidateRefName = cand ? candidateRef(run.id, cand.seq) : null;
   const worktrees = worktreesOf(db, run.id);
+  // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
+  const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -269,7 +271,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
     ...(worktrees ? { worktrees } : {}),
-    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run))}${worktreeAdvice(worktrees)}`,
+    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees)}`,
     generated_at: opts.clock.now(),
   };
 }
@@ -285,14 +287,24 @@ function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['workt
     const v = parseJson<T>(r.data_json);
     return v === null ? [] : [v];
   });
-  const releases = data<Partial<WorktreesReleased>>(WORKTREES_RELEASED_EVENT);
-  const retentions = data<Partial<WorktreesRetained>>(WORKTREES_RETAINED_EVENT);
   const preserved = new Map<string, { worktree: string; ref: string }>();
   for (const p of data<PreservedEdits>(WORKTREE_PRESERVED_EVENT)) preserved.set(p.ref, { worktree: p.worktree, ref: p.ref });
-  if (releases.length === 0 && retentions.length === 0 && preserved.size === 0) return null;
+  // Retentions and releases in the order they happened: a retention keeps the checkouts it names, and a later release
+  // (orbit gc after retention) takes out the ones it removed and keeps the ones it could not.
+  const settled = db.all<{ type: string; data_json: string | null }>('SELECT type, data_json FROM events WHERE run_id = ? AND type IN (?, ?) ORDER BY id', runId, WORKTREES_RETAINED_EVENT, WORKTREES_RELEASED_EVENT);
+  if (settled.length === 0 && preserved.size === 0) return null;
   const kept = new Map<string, { worktree: string; path: string; why: string }>();
-  for (const r of retentions.at(-1)?.retained ?? []) kept.set(r.worktree, { worktree: r.worktree, path: r.path, why: r.why });
-  for (const r of releases.at(-1)?.retained ?? []) kept.set(r.worktree, { worktree: r.worktree, path: r.path, why: r.why });
+  for (const e of settled) {
+    if (e.type === WORKTREES_RETAINED_EVENT) {
+      const r = parseJson<Partial<WorktreesRetained>>(e.data_json);
+      kept.clear();
+      for (const k of r?.retained ?? []) kept.set(k.worktree, { worktree: k.worktree, path: k.path, why: k.why });
+    } else {
+      const r = parseJson<Partial<WorktreesReleased>>(e.data_json);
+      for (const name of r?.removed ?? []) kept.delete(name);
+      for (const k of r?.retained ?? []) kept.set(k.worktree, { worktree: k.worktree, path: k.path, why: k.why });
+    }
+  }
   return { preserved: [...preserved.values()], retained: [...kept.values()] };
 }
 
@@ -389,7 +401,7 @@ function outcomeHas(run: RunRecord, key: string): boolean {
   }
 }
 
-function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null): string {
+function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null, pruned = false): string {
   const { branch, candidateRef: ref } = refs;
   // Where no branch was recorded, the reviewed candidate is at its ref (and says so only when there is one).
   const candidate = ref !== null ? `the reviewed candidate at ${ref}` : 'the reviewed candidate';
@@ -412,13 +424,13 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case 'EXHAUSTED': {
-      const advice = exhaustedAdvice(run, ref);
+      const advice = exhaustedAdvice(run, ref, pruned);
       // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
       const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${clipAtWord(q.question, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
       return `${advice}${asked}`;
     }
     case 'IMPOSSIBLE':
-      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} The worktree and evidence are preserved, and orbit gc removes them after retention. Revise the goal or the authorization before trying again.`;
+      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} ${pruned ? PRUNED : 'The worktree and evidence are preserved, and orbit gc removes them after retention.'} Revise the goal or the authorization before trying again.`;
     case 'CANCELLED':
       return 'Nothing further: the run was cancelled on request and its artifacts are preserved.';
     default:
@@ -431,12 +443,15 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
  * budget; a refused extension, a failed diagnosis, a provider outage, spent recovery attempts and the attempt, review
  * and CI repair caps each name their own cause and way forward.
  */
-function exhaustedAdvice(run: RunRecord, candidateRef: string | null): string {
+/** What the report says once `orbit gc` has removed a run's files after retention (a `run.artifacts_pruned` event, storage/retention.ts). */
+const PRUNED = 'orbit gc removed this run\'s worktree, evidence and candidate refs after retention; only its record remains, so start a new run to continue.';
+
+function exhaustedAdvice(run: RunRecord, candidateRef: string | null, pruned = false): string {
   const reason = run.outcomeReason ?? 'see decisions';
   const why = `(${reason})`;
   // An EXHAUSTED run keeps its worktree: the way forward starts from it and from the candidate refs alike.
   const where = candidateRef !== null ? `the work is at ${candidateRef} (earlier candidates under refs/orbit/${run.id}/candidates/)` : 'no candidate was recorded';
-  const kept = `the worktree and evidence are preserved, and orbit gc removes them after retention; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
+  const kept = pruned ? PRUNED.replace(/\.$/, '') : `the worktree and evidence are preserved, and orbit gc removes them after retention; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
   const Kept = `${kept[0]!.toUpperCase()}${kept.slice(1)}`;
   const from = candidateRef !== null ? `the candidate at ${candidateRef}` : 'the evidence';
   // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
