@@ -128,6 +128,8 @@ describe('fail-before statement wording', () => {
     expect(statesCheckRunsTests('The new tests are run by CI without the lint check', ids)).toBeNull();
     // The passive verb must belong to the tests, not to another clause; a later mention of the tests can still be it.
     expect(statesCheckRunsTests('The tests pass locally and ESLint is run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The tests start after ESLint is run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The test files under tests/ are collected by the unit-tests check', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The new tests in tests/unit are run by the unit-tests check', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('Old tests pass, and the new tests are run by the unit-tests check', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);

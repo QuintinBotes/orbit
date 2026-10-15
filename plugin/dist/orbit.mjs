@@ -51028,7 +51028,7 @@ var init_fail_before_statements = __esm({
     AFTER_AGENTS = String.raw`(?=\s*(?:$|[,;:.]|\b(?:with|on|in|for|using|over|under|at|from|via|through|against|after|when|whenever|once|before|while|if|because|until|unless|since|so|then|where)\b))`;
     PASSIVE_AGENTS = new RegExp(String.raw`^\s*by\s+(${AGENT_ELEMENT}(?:\s*,?\s+(?:and|or)\s+${AGENT_ELEMENT})*)${AFTER_AGENTS}`, "i");
     CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)$/i;
-    SUBJECT_GAP = /^(?:\s+(?!(?:and|or|but|while|whereas|which|that|who|when|so|then)\b)[A-Za-z0-9][A-Za-z0-9._/-]*){0,3}\s+$/i;
+    SUBJECT_GAP = /^\s+(?:(?:suite|suites|files?|cases?|modules?|specs?)\s+)?(?:(?:in|under|from|of)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s+)?$/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
       "a",

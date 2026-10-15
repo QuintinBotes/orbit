@@ -108,11 +108,12 @@ function sentenceTestsRunByChecks(sentence: string, checkIds: readonly string[])
 }
 
 /**
- * What may stand between the tests and the passive verb: at most three words that continue the tests' noun phrase
- * ("The pytest suite is run", "the new tests in tests/unit are run"), with no punctuation, conjunction or relative word,
- * so another clause's verb ("The tests pass locally and ESLint is run by the lint check") is never the tests'.
+ * What may stand between the tests and the passive verb: nothing, one noun that continues the tests' noun phrase
+ * ("The pytest suite is run", "the test files are collected"), and a place ("in tests/unit", "under tests/"). Listing
+ * what may stand there, not what may not: any other word (a verb, "after", "and") belongs to another clause, whose verb
+ * is never the tests' ("The tests start after ESLint is run by the lint check", "The tests pass locally and ESLint is run").
  */
-const SUBJECT_GAP = /^(?:\s+(?!(?:and|or|but|while|whereas|which|that|who|when|so|then)\b)[A-Za-z0-9][A-Za-z0-9._/-]*){0,3}\s+$/i;
+const SUBJECT_GAP = /^\s+(?:(?:suite|suites|files?|cases?|modules?|specs?)\s+)?(?:(?:in|under|from|of)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s+)?$/i;
 
 /** The passive form from the end of one mention of the tests at `from`: see sentenceTestsRunByChecks. */
 function testsRunByChecksFrom(sentence: string, from: number, checkIds: readonly string[]): string[] | null {
