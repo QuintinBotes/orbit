@@ -402,10 +402,16 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
-    // An APPROVE that inspected nothing (no tool call recorded) does not clear the tree (ADR 0016, item 3): one fresh
-    // review must open the files; if that one inspects nothing either, the run stops and says so.
-    const shallow = shallowApprovals(ctx, state);
-    if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
+    // An APPROVE that inspected nothing (no tool call recorded) does not clear a tree that changes something (ADR 0016,
+    // item 3): one fresh review must open the files. A fresh review of the tree that inspected nothing, whatever its
+    // verdict, leaves the tree without a review that looked at it, even when another approval stands: the run stops.
+    if (cand.treeHash !== ctx.run.baseTree) {
+      const shallow = shallowApprovals(ctx, state);
+      const asked = freshReviewOf(ctx, cand.treeHash);
+      const fresh = asked ? recordedFreshReview(ctx, asked) : null;
+      if (fresh && reviewDepthOf(ctx, fresh.id)?.tool_calls === 0 && !shallow.some((r) => r.id === fresh.id)) shallow.push(fresh);
+      if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
+    }
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
     const waiting = await blockOnOpenQuestions(ctx, 'delivery');
     if (waiting) return waiting;
@@ -599,7 +605,7 @@ function shallowApprovals(ctx: RunContext, state: ReturnType<typeof loadResolver
  */
 async function decideShallowApproval(ctx: RunContext, cand: CandidateRecord, shallow: ReturnType<typeof loadResolverState>['reviews'], gateReasons: readonly string[]): Promise<StepResult> {
   const ids = shallow.map((r) => r.id);
-  const what = `review(s) ${ids.join(', ')} approved tree ${cand.treeHash} from the packet alone and inspected nothing (no tool call)`;
+  const what = `review(s) ${ids.join(', ')} of tree ${cand.treeHash} judged it from the packet alone and inspected nothing (no tool call)`;
   const asked = freshReviewOf(ctx, cand.treeHash);
   if (!asked) {
     const rounds = ctx.ledger!.state('review_rounds');

@@ -63323,8 +63323,13 @@ async function resolveAndDecide(ctx, cand) {
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
-    const shallow = shallowApprovals(ctx, state);
-    if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
+    if (cand.treeHash !== ctx.run.baseTree) {
+      const shallow = shallowApprovals(ctx, state);
+      const asked2 = freshReviewOf(ctx, cand.treeHash);
+      const fresh2 = asked2 ? recordedFreshReview(ctx, asked2) : null;
+      if (fresh2 && reviewDepthOf(ctx, fresh2.id)?.tool_calls === 0 && !shallow.some((r) => r.id === fresh2.id)) shallow.push(fresh2);
+      if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
+    }
     progress(ctx, "review.approved", { candidate_id: cand.id, tree_hash: cand.treeHash });
     const waiting = await blockOnOpenQuestions(ctx, "delivery");
     if (waiting) return waiting;
@@ -63451,7 +63456,7 @@ function shallowApprovals(ctx, state) {
 }
 async function decideShallowApproval(ctx, cand, shallow, gateReasons) {
   const ids = shallow.map((r) => r.id);
-  const what = `review(s) ${ids.join(", ")} approved tree ${cand.treeHash} from the packet alone and inspected nothing (no tool call)`;
+  const what = `review(s) ${ids.join(", ")} of tree ${cand.treeHash} judged it from the packet alone and inspected nothing (no tool call)`;
   const asked = freshReviewOf(ctx, cand.treeHash);
   if (!asked) {
     const rounds = ctx.ledger.state("review_rounds");

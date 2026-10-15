@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { ProviderAdapter } from '../../../src/adapters/types.ts';
 import { snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import { insertLedgerEntry, insertQuestion } from '../../../src/inquisition/store.ts';
-import { listDecisions } from '../../../src/storage/decisions.ts';
+import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
 import { listFindings, listReviews, recordReview } from '../../../src/review/store.ts';
 import type { IngestedFinding } from '../../../src/review/types.ts';
 import { getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
@@ -508,6 +508,36 @@ describe('a review that inspected nothing does not clear the tree', () => {
     expect(state()).toBe('DELIVERING');
     expect(reviewer.specs).toHaveLength(1);
     expect(decisions('review.fresh')).toEqual([]);
+  });
+
+  /** A recorded review depth, as a review session's transcript would have given it. */
+  const depth = (reviewId: string, toolCalls: number) =>
+    recordDecision(lab.db, lab.base, { id: `dec-${lab.runId}-review-depth-${reviewId}`, runId: lab.runId, kind: 'review.depth', summary: 'depth', data: { review_id: reviewId, worker_id: 'w', provider: 'codex', model: null, tool_calls: toolCalls, reasoning_tokens: 10 } }, lab.clock);
+
+  // Review of the first version: with two reviews of one tree, a fresh review that inspected nothing and asked for repair
+  // only through a note let the other approval clear the tree.
+  it('blocks when the fresh review inspected nothing, whatever its verdict, though another approval stands', async () => {
+    const note = { externalId: 'NOTE-1', severity: 'medium' as const, category: 'evidence-classification', location: 'apps/calc.mjs:2', path: 'apps/calc.mjs', line: 2, claim: 'the fail-before evidence is only a load failure', evidence: 'probe log', suggestedValidation: null };
+    const { cand } = await setup({
+      onReviewerStart: transcripts(answerOnly),
+      reviewer: ({ spec }) => okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision: spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1], findings: [{ id: 'NOTE-1', severity: 'medium', category: 'evidence-classification', location: 'apps/calc.mjs:2', claim: note.claim, evidence: note.evidence, suggested_validation: null }] }),
+    });
+    record(cand, 'APPROVE');
+    depth('rev-1', 0);
+    record(cand, 'APPROVE');
+    depth('rev-2', 3);
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/inspected nothing/);
+  });
+
+  it('leaves a tree that changes nothing to the approval as before', async () => {
+    const { cand, reviewer } = await setup({ onReviewerStart: transcripts(answerOnly), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 1) });
+    lab.db.run('UPDATE runs SET base_tree = ? WHERE id = ?', cand.treeHash, lab.runId);
+    await settle();
+    expect(reviewer.specs).toHaveLength(1);
+    expect(decisions('review.fresh')).toEqual([]);
+    expect(state()).not.toBe('BLOCKED');
   });
 
   it('blocks rather than start the fresh review when review_rounds is spent', async () => {
