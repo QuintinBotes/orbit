@@ -105,6 +105,18 @@ export interface CriterionFailBefore {
   check_wide?: string;
 }
 
+/**
+ * A contract assumption the evidence report evaluated from the fail-before probe (ADR 0016, item 1): one that states a
+ * check runs the new tests, supported only when every check it names (or every probed check, when it names none)
+ * failed before. Present only for such an assumption; every other assumption keeps the contract's own status.
+ */
+export interface AssumptionEvidence {
+  assumption_id: string;
+  status: 'supported' | 'unverified';
+  reason: string;
+  checks: string[];
+}
+
 /** Spec §11 example shape, extended with the bindings. */
 export interface EvidenceReport {
   task_id: string;
@@ -118,6 +130,8 @@ export interface EvidenceReport {
   checks: { id: string; status: CheckStatus; exit_code: number | null; flaky: boolean; log: string }[];
   ui: { journey: string; status: CheckStatus; artifacts: string[] }[];
   acceptance_evidence: CriterionEvidence[];
+  /** The contract assumptions the fail-before probe decided (ADR 0016, item 1); absent when none was evaluated. */
+  assumptions?: AssumptionEvidence[];
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   /** Things the report could not establish, stated rather than implied. */
   unverified: string[];

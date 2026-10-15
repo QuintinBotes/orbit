@@ -90,7 +90,7 @@ export interface FinalReport {
    */
   reviewer?: ReportReviewer | null;
   decisions: { kind: string; summary: string; at: number }[];
-  assumptions: { id: string; statement: string; status: string }[];
+  assumptions: { id: string; statement: string; status: string; reason?: string }[];
   /** The engineering practices (spec section 5) the plan selected or omitted, with the reason for each; empty for a contract that predates the selection. */
   practices?: { practice: string; applicable: boolean; justification: string }[];
   repairs: { attempt: number; source: string; fingerprint: string | null }[];
@@ -202,6 +202,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     const failBefore: ReportFailBefore | undefined = fb ? { mode: fb.mode, outcome: fb.outcome, ...(fb.cause ? { cause: fb.cause } : {}), reason: fb.reason, ...(fb.check_wide ? { check_wide: fb.check_wide } : {}) } : undefined;
     return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [], ...(e?.check_wide ? { check_wide: e.check_wide } : {}), ...(failBefore ? { fail_before: failBefore } : {}) };
   });
+  // A contract assumption the latest evidence report evaluated from the fail-before probe (ADR 0016, item 1) shows
+  // that status and reason, not the contract's own; every other assumption and ledger entry keeps its own status.
+  const evaluatedAssumptions = new Map((ev?.report.assumptions ?? []).map((a) => [a.assumption_id, a] as const));
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [(d.data as ReviewDepth).review_id, d.data as ReviewDepth] as const));
   const findings = listFindings(db, run.id);
@@ -291,7 +294,13 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     reviewer,
     decisions,
     review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
-    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    assumptions: [
+      ...(contract?.assumptions ?? []).map((a) => {
+        const evaluated = evaluatedAssumptions.get(a.id);
+        return evaluated ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
+      }),
+      ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status })),
+    ],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
     worker_plugins: plugins.plugins,
@@ -523,7 +532,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), '');
   if (r.review_findings && r.review_findings.length > 0) out.push('## Review findings', '', list(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
-  out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
+  out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}${a.reason ? ` (${a.reason})` : ''}`)), '');
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
   if (r.worker_plugins && r.worker_plugins.length > 0) {
     const named = (p: WorkerPluginLine) => `${p.id ?? 'an unidentified plugin'} (scope ${p.scope ?? 'unknown'})`;

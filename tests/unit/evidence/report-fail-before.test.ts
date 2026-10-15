@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateEvidence, type BuildReportInput } from '../../../src/evidence/report.ts';
 import { otherwiseAcceptable, type CheckProbe, type FailBeforeEvidence, type ProbeResult } from '../../../src/evidence/fail-before.ts';
+import { statesCheckRunsTests, statesFailBefore } from '../../../src/evidence/fail-before-statements.ts';
 import type { FailBeforeMode } from '../../../src/policy/types.ts';
 import { CANDIDATE, CLEAN_SCOPE, contract, fakeSnapshot, result } from './report-fixtures.ts';
 import { checkDef } from './fixtures.ts';
@@ -50,6 +51,60 @@ describe('test evidence is per check', () => {
 
   it('keeps the old wording when the candidate changes no test at all', () => {
     expect(judge(['a/src/mul.mjs']).report.acceptance_evidence[0]!.note).toBe('no new evidence: unit-a already passed on the base revision and the candidate adds or changes no test');
+  });
+});
+
+// ADR 0016, item 1: wording only selects the statements the probe decides, and can only make Orbit stricter.
+describe('fail-before statement wording', () => {
+  it('statesFailBefore matches tests failing on the base revision and not near misses', () => {
+    for (const statement of [
+      'The new tests import round_price and so fail on the base revision',
+      'The new tests fail on the base revision (ImportError for round_price)',
+      'Its tests fail against the base revision',
+      "The change's tests are failing before the change",
+      'The new test fails before the fix',
+      'Without the change, the new tests fail',
+      'On the base revision, the new tests fail',
+      'Prices round up. The new tests fail on the base revision.',
+    ]) {
+      expect(statesFailBefore(statement), statement).toBe(true);
+    }
+    for (const statement of [
+      'the function raises ValueError',
+      'tests pass',
+      'The tests pass on the base revision',
+      'The tests fail on invalid input',
+      'The function fails on the base revision',
+      'The tests fail. The base revision is unchanged.',
+      'The new tests fail to import on Tuesdays',
+      'round_price fails before the change and tests cover it',
+      'The tests pass before the change and fail afterwards',
+    ]) {
+      expect(statesFailBefore(statement), statement).toBe(false);
+    }
+  });
+
+  it('statesCheckRunsTests returns the named whole-word check ids, or null for other assumptions', () => {
+    const ids = ['unit-tests', 'lint'];
+    expect(statesCheckRunsTests('The unit-tests check runs pytest over tests/ with src on the path', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
+    expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);
+    expect(statesCheckRunsTests('The test command executes tests/test_pricing.py', ids)).toEqual([]);
+    expect(statesCheckRunsTests('The unit-tests check and the lint check run the new tests', ids)).toEqual(['unit-tests', 'lint']);
+    // A longer id that only contains a configured one does not name it, although the check still selects the assumption.
+    expect(statesCheckRunsTests('The unit-tests-extra check runs the new tests', ids)).toEqual([]);
+    for (const statement of [
+      'Prices are in euros',
+      'The unit-tests check passes',
+      'The application runs the new tests',
+      'The test runner is fast',
+      'Tests run quickly',
+      'The unit-tests check can import shop from src',
+      'The check runs in euros',
+    ]) {
+      expect(statesCheckRunsTests(statement, ids), statement).toBeNull();
+    }
   });
 });
 
@@ -172,6 +227,163 @@ describe('fail_before per criterion, by mode', () => {
     const e = judge('required', null);
     expect(e.report.verdict).toBe('PASS');
     expect(e.report.acceptance_evidence[0]!.fail_before).toBeUndefined();
+  });
+
+  // ADR 0016, item 1: a flagged criterion's passing candidate log never supports it; the probe alone does.
+  const flaggedCriterion = contract({
+    acceptance_criteria: [{ id: 'AC-1', statement: 'The new tests import mul and so fail on the base revision', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }],
+    required_check_ids: ['unit'],
+  });
+  const flaggedNote = /^it states that its tests fail on the base revision, which only the fail-before probe establishes: /;
+  const baseFlipped: Partial<BuildReportInput> = { base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'FAILED' }], changedPaths: ['apps/calc.mjs', 'tests/mul.test.mjs'] } };
+
+  it('a criterion that states fail-before is supported only by failed-before, and is a residual risk under advisory or off', () => {
+    const supported = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: flaggedCriterion });
+    expect(supported.report.acceptance_evidence[0]!.status).toBe('supported');
+    expect(supported.report.verdict).toBe('PASS');
+
+    for (const [name, fb] of [
+      ['passed-before', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }],
+      ['not-established', { probe: probe(TIMED_OUT), skipped: null, accepted: [] }],
+      ['no probe result', { probe: null, skipped: null, accepted: [] }],
+    ] as const) {
+      const e = judge('advisory', fb, { contract: flaggedCriterion });
+      const entry = e.report.acceptance_evidence[0]!;
+      expect(entry.status, name).toBe('unverified');
+      expect(entry.note, name).toMatch(flaggedNote);
+      expect(e.report.verdict, name).toBe('PASS');
+      expect(e.incompleteReasons, name).toEqual([]);
+      expect(e.report.unverified, name).toContain(`criterion AC-1: unverified (${entry.note})`);
+    }
+
+    // not-applicable: its check failed on the base revision, so the entry says its support does not rest on new tests.
+    const notApplicable = judge('advisory', { probe: null, skipped: null, accepted: [] }, { contract: flaggedCriterion, ...baseFlipped });
+    expect(notApplicable.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', fail_before: { outcome: 'not-applicable' } });
+    expect(notApplicable.report.acceptance_evidence[0]!.note).toBe('it states that its tests fail on the base revision, which only the fail-before probe establishes: its support does not rest on new tests: unit failed on the base revision');
+    expect(notApplicable.report.verdict).toBe('PASS');
+
+    // not-run under off, and no entry at all when no fail-before input was given.
+    const off = judge('off', { probe: null, skipped: null, accepted: [] }, { contract: flaggedCriterion });
+    expect(off.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', fail_before: { outcome: 'not-run' } });
+    expect(off.report.verdict).toBe('PASS');
+    expect(off.incompleteReasons).toEqual([]);
+    const noEntry = judge('advisory', null, { contract: flaggedCriterion });
+    expect(noEntry.report.acceptance_evidence[0]!.fail_before).toBeUndefined();
+    expect(noEntry.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: 'it states that its tests fail on the base revision, which only the fail-before probe establishes: no probe ran for it' });
+    expect(noEntry.report.verdict).toBe('PASS');
+  });
+
+  it('under required a flagged criterion blocks the PASS unless failed-before or a person accepted it', () => {
+    expect(judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: flaggedCriterion }).report).toMatchObject({ verdict: 'PASS' });
+    const accepted = judge('required', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }] }, { contract: flaggedCriterion });
+    expect(accepted.report.acceptance_evidence[0]!.status).toBe('supported');
+    expect(accepted.report.verdict).toBe('PASS');
+
+    const notApplicable = judge('required', { probe: null, skipped: null, accepted: [] }, { contract: flaggedCriterion, ...baseFlipped });
+    const entry = notApplicable.report.acceptance_evidence[0]!;
+    expect(entry).toMatchObject({ status: 'unverified', fail_before: { outcome: 'not-applicable' } });
+    expect(entry.note).toMatch(flaggedNote);
+    expect(notApplicable.report.verdict).toBe('INCOMPLETE');
+    expect(notApplicable.incompleteReasons).toContain(`criterion AC-1: unverified (${entry.note})`);
+
+    const noEntry = judge('required', null, { contract: flaggedCriterion });
+    expect(noEntry.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: 'it states that its tests fail on the base revision, which only the fail-before probe establishes: no probe ran for it' });
+    expect(noEntry.report.verdict).toBe('INCOMPLETE');
+
+    // A status judgeFailBefore already left unverified stands with its own note, and still blocks.
+    const passed = judge('required', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: flaggedCriterion });
+    expect(passed.report.acceptance_evidence[0]!.status).toBe('unverified');
+    expect(passed.report.acceptance_evidence[0]!.note).toMatch(/^the new tests pass on the base revision: /);
+    expect(passed.report.verdict).toBe('INCOMPLETE');
+  });
+
+  it('a criterion that does not state fail-before keeps the status its checks give it', () => {
+    // The same evidence that leaves a flagged criterion unverified (a base flip, no probe entry) supports an unflagged one.
+    const unflagged = judge('required', { probe: null, skipped: null, accepted: [] }, baseFlipped);
+    expect(unflagged.report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'not-applicable' } });
+    expect(unflagged.report.verdict).toBe('PASS');
+    const flagged = judge('required', { probe: null, skipped: null, accepted: [] }, { contract: flaggedCriterion, ...baseFlipped });
+    expect(flagged.report.acceptance_evidence[0]!.status).toBe('unverified');
+    const advisoryPassed = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] });
+    expect(advisoryPassed.report.acceptance_evidence[0]!.status).toBe('supported');
+    expect(advisoryPassed.report.verdict).toBe('PASS');
+  });
+
+  // An assumption that a check runs the new tests takes its status from the probe too. An assumption about behaviour
+  // (AS-2 here) is never evaluated, so only the flagged one reaches the report's assumptions.
+  const withAssumptions = (...assumptions: { id: string; statement: string; status: 'unverified' }[]) =>
+    contract({ acceptance_criteria: oneCriterion.acceptance_criteria, required_check_ids: ['unit'], assumptions });
+  const FLAGGED_ASSUMPTION = { id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'unverified' as const };
+  const BEHAVIOUR_ASSUMPTION = { id: 'AS-2', statement: 'Prices are in euros', status: 'unverified' as const };
+
+  it('a flagged assumption is supported only when its named check failed before', () => {
+    const inputs = withAssumptions(FLAGGED_ASSUMPTION, BEHAVIOUR_ASSUMPTION);
+    const supported = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(supported.report.assumptions).toEqual([
+      { assumption_id: 'AS-1', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests (exit 1, 2 attempts))', checks: ['unit'] },
+    ]);
+    expect(supported.report.verdict).toBe('PASS');
+
+    const passed = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
+    expect(passed.report.assumptions).toEqual([
+      { assumption_id: 'AS-1', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)', checks: ['unit'] },
+    ]);
+    expect(passed.report.verdict).toBe('PASS');
+    expect(passed.incompleteReasons).toEqual([]);
+    expect(passed.report.unverified).toContain('assumption AS-1: unverified (unit: passed-before (unit passed on the base revision with the new tests))');
+
+    const timedOut = judge('advisory', { probe: probe(TIMED_OUT), skipped: null, accepted: [] }, { contract: inputs });
+    expect(timedOut.report.assumptions).toEqual([
+      { assumption_id: 'AS-1', status: 'unverified', reason: 'unit: not-established (unit timed out on the probe tree)', checks: ['unit'] },
+    ]);
+
+    const noProbe = judge('advisory', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
+    expect(noProbe.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
+    const noInput = judge('advisory', null, { contract: inputs });
+    expect(noInput.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
+    expect(noInput.report.verdict).toBe('PASS');
+  });
+
+  it('a flagged assumption that names no check uses every check the probe ran', () => {
+    const inputs = withAssumptions({ id: 'AS-1', statement: 'The check runs the new tests', status: 'unverified' });
+    const lintPassed: CheckProbe = { checkId: 'lint', outcome: 'passed-before', reason: 'lint passed on the base revision with the new tests', attempts: [{ attempt: 1, status: 'PASSED', exitCode: 0, signals: [], log: 'evidence/1/fail-before/lint.log' }] };
+    const twoChecks: ProbeResult = { ...probe({}), checks: [...probe({}).checks, lintPassed] };
+    const mixed = judge('advisory', { probe: twoChecks, skipped: null, accepted: [] }, { contract: inputs });
+    expect(mixed.report.assumptions).toEqual([
+      {
+        assumption_id: 'AS-1',
+        status: 'unverified',
+        reason: 'unit: failed-before (unit failed on the base revision with the new tests (exit 1, 2 attempts)); lint: passed-before (lint passed on the base revision with the new tests)',
+        checks: ['unit', 'lint'],
+      },
+    ]);
+
+    const lintFailed: CheckProbe = { ...lintPassed, outcome: 'failed-before', reason: 'lint failed on the base revision with the new tests (exit 1, 2 attempts)', attempts: [{ attempt: 1, status: 'FAILED', exitCode: 1, signals: [], log: 'evidence/1/fail-before/lint.log' }] };
+    const both = judge('advisory', { probe: { ...twoChecks, checks: [...probe({}).checks, lintFailed] }, skipped: null, accepted: [] }, { contract: inputs });
+    expect(both.report.assumptions![0]).toMatchObject({ status: 'supported', checks: ['unit', 'lint'] });
+
+    const none = judge('advisory', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
+    expect(none.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran', checks: [] }]);
+  });
+
+  it('under required an unverified flagged assumption blocks the PASS; under advisory it does not', () => {
+    // The criterion is supported by unit failed-before, so only the assumption (which names lint, a check the probe
+    // never ran) can keep the verdict from PASS.
+    const inputs = withAssumptions({ id: 'AS-1', statement: 'The lint check discovers tests/mul.test.mjs', status: 'unverified' });
+    const required = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(required.report.acceptance_evidence[0]!.status).toBe('supported');
+    expect(required.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'lint: no probe result', checks: ['lint'] }]);
+    expect(required.report.verdict).toBe('INCOMPLETE');
+    expect(required.incompleteReasons).toEqual(['assumption AS-1: unverified (lint: no probe result)']);
+
+    const advisory = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(advisory.report.verdict).toBe('PASS');
+    expect(advisory.incompleteReasons).toEqual([]);
+    expect(advisory.report.unverified).toContain('assumption AS-1: unverified (lint: no probe result)');
+
+    const off = judge('off', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
+    expect(off.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for lint', checks: ['lint'] }]);
+    expect(off.report.verdict).toBe('PASS');
   });
 });
 

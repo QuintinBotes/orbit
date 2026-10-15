@@ -77,6 +77,37 @@ describe('the final report carries each criterion\'s fail-before outcome', () =>
     expect(section).toContain('- AC-3 (optional) [supported]: the export journey downloads a file (evidence: ui/export.png); fail-before (advisory): not-established (cause not-probed): ui is not probed: only a command check of category test that passed on the base revision is');
   });
 
+  it('shows the evaluated status and reason for a flagged assumption, and the contract status for the others', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const cand = addCandidate(lab);
+    const withAssumptions: GoalContract = {
+      ...contractOf(),
+      assumptions: [
+        { id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'unverified' },
+        { id: 'AS-2', statement: 'Prices are in euros', status: 'unverified' },
+        { id: 'AS-3', statement: 'The unit check discovers tests/test_pricing.py', status: 'supported' },
+      ],
+    };
+    lab.db.run('UPDATE runs SET contract_json = ? WHERE id = ?', JSON.stringify(withAssumptions), lab.runId);
+    addEvidence(lab, cand, {
+      acceptance_evidence: evidence,
+      assumptions: [
+        { assumption_id: 'AS-1', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests)', checks: ['unit'] },
+        { assumption_id: 'AS-3', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)', checks: ['unit'] },
+      ],
+    });
+    const run = getRun(lab.db, lab.runId);
+    const r = buildFinalReport(lab.db, run, { runDir: join(lab.repo, '.orbit', 'runs', lab.runId), clock: lab.clock, snapshot: verifySnapshot(run.policyPath, run.policyHash) });
+    expect(r.assumptions).toEqual([
+      { id: 'AS-1', statement: 'The unit check runs pytest over tests/ with src on the path', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests)' },
+      { id: 'AS-2', statement: 'Prices are in euros', status: 'unverified' },
+      { id: 'AS-3', statement: 'The unit check discovers tests/test_pricing.py', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)' },
+    ]);
+    const md = renderMarkdown(r);
+    expect(md).toContain('- AS-1 [supported]: The unit check runs pytest over tests/ with src on the path (unit: failed-before (unit failed on the base revision with the new tests))');
+    expect(md).toContain('- AS-2 [unverified]: Prices are in euros\n');
+  });
+
   it('a criterion with no fail-before entry reads as before', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     const cand = addCandidate(lab);

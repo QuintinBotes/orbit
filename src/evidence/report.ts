@@ -3,15 +3,16 @@ import type { Clock } from '../core/clock.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { hashObject } from '../core/hash.ts';
 import type { GoalContract } from '../contract/types.ts';
-import { checkCategory } from '../policy/config.ts';
+import { checkCategory, failBeforePolicy } from '../policy/config.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { criterionFailBefore, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
+import { statesCheckRunsTests, statesFailBefore } from './fail-before-statements.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
 import { insertEvidenceReport, type EvidenceReportRecord } from './store.ts';
-import type { Candidate, CheckResult, CheckStatus, CriterionEvidence, CriterionFailBefore, CriterionStatus, EvidenceReport, ScopeReport } from './types.ts';
+import type { AssumptionEvidence, Candidate, CheckResult, CheckStatus, CriterionEvidence, CriterionFailBefore, CriterionStatus, EvidenceReport, ScopeReport } from './types.ts';
 
 /**
  * Evidence reports (spec §11 "Completion proof"). A report is derived only
@@ -359,18 +360,69 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         }
       }
     }
-    if (c.mandatory) {
+    // A criterion that states its tests fail on the base revision takes supported from the probe alone, never from the
+    // passing log that would otherwise support it (ADR 0016, item 1): wording only selects it, and only to be stricter.
+    // A status the checks and judgeFailBefore already left short of supported stands as it is. Under advisory or off
+    // the downgrade is a residual risk, not an incomplete, even for a mandatory criterion; under required it blocks
+    // like any unmet mandatory criterion, save where a person accepted it as judgeFailBefore allows.
+    const entry = failBeforeOf.get(c.id);
+    let statementResidual = false;
+    if (status === 'supported' && statesFailBefore(c.statement)) {
+      const mode = entry?.mode ?? input.failBefore?.mode ?? failBeforePolicy(snapshot.config).mode;
+      const accepted = mode === 'required' && entry?.accepted !== undefined;
+      if (entry?.outcome !== 'failed-before' && !accepted) {
+        status = 'unverified';
+        why = `it states that its tests fail on the base revision, which only the fail-before probe establishes: ${entry?.reason ?? 'no probe ran for it'}`;
+        statementResidual = mode !== 'required';
+      }
+    }
+    if (statementResidual) {
+      note(unverified, `${c.mandatory ? 'criterion' : 'optional criterion'} ${c.id}: unverified (${why})`);
+    } else if (c.mandatory) {
       if (status === 'unsupported') note(fail, `criterion ${c.id}: ${why}`);
       else if (status !== 'supported') note(incomplete, `criterion ${c.id}: ${status}${why ? ` (${why})` : ''}`);
     } else if (status !== 'supported') {
       note(unverified, `optional criterion ${c.id}: ${status}${why ? ` (${why})` : ''}`);
     }
-    const entry = failBeforeOf.get(c.id);
     const wide = checkWide(ids);
     return { criterion_id: c.id, status, artifacts, ...(why ? { note: why } : {}), ...(wide !== undefined ? { check_wide: wide } : {}), ...(entry ? { fail_before: entry } : {}) };
   });
   if (notRun.length > 0) note(unverified, `fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: ${notRun.join(', ')}`);
   if (advisoryGaps.length > 0) note(unverified, `fail-before (advisory): ${advisoryGaps.join('; ')}`);
+
+  // An assumption that a check runs the new tests is likewise the probe's to decide (ADR 0016, item 1): the checks it
+  // names, or every check the probe ran when it names none, must each have failed before, which shows the check ran a
+  // test that fails on the base revision. Wording only selects the assumption. Under required an unverified one blocks
+  // the PASS; under advisory or off it is a residual risk.
+  const assumptions: AssumptionEvidence[] = [];
+  const assumptionMode = fb?.mode ?? input.failBefore?.mode ?? failBeforePolicy(snapshot.config).mode;
+  const assumptionProbe = fb?.probe ?? null;
+  const configuredCheckIds = Object.keys(snapshot.config.checks);
+  for (const a of contract.assumptions ?? []) {
+    const named = statesCheckRunsTests(a.statement, configuredCheckIds);
+    if (named === null) continue;
+    const itsChecks = named.length > 0 ? [...named] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
+    let status: AssumptionEvidence['status'];
+    let reason: string;
+    if (assumptionProbe === null) {
+      status = 'unverified';
+      reason = itsChecks.length > 0 ? `no probe ran for ${itsChecks.join(', ')}` : 'no probe ran';
+    } else if (itsChecks.length === 0) {
+      status = 'unverified';
+      reason = 'the probe ran no check';
+    } else {
+      const byId = new Map(assumptionProbe.checks.map((x) => [x.checkId, x] as const));
+      status = itsChecks.every((id) => byId.get(id)?.outcome === 'failed-before') ? 'supported' : 'unverified';
+      reason = itsChecks
+        .map((id) => {
+          const probed = byId.get(id);
+          return probed === undefined ? `${id}: no probe result` : `${id}: ${probed.outcome} (${probed.reason})`;
+        })
+        .join('; ');
+    }
+    assumptions.push({ assumption_id: a.id, status, reason, checks: itsChecks });
+    if (status !== 'supported') note(assumptionMode === 'required' ? incomplete : unverified, `assumption ${a.id}: unverified (${reason})`);
+  }
 
   // UI journeys.
   const uiRows = (input.uiResults ?? []).map((u) => ({ journey: u.journey, status: u.status, artifacts: [...u.artifacts] }));
@@ -418,6 +470,7 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     checks,
     ui: uiRows,
     acceptance_evidence: criteria,
+    ...(assumptions.length > 0 ? { assumptions } : {}),
     verdict: fail.length > 0 ? 'FAIL' : incomplete.length > 0 ? 'INCOMPLETE' : 'PASS',
     unverified,
   };
