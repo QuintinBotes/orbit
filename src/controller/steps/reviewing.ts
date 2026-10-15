@@ -20,16 +20,17 @@ import { recordReviewDepth } from '../review-depth.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { renderWorkerPrompt } from '../../adapters/prompt.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
-import { currentEvidenceReport, listCandidates, type CandidateRecord } from '../../evidence/store.ts';
+import { currentEvidenceReport, listCandidates, type CandidateRecord, type CheckRunRecord } from '../../evidence/store.ts';
 import { isFresh } from '../../evidence/freshness.ts';
 import { buildReviewPacket } from '../../review/packet.ts';
 import { ingestFindings, resolveFindings, type ClaimEvidence, type Disposition, type Resolution } from '../../review/resolve.ts';
-import { severityRank, type FindingSeverity } from '../../review/types.ts';
+import { findingFingerprint, severityRank, type FindingSeverity } from '../../review/types.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { listCheckRuns } from '../../evidence/store.ts';
 import { git } from '../../evidence/git.ts';
 import type { EvidenceReport, RepairBrief } from '../../evidence/types.ts';
-import { probeLogExcerpt, probeLogPath } from '../../evidence/fail-before.ts';
+import { isTestCommandCheck, probeLogExcerpt, probeLogPath, underCheck, type ProbeChange, type ProbeResult } from '../../evidence/fail-before.ts';
+import { probeChanges, runRepairProbe, type ProbeChanges } from '../fail-before.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
 import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
@@ -379,10 +380,24 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const repairs = reviewRepairs(ctx);
   const repaired = new Map<string, ReviewRepairRecord>();
   for (const r of repairs) for (const f of r.findings) for (const id of f.member_ids) repaired.set(id, r);
-  const evidence = await repairEvidence(ctx, cand, repairs);
+  // A finding a review of this tree raised again is the reviewer's claim about the repaired tree: the repair's test does
+  // not override it. Nor does a test whose finding a review of an earlier tree that had it raised again (raisedOn).
+  const closed = new Set([...state.findings, ...state.previousFindings].filter((f) => f.status === 'resolved' || f.status === 'rejected').map((f) => f.id));
+  const raisedOn = new Map<string, Set<string>>();
+  for (const f of [...state.findings, ...state.previousFindings]) {
+    const fp = findingFingerprint(f);
+    raisedOn.set(fp, (raisedOn.get(fp) ?? new Set<string>()).add(f.treeHash));
+  }
+  const { evidence, unresolved, repairedBy, probed } = await repairEvidence(ctx, cand, repairs, { raisedAgain: new Set(state.findings.map((f) => findingFingerprint(f))), raisedOn, closed });
+  if (probed) {
+    // The repair probe ran checks, a long phase of its own: the step's safe point follows it, as VERIFYING's does.
+    const stop = await safePoint(ctx);
+    if (stop) return stop;
+  }
   const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
-  markRepaired(resolution, repaired);
+  markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
+  noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
@@ -395,7 +410,8 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
 
   // Review findings drive a repair loop (spec sections 12 and 14). A finding confirmed by evidence, and a
   // finding a reviewer asked to have repaired (REPAIR_REQUIRED, now or for an earlier tree) at a blocking
-  // severity, becomes a repair brief; it is closed later only by a test exercising it that passes.
+  // severity, becomes a repair brief; it is closed later only by the test the repair wrote for it, where a test check
+  // passes on the pre-repair tree without that test, fails there with it and passes on the repaired tree (ADR 0015).
   const repairRequested = state.reviews.some((r) => r.verdict === 'REPAIR_REQUIRED');
   const blockRank = blockSeverityRank(ctx);
   const open = resolution.dispositions.filter((d) => d.status === 'accepted' || d.status === 'claim_pending' || d.status === 'open');
@@ -656,22 +672,117 @@ function materialSemantics(ctx: RunContext, d: Disposition, t: FindingText | und
   return reasons;
 }
 
+/** What an earlier repair's tests show on this candidate: evidence that resolves findings, and why the others stay open. */
+interface RepairEvidence {
+  evidence: ClaimEvidence[];
+  /** By finding fingerprint: why the repair's test does not resolve it on this tree. */
+  unresolved: Map<string, string[]>;
+  /** By finding id: the repair whose test resolved it, which its resolution names. */
+  repairedBy: Map<string, ReviewRepairRecord>;
+  /** Whether a repair probe ran a check in this call: a long phase, after which the step stops at a safe point. */
+  probed: boolean;
+}
+
+/** What the reviews so far said about the findings the repairs addressed. */
+interface ReviewHistory {
+  /** Fingerprints a review of this tree raised: the reviewer saw the repair's test and still holds the claim. */
+  raisedAgain: ReadonlySet<string>;
+  /** By fingerprint, every tree a review raised the finding on. */
+  raisedOn: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Ids of the findings already resolved or rejected. */
+  closed: ReadonlySet<string>;
+}
+
+const NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";
+
+/** Whether `text` names `id` as a whole token, as reviewers and reports cite ids: TEST-1 is not named by TEST-10. */
+function namesId(text: string, id: string): boolean {
+  return new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i').test(text);
+}
+
+/** Whether a report's text names a finding a repair was sent, by its fingerprint or its external id. */
+function namesFinding(text: string, f: { fingerprint: string; external_id: string | null }): boolean {
+  return [f.fingerprint, f.external_id].some((id) => typeof id === 'string' && id.length > 0 && namesId(text, id));
+}
+
 /**
- * Evidence for findings an earlier repair addressed: the repair named a test for the finding (implementer
- * evidence_refs or tests_added naming its id or fingerprint), that test changed between the reviewed tree and
- * this candidate, and the required checks passed on this candidate. A test exercising the claim that passes
- * on this tree refutes the claim here; nothing else (a reviewer's silence, the implementer's word) does.
+ * The findings among `among` a report's text names for a file: each whose fingerprint it names, and for each external id
+ * it names, the findings with that id. An external id (TEST-1) is unique only within one review, so among the findings
+ * that share it, an id names the ones whose fingerprint `cited` holds (the fingerprints the reports cite for the same
+ * file) when any does, and all of them otherwise: a title "(TEST-1)" beside a note citing review 2's TEST-1 is not read
+ * as naming review 1's.
  */
-async function repairEvidence(ctx: RunContext, cand: CandidateRecord, repairs: readonly ReviewRepairRecord[]): Promise<ClaimEvidence[]> {
+function findingsNamed<F extends { fingerprint: string; external_id: string | null }>(text: string, among: readonly F[], cited: ReadonlySet<string>): F[] {
+  const out = new Map<string, F>();
+  for (const f of among) if (f.fingerprint.length > 0 && namesId(text, f.fingerprint)) out.set(f.fingerprint, f);
+  const ids = new Set(among.flatMap((f) => (typeof f.external_id === 'string' && f.external_id.length > 0 && namesId(text, f.external_id) ? [f.external_id] : [])));
+  for (const id of ids) {
+    const sharing = among.filter((f) => f.external_id === id);
+    const pinned = sharing.filter((f) => cited.has(f.fingerprint));
+    for (const f of pinned.length > 0 ? pinned : sharing) out.set(f.fingerprint, f);
+  }
+  return [...out.values()];
+}
+
+/**
+ * Evidence for findings an earlier repair addressed (docs/decisions/0015-repair-evidence.md). The repair named a test for
+ * the finding (implementer evidence_refs or tests_added naming its id or fingerprint as a whole token), and that test
+ * changed between the reviewed tree and this candidate. Each required command check of category test that passed on this
+ * candidate, whose directory holds the test (ADR 0014 section 4), and whose latest run on the pre-repair candidate passed
+ * cleanly, runs on two probe trees built from the pre-repair candidate's tree with its production code
+ * (controller/fail-before.ts runRepairProbe): the control tree, with the repair's test-owned changes but every test the
+ * reports name for a finding, and the finding's tree, the control tree with the tests named for the finding. The finding
+ * is resolved by its tests only when such a check PASSED on the control tree, FAILED on the finding's tree on every
+ * attempt, with no environment signal and its logs read whole, and PASSED on this candidate: the finding's own tests
+ * tell the trees apart, not another finding's test, a test change named for nothing, or a check that fails on the
+ * pre-repair tree by itself. Exit statuses alone decide; nothing reads the test output to tell which tests ran. A check
+ * that passes on the finding's tree (its tests are skipped, the check's command never runs them, or they do not check
+ * the fix), one that fails on the control tree, one that did not pass cleanly on the pre-repair candidate, and a probe
+ * that is not established (a timeout, an ERROR, an environment signal, a manifest or lockfile the repair changes, a log
+ * that cannot be read whole, the probe's bound) leave the finding open, and `unresolved` says why. A test that fails to
+ * load on the pre-repair tree, for a symbol the repair adds, counts as failing, and so does a test that fails only on a
+ * probe tree for a reason that is neither the fix nor the repair (ADR 0015 Limits): the review of the repaired tree is the
+ * second line of defence. Nothing else resolves it: a reviewer's silence, the implementer's word, or a lint, typecheck or
+ * build check that passed. A finding a review of this tree raised again (`raisedAgain`, by fingerprint) is not probed:
+ * the reviewer saw the repair's test and still holds the claim, so the finding stays open. Nor is a test that a review of
+ * an earlier tree with it raised the finding again on (`raisedOn`), nor a finding already closed (`closed`, by id). A
+ * finding sent to repair more than once is judged by its latest repair that named a test for it, on the tree that repair
+ * started from.
+ */
+async function repairEvidence(ctx: RunContext, cand: CandidateRecord, repairs: readonly ReviewRepairRecord[], seen: ReviewHistory): Promise<RepairEvidence> {
   const out: ClaimEvidence[] = [];
+  const unresolved = new Map<string, string[]>();
+  const result: RepairEvidence = { evidence: out, unresolved, repairedBy: new Map(), probed: false };
+  const because = (fingerprint: string, why: string): void => {
+    const list = unresolved.get(fingerprint) ?? [];
+    if (!list.includes(why)) list.push(why);
+    unresolved.set(fingerprint, list);
+  };
   const pending = repairs.filter((r) => r.tree_hash !== cand.treeHash);
-  if (pending.length === 0) return out;
+  if (pending.length === 0) return result;
+  const tree = cand.treeHash.slice(0, 12);
   const required = new Set(assertContract(ctx).required_check_ids);
-  const passed = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id }).filter((c) => required.has(c.checkId) && c.status === 'PASSED' && c.treeHash === cand.treeHash);
-  if (passed.length === 0) return out;
-  const check = passed[0]!;
+  const checks = ctx.snapshot.config.checks;
+  // The latest pass on this tree of each required command check of category test: the checks a repair probe may run.
+  const passed = new Map<string, CheckRunRecord>();
+  for (const c of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
+    if (required.has(c.checkId) && c.status === 'PASSED' && c.treeHash === cand.treeHash && isTestCommandCheck(checks[c.checkId])) passed.set(c.checkId, c);
+  }
+  /** The passing test checks whose directory holds `path`: the ones whose run can include it (ADR 0014 section 4). */
+  const holders = (path: string): string[] => [...passed.keys()].filter((id) => underCheck(path, checks[id])).sort();
   const reports = listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).filter((w) => w.state === 'SUCCEEDED' && w.resultJson);
-  for (const r of pending) {
+  // Every finding a repair was sent: a test the reports name for any of them stays out of a control tree.
+  const everyFinding = repairs.flatMap((r) => r.findings);
+  // The latest attempt that produced each tree: a tree of that attempt or a later one has the tests written by then.
+  const attemptOf = new Map<string, number>();
+  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf.set(c.treeHash, Math.max(attemptOf.get(c.treeHash) ?? 0, c.attempt));
+  /** A tree before this one, with the test written in `attempt`, whose review raised the finding again; null when none. */
+  const heldBy = (fingerprint: string, attempt: number): string | null => [...(seen.raisedOn.get(fingerprint) ?? [])].find((t) => t !== cand.treeHash && (attemptOf.get(t) ?? 0) >= attempt) ?? null;
+  // Newest repair first: a finding sent to repair more than once is judged on the tree its latest repair started from.
+  const judged = new Set<string>();
+  for (const r of [...pending].reverse()) {
+    const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id) => seen.closed.has(id)));
+    if (findings.length === 0) continue;
     let changed: Set<string>;
     try {
       changed = new Set((await git(ctx.run.repoRoot, ['diff', '--name-only', '-z', '--no-renames', r.commit, cand.commitSha, '--'])).split('\0').filter((p) => p.length > 0));
@@ -690,10 +801,156 @@ async function repairEvidence(ctx: RunContext, cand: CandidateRecord, repairs: r
       for (const e of o.evidence_refs) named.push({ path: e.ref.trim(), attempt: w.attempt ?? r.attempt, text: `${e.ref} ${e.note}` });
       for (const t of o.tests_added) named.push({ path: t.path.trim(), attempt: w.attempt ?? r.attempt, text: `${t.path} ${t.name}` });
     }
-    for (const f of r.findings) {
-      const ids = [f.fingerprint, f.external_id].filter((x): x is string => typeof x === 'string' && x.length > 0).map((x) => x.toLowerCase());
-      const hit = named.find((n) => changed.has(n.path) && ids.some((id) => n.text.toLowerCase().includes(id)));
+    // The fingerprints the reports cite for each path, then the findings, of any repair, each path the repair changed is
+    // named for, with the first attempt that named it.
+    const cited = new Map<string, Set<string>>();
+    for (const x of named) for (const g of everyFinding) if (g.fingerprint.length > 0 && namesId(x.text, g.fingerprint)) cited.set(x.path, (cited.get(x.path) ?? new Set<string>()).add(g.fingerprint));
+    const namedFor = new Map<string, Map<string, { name: string; attempt: number }>>();
+    for (const x of named) {
+      if (!changed.has(x.path)) continue;
+      const m = namedFor.get(x.path) ?? new Map<string, { name: string; attempt: number }>();
+      for (const g of findingsNamed(x.text, everyFinding, cited.get(x.path) ?? new Set())) m.set(g.fingerprint, { name: g.external_id ?? g.finding_id, attempt: Math.min(m.get(g.fingerprint)?.attempt ?? x.attempt, x.attempt) });
+      if (m.size > 0) namedFor.set(x.path, m);
+    }
+    // The tests the repair named for each finding, less a file also named for another finding (a failure in it could be
+    // the other finding's test, and a test file is the smallest unit a check runs) and those a review of a tree that
+    // already had them raised the finding again on.
+    const testsFor = new Map<string, { path: string; attempt: number }[]>();
+    for (const f of findings) {
+      const paths = [...namedFor].filter(([, m]) => m.has(f.fingerprint));
+      if (paths.length === 0) continue;
+      judged.add(f.fingerprint);
+      const tests: { path: string; attempt: number }[] = [];
+      for (const [path, m] of paths) {
+        const { attempt } = m.get(f.fingerprint)!;
+        const others = [...new Set([...m].filter(([fp]) => fp !== f.fingerprint).map(([, v]) => v.name))].sort();
+        const held = heldBy(f.fingerprint, attempt);
+        if (others.length > 0) because(f.fingerprint, `${path} is named for ${others.join(' and ')} too, so a failure in it cannot be tied to this finding; a test in a file of its own can resolve it`);
+        else if (held === null) tests.push({ path, attempt });
+        else because(f.fingerprint, `${path}: a review of tree ${held.slice(0, 12)}, which already had it, raised the finding again`);
+      }
+      if (tests.length > 0) testsFor.set(f.fingerprint, tests);
+    }
+    if (testsFor.size === 0) continue;
+    if (passed.size === 0) {
+      for (const fp of testsFor.keys()) because(fp, `no required command check of category test passed on tree ${tree}, so no test can resolve it`);
+      continue;
+    }
+    let plan: ProbeChanges;
+    try {
+      plan = await probeChanges(ctx.run.repoRoot, r.commit, cand.commitSha);
+    } catch (err) {
+      if (!isOrbitError(err)) throw err;
+      for (const fp of testsFor.keys()) because(fp, `not probed: the repair's changes could not be read (${err.message})`);
+      continue;
+    }
+    if (plan.manifests.length > 0) {
+      for (const fp of testsFor.keys()) because(fp, `not probed: the repair changes ${plan.manifests.join(', ')}, a dependency manifest or lockfile outside test-owned paths, so its test could fail on the pre-repair tree for a dependency rather than for the repair`);
+      continue;
+    }
+    const owned = new Map(plan.owned.map((c) => [c.path, c] as const));
+    // The control tree takes the repair's test-owned changes but every test named for a finding.
+    const forFindings = new Set(named.filter((x) => everyFinding.some((f) => namesFinding(x.text, f))).map((x) => x.path));
+    const control = plan.owned.filter((c) => !forFindings.has(c.path));
+    // The latest run of each check on the pre-repair candidate: a check is probed only where it passed there cleanly, so a
+    // failure on the probe trees is not the pre-repair tree's own.
+    const before = new Map<string, CheckRunRecord>();
+    for (const c of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: r.candidate_id })) if (c.treeHash === r.tree_hash) before.set(c.checkId, c);
+    // For each finding, its test-owned tests and the checks that judge them.
+    const plans = new Map<string, FindingPlan>();
+    for (const f of findings) {
+      const tests: { path: string; attempt: number }[] = [];
+      const ids = new Set<string>();
+      for (const t of testsFor.get(f.fingerprint) ?? []) {
+        if (!owned.has(t.path)) {
+          because(f.fingerprint, `${t.path} is a test only by its content (not a test-owned file), which the probe tree cannot take without the repair's production code`);
+          continue;
+        }
+        tests.push(t);
+        const holding = holders(t.path);
+        if (holding.length === 0) because(f.fingerprint, `no required command check of category test that passed on tree ${tree} holds ${t.path} under its directory`);
+        for (const id of holding) {
+          const b = before.get(id);
+          if (b?.status === 'PASSED' && !b.flaky) ids.add(id);
+          else because(f.fingerprint, `${id} is not probed: it did not pass cleanly on the pre-repair tree ${r.tree_hash.slice(0, 12)} (${b === undefined ? 'it has no recorded run there' : b.status === 'PASSED' ? 'its pass there needed a rerun' : `its run there ended ${b.status}`}), so a failure there could not be tied to the repair's test`);
+        }
+      }
+      if (tests.length > 0 && ids.size > 0) plans.set(f.fingerprint, { name: f.external_id ?? f.finding_id, tests, checks: [...ids].sort() });
+    }
+    if (plans.size === 0) continue;
+    const probe = async (changes: readonly ProbeChange[], tests: readonly string[] | null, byCheck: ReadonlyMap<string, readonly string[]>, fps: readonly string[], repaired = false): Promise<ProbeResult | null> => {
+      try {
+        const p = await runRepairProbe(ctx, cand, { attempt: r.attempt, preRepair: r.commit, changes, tests, checks: [...byCheck].map(([checkId, names]) => ({ checkId, findings: [...names] })), repaired });
+        if (!p.reused && p.checks.some((c) => c.attempts.length > 0)) result.probed = true;
+        return p;
+      } catch (err) {
+        // A stop of supervision or a cancellation is the step's; a git failure building the probe leaves the findings open.
+        if (!isOrbitError(err) || err.code === 'CANCELLED') throw err;
+        for (const fp of fps) because(fp, `not probed: ${err.message}`);
+        return null;
+      }
+    };
+    /** The finding's tests a check's directory holds, as a reason names them. */
+    const under = (p: FindingPlan, id: string): { path: string; attempt: number }[] => p.tests.filter((t) => underCheck(t.path, checks[id]));
+    // The control tree, once for the repair: a check must pass there for a failure with a finding's tests to be theirs.
+    const controlChecks = new Map<string, string[]>();
+    for (const p of plans.values()) for (const id of p.checks) controlChecks.set(id, [...(controlChecks.get(id) ?? []), p.name]);
+    const base = await probe(control, null, controlChecks, [...plans.keys()]);
+    if (!base) continue;
+    // The repaired tree in the same probe checkout, once for the repair, for the checks that passed on the control tree:
+    // a check must pass there too, so the finding's tests fail before and pass after in one place, and a failure that is
+    // the probe checkout's own (its path, its directory) fails on both.
+    const afterChecks = new Map([...controlChecks].filter(([id]) => base.checks.some((c) => c.checkId === id && c.outcome === 'passed-before')));
+    const after = afterChecks.size > 0 ? await probe(plan.all, null, afterChecks, [...plans.keys()], true) : null;
+    if (afterChecks.size > 0 && !after) continue;
+    // Each finding's tree, one for the findings named by the same tests, with the checks that passed on the control tree.
+    const keyOf = (p: FindingPlan): string => p.tests.map((t) => t.path).sort().join('\0');
+    const groups = new Map<string, { tests: string[]; checks: Map<string, string[]>; fps: string[] }>();
+    for (const [fp, p] of plans) {
+      for (const id of p.checks) {
+        const c = base.checks.find((x) => x.checkId === id);
+        const label = under(p, id).map((t) => t.path).join(', ');
+        if (c?.outcome === 'failed-before') {
+          because(fp, `${label}: ${id} fails on the pre-repair tree without the finding's tests too, so its failure cannot be tied to them (${c.reason})`);
+          continue;
+        }
+        if (c?.outcome !== 'passed-before') {
+          because(fp, `${label}: whether it tells the trees apart is not established: ${c?.reason ?? `${id} was not probed`}`);
+          continue;
+        }
+        const a = after?.checks.find((x) => x.checkId === id);
+        if (a?.outcome !== 'passed-before') {
+          because(fp, `${label}: ${id} did not pass on the repaired tree in the probe checkout (${a?.reason ?? `${id} was not probed`}), so what the finding's tests tell apart may be the probe checkout rather than the repair`);
+          continue;
+        }
+        const g = groups.get(keyOf(p)) ?? { tests: p.tests.map((t) => t.path).sort(), checks: new Map<string, string[]>(), fps: [] };
+        g.checks.set(id, [...(g.checks.get(id) ?? []), p.name]);
+        if (!g.fps.includes(fp)) g.fps.push(fp);
+        groups.set(keyOf(p), g);
+      }
+    }
+    const verdicts = new Map<string, ProbeResult>();
+    for (const [key, g] of groups) {
+      const p = await probe([...control, ...g.tests.map((path) => owned.get(path)!)], g.tests, g.checks, g.fps);
+      if (p) verdicts.set(key, p);
+    }
+    for (const f of findings) {
+      const p = plans.get(f.fingerprint);
+      const theirs = p ? verdicts.get(keyOf(p)) : undefined;
+      if (!p || !theirs) continue;
+      // The first check the finding's tests tell the trees apart with, and why each other check does not.
+      let hit: { tests: { path: string; attempt: number }[]; check: CheckRunRecord; reason: string; control: string; repaired: string } | null = null;
+      for (const id of p.checks) {
+        const c = theirs.checks.find((x) => x.checkId === id);
+        // Not run on the finding's tree: it did not pass on the control tree, which is already said.
+        if (!c) continue;
+        const tests = under(p, id);
+        const label = tests.map((t) => t.path).join(', ');
+        if (c.outcome === 'failed-before') hit ??= { tests, check: passed.get(id)!, reason: c.reason, control: base.checks.find((x) => x.checkId === id)!.reason, repaired: after!.checks.find((x) => x.checkId === id)!.reason };
+        else because(f.fingerprint, c.outcome === 'passed-before' ? `${label}: ${NOT_APART} (${c.reason})` : `${label}: whether it tells the trees apart is not established: ${c.reason}`);
+      }
       if (!hit) continue;
+      const { tests, check } = hit;
       out.push({
         findingId: f.finding_id,
         fingerprint: f.fingerprint,
@@ -704,11 +961,34 @@ async function repairEvidence(ctx: RunContext, cand: CandidateRecord, repairs: r
         flaky: check.flaky,
         exercisesClaim: true,
         checkId: check.checkId,
-        ref: `${hit.path} (written in attempt ${hit.attempt} for this finding; ${check.checkId} passed on tree ${cand.treeHash.slice(0, 12)}${check.logSha256 ? `, log sha256 ${check.logSha256.slice(0, 12)}` : ''})`,
+        ref: `${tests.map((t) => t.path).join(', ')} (written in attempt ${[...new Set(tests.map((t) => t.attempt))].join(' and ')} for this finding; ${hit.reason}, ${hit.control}, and ${hit.repaired}: pre-repair tree ${r.tree_hash.slice(0, 12)}, probe tree ${theirs.probeTree!.slice(0, 12)}, control tree ${base.probeTree!.slice(0, 12)}; and ${check.checkId} passed on tree ${tree}${check.logSha256 ? `; log sha256 ${check.logSha256.slice(0, 12)}` : ''})`,
       });
+      for (const id of f.member_ids) result.repairedBy.set(id, r);
     }
   }
-  return out;
+  return result;
+}
+
+/** A finding's tests on the probe trees: its test-owned tests, and the checks that judge them. */
+interface FindingPlan {
+  /** The finding as a decision lists it: its external id, or its id. */
+  name: string;
+  tests: { path: string; attempt: number }[];
+  /** The checks that passed on the repaired tree and cleanly on the pre-repair one, whose directory holds a test. */
+  checks: string[];
+}
+
+/**
+ * A finding a repair addressed that stays open says why the repair's test did not resolve it ("the repair's test passes
+ * on the pre-repair tree too, so it does not tell the trees apart", or why that could not be established), so the
+ * person reading the finding, and the next repair brief, see what is missing.
+ */
+function noteUnresolvedRepairTests(resolution: Resolution, unresolved: ReadonlyMap<string, readonly string[]>): void {
+  for (const d of resolution.dispositions) {
+    const why = unresolved.get(d.fingerprint);
+    if (!why || !(d.status === 'accepted' || d.status === 'claim_pending' || d.status === 'open')) continue;
+    d.reason += `; the repair's test does not resolve it on tree ${resolution.treeHash.slice(0, 12)}: ${why.join('; ')}`;
+  }
 }
 
 function claimsTriggerKey(cand: CandidateRecord, claims: readonly { findingId: string }[]): string {
@@ -769,14 +1049,17 @@ function settleInquiredClaims(ctx: RunContext, cand: CandidateRecord, resolution
   return undecided;
 }
 
-/** A claim that was sent to repair and no longer holds was repaired: resolved, not rejected (it was never refuted on the tree it was raised on). */
-function markRepaired(resolution: Resolution, repaired: ReadonlyMap<string, ReviewRepairRecord>): void {
+/**
+ * A claim that was sent to repair and no longer holds was repaired: resolved, not rejected (it was never refuted on the
+ * tree it was raised on). Its reason names the repair whose test resolved it (`repairedBy`), else the latest it was sent to.
+ */
+function markRepaired(resolution: Resolution, repaired: ReadonlyMap<string, ReviewRepairRecord>, repairedBy: ReadonlyMap<string, ReviewRepairRecord>): void {
   for (const d of resolution.dispositions) {
     if (d.status !== 'rejected' || d.evidenceRefs.length === 0) continue;
-    const rec = d.memberIds.map((id) => repaired.get(id)).find((x) => x !== undefined);
+    const rec = d.memberIds.map((id) => repairedBy.get(id)).find((x) => x !== undefined) ?? d.memberIds.map((id) => repaired.get(id)).find((x) => x !== undefined);
     if (!rec) continue;
     d.status = 'resolved';
-    d.reason = `repaired in attempt ${rec.attempt}: a test exercising the claim passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join('; ')})`;
+    d.reason = `repaired in attempt ${rec.attempt}: the test written for it fails on the pre-repair tree and passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join('; ')})`;
   }
   resolution.rejected = resolution.dispositions.filter((d) => d.status === 'rejected');
   resolution.resolved = resolution.dispositions.filter((d) => d.status === 'resolved');
@@ -793,7 +1076,7 @@ function openFindings(list: readonly Disposition[]): { id: string; external_id: 
 export function blockedCriteriaIn(d: Pick<Disposition, 'claim' | 'location'>, t: FindingText | undefined, blocked: readonly string[]): string[] {
   if (blocked.length === 0) return [];
   const text = [d.claim, d.location ?? '', t?.evidence ?? '', t?.suggestedValidation ?? ''].join('\n');
-  return blocked.filter((id) => new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i').test(text));
+  return blocked.filter((id) => namesId(text, id));
 }
 
 /**
@@ -911,7 +1194,7 @@ function reviewBrief(ctx: RunContext, d: Disposition, validation: string | null,
       `Stay within the allowed paths: ${contract.allowed_paths.join(', ')}.`,
       'Do not weaken, skip or delete existing tests or assertions.',
       ...contract.non_goals.slice(0, 10).map((g) => `Non-goal: ${g}`),
-      `Report the validation test in evidence_refs as { criterion_id: null, ref: "<test file path>", note: "validation for finding ${name} (${d.fingerprint})" }.`,
+      `Report the validation test in evidence_refs as { criterion_id: null, ref: "<test file path>", note: "validation for finding ${name} (${d.fingerprint})" }, naming there only the tests that check this finding, each in a test file of its own: a file named for more than one finding resolves none of them. Orbit runs the required test checks on the current candidate's tree with only your test files changed, first without the tests you name for findings, where a check must pass, then with the tests you name for this finding, where it must fail, and the check must pass on the repaired tree, in the same checkout and as the candidate: only then does the test resolve the finding. A test that is skipped, that the check's command does not run, or that passes without the repair leaves the finding open, and so does a check that fails without the tests you name.`,
     ],
     finding_ids: d.memberIds,
     severity: d.severity,

@@ -92,11 +92,16 @@ delivery:
   require_ci: false
 
 checks:
+  # The category says what a check evidences. Only a check of category test is
+  # run on the base revision with the new tests (the fail-before probe), and only
+  # its pass can show a repair's test passing; a check without one is a test.
   lint:
     command: [npm, run, --silent, lint]
+    category: lint
     timeout_seconds: 300
   unit:
     command: [npm, test, --silent]
+    category: test
     timeout_seconds: 300
     flaky_reruns: 1
   # Browser journeys run through Orbit's UI runner, and only when a criterion or a changed
@@ -105,6 +110,7 @@ checks:
   ui:
     command: [npx, --no-install, playwright, test]
     kind: playwright
+    category: ui
     mandatory: false
     timeout_seconds: 600
 

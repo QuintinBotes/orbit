@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { listRuns } from '../../controller/run-store.ts';
+import { declinesLedger } from '../../controller/undecided-ledger.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { amendmentIdOfQuestion, answerQuestion, applyAmendmentAnswers, listQuestions, openQuestions, type AmendmentAnswerOutcome, type QuestionRecord } from '../../inquisition/index.ts';
 import { appendEvent } from '../../storage/events.ts';
@@ -107,7 +108,10 @@ export async function decideCommand(args: Args, ctx: CliContext): Promise<number
     if (amendment) line(ctx.io, describeAmendment(amendment));
     if (result.unblocks.length > 0) line(ctx.io, `unblocks: ${result.unblocks.join(', ')}`);
     if (remaining.length > 0) line(ctx.io, `${remaining.length} question(s) still open: ${remaining.map((x) => x.id).join(', ')}`);
-    if (run.state === 'BLOCKED') line(ctx.io, `The run is BLOCKED. Continue it with: ${continueCommand(db, run.id, ctx.clock.now())}`);
+    // A declined needs-decision ledger entry keeps the run from success, and a resume would only block again on it.
+    if (run.state === 'BLOCKED' && declinesLedger(db, run.id, q.id, answer)) {
+      line(ctx.io, `The run cannot succeed with a decision a person declined, so resuming would only block again: "orbit cancel ${run.id}" and start a new run whose goal states the decision, with "orbit run".`);
+    } else if (run.state === 'BLOCKED') line(ctx.io, `The run is BLOCKED. Continue it with: ${continueCommand(db, run.id, ctx.clock.now())}`);
     else line(ctx.io, 'A controller picks the answer up at the run\'s next inquiry; nothing else is needed.');
     return EXIT.OK;
   });

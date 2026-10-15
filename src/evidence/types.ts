@@ -72,6 +72,11 @@ export interface CriterionEvidence {
   status: CriterionStatus;
   artifacts: string[];
   note?: string;
+  /**
+   * Present when a check the criterion cites is cited by other criteria too ("check-wide: the tests unit runs, shared by
+   * AC-1, AC-2"): its support is that check's whole run, which also supports them (ADR 0014 section 4).
+   */
+  check_wide?: string;
   /** Whether the criterion's new tests fail on the base revision (docs/decisions/0014-fail-before.md); absent without a base comparison. */
   fail_before?: CriterionFailBefore;
 }
@@ -96,6 +101,8 @@ export interface CriterionFailBefore {
   cause?: string;
   /** A person accepted the criterion without fail-before for this candidate tree (its question and who answered). */
   accepted?: { question_id: string; by: string };
+  /** Present when a probed check is cited by other criteria too: the outcome is that check's, shared by each of them. */
+  check_wide?: string;
 }
 
 /** Spec §11 example shape, extended with the bindings. */

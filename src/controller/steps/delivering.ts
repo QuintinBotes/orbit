@@ -27,6 +27,7 @@ import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/githu
 import { resolveRemoteUrl } from '../../delivery/git.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { completionGate, deliveryGate } from '../gates.ts';
+import { blockOnUndecidedLedger } from '../undecided-ledger.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
@@ -45,9 +46,11 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
     // Evidence or review went stale since review (a policy or tree change): verify again rather than deliver.
     return move(ctx, 'VERIFYING', `delivery refused: ${!ev ? 'no live evidence' : !review ? 'no approving review of this tree' : 'the evidence is stale'}; verifying again`);
   }
-  // Nothing is delivered while a criterion waits for a person's decision.
+  // Nothing is delivered while a criterion waits for a person's decision, or while a choice only a person may make is open.
   const waiting = await blockOnOpenQuestions(ctx, 'delivery');
   if (waiting) return waiting;
+  const undecided = await blockOnUndecidedLedger(ctx, 'delivery');
+  if (undecided) return undecided;
 
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -234,6 +237,9 @@ async function deliveryGateOrBlock(ctx: RunContext, ev: EvidenceReportRecord, re
 
 /** The completion gate, then SUCCEEDED; anything short of it is not success. */
 export async function complete(ctx: RunContext, deliveredTree: string, outcome: Record<string, unknown>, notes: string[] = []): Promise<StepResult> {
+  // DELIVERING asked already; a needs-decision entry recorded since (a CI repair's inquiry) is asked about here.
+  const undecided = await blockOnUndecidedLedger(ctx, 'success');
+  if (undecided) return undecided;
   const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now() });
   recordGate(ctx, gate);
   if (!gate.passed) return finishRun(ctx, 'BLOCKED', `completion gate: ${gate.reasons.join('; ')}`, { outcome: { ...outcome, gate: gate.reasons } });

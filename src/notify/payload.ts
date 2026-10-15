@@ -6,7 +6,7 @@
  * comes from a fixed template per state, never from model prose.
  */
 import { redact } from '../core/redact.ts';
-import { candidateEnvironmentFailures, freshReviewSpent, frozenPolicySetting } from '../controller/resume.ts';
+import { candidateEnvironmentFailures, declinedLedger, freshReviewSpent, frozenPolicySetting } from '../controller/resume.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 
 export const PAYLOAD_SCHEMA = 'orbit.notification/1';
@@ -60,6 +60,10 @@ export function sanitizeReason(text: string | null | undefined): string | null {
 function nextAction(input: PayloadInput): string {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
+  // A decision a person declined: no answer to another question makes a resume succeed.
+  if (run.state === 'BLOCKED' && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {
+    return `Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`;
+  }
   if (first !== undefined) {
     const local = `Answer with orbit decide ${run.id} ${first} <answer>`;
     return remote ? `${local}, or comment "/orbit answer ${first} <choice>" on ${remote.where}.` : `${local}, then run orbit resume ${run.id}.`;

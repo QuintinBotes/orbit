@@ -28,7 +28,7 @@ import type { CheckResult, EvidenceReport, ScopeReport } from '../evidence/types
 import { runUiChecks, toEvidenceUi } from '../ui/runner.ts';
 import type { UiRunResult } from '../ui/types.ts';
 import type { ExplorationResult } from '../ui/explore.ts';
-import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
+import { checkRunnerFor, homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { staticSecurityGate, uiGate, type GateResult } from './gates.ts';
 import { judgeSastResult, sastCheckIds, scanCandidateSecrets, type SastVerdict, type SecretScanResult } from './security.ts';
 import { exploreCandidate, explorationEnabled, explorationUnverified } from './exploration.ts';
@@ -87,22 +87,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
   const checkpoint = async (): Promise<S | null> => (opts.checkpoint ? opts.checkpoint() : null);
 
   // Trusted checks in a clean, writable checkout of exactly this tree.
-  const runner: RunnerContext = {
-    db: ctx.db,
-    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
-    snapshot,
-    isolation: ctx.isolation(),
-    checkoutDir,
-    runDir: ctx.runDir,
-    clock: ctx.clock,
-    // The signal means "stop supervising" (lease lost, shutdown, watchdog), never "cancel": the checks keep running
-    // for the run's next owner. A durable cancellation reaches the runner through the run row.
-    detachSignal: ctx.signal,
-    pollMs: ctx.timing.checkPollMs,
-    killGraceMs: ctx.timing.killGraceMs,
-    homeDir: homeOf(ctx.deps),
-    toolchainCacheRoot: toolchainCacheRootFor(ctx),
-  };
+  const runner: RunnerContext = { ...checkRunnerFor(ctx), checkoutDir };
   const install = await installDependencies({ ...runner, candidate: cand });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');
   const results: CheckResult[] = [...install.results];
@@ -206,7 +191,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
  * the paths the candidate adds or modifies, and what tells which of them are tests (ADR 0011): the test layout of
  * both trees and, when no changed path is a test by itself, the diffs of the files only content can show a test in.
  */
-async function baseComparison(ctx: RunContext, baseRev: string, commit: string): Promise<BaseComparison> {
+export async function baseComparison(ctx: RunContext, baseRev: string, commit: string): Promise<BaseComparison> {
   const repoRoot = ctx.run.repoRoot;
   const treeHash = (await git(repoRoot, ['rev-parse', '--verify', `${baseRev}^{tree}`])).trim();
   const baseline = readJsonIfExists<BaselineReport>(join(ctx.runDir, BASELINE_FILE));

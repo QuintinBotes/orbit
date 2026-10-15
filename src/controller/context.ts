@@ -24,6 +24,7 @@ import { verifySnapshot } from '../policy/snapshot.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { validateContract } from '../contract/validate.ts';
 import { listCandidates, type CandidateRecord } from '../evidence/store.ts';
+import type { RunnerContext } from '../evidence/runner.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import { AgentScheduler, type SystemProbe } from '../scheduling/scheduler.ts';
 import type { WorkUnit } from '../scheduling/types.ts';
@@ -297,4 +298,25 @@ export function runWorktreeRoot(ctx: Pick<RunContext, 'deps' | 'run'>): string {
 /** The same directory from the orbit home and the run row alone, for callers that hold no RunContext (recovery). */
 export function worktreeRootFor(orbitHome: string, run: Pick<RunRecord, 'id' | 'repoRoot'>): string {
   return join(orbitHome, 'worktrees', repoKey(run.repoRoot), run.id);
+}
+
+/**
+ * How this run's trusted checks run, whatever checkout they run in: the candidate's checks in VERIFYING, and the probes
+ * on trees of their own (ADR 0014, ADR 0015). The signal means "stop supervising" (lease lost, shutdown, watchdog), never
+ * "cancel": the checks keep running for the run's next owner. A durable cancellation reaches the runner through the run row.
+ */
+export function checkRunnerFor(ctx: RunContext): Omit<RunnerContext, 'checkoutDir'> {
+  return {
+    db: ctx.db,
+    run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
+    snapshot: ctx.snapshot,
+    isolation: ctx.isolation(),
+    runDir: ctx.runDir,
+    clock: ctx.clock,
+    detachSignal: ctx.signal,
+    pollMs: ctx.timing.checkPollMs,
+    killGraceMs: ctx.timing.killGraceMs,
+    homeDir: homeOf(ctx.deps),
+    toolchainCacheRoot: toolchainCacheRootFor(ctx),
+  };
 }

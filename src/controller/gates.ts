@@ -32,7 +32,7 @@ import type { ScopeReport } from '../evidence/types.ts';
 import type { UiRunResult } from '../ui/types.ts';
 import { isOrbitError } from '../core/errors.ts';
 import { criteriaBlockedByQuestions, openQuestions } from '../inquisition/questions.ts';
-import type { QuestionRecord } from '../inquisition/store.ts';
+import { listLedger, type QuestionRecord } from '../inquisition/store.ts';
 import type { RunRecord } from './run-store.ts';
 import type { SecretScanResult } from './security.ts';
 
@@ -472,6 +472,9 @@ export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<
   // A criterion an open material question blocks is not done, whatever the checks say (spec section 10).
   const { criteria: blocked, questions: waiting } = blockingQuestions(db, input.run.id);
   if (blocked.length > 0) reasons.push(`${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} blocked by open question(s) ${waiting.map((q) => q.id).join(', ')} waiting for a person`);
+  // A choice only a person may make (a needs-decision ledger entry) is not made by succeeding (spec section 10 "Ledger").
+  const undecided = listLedger(db, input.run.id, { status: 'needs-decision' }).map((e) => e.id);
+  if (undecided.length > 0) reasons.push(`assumption ledger ${undecided.length === 1 ? 'entry' : 'entries'} ${undecided.join(', ')} ${undecided.length === 1 ? 'needs' : 'need'} a person's decision`);
   if (input.deliveredTree === null) reasons.push('no delivered commit to compare with the reviewed tree');
   else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
   else evidence.push(`delivered tree ${input.deliveredTree}`);

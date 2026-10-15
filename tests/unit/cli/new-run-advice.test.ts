@@ -16,6 +16,8 @@ import { buildFinalReport } from '../../../src/controller/report.ts';
 import { newRunNeeded } from '../../../src/controller/resume.ts';
 import type { RunState } from '../../../src/controller/states.ts';
 import { buildPayload } from '../../../src/notify/payload.ts';
+import { recordDecision } from '../../../src/storage/decisions.ts';
+import { LEDGER_ASKED_KIND } from '../../../src/controller/undecided-ledger.ts';
 import { makeLab, type Lab } from './lab.ts';
 
 const hooks = vi.hoisted(() => ({ fake: false, start: null as null | ((runId: string) => Promise<void>) }));
@@ -221,6 +223,74 @@ describe('the report and the notification of a blocked run', () => {
     const plain = l.newRun('two');
     block(l, plain.id, VERIFYING, {});
     expect(buildPayload({ kind: 'run.ended', run: getRun(l.db(), plain.id), questionIds: [], pullRequest: null, remote: null } as never).next_action).toBe(`Resolve the block, then run orbit resume ${plain.id}.`);
+  });
+});
+
+/**
+ * A needs-decision ledger entry a person declined (controller/undecided-ledger.ts): the run cannot succeed with it, and
+ * the question is not asked again, so a resume blocks again on it. The reason says to start a new run; the closing line,
+ * `orbit status`, the report and a notification say the same instead of "resume".
+ */
+describe('a block on a needs-decision ledger entry a person declined', () => {
+  const DELIVERING: RunState[] = [...VERIFYING, 'REVIEWING', 'DELIVERING'];
+  const DECLINED = { ledger_entries: ['led-1'], questions: ['q-ledger-1'], ledger_declined: [{ question_id: 'q-ledger-1', ledger_ids: ['led-1'] }] };
+  const stage = (l: Lab, id: string) => buildRunStatus({ clock: systemClock }, l.db(), getRun(l.db(), id)).stage;
+  const nextAction = (l: Lab, id: string) => buildFinalReport(l.db(), getRun(l.db(), id), { runDir: l.base, clock: systemClock, snapshot: null }).next_action;
+
+  it('ends the CLI with a new run, not "resolve the reason above, then resume"', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    hooks.start = async (id) => block(l, id, DELIVERING, DECLINED);
+    const r = await drive(l, ['run', '--goal', 'one', '--foreground']);
+    expect(r.out).toMatch(/resuming would only block again \(a person declined needs-decision assumption ledger entry led-1 \(question q-ledger-1\)[^\n]*\): "orbit cancel orb-\S+" and start a new run whose goal states the decision, with "orbit run"\n$/);
+    expect(r.out).not.toMatch(/resolve the reason above/);
+    expect(r.out).not.toMatch(/then "orbit resume/);
+  });
+
+  it('shows a new run in orbit status, and the report and a notification do not say resume', () => {
+    const l = lab();
+    const run = l.newRun('one');
+    block(l, run.id, DELIVERING, DECLINED);
+    expect(stage(l, run.id)).toMatch(/^BLOCKED \(a new run is needed: a person declined needs-decision assumption ledger entry led-1 \(question q-ledger-1\)/);
+    expect(newRunNeeded(l.db(), getRun(l.db(), run.id))).not.toBeNull();
+    const next = nextAction(l, run.id);
+    expect(next).toContain(`orbit cancel ${run.id}`);
+    expect(next).toContain('start a new run');
+    expect(next).not.toMatch(/Resolve that, then run/);
+    const payload = (questionIds: string[]) => buildPayload({ kind: 'run.ended', run: getRun(l.db(), run.id), questionIds, pullRequest: null, remote: null } as never).next_action;
+    expect(payload([])).toBe(`Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`);
+    expect(payload(['q-other'])).not.toMatch(/orbit resume/);
+  });
+});
+
+describe('orbit decide on the question about needs-decision ledger entries', () => {
+  const DELIVERING: RunState[] = [...VERIFYING, 'REVIEWING', 'DELIVERING'];
+  /** A run blocked on question q-ledger-1, asked as undecided-ledger.ts asks it: only "accept" settles led-1. */
+  function askedRun(l: Lab, goal: string) {
+    const run = l.newRun(goal);
+    l.ask(run.id, { id: 'q-ledger-1', mode: 'decision-record', question: 'Accept the decision this run recorded without a person: led-1?', options: [{ label: 'accept', description: 'a', consequences: 'c' }, { label: 'decline', description: 'd', consequences: 'c' }], recommendation: { option: 'decline', reason: 'r' }, safeDefault: { exists: true, option: 'decline', reason: 'r' }, affected: [] });
+    recordDecision(l.db(), l.base, { id: `dec-${run.id}-ledger-asked`, runId: run.id, kind: LEDGER_ASKED_KIND, summary: 'asked a person to decide led-1', data: { ledger_ids: ['led-1'], question_ids: ['q-ledger-1'], settles_on: 'accept' } }, systemClock);
+    block(l, run.id, DELIVERING, { ledger_entries: ['led-1'], questions: ['q-ledger-1'] });
+    return run;
+  }
+
+  it('after a decline, says to start a new run instead of "Continue it with: orbit resume"', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    const run = askedRun(l, 'one');
+    const r = await l.cli(['decide', run.id, 'q-ledger-1', 'decline']);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toMatch(/Continue it with/);
+    expect(r.out).toContain(`orbit cancel ${run.id}`);
+    expect(r.out).toContain('start a new run whose goal states the decision');
+  });
+
+  it('after an accept, still says to continue the run', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    const run = askedRun(l, 'two');
+    const r = await l.cli(['decide', run.id, 'q-ledger-1', 'accept']);
+    expect(r.out).toMatch(/The run is BLOCKED\. Continue it with: orbit resume/);
   });
 });
 

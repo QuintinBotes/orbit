@@ -11,6 +11,11 @@
  * reuses its decisive results when the probe tree, the check configuration and the policy all match (a repair that
  * changed production code only). A probe interrupted by a crash is closed as interrupted and runs again, once its
  * attempts are confirmed stopped: one that may still run keeps its record open and its checkout.
+ *
+ * The same machinery judges a review repair's test (docs/decisions/0015-repair-evidence.md): its probe trees are the
+ * pre-repair candidate's tree with the repair's test-owned paths but the tests named for findings (REPAIR_CONTROL), that
+ * tree with the tests named for one finding (REPAIR_PROBE), and the repaired tree in the same checkout (REPAIR_REPAIRED),
+ * each recorded as its own decision.
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -68,6 +73,37 @@ export function acceptableCause(cause: NotEstablishedCause): boolean {
 }
 
 export const FAIL_BEFORE_DECISION_KIND = 'verification.fail-before';
+export const REPAIR_PROBE_DECISION_KIND = 'review.repair-probe';
+
+/**
+ * What a probe asks of its tree, and where it keeps what it finds. The fail-before probe (ADR 0014) runs a candidate's
+ * new tests on the base revision; the repair probes (ADR 0015) run a review repair's tests on the tree the repair was
+ * sent to repair, without and with the tests named for a finding. All build their tree, run, judge and record the same
+ * way, and the two repair probes share a directory, a ref namespace and a decision kind, so a result is reused by tree.
+ */
+export interface ProbeFlavour {
+  /** The directory under evidence/<seq>/ that keeps its attempts' logs, and its ref namespace under refs/orbit/<run>/. */
+  name: 'fail-before' | 'repair-probe';
+  /** The decision a completed probe records, and whose decisive results a later probe of the same tree reuses. */
+  decisionKind: string;
+  /** The tree the probe starts from, as a reason names it. */
+  base: string;
+  /** Where its checks ran, as an outcome's reason says it: "on the base revision with the new tests". */
+  where: string;
+}
+
+export const FAIL_BEFORE_PROBE: ProbeFlavour = Object.freeze({ name: 'fail-before', decisionKind: FAIL_BEFORE_DECISION_KIND, base: 'the base revision', where: 'on the base revision with the new tests' });
+/** A repair's tests named for a finding, on the pre-repair tree with the repair's other test-owned changes. */
+export const REPAIR_PROBE: ProbeFlavour = Object.freeze({ name: 'repair-probe', decisionKind: REPAIR_PROBE_DECISION_KIND, base: 'the pre-repair tree', where: 'on the pre-repair tree with the tests named for the finding' });
+/** The control tree: the pre-repair tree with the repair's test-owned changes but every test named for a finding. */
+export const REPAIR_CONTROL: ProbeFlavour = Object.freeze({ name: 'repair-probe', decisionKind: REPAIR_PROBE_DECISION_KIND, base: 'the pre-repair tree', where: 'on the pre-repair tree without the tests named for findings' });
+/**
+ * The repaired tree, built like the others and run in the same probe checkout, so the finding's tests fail before and
+ * pass after in one place: a test that fails only for the probe checkout's path fails here too.
+ */
+export const REPAIR_REPAIRED: ProbeFlavour = Object.freeze({ name: 'repair-probe', decisionKind: REPAIR_PROBE_DECISION_KIND, base: 'the pre-repair tree', where: 'on the repaired tree in the probe checkout' });
+/** One flavour per evidence directory, for the cleanup of interrupted attempts. */
+const FLAVOURS: readonly ProbeFlavour[] = [FAIL_BEFORE_PROBE, REPAIR_PROBE];
 
 export interface ProbeAttempt {
   attempt: number;
@@ -94,8 +130,9 @@ export interface CheckProbe {
 /**
  * The outcome of one probed check over every attempt (ADR 0014 section 3): failed-before when every attempt FAILED, at
  * least two, with no environment signal; passed-before when every attempt PASSED; anything else is not established.
+ * `where` names the probe tree in the reason (ProbeFlavour.where).
  */
-export function judgeProbeAttempts(checkId: string, attempts: readonly ProbeAttempt[]): CheckProbe {
+export function judgeProbeAttempts(checkId: string, attempts: readonly ProbeAttempt[], where: string = FAIL_BEFORE_PROBE.where): CheckProbe {
   const done = (outcome: FailBeforeOutcome, reason: string, cause?: NotEstablishedCause): CheckProbe => ({ checkId, outcome, ...(cause ? { cause } : {}), reason, attempts: [...attempts] });
   if (attempts.length === 0) return done('not-established', `${checkId} did not run on the probe tree`, 'interrupted');
   // The causes no person may accept come first, whatever else the attempts show: an ERROR, then an environment signal.
@@ -103,14 +140,14 @@ export function judgeProbeAttempts(checkId: string, attempts: readonly ProbeAtte
   if (statuses.includes('ERROR')) return done('not-established', `${checkId} could not be run on the probe tree (ERROR)`, 'error');
   const signals = [...new Set(attempts.flatMap((a) => a.signals))];
   if (signals.length > 0) return done('not-established', `${checkId} could not run on the probe tree: its output shows an environment cause (${signals.join(', ')}), not a test result`, 'environment');
-  if (statuses.every((s) => s === 'PASSED')) return done('passed-before', `${checkId} passed on the base revision with the new tests`);
+  if (statuses.every((s) => s === 'PASSED')) return done('passed-before', `${checkId} passed ${where}`);
   if (statuses.every((s) => s === 'FAILED')) {
-    if (attempts.length < 2) return done('not-established', `${checkId} failed once on the base revision with the new tests, and a failure counts only when it repeats`, 'once');
+    if (attempts.length < 2) return done('not-established', `${checkId} failed once ${where}, and a failure counts only when it repeats`, 'once');
     // A failure counts only from a log read whole in one pass with nothing dropped: a cause outside it cannot be ruled out.
     const unscanned = attempts.find((a) => a.unscanned !== undefined);
     if (unscanned) return done('not-established', `${checkId} could not be judged on the probe tree: ${unscanned.unscanned}`, 'unscanned');
     const exits = [...new Set(attempts.map((a) => (a.exitCode === null ? 'none' : String(a.exitCode))))];
-    return done('failed-before', `${checkId} failed on the base revision with the new tests (exit ${exits.join(', ')}, ${attempts.length} attempts)`);
+    return done('failed-before', `${checkId} failed ${where} (exit ${exits.join(', ')}, ${attempts.length} attempts)`);
   }
   if (statuses.includes('TIMEOUT')) return done('not-established', `${checkId} timed out on the probe tree`, 'timeout');
   if (statuses.includes('CANCELLED')) return done('not-established', `${checkId} was cancelled on the probe tree`, 'cancelled');
@@ -192,7 +229,7 @@ function readProbeLog(path: string | null): string | null {
 // Which criteria rest on new tests
 
 /** A check's directory as a repository path prefix: '' for the root. */
-function checkDir(def: Pick<CheckDefinition, 'cwd'> | undefined): string {
+export function checkDir(def: Pick<CheckDefinition, 'cwd'> | undefined): string {
   const cwd = (def?.cwd ?? '.').replace(/^\.\/+/, '').replace(/\/+$/, '');
   return cwd === '.' ? '' : cwd;
 }
@@ -223,6 +260,11 @@ export interface CriterionTestSupport {
   testPaths: string[];
 }
 
+/** A check the probes run: a command check of category test, never lint, typecheck, format or build. */
+export function isTestCommandCheck(def: CheckDefinition | undefined): def is CheckDefinition {
+  return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test';
+}
+
 /** For each criterion, what its support through new tests rests on (ADR 0014 section 4). */
 export function newTestSupport(contract: Pick<GoalContract, 'acceptance_criteria'>, snapshot: Pick<PolicySnapshot, 'config'>, base: BaseComparison): CriterionTestSupport[] {
   const baseStatus = new Map((base.checks ?? []).map((c) => [c.checkId, c.status] as const));
@@ -238,10 +280,7 @@ export function newTestSupport(contract: Pick<GoalContract, 'acceptance_criteria
   return contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
     const withTests = ids.filter((id) => tests(id).length > 0);
-    const probeable = withTests.filter((id) => {
-      const def = snapshot.config.checks[id];
-      return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test' && baseStatus.get(id) === 'PASSED';
-    });
+    const probeable = withTests.filter((id) => isTestCommandCheck(snapshot.config.checks[id]) && baseStatus.get(id) === 'PASSED');
     return {
       criterionId: c.id,
       flips: ids.filter((id) => baseStatus.get(id) === 'FAILED' || baseStatus.get(id) === 'TIMEOUT'),
@@ -302,12 +341,14 @@ async function objectTypes(repoRoot: string, rev: string, paths: readonly string
 }
 
 /**
- * The probe tree (ADR 0014 section 2): the base tree with every given test-owned change applied, written in a private
- * index (read-tree, update-index --index-info, write-tree). git applies an entry by replacing whatever is in its way, so
- * a change that would drop a base entry the probe keeps (a file where the base has a directory, a test file below a
- * base file) and a gitlink refuse the whole probe instead: it is never partial. The order of `changes` does not matter.
+ * The probe tree (ADR 0014 section 2): the tree of `base` with every given test-owned change applied, written in a
+ * private index (read-tree, update-index --index-info, write-tree). `base` is any revision: the base revision for the
+ * fail-before probe, the pre-repair candidate for a repair's (ADR 0015), named `baseName` in a refusal. git applies an
+ * entry by replacing whatever is in its way, so a change that would drop a base entry the probe keeps (a file where the
+ * base has a directory, a test file below a base file) and a gitlink refuse the whole probe instead: it is never
+ * partial. The order of `changes` does not matter.
  */
-export async function buildProbeTree(repoRoot: string, base: string, changes: readonly ProbeChange[]): Promise<{ tree: string } | { refused: string }> {
+export async function buildProbeTree(repoRoot: string, base: string, changes: readonly ProbeChange[], baseName: string = FAIL_BEFORE_PROBE.base): Promise<{ tree: string } | { refused: string }> {
   const sorted = [...changes].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const c of sorted) {
     if (c.srcMode === GITLINK || c.dstMode === GITLINK) return { refused: `${c.path} is a gitlink (a submodule), which the probe tree cannot take` };
@@ -320,12 +361,12 @@ export async function buildProbeTree(repoRoot: string, base: string, changes: re
   for (const c of added) {
     for (const d of parentsOf(c.path)) {
       const t = types.get(d);
-      if (t !== null && t !== undefined && t !== 'tree' && !deleted.has(d)) return { refused: `${c.path} needs the directory ${d}, but ${d} is a file on the base revision that the probe keeps (it is not test-owned)` };
+      if (t !== null && t !== undefined && t !== 'tree' && !deleted.has(d)) return { refused: `${c.path} needs the directory ${d}, but ${d} is a file on ${baseName} that the probe keeps (it is not test-owned)` };
     }
     if (types.get(c.path) === 'tree') {
       const inside = (await git(repoRoot, ['ls-tree', '-r', '-z', '--name-only', '--full-tree', base, '--', `:(literal)${c.path}`])).split('\0').filter((p) => p.length > 0);
       const kept = inside.filter((p) => !deleted.has(p));
-      if (kept.length > 0) return { refused: `${c.path} is a directory on the base revision whose files the probe keeps (${kept[0]}${kept.length > 1 ? ` and ${kept.length - 1} more` : ''}), so a test-owned file cannot replace it` };
+      if (kept.length > 0) return { refused: `${c.path} is a directory on ${baseName} whose files the probe keeps (${kept[0]}${kept.length > 1 ? ` and ${kept.length - 1} more` : ''}), so a test-owned file cannot replace it` };
     }
   }
   const scratch = mkdtempSync(join(tmpdir(), 'orbit-probe-index-'));
@@ -341,8 +382,8 @@ export async function buildProbeTree(repoRoot: string, base: string, changes: re
 }
 
 /**
- * Commit the probe tree on the base revision with Orbit's identity, dated by the base commit so the same base, tree and
- * message always give the same commit, and pin it under `ref` (refs/orbit/<run>/fail-before/<seq>).
+ * Commit the probe tree on the revision it starts from with Orbit's identity, dated by that commit so the same base, tree
+ * and message always give the same commit, and pin it under `ref` (probeRef).
  */
 export async function commitProbeTree(repoRoot: string, o: { base: string; tree: string; ref: string; message: string }): Promise<string> {
   const when = `${(await git(repoRoot, ['show', '-s', '--format=%ct', o.base])).trim()} +0000`;
@@ -355,13 +396,14 @@ export async function commitProbeTree(repoRoot: string, o: { base: string; tree:
   return commit;
 }
 
-export function probeRef(runId: string, seq: number): string {
-  return `refs/orbit/${runId}/fail-before/${seq}`;
+/** The ref that pins a candidate's probe commit: refs/orbit/<run>/fail-before/<seq>, or refs/orbit/<run>/repair-probe/<seq>-<part>. */
+export function probeRef(runId: string, seq: number, flavour: ProbeFlavour = FAIL_BEFORE_PROBE, part: string | null = null): string {
+  return `refs/orbit/${runId}/${flavour.name}/${seq}${part === null ? '' : `-${part}`}`;
 }
 
-/** Where a candidate's probe attempts keep their logs: evidence/<seq>/fail-before/. */
-export function probeEvidenceDir(runDir: string, seq: number): string {
-  return join(candidateEvidenceDir(runDir, seq), 'fail-before');
+/** Where a candidate's probe attempts keep their logs: evidence/<seq>/fail-before/, or evidence/<seq>/repair-probe/. */
+export function probeEvidenceDir(runDir: string, seq: number, flavour: ProbeFlavour = FAIL_BEFORE_PROBE): string {
+  return join(candidateEvidenceDir(runDir, seq), flavour.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -503,7 +545,7 @@ export function listProbeAttempts(db: OrbitDb, runId: string, opts: { probeId?: 
   }));
 }
 
-/** Probe attempt directories by row id, from each attempt's intent.json (evidence/<seq>/fail-before/<check>[~n]). */
+/** Probe attempt directories by row id, from each attempt's intent.json (evidence/<seq>/<flavour>/<check>[~n]). */
 function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimIntent }> {
   const found = new Map<string, { dir: string; intent: ShimIntent }>();
   const subdirs = (d: string): string[] => {
@@ -514,11 +556,13 @@ function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimInten
     }
   };
   for (const seq of subdirs(join(runDir, 'evidence'))) {
-    const root = join(runDir, 'evidence', seq, 'fail-before');
-    for (const name of subdirs(root)) {
-      const dir = join(root, name);
-      const intent = readJsonFile<ShimIntent>(shimPath(dir, 'intent'));
-      if (intent && typeof intent.checkRunId === 'string') found.set(intent.checkRunId, { dir, intent });
+    for (const flavour of FLAVOURS) {
+      const root = join(runDir, 'evidence', seq, flavour.name);
+      for (const name of subdirs(root)) {
+        const dir = join(root, name);
+        const intent = readJsonFile<ShimIntent>(shimPath(dir, 'intent'));
+        if (intent && typeof intent.checkRunId === 'string') found.set(intent.checkRunId, { dir, intent });
+      }
     }
   }
   return found;
@@ -573,11 +617,12 @@ export interface ProbeRequest {
   /** The candidate's runner context; checkoutDir and records are the probe's own. */
   runner: Omit<RunnerContext, 'checkoutDir' | 'records' | 'definitions' | 'setAside' | 'parallelism'>;
   repoRoot: string;
+  /** The revision the probe tree starts from: the base revision, or the pre-repair candidate's commit for a repair probe. */
   baseRev: string;
   candidate: Pick<Candidate, 'id' | 'seq' | 'runId' | 'commitSha'>;
-  /** The checks to probe, each with the criteria whose support rests on it. */
+  /** The checks to probe, each with what rests on it: the criteria, or the findings for a repair probe. */
   checks: readonly { checkId: string; criteria: readonly string[] }[];
-  /** The candidate's test-owned changes: what the probe tree takes from it. */
+  /** The candidate's test-owned changes against `baseRev`: what the probe tree takes from it. */
   changes: readonly ProbeChange[];
   /** An empty directory beside the candidate's check checkout; removed afterwards. */
   checkoutDir: string;
@@ -585,8 +630,12 @@ export interface ProbeRequest {
   timeoutMs: number;
   /** What is left of the run's wall-time budget; the probe is skipped when it is less than its bound. Null: no budget yet. */
   wallRemainingMs: number | null;
-  /** Records the probe's `verification.fail-before` decision. */
+  /** Records the probe's decision (`verification.fail-before`, or the flavour's own). */
   decide: (d: { id: string; kind: string; summary: string; data: unknown }) => void;
+  /** What the probe asks: the fail-before probe (ADR 0014) when absent, or a repair's (ADR 0015). */
+  flavour?: ProbeFlavour;
+  /** What tells this candidate's probes of the flavour apart in their ref (probeRef): a repair probe's attempt and tree. */
+  refPart?: string;
 }
 
 export interface ProbeResult {
@@ -594,6 +643,7 @@ export interface ProbeResult {
   probeId: string | null;
   /** The probe tree; null when it was refused. */
   probeTree: string | null;
+  /** The revision the probe tree starts from (ProbeRequest.baseRev). */
   baseRevision: string;
   /** The test-owned paths the probe tree takes from the candidate. */
   testPaths: string[];
@@ -629,10 +679,10 @@ export function listedPaths(paths: readonly string[]): { paths: string[]; count:
   return { paths: paths.slice(0, MAX_LISTED_PATHS), count: paths.length };
 }
 
-/** A decisive result of an earlier probe of the same tree, check configuration and policy, for each check that has one. */
-function reusable(db: OrbitDb, runId: string, probeTree: string, policyHash: string, configHashes: ReadonlyMap<string, string>): Map<string, { probeId: string; check: CheckProbe }> {
+/** A decisive result of an earlier probe of the same flavour, tree, check configuration and policy, for each check that has one. */
+function reusable(db: OrbitDb, runId: string, kind: string, probeTree: string, policyHash: string, configHashes: ReadonlyMap<string, string>): Map<string, { probeId: string; check: CheckProbe }> {
   const out = new Map<string, { probeId: string; check: CheckProbe }>();
-  for (const d of listDecisions(db, runId, { kind: FAIL_BEFORE_DECISION_KIND })) {
+  for (const d of listDecisions(db, runId, { kind })) {
     const data = d.data as DecisionData | null;
     if (!data || data.probe_tree !== probeTree || data.policy_hash !== policyHash || !Array.isArray(data.checks)) continue;
     for (const c of data.checks) {
@@ -658,11 +708,13 @@ function runRelative(runDir: string, p: string | null): string | null {
  * Run the fail-before probe for a candidate (ADR 0014 section 2): build the probe tree, reuse the decisive results of an
  * earlier probe of the same tree, configuration and policy, and run each remaining check on a checkout of the tree after
  * the locked install, a failing attempt once more. The whole probe has one wall-clock bound, and is skipped as not
- * established when the run's remaining wall time is smaller. Records one `verification.fail-before` decision when it ran.
+ * established when the run's remaining wall time is smaller. Records one decision of the flavour's kind when it ran:
+ * `verification.fail-before`, or `review.repair-probe` for a repair's tests on the pre-repair tree (ADR 0015).
  */
 export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult> {
   const { runner, candidate } = req;
   const { db, snapshot, clock, runDir } = runner;
+  const flavour = req.flavour ?? FAIL_BEFORE_PROBE;
   const checkIds = req.checks.map((c) => c.checkId);
   const testPaths = req.changes.map((c) => c.path).sort();
   const result = (probeTree: string | null, checks: CheckProbe[], probeId: string | null = null, reused = false): ProbeResult => ({ probeId, probeTree, baseRevision: req.baseRev, testPaths, checks, reused });
@@ -673,13 +725,13 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
     return result(null, notEstablished(checkIds, 'interrupted', (id) => `${id} was not probed: an earlier fail-before probe attempt may still be running: ${why}; the probe runs again once it has ended`));
   }
 
-  const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes);
+  const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes, flavour.base);
   if ('refused' in built) return result(null, notEstablished(checkIds, 'refused-tree', (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
 
   const defs = new Map(checkIds.map((id) => [id, snapshot.config.checks[id]!] as const));
   const configHashes = new Map(checkIds.map((id) => [id, configHashFor(snapshot, defs.get(id)!)] as const));
-  const earlier = reusable(db, runner.run.id, probeTree, runner.run.policyHash, configHashes);
+  const earlier = reusable(db, runner.run.id, flavour.decisionKind, probeTree, runner.run.policyHash, configHashes);
   const toRun = checkIds.filter((id) => !earlier.has(id));
   const reusedChecks = checkIds.filter((id) => earlier.has(id)).map((id) => earlier.get(id)!.check);
   if (toRun.length === 0) return result(probeTree, reusedChecks, earlier.get(checkIds[0]!)!.probeId, true);
@@ -689,13 +741,13 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   }
 
   const probeId = newId('probe');
-  const commit = await commitProbeTree(req.repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(runner.run.id, candidate.seq), message: `orbit fail-before probe ${runner.run.id}/${candidate.seq}\n\nbase: ${req.baseRev}\ncandidate: ${candidate.commitSha}\ntree: ${probeTree}\n` });
+  const commit = await commitProbeTree(req.repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(runner.run.id, candidate.seq, flavour, req.refPart ?? null), message: `orbit ${flavour.name} probe ${runner.run.id}/${candidate.seq}\n\nbase: ${req.baseRev}\ncandidate: ${candidate.commitSha}\ntree: ${probeTree}\n` });
   await cleanupCandidateCheckout(req.repoRoot, req.checkoutDir).catch(() => {});
   await materializeCandidate(req.repoRoot, commit, req.checkoutDir, { readOnly: false });
   const checkout = realpathSync(req.checkoutDir);
   const deadline = clock.now() + req.timeoutMs;
   const ctx: RunnerContext = { ...runner, checkoutDir: checkout, records: probeRecords(probeId) };
-  const subject: CheckSubject = { candidateId: candidate.id, bindingId: `fail-before:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir, candidate.seq), source: 'check' };
+  const subject: CheckSubject = { candidateId: candidate.id, bindingId: `${flavour.name}:${probeTree}`, treeHash: probeTree, evidenceDir: probeEvidenceDir(runDir, candidate.seq, flavour), source: 'check' };
   const attemptOf = (row: CheckRunRecord, def: CheckDefinition): ProbeAttempt => {
     const base = { attempt: attemptNumber(db, row.id), status: row.status as CheckStatus, exitCode: row.exitCode, log: runRelative(runDir, row.logPath) };
     // Every attempt's log is read for an environment signal, a passing one too (a shell pipeline can hide a failing
@@ -806,7 +858,7 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
         ran.push({ checkId: id, outcome: 'not-established', cause: 'error', reason: `${id} could not be run on the probe tree: ${refused}`, attempts });
         continue;
       }
-      let judged = judgeProbeAttempts(id, attempts);
+      let judged = judgeProbeAttempts(id, attempts, flavour.where);
       // Not run at all, cut short by the probe's bound, or not repeated for want of time: the bound ran out, not the check.
       const outOfTime = attempts.length === 0 || judged.cause === 'once' || (judged.cause === 'timeout' && bounded);
       if (judged.outcome === 'not-established' && outOfTime && clock.now() >= deadline - 1000) {
@@ -839,7 +891,7 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
       test_paths: listedPaths(testPaths),
       checks: fresh.map((c) => ({ check_id: c.checkId, check_config_hash: configHashes.get(c.checkId)!, outcome: c.outcome, ...(c.cause ? { cause: c.cause } : {}), reason: c.reason, criteria: criteria.get(c.checkId) ?? [], attempts: c.attempts.map((a) => ({ attempt: a.attempt, status: a.status, exit_code: a.exitCode, signals: a.signals, ...(a.unscanned === undefined ? {} : { unscanned: a.unscanned }), log: a.log })) })),
     };
-    req.decide({ id: `dec-${runner.run.id}-fail-before-${probeId}`, kind: FAIL_BEFORE_DECISION_KIND, summary: probeSummary(data.checks), data });
+    req.decide({ id: `dec-${runner.run.id}-${flavour.name}-${probeId}`, kind: flavour.decisionKind, summary: probeSummary(data.checks), data });
   }
   return result(probeTree, checks, probeId, false);
 }
