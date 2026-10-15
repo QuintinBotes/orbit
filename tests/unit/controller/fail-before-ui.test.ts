@@ -2,8 +2,8 @@
 // starts. A criterion resting on a new journey under a browser check is probed on the base revision with the
 // candidate's test-owned changes, after a control run of the base revision alone, once per run, shows the journeys
 // pass there. The scripted runner tells the control from the probe by the checkout it is given.
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkRunnerFor } from '../../../src/controller/context.ts';
 import { collectFailBefore } from '../../../src/controller/fail-before.ts';
@@ -171,7 +171,7 @@ describe('the fail-before ui probe', () => {
     const check = probed(evidence);
     expect(check).toMatchObject({ outcome: 'failed-before' });
     expect(check.attempts.map((a) => a.status)).toEqual(['FAILED', 'FAILED']);
-    expect(check.attempts[0]!.log).toContain('evidence/1/fail-before/ui/probe-1/');
+    expect(check.attempts[0]!.log).toMatch(/evidence\/1\/fail-before\/ui\/probe-[^/]+\/probe-1\//);
     const ctx = b.lab.ctx();
     const support = newTestSupport(ctx.contract!, ctx.snapshot, b.comparison)[0]!;
     expect(criterionFailBefore(support, evidence)).toMatchObject({ outcome: 'failed-before', checks: [{ id: 'journeys', outcome: 'failed-before' }] });
@@ -193,6 +193,24 @@ describe('the fail-before ui probe', () => {
     const s = scripted({}, { journeyStatus: 'SKIPPED', verdict: 'FAIL' });
     const evidence = await collect(b, s.runner);
     expect(probed(evidence)).toMatchObject({ outcome: 'passed-before' });
+  }, 60_000);
+
+  // A confirm review of the fetch-failure scan: the application appends to app.log, and a resumed probe of the same
+  // candidate reused the same output directory, so the scan found the earlier refusal and kept the run blocked after the
+  // environment was fixed. Each probe now writes under a directory of its own.
+  it('a resumed probe after a fetch failure reads a fresh application log, so it recovers once the environment is fixed', async () => {
+    const b = await browserLab();
+    let refused = true;
+    const runner: UiRunner = async (input) => {
+      const control = input.checkoutDir.endsWith('fail-before-ui-control');
+      const log = join(input.outDir, 'app', 'app.log');
+      mkdirSync(dirname(log), { recursive: true });
+      appendFileSync(log, refused && !control ? 'npm error code E403\nnpm error 403 403 Forbidden - GET https://registry.npmjs.org/acme-widget\n' : 'listening\n');
+      return control ? uiRun(input, {}) : uiRun(input, { journeyStatus: 'FAILED' });
+    };
+    expect(probed(await collect(b, runner))).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    refused = false;
+    expect(probed(await collect(b, runner))).toMatchObject({ outcome: 'failed-before' });
   }, 60_000);
 
   it('a failing control establishes nothing: the journeys do not pass on the base revision', async () => {

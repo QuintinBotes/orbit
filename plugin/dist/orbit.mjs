@@ -57318,7 +57318,7 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
-  const uiDir = join52(probeEvidenceDir(ctx.runDir, cand.seq), "ui");
+  const uiDir = join52(probeEvidenceDir(ctx.runDir, cand.seq), "ui", probeId);
   const runJourneys = (checkoutDir, commitSha, treeHash, parentSha, outDir) => runner({ checkoutDir, snapshot: ctx.snapshot, candidate: { ...cand, commitSha, treeHash, parentSha }, uiConfig: ui, journeyCheckIds: [...checkIds], isolation: ctx.isolation(), outDir, clock: ctx.clock, abortSignal: boundControl.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
   let controlCut = false;
   let control = listDecisions(ctx.db, ctx.run.id, { kind: UI_CONTROL_DECISION_KIND }).map((d) => d.data).find((d) => d !== null && d.base_tree === baseTree && sameIds(d.checks, checkIds));

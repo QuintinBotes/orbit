@@ -236,7 +236,9 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
-  const uiDir = join(probeEvidenceDir(ctx.runDir, cand.seq), 'ui');
+  // A directory of this probe's own: an application appends to its log (app/app.log), and the log is read whole for a
+  // fetch failure, so a resumed probe of the same candidate must not find an earlier run's refusal in it.
+  const uiDir = join(probeEvidenceDir(ctx.runDir, cand.seq), 'ui', probeId);
   // The runner binds its evidence to the candidate it is given and checks the checkout against it, so each tree
   // gets the candidate record of its own commit: the base revision for the control, the probe commit for the probe.
   const runJourneys = (checkoutDir: string, commitSha: string, treeHash: string, parentSha: string, outDir: string): Promise<UiRunResult> =>
