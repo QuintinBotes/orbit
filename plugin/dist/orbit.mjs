@@ -50912,7 +50912,7 @@ function escapeRegExp3(text2) {
 }
 function namedAt(text2, checkId) {
   if (checkId.length === 0) return null;
-  const m = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp3(checkId)}(?![A-Za-z0-9_-])`, "i").exec(text2);
+  const m = new RegExp(`(?<![A-Za-z0-9._-])${escapeRegExp3(checkId)}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`, "i").exec(text2);
   return m === null ? null : { index: m.index, end: m.index + m[0].length };
 }
 function namedCheckIds(text2, checkIds) {
@@ -50950,10 +50950,13 @@ function unknownNamedChecks(statement, checkIds) {
     seen.add(lower2);
     unknown.push(word);
   };
+  const ID = String.raw`[\x60"'“‘]?([A-Za-z0-9][A-Za-z0-9._-]*)[\x60"'”’]?`;
+  const clean = (word) => word.replace(/\.+$/, "");
   for (const sentence of sentences(statement)) {
-    for (const m of sentence.matchAll(/\b([A-Za-z0-9][A-Za-z0-9_-]*)\s+checks?\b/gi)) add(m[1]);
-    for (const m of sentence.matchAll(/\bthe\s+checks?\s+(?:named\s+|called\s+)?([A-Za-z0-9][A-Za-z0-9_-]*)\b/gi)) {
-      if (!AFTER_CHECK_VERBS.has(m[1].toLowerCase())) add(m[1]);
+    for (const m of sentence.matchAll(new RegExp(String.raw`(?<![A-Za-z0-9._-])${ID}\s+checks?\b`, "gi"))) add(clean(m[1]));
+    for (const m of sentence.matchAll(new RegExp(String.raw`\bthe\s+checks?\s+(?:named\s+|called\s+)?${ID}`, "gi"))) {
+      const word = clean(m[1]);
+      if (!AFTER_CHECK_VERBS.has(word.toLowerCase())) add(word);
     }
   }
   return unknown;
@@ -50964,7 +50967,7 @@ var init_fail_before_statements = __esm({
     "use strict";
     LOCUS = String.raw`(?:(?:on|against)\s+(?:the\s+)?base revision|before\s+(?:the|this)\s+(?:change|fix)|without\s+(?:the|this)\s+change)`;
     FAIL_VERB = String.raw`(?:fails?|failing|failed)`;
-    NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|never|no\s+longer|cannot|can['’]t|won['’]t|will\s+not|is\s+not|isn['’]t)`;
+    NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not)`;
     PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
@@ -57210,6 +57213,15 @@ function judgeControl(data) {
   if (data.verdict === "ERROR") return { passed: false, cause: "error", reason };
   return { passed: false, cause: "base-failed", reason };
 }
+function browserNotStarted(journeys) {
+  for (const j of journeys) {
+    if (j.status !== "FAILED") continue;
+    const text2 = [j.error?.message, j.errorContext?.errorDetails].filter((t) => t !== null && t !== void 0).join("\n");
+    const line3 = text2.split("\n").find((l) => BROWSER_NOT_STARTED.test(l))?.trim();
+    if (line3) return `the browser did not start (${redact(line3).slice(0, 300)})`;
+  }
+  return null;
+}
 function attemptOf(ctx, result2, checkId, n2) {
   const notRun = result2.notExecuted.find((x) => x.checkId === null || x.checkId === checkId);
   if (notRun) {
@@ -57217,6 +57229,8 @@ function attemptOf(ctx, result2, checkId, n2) {
     return { environment: notRun.environment ?? `${what} never ran the repository's code` };
   }
   const journeys = result2.journeys.filter((j) => j.checkId === checkId);
+  const notStarted = browserNotStarted(journeys);
+  if (notStarted) return { environment: notStarted };
   const status2 = result2.verdict === "TIMEOUT" ? "TIMEOUT" : result2.verdict === "CANCELLED" ? "CANCELLED" : result2.verdict === "ERROR" || journeys.length === 0 ? "ERROR" : journeys.some((j) => j.status === "TIMED_OUT") ? "TIMEOUT" : journeys.some((j) => j.status === "INTERRUPTED") ? "CANCELLED" : journeys.some((j) => j.status === "FAILED") ? "FAILED" : "PASSED";
   const run = result2.checks.find((c) => c.checkId === checkId);
   return { attempt: { attempt: n2, status: status2, exitCode: run?.exitCode ?? null, signals: [], log: runRelative2(ctx.runDir, run?.logPath ?? join52(result2.outDir, "ui-result.json")) } };
@@ -57226,21 +57240,47 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
   const probeId = newId("probe");
   const checks = [...req.checks].sort((a, b) => a.checkId.localeCompare(b.checkId));
   const checkIds = checks.map((c) => c.checkId);
-  const done = (probeTree2, probed2) => ({ probeId, probeTree: probeTree2, checks: probed2 });
+  let releaseBound = () => {
+  };
+  const done = (probeTree2, probed2) => {
+    releaseBound();
+    return { probeId, probeTree: probeTree2, checks: probed2 };
+  };
   const ui = ctx.snapshot.config.ui;
   if (!ui || ui.journey_check_ids.length === 0) {
     return done(null, notEstablished2(checkIds, "not-probed", (id) => `${id} was not probed: no ui journeys are configured (ui.journey_check_ids is empty)`));
+  }
+  if (ui.environment.start_command === null) {
+    return done(null, notEstablished2(checkIds, "not-probed", (id) => `${id} was not probed: ui.environment.start_command is not set, so the journeys would run against the application already at ui.environment.base_url, which is not started from the probe's checkout and is not bound to the base revision`));
   }
   if (req.wallRemainingMs !== null && req.wallRemainingMs < req.timeoutMs) {
     const left = Math.max(0, Math.floor(req.wallRemainingMs / 1e3));
     return done(null, notEstablished2(checkIds, "budget", (id) => `${id} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`));
   }
-  const deadline = ctx.clock.now() + req.timeoutMs;
+  const boundMs = req.wallRemainingMs === null ? req.timeoutMs : Math.min(req.timeoutMs, req.wallRemainingMs);
+  const deadline = ctx.clock.now() + boundMs;
+  const boundControl = new AbortController();
+  let boundOut = false;
+  const onBoundSignal = () => boundControl.abort();
+  ctx.signal.addEventListener("abort", onBoundSignal, { once: true });
+  if (ctx.signal.aborted) boundControl.abort();
+  const boundTimer = setTimeout(() => {
+    boundOut = true;
+    boundControl.abort();
+  }, Math.max(0, deadline - ctx.clock.now()));
+  boundTimer.unref();
+  releaseBound = () => {
+    clearTimeout(boundTimer);
+    ctx.signal.removeEventListener("abort", onBoundSignal);
+  };
+  const boundRanOut = () => !ctx.signal.aborted && (boundOut || ctx.clock.now() >= deadline);
+  const boundReason = (id) => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out`;
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
   const uiDir = join52(probeEvidenceDir(ctx.runDir, cand.seq), "ui");
-  const runJourneys = (checkoutDir, commitSha, treeHash, parentSha, outDir) => runner({ checkoutDir, snapshot: ctx.snapshot, candidate: { ...cand, commitSha, treeHash, parentSha }, uiConfig: ui, journeyCheckIds: [...checkIds], isolation: ctx.isolation(), outDir, clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
+  const runJourneys = (checkoutDir, commitSha, treeHash, parentSha, outDir) => runner({ checkoutDir, snapshot: ctx.snapshot, candidate: { ...cand, commitSha, treeHash, parentSha }, uiConfig: ui, journeyCheckIds: [...checkIds], isolation: ctx.isolation(), outDir, clock: ctx.clock, abortSignal: boundControl.signal, homeDir: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
+  let controlCut = false;
   let control = listDecisions(ctx.db, ctx.run.id, { kind: UI_CONTROL_DECISION_KIND }).map((d) => d.data).find((d) => d !== null && d.base_tree === baseTree && sameIds(d.checks, checkIds));
   if (!control) {
     let ran = null;
@@ -57263,16 +57303,20 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
       checks: [...checkIds],
       verdict: ran?.verdict ?? "ERROR",
       passed: ran !== null && ran.verdict === "PASS",
-      environment: (ran?.notExecuted.length ?? 0) > 0,
+      environment: (ran?.notExecuted.length ?? 0) > 0 || ran !== null && browserNotStarted(ran.journeys) !== null,
       reasons: ran !== null ? [...ran.reasons] : [`the journeys could not run on the base revision: ${controlThrown ?? "no result"}`]
     };
-    decide2(ctx, {
-      id: `dec-${ctx.run.id}-fail-before-ui-control-${hashObject({ tree: baseTree, checks: [...checkIds] }).slice(7, 19)}`,
-      kind: UI_CONTROL_DECISION_KIND,
-      summary: control.passed ? `the journeys (${checkIds.join(", ")}) pass on the base revision alone: the fail-before ui control` : `the journeys (${checkIds.join(", ")}) do not pass on the base revision alone, so no browser check is probed: ${control.reasons.join("; ")}`,
-      data: control
-    });
+    controlCut = boundRanOut();
+    if (!controlCut) {
+      decide2(ctx, {
+        id: `dec-${ctx.run.id}-fail-before-ui-control-${hashObject({ tree: baseTree, checks: [...checkIds] }).slice(7, 19)}`,
+        kind: UI_CONTROL_DECISION_KIND,
+        summary: control.passed ? `the journeys (${checkIds.join(", ")}) pass on the base revision alone: the fail-before ui control` : `the journeys (${checkIds.join(", ")}) do not pass on the base revision alone, so no browser check is probed: ${control.reasons.join("; ")}`,
+        data: control
+      });
+    }
   }
+  if (controlCut) return done(null, notEstablished2(checkIds, "budget", boundReason));
   const judgedControl = judgeControl(control);
   if (!judgedControl.passed) {
     return done(null, notEstablished2(checkIds, judgedControl.cause, (id) => `${id} was not probed: ${judgedControl.reason}, so a failure with the new journeys would not be theirs alone`));
@@ -57289,6 +57333,7 @@ tree: ${probeTree}
   const attempts = new Map(checkIds.map((id) => [id, []]));
   const environments = /* @__PURE__ */ new Map();
   let thrown = null;
+  let cutShort = false;
   let runs = 0;
   const checkout = join52(runWorktreeRoot(ctx), `fail-before-ui-${cand.seq}`);
   await cleanupCandidateCheckout(repoRoot, checkout).catch(() => {
@@ -57300,15 +57345,20 @@ tree: ${probeTree}
   }
   try {
     for (let n2 = 1; thrown === null && n2 <= 2; n2++) {
-      if (ctx.clock.now() >= deadline) break;
+      if (boundRanOut()) break;
       let result2;
       try {
         result2 = await runJourneys(checkout, commit, probeTree, baseCommit, join52(uiDir, `probe-${n2}`));
       } catch (err) {
-        thrown = { cause: isOrbitError(err, "CANCELLED") ? "cancelled" : "error", message: err instanceof Error ? err.message : String(err) };
+        if (boundRanOut()) cutShort = true;
+        else thrown = { cause: isOrbitError(err, "CANCELLED") ? "cancelled" : "error", message: err instanceof Error ? err.message : String(err) };
         break;
       }
       runs++;
+      if (boundRanOut()) {
+        cutShort = true;
+        break;
+      }
       let failed = false;
       for (const id of checkIds) {
         const a = attemptOf(ctx, result2, id, n2);
@@ -57329,10 +57379,11 @@ tree: ${probeTree}
     const environment = environments.get(id);
     if (environment !== void 0) return { checkId: id, outcome: "not-established", cause: "environment", reason: `${id} could not run on the base revision with the new tests: ${environment}, not a journey result`, attempts: mine };
     if (thrown !== null) return { checkId: id, outcome: "not-established", cause: thrown.cause, reason: `${id} could not be run on the probe tree: ${thrown.message}`, attempts: mine };
-    if (mine.length === 0) return { checkId: id, outcome: "not-established", cause: "budget", reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out`, attempts: mine };
+    if (cutShort) return { checkId: id, outcome: "not-established", cause: "budget", reason: boundReason(id), attempts: mine };
+    if (mine.length === 0) return { checkId: id, outcome: "not-established", cause: "budget", reason: boundReason(id), attempts: mine };
     const judged = judgeProbeAttempts(id, mine, FAIL_BEFORE_PROBE.where);
-    if (judged.outcome === "not-established" && judged.cause === "once" && ctx.clock.now() >= deadline - 1e3) {
-      return { ...judged, cause: "budget", reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out` };
+    if (judged.outcome === "not-established" && judged.cause === "once" && (boundRanOut() || ctx.clock.now() >= deadline - 1e3)) {
+      return { ...judged, cause: "budget", reason: boundReason(id) };
     }
     return judged;
   });
@@ -57354,13 +57405,14 @@ tree: ${probeTree}
   }
   return done(probeTree, probed);
 }
-var UI_CONTROL_DECISION_KIND, UI_PROBE_DECISION_KIND, sameIds;
+var UI_CONTROL_DECISION_KIND, UI_PROBE_DECISION_KIND, sameIds, BROWSER_NOT_STARTED;
 var init_fail_before_ui = __esm({
   "src/controller/fail-before-ui.ts"() {
     "use strict";
     init_errors();
     init_hash();
     init_ids();
+    init_redact();
     init_candidate();
     init_fail_before();
     init_git();
@@ -57371,6 +57423,7 @@ var init_fail_before_ui = __esm({
     UI_CONTROL_DECISION_KIND = "verification.fail-before-ui-control";
     UI_PROBE_DECISION_KIND = "verification.fail-before-ui";
     sameIds = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
+    BROWSER_NOT_STARTED = /browserType\.launch|Executable doesn't exist|Failed to launch|MachPortRendezvousServer|mach_port_rendezvous|sandbox initialization failed|Target page, context or browser has been closed/i;
   }
 });
 
