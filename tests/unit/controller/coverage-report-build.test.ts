@@ -84,7 +84,7 @@ describe('the final report of a run with everything recorded', () => {
     expect(r.revision).toMatchObject({ base: 'b'.repeat(40), candidate: cand.commitSha, tree: cand.treeHash, branch: 'orbit/delivered', delivered_commit: 'd'.repeat(40), pull_request: { number: 7, url: 'https://example.test/pr/7' } });
     expect(r.unverified).toEqual(['SAST is unverified']);
     expect(r.residual_risks).toEqual(expect.arrayContaining(['no isolation', 'check unit passed only on a rerun (flaky)']));
-    expect(r.residual_risks.some((x) => x.startsWith('review finding F-1 (low, open): claim F-1 '))).toBe(true);
+    expect(r.residual_risks.some((x) => x.startsWith('review finding F-1 (low, open): claim F-1'))).toBe(true);
     expect(r.residual_risks.find((x) => x.startsWith('review finding F-1'))!.length).toBeLessThan(260);
   });
 
@@ -204,7 +204,7 @@ describe('what to do next', () => {
     expect(next('BLOCKED')).toBe('The run is blocked. Resolve that, then run `orbit resume orb-unit`.');
     expect(next('EXHAUSTED', 'autonomous', 'cost cap')).toContain('The authorized budget is spent (cost cap).');
     expect(next('EXHAUSTED')).toContain('(see decisions)');
-    expect(next('IMPOSSIBLE', 'autonomous', 'no way')).toBe('no way Revise the goal or the authorization before trying again.');
+    expect(next('IMPOSSIBLE', 'autonomous', 'no way')).toBe('no way The worktree and evidence are preserved, and orbit gc removes them after retention. Revise the goal or the authorization before trying again.');
     expect(next('IMPOSSIBLE')).toContain('No authorized way to meet the contract was found.');
     expect(next('CANCELLED')).toBe('Nothing further: the run was cancelled on request and its artifacts are preserved.');
     expect(next('IMPLEMENTING')).toBe('The run is IMPLEMENTING; this report is provisional.');

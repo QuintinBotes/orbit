@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Clock } from './clock.ts';
 import { OrbitError } from './errors.ts';
 
@@ -121,6 +122,98 @@ export async function terminateGroup(pgid: number, graceMs: number, options: { c
     }
   }
   return { exited: !isGroupAlive(pgid), signal: last };
+}
+
+/** Where a process-table search looks; tests substitute a platform and a /proc of their own making. */
+export interface ProcessSearchOptions {
+  platform?: NodeJS.Platform;
+  /** Linux: the proc filesystem to read. Default /proc. */
+  procDir?: string;
+}
+
+/**
+ * Pids of the live processes whose command line (the arguments joined by single spaces) satisfies `match`. A launcher
+ * puts a marker on the command line of a process it spawns (a launch token, a directory) so that this search finds it,
+ * whatever the process is written in, before any record names its pid. On Linux each /proc/<pid>/cmdline is read: the
+ * raw argument bytes, with no procps needed (slim container images have none). Elsewhere (macOS) it is
+ * `ps -A -ww -o pid=,stat=,args=`, which prints the arguments whole, under a UTF-8 locale: under C, macOS ps prints a
+ * non-ASCII argument vis-encoded ("Código" as "CM-CM-3digo"), and a path in the match would never match. Zombies and
+ * this process are left out. Throws when the process table cannot be read: an empty answer always means no such
+ * process, never that nobody could look.
+ */
+export function findProcesses(match: (commandLine: string) => boolean, opts: ProcessSearchOptions = {}): number[] {
+  if ((opts.platform ?? process.platform) === 'linux') return procSearch(opts.procDir ?? '/proc', 'cmdline', (args) => match(args.join(' ')));
+  return psSearch(false, match);
+}
+
+/**
+ * Pids of the live processes whose environment holds `name=value` as one whole entry. Every process a check starts
+ * inherits the check's token there (evidence/check-shim.ts CHECK_TOKEN_ENV), so this finds what still runs of a check
+ * whose process group no record names. It is the environment a process started with: one that changes its own later
+ * is found by the original, and a descendant that was started without it (a cleared environment) is not found. On Linux
+ * each /proc/<pid>/environ is read; one that cannot be read (another user's process, or one that made itself
+ * undumpable, as ssh-agent does) is not searched. Elsewhere (macOS) it is `ps -E`, which appends the environment of the
+ * user's own processes to their arguments. Throws when the process table cannot be read, as findProcesses does.
+ */
+export function findProcessesWithEnv(name: string, value: string, opts: ProcessSearchOptions = {}): number[] {
+  const entry = `${name}=${value}`;
+  if ((opts.platform ?? process.platform) === 'linux') return procSearch(opts.procDir ?? '/proc', 'environ', (env) => env.includes(entry));
+  return psSearch(true, (line) => ` ${line} `.includes(` ${entry} `));
+}
+
+/** A UTF-8 locale every macOS has: ps prints a non-ASCII argument as it is. */
+const PS_LOCALE = 'en_US.UTF-8';
+
+function psSearch(withEnvironment: boolean, match: (line: string) => boolean): number[] {
+  const r = spawnSync('ps', [...(withEnvironment ? ['-E'] : []), '-A', '-ww', '-o', 'pid=,stat=,args='], {
+    encoding: 'utf8',
+    env: { ...process.env, LC_ALL: PS_LOCALE, LANG: PS_LOCALE },
+    timeout: 10_000,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (r.error) throw new OrbitError('INTERNAL', `cannot run ps to search the process table: ${r.error.message}`, {}, { cause: r.error });
+  if (r.status !== 0 || typeof r.stdout !== 'string') throw new OrbitError('INTERNAL', `ps failed searching the process table (exit ${String(r.status)})`, { stderr: String(r.stderr ?? '').slice(0, 500) });
+  const out: number[] = [];
+  for (const line of r.stdout.split('\n')) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (!isValidPid(pid) || pid === process.pid || pid === r.pid || m[2]!.startsWith('Z')) continue;
+    if (match(m[3]!.trimEnd())) out.push(pid);
+  }
+  return out;
+}
+
+/**
+ * Linux: the processes whose /proc/<pid>/<file> (NUL-separated entries: cmdline's arguments, environ's NAME=value
+ * pairs) satisfies `match`. An entry that ended meanwhile, or that cannot be read, is skipped, and so is an empty one (a
+ * zombie or a kernel thread). Throws when the proc filesystem itself cannot be read.
+ */
+function procSearch(procDir: string, file: 'cmdline' | 'environ', match: (entries: string[]) => boolean): number[] {
+  let names: string[];
+  try {
+    names = readdirSync(procDir);
+  } catch (err) {
+    throw new OrbitError('INTERNAL', `cannot read ${procDir} to search the process table: ${errno(err) ?? String(err)}`, { procDir }, { cause: err });
+  }
+  const out: number[] = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    if (!isValidPid(pid) || pid === process.pid) continue;
+    let raw: string;
+    try {
+      raw = readFileSync(join(procDir, name, file), 'utf8');
+    } catch {
+      continue;
+    }
+    const entries = raw.split('\0');
+    if (entries.at(-1) === '') entries.pop();
+    if (entries.length === 0) continue;
+    if (match(entries)) out.push(pid);
+  }
+  return out;
 }
 
 /** Collapse whitespace so start times recorded by different callers compare equal. */

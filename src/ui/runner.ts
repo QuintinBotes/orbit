@@ -151,186 +151,195 @@ export async function runUiChecks(input: UiRunInput): Promise<UiRunResult> {
     enforcement: UI_ENFORCEMENT_VERSION,
     projects: input.projects ?? null,
   });
-  atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'running', candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) });
+  // The run's state marker: running now, finished (with the verdict) or aborted (with the error) when it ends.
+  const runMarker = { candidate: candidate.id, startedAt, checks: checks.map((c) => c.id) };
+  atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'running', ...runMarker });
 
-  const reasons: string[] = [];
-  const unverified: string[] = [];
-  const checkRuns: UiCheckRun[] = [];
-  const journeys: UiJourneyResult[] = [];
-  const notExecuted: UiNotExecuted[] = [];
-  let terminal: UiRunVerdict | null = null;
-  let app: AppHandle | null = null;
-  // Emptied first: the directory is under the candidate's evidence, which a later UI run of the candidate reuses, and an
-  // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
-  removeScratch(join(outDir, 'tmp'));
-  const tmpDir = ensureDir(join(outDir, 'tmp'));
-  const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
-  const port = new URL(baseUrl).port;
-  const appStart = uiConfig.environment.start_command;
-  const appEnv: Record<string, string> = { ...(input.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir };
-  // The application's toolchain profile (ui/app-toolchains.ts): the repository's caches read-only, build state private
-  // to this run (removed with it), and for .NET the check's settings and the NIS rule, for the hosts its sandbox allows.
-  const appScratch = join(outDir, 'toolchains');
-  const toolchainsFor = (command: readonly string[], networkHosts: readonly string[]): AppToolchains =>
-    appToolchains({ command, checkoutDir, cacheRoot: input.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: input.isolation.kind, networkHosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}), hostEnv: input.hostEnv ?? process.env });
-  // A provider whose every sandbox has its own loopback (srt on Linux, containers): an application started in one is
-  // unreachable from a browser in another, so each journey check starts it inside its own sandbox (single-sandbox.ts).
-  const launch: AppLaunch | null =
-    appStart !== null && input.isolation.privateLoopback === true
-      ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000, stateDir: ensureDir(join(outDir, 'app')), pollMs: input.appPollMs, toolchains: (hosts) => toolchainsFor(appStart, hosts) }
-      : null;
-
+  // Everything from the running marker to the finished one: a refusal, or a failed read of the checkout after the journeys, leaves "aborted", never "running".
   try {
-    if (appStart !== null && launch === null) {
-      const appCheck: CheckDefinition = { ...defaultCheck('ui-app'), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
-      const tc = toolchainsFor(appStart, appCheck.network_hosts);
-      // startApp adds allowLocalBinding: the application is the one process here that must listen on loopback.
-      const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: input.homeDir, env: input.hostEnv });
-      try {
-        app = await startApp({
-          command: appStart,
-          cwd: checkoutDir,
-          baseUrl,
-          readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000,
-          // The application's own variables win over its toolchains'.
-          env: { ...tc.env, ...appEnv },
-          isolation: { provider: input.isolation, profile },
-          isolatedTestData: uiConfig.environment.isolated_test_data,
-          stateDir: join(outDir, 'app'),
-          clock,
-          pollMs: input.appPollMs,
-          hostEnv: input.hostEnv,
-          stopWhen: appNodeDenialWatch(appStart, tmpDir),
-        });
-      } catch (err) {
-        // Isolation that is missing or a policy refusal must stop the run; a server that will not start is a failed run.
-        if (err instanceof OrbitError && (err.code === 'ISOLATION_UNAVAILABLE' || err.code === 'POLICY_DENIED')) throw err;
-        terminal = 'ERROR';
-        reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
-        notExecuted.push({ stage: 'application', checkId: null, logPath: join(outDir, 'app', APP_LOG_FILE), signal: null });
+    const reasons: string[] = [];
+    const unverified: string[] = [];
+    const checkRuns: UiCheckRun[] = [];
+    const journeys: UiJourneyResult[] = [];
+    const notExecuted: UiNotExecuted[] = [];
+    let terminal: UiRunVerdict | null = null;
+    let app: AppHandle | null = null;
+    // Emptied first: the directory is under the candidate's evidence, which a later UI run of the candidate reuses, and an
+    // MSBuild failure report an earlier one left there would stop the application at its first look (a review of #26).
+    removeScratch(join(outDir, 'tmp'));
+    const tmpDir = ensureDir(join(outDir, 'tmp'));
+    const baseEnv = safeBaseEnv(input.hostEnv ?? process.env);
+    const port = new URL(baseUrl).port;
+    const appStart = uiConfig.environment.start_command;
+    const appEnv: Record<string, string> = { ...(input.appEnv ?? {}), ORBIT_UI_BASE_URL: baseUrl, ...(port ? { PORT: port, ORBIT_UI_PORT: port } : {}), ORBIT_UI_ISOLATED_TEST_DATA: uiConfig.environment.isolated_test_data ? '1' : '0', TMPDIR: tmpDir };
+    // The application's toolchain profile (ui/app-toolchains.ts): the repository's caches read-only, build state private
+    // to this run (removed with it), and for .NET the check's settings and the NIS rule, for the hosts its sandbox allows.
+    const appScratch = join(outDir, 'toolchains');
+    const toolchainsFor = (command: readonly string[], networkHosts: readonly string[]): AppToolchains =>
+      appToolchains({ command, checkoutDir, cacheRoot: input.toolchainCacheRoot ?? null, scratchRoot: appScratch, tmpDir, isolation: input.isolation.kind, networkHosts, ...(input.homeDir ? { homeDir: input.homeDir } : {}), hostEnv: input.hostEnv ?? process.env });
+    // A provider whose every sandbox has its own loopback (srt on Linux, containers): an application started in one is
+    // unreachable from a browser in another, so each journey check starts it inside its own sandbox (single-sandbox.ts).
+    const launch: AppLaunch | null =
+      appStart !== null && input.isolation.privateLoopback === true
+        ? { command: appStart, env: { ...baseEnv, ...appEnv }, readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000, stateDir: ensureDir(join(outDir, 'app')), pollMs: input.appPollMs, toolchains: (hosts) => toolchainsFor(appStart, hosts) }
+        : null;
+
+    try {
+      if (appStart !== null && launch === null) {
+        const appCheck: CheckDefinition = { ...defaultCheck('ui-app'), command: appStart, network_hosts: [], timeout_seconds: uiConfig.environment.ready_timeout_seconds };
+        const tc = toolchainsFor(appStart, appCheck.network_hosts);
+        // startApp adds allowLocalBinding: the application is the one process here that must listen on loopback.
+        const profile = profileForCheck({ worktree: checkoutDir, check: appCheck, snapshot, extraWritable: [tmpDir, ...tc.extraWritable], readablePaths: tc.readablePaths, nisDomainName: tc.nisDomainName, homeDir: input.homeDir, env: input.hostEnv });
+        try {
+          app = await startApp({
+            command: appStart,
+            cwd: checkoutDir,
+            baseUrl,
+            readyTimeoutMs: uiConfig.environment.ready_timeout_seconds * 1000,
+            // The application's own variables win over its toolchains'.
+            env: { ...tc.env, ...appEnv },
+            isolation: { provider: input.isolation, profile },
+            isolatedTestData: uiConfig.environment.isolated_test_data,
+            stateDir: join(outDir, 'app'),
+            clock,
+            pollMs: input.appPollMs,
+            hostEnv: input.hostEnv,
+            stopWhen: appNodeDenialWatch(appStart, tmpDir),
+          });
+        } catch (err) {
+          // Isolation that is missing or a policy refusal must stop the run; a server that will not start is a failed run.
+          if (err instanceof OrbitError && (err.code === 'ISOLATION_UNAVAILABLE' || err.code === 'POLICY_DENIED')) throw err;
+          terminal = 'ERROR';
+          reasons.push(`the application did not start: ${err instanceof Error ? err.message : String(err)}`);
+          notExecuted.push({ stage: 'application', checkId: null, logPath: join(outDir, 'app', APP_LOG_FILE), signal: null });
+        }
+      } else if (appStart === null) {
+        unverified.push('ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate');
       }
-    } else if (appStart === null) {
-      unverified.push('ui.environment.start_command is not set: the application at base_url was started by something other than Orbit, so its build is not bound to this candidate');
+
+      if (terminal === null) {
+        for (const check of checks) {
+          const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock, launch });
+          checkRuns.push(run.run);
+          journeys.push(...run.journeys);
+          reasons.push(...run.reasons);
+          unverified.push(...run.unverified);
+          if (run.notExecuted) notExecuted.push(run.notExecuted);
+          if (run.terminal && terminal === null) terminal = run.terminal;
+          if (run.terminal === 'CANCELLED') break;
+          // The next check would start the same application the same way.
+          if (run.appFailed) break;
+        }
+      }
+    } finally {
+      if (app) await stopApp(app, { clock });
+      removeScratch(appScratch);
     }
 
-    if (terminal === null) {
-      for (const check of checks) {
-        const run = await runOneCheck({ input, check, checkoutDir, outDir, tmpDir, baseEnv, baseUrl, clock, launch });
-        checkRuns.push(run.run);
-        journeys.push(...run.journeys);
-        reasons.push(...run.reasons);
-        unverified.push(...run.unverified);
-        if (run.notExecuted) notExecuted.push(run.notExecuted);
-        if (run.terminal && terminal === null) terminal = run.terminal;
-        if (run.terminal === 'CANCELLED') break;
-        // The next check would start the same application the same way.
-        if (run.appFailed) break;
-      }
+    const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
+    const visualBaselineChanges = [...new Set([...visualFromDiff, ...written])].sort();
+    const changedPaths = new Set([...candidateChanges.map((c) => c.path), ...(await touchedSince(checkoutDir, candidate.commitSha))]);
+    const a11yBaselineChanges = [...new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths), ...[...changedPaths].filter(looksLikeA11yBaseline)])].sort();
+    if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(', ')}`);
+
+    // A journey or the app that edits the code under test makes the evidence describe something other than the candidate.
+    const drift = await driftSince(checkoutDir, candidate.commitSha);
+    const outside = (p: string): boolean => !isInside(resolve(checkoutDir, p), outDir);
+    const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
+    if (mutated.length > 0) {
+      reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(', ')}`);
+      terminal ??= 'ERROR';
     }
-  } finally {
-    if (app) await stopApp(app, { clock });
-    removeScratch(appScratch);
+    const leftovers = drift.untracked.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
+    if (leftovers.length > 0) unverified.push(`the run left untracked files in the checkout: ${leftovers.slice(0, 10).join(', ')}`);
+
+    const journeyFiles = new Set(journeys.map((j) => j.file));
+    const deletedJourneys = candidateChanges.filter((c) => c.status === 'D' && JOURNEY_FILE.test(c.path)).map((c) => c.path);
+    if (deletedJourneys.length > 0) unverified.push(`the candidate deleted journey files, so their coverage is gone: ${deletedJourneys.join(', ')}`);
+    const editedJourneys = candidateChanges.filter((c) => c.status !== 'D' && journeyFiles.has(c.path)).map((c) => c.path);
+    if (editedJourneys.length > 0) unverified.push(`the candidate changed journey definitions that this run executed (check that no assertion was weakened): ${editedJourneys.join(', ')}`);
+
+    const stats = tally(journeys);
+    const coverage = coverageOf(journeys, uiConfig);
+    if (journeys.length > 0) {
+      if (coverage.missingViewports.length) unverified.push(`configured viewports never exercised: ${coverage.missingViewports.map((v) => `${v.width}x${v.height}`).join(', ')}`);
+      if (coverage.missingBrowsers.length) unverified.push(`configured browsers never exercised: ${coverage.missingBrowsers.join(', ')}`);
+      if (uiConfig.accessibility.enabled && !journeys.some((j) => j.a11y.length > 0)) unverified.push('accessibility is enabled but no journey ran an accessibility scan');
+    }
+    const advisoryCount = journeys.reduce((n, j) => n + j.a11y.filter((s) => s.advisory).reduce((m, s) => m + s.newViolations.length, 0), 0);
+    if (advisoryCount > 0) {
+      unverified.push(`${advisoryCount} new serious or critical accessibility violation(s) were recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false; they did not fail any journey`);
+    }
+    for (const j of journeys) {
+      if (j.annotations.includes('test.fail')) unverified.push(`journey ${j.id} is annotated test.fail(): a "pass" there means the failure still happens`);
+    }
+
+    const failing = journeys.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT' || j.status === 'SKIPPED');
+    for (const j of failing) reasons.push(j.status === 'SKIPPED' ? `journey ${j.id} was skipped, which proves nothing` : `journey ${j.id} ${j.status === 'TIMED_OUT' ? 'timed out' : 'failed'}${j.failedStep ? ` at step "${j.failedStep}"` : ''}`);
+    const needsReview = uiConfig.visual.baseline_changes_require_review && (visualBaselineChanges.length > 0 || a11yBaselineChanges.length > 0);
+    if (needsReview) {
+      reasons.push(`stored baselines changed in the candidate and need human review: ${[...visualBaselineChanges, ...a11yBaselineChanges].join(', ')}`);
+    }
+    if (journeys.some((j) => j.status === 'INTERRUPTED')) terminal = 'CANCELLED';
+
+    let verdict: UiRunVerdict;
+    if (terminal !== null) verdict = terminal;
+    else if (failing.length > 0) verdict = 'FAIL';
+    else if (needsReview) verdict = 'BLOCKED';
+    else verdict = 'PASS';
+
+    // Disclosed with the evidence: the browser ran without its own sandbox, with srt as its only boundary and two extra rules.
+    for (const c of checkRuns) {
+      if (!c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS)) continue;
+      unverified.push(`check ${c.checkId} ran its browser under sandbox-runtime ${c.srtVersion ?? 'of unknown version'} with the isolation adjustment ${c.isolationAdjustments.join(', ')}: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
+    }
+    const adjusted = checkRuns.some((c) => c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS));
+    const single = checkRuns.some((c) => c.isolationAdjustments?.includes(UI_SINGLE_SANDBOX));
+    const singleLimitation = singleSandboxLimitation(input.isolation.kind);
+    if (single) unverified.push(`the application under test and the journeys ran in one sandbox (${UI_SINGLE_SANDBOX}): ${singleLimitation}`);
+
+    const browsers = uniqueBy(journeys.flatMap((j) => (j.browser ? [j.browser] : [])), (b) => `${b.name}@${b.version}`);
+    const viewports = coverage.observedViewports;
+    const result: UiRunResult = {
+      verdict,
+      passed: verdict === 'PASS',
+      reasons,
+      binding: {
+        candidateId: candidate.id,
+        treeHash: candidate.treeHash,
+        checkConfigHash: configHash,
+        policyHash: snapshotHash(snapshot),
+        commitSha: candidate.commitSha,
+        playwrightVersion: checkRuns.find((c) => c.playwrightVersion)?.playwrightVersion ?? null,
+        browsers,
+        viewports,
+        baseUrl,
+        keyboard: { scans: journeys.reduce((n, j) => n + j.keyboard.length, 0), failed: journeys.reduce((n, j) => n + j.keyboard.filter((k) => !k.passed).length, 0) },
+        accessibilityFailOn: a11yFailOn(uiConfig),
+      },
+      journeys,
+      checks: checkRuns,
+      stats,
+      flaky: journeys.some((j) => j.status === 'FLAKY'),
+      visualBaselineChanges,
+      a11yBaselineChanges,
+      a11yAdvisory: journeys.flatMap((j) => j.a11y.filter((s) => s.advisory).flatMap((s) => s.newViolations)),
+      consoleErrorCount: journeys.reduce((n, j) => n + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
+      coverage,
+      unverified,
+      notExecuted,
+      limitations: [...UI_LIMITATIONS, ...(adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []), ...(single ? [singleLimitation] : [])],
+      outDir,
+      startedAt,
+      endedAt: clock.now(),
+    };
+    atomicWriteJson(join(outDir, UI_RESULT_FILE), redactValue(result));
+    atomicWriteJson(join(outDir, 'ui-run.json'), { state: 'finished', ...runMarker, endedAt: result.endedAt, verdict });
+    return result;
+  } catch (err) {
+    atomicWriteJson(join(outDir, 'ui-run.json'), redactValue({ state: 'aborted', ...runMarker, endedAt: clock.now(), error: err instanceof Error ? err.message : String(err) }));
+    throw err;
   }
-
-  const written = await baselineFilesWrittenDuringRun(checkoutDir, candidate.commitSha, globs);
-  const visualBaselineChanges = [...new Set([...visualFromDiff, ...written])].sort();
-  const changedPaths = new Set([...candidateChanges.map((c) => c.path), ...(await touchedSince(checkoutDir, candidate.commitSha))]);
-  const a11yBaselineChanges = [...new Set([...changedA11yBaselines(journeys, checkoutDir, changedPaths), ...[...changedPaths].filter(looksLikeA11yBaseline)])].sort();
-  if (written.length > 0) reasons.push(`the run itself wrote baseline files: ${written.join(', ')}`);
-
-  // A journey or the app that edits the code under test makes the evidence describe something other than the candidate.
-  const drift = await driftSince(checkoutDir, candidate.commitSha);
-  const outside = (p: string): boolean => !isInside(resolve(checkoutDir, p), outDir);
-  const mutated = drift.modified.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
-  if (mutated.length > 0) {
-    reasons.push(`the run modified tracked files, so its evidence no longer describes the candidate: ${mutated.slice(0, 10).join(', ')}`);
-    terminal ??= 'ERROR';
-  }
-  const leftovers = drift.untracked.filter((p) => !globs(p) && !looksLikeA11yBaseline(p) && outside(p));
-  if (leftovers.length > 0) unverified.push(`the run left untracked files in the checkout: ${leftovers.slice(0, 10).join(', ')}`);
-
-  const journeyFiles = new Set(journeys.map((j) => j.file));
-  const deletedJourneys = candidateChanges.filter((c) => c.status === 'D' && JOURNEY_FILE.test(c.path)).map((c) => c.path);
-  if (deletedJourneys.length > 0) unverified.push(`the candidate deleted journey files, so their coverage is gone: ${deletedJourneys.join(', ')}`);
-  const editedJourneys = candidateChanges.filter((c) => c.status !== 'D' && journeyFiles.has(c.path)).map((c) => c.path);
-  if (editedJourneys.length > 0) unverified.push(`the candidate changed journey definitions that this run executed (check that no assertion was weakened): ${editedJourneys.join(', ')}`);
-
-  const stats = tally(journeys);
-  const coverage = coverageOf(journeys, uiConfig);
-  if (journeys.length > 0) {
-    if (coverage.missingViewports.length) unverified.push(`configured viewports never exercised: ${coverage.missingViewports.map((v) => `${v.width}x${v.height}`).join(', ')}`);
-    if (coverage.missingBrowsers.length) unverified.push(`configured browsers never exercised: ${coverage.missingBrowsers.join(', ')}`);
-    if (uiConfig.accessibility.enabled && !journeys.some((j) => j.a11y.length > 0)) unverified.push('accessibility is enabled but no journey ran an accessibility scan');
-  }
-  const advisoryCount = journeys.reduce((n, j) => n + j.a11y.filter((s) => s.advisory).reduce((m, s) => m + s.newViolations.length, 0), 0);
-  if (advisoryCount > 0) {
-    unverified.push(`${advisoryCount} new serious or critical accessibility violation(s) were recorded as advisory because ui.accessibility.fail_on_new_serious_or_critical is false; they did not fail any journey`);
-  }
-  for (const j of journeys) {
-    if (j.annotations.includes('test.fail')) unverified.push(`journey ${j.id} is annotated test.fail(): a "pass" there means the failure still happens`);
-  }
-
-  const failing = journeys.filter((j) => j.status === 'FAILED' || j.status === 'TIMED_OUT' || j.status === 'SKIPPED');
-  for (const j of failing) reasons.push(j.status === 'SKIPPED' ? `journey ${j.id} was skipped, which proves nothing` : `journey ${j.id} ${j.status === 'TIMED_OUT' ? 'timed out' : 'failed'}${j.failedStep ? ` at step "${j.failedStep}"` : ''}`);
-  const needsReview = uiConfig.visual.baseline_changes_require_review && (visualBaselineChanges.length > 0 || a11yBaselineChanges.length > 0);
-  if (needsReview) {
-    reasons.push(`stored baselines changed in the candidate and need human review: ${[...visualBaselineChanges, ...a11yBaselineChanges].join(', ')}`);
-  }
-  if (journeys.some((j) => j.status === 'INTERRUPTED')) terminal = 'CANCELLED';
-
-  let verdict: UiRunVerdict;
-  if (terminal !== null) verdict = terminal;
-  else if (failing.length > 0) verdict = 'FAIL';
-  else if (needsReview) verdict = 'BLOCKED';
-  else verdict = 'PASS';
-
-  // Disclosed with the evidence: the browser ran without its own sandbox, with srt as its only boundary and two extra rules.
-  for (const c of checkRuns) {
-    if (!c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS)) continue;
-    unverified.push(`check ${c.checkId} ran its browser under sandbox-runtime ${c.srtVersion ?? 'of unknown version'} with the isolation adjustment ${c.isolationAdjustments.join(', ')}: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`);
-  }
-  const adjusted = checkRuns.some((c) => c.isolationAdjustments?.includes(CHROMIUM_MACH_RENDEZVOUS));
-  const single = checkRuns.some((c) => c.isolationAdjustments?.includes(UI_SINGLE_SANDBOX));
-  const singleLimitation = singleSandboxLimitation(input.isolation.kind);
-  if (single) unverified.push(`the application under test and the journeys ran in one sandbox (${UI_SINGLE_SANDBOX}): ${singleLimitation}`);
-
-  const browsers = uniqueBy(journeys.flatMap((j) => (j.browser ? [j.browser] : [])), (b) => `${b.name}@${b.version}`);
-  const viewports = coverage.observedViewports;
-  const result: UiRunResult = {
-    verdict,
-    passed: verdict === 'PASS',
-    reasons,
-    binding: {
-      candidateId: candidate.id,
-      treeHash: candidate.treeHash,
-      checkConfigHash: configHash,
-      policyHash: snapshotHash(snapshot),
-      commitSha: candidate.commitSha,
-      playwrightVersion: checkRuns.find((c) => c.playwrightVersion)?.playwrightVersion ?? null,
-      browsers,
-      viewports,
-      baseUrl,
-      keyboard: { scans: journeys.reduce((n, j) => n + j.keyboard.length, 0), failed: journeys.reduce((n, j) => n + j.keyboard.filter((k) => !k.passed).length, 0) },
-      accessibilityFailOn: a11yFailOn(uiConfig),
-    },
-    journeys,
-    checks: checkRuns,
-    stats,
-    flaky: journeys.some((j) => j.status === 'FLAKY'),
-    visualBaselineChanges,
-    a11yBaselineChanges,
-    a11yAdvisory: journeys.flatMap((j) => j.a11y.filter((s) => s.advisory).flatMap((s) => s.newViolations)),
-    consoleErrorCount: journeys.reduce((n, j) => n + (j.diagnostics?.consoleErrors.length ?? 0) + (j.diagnostics?.pageErrors.length ?? 0), 0),
-    coverage,
-    unverified,
-    notExecuted,
-    limitations: [...UI_LIMITATIONS, ...(adjusted ? [CHROMIUM_MACH_RENDEZVOUS_LIMITATION] : []), ...(single ? [singleLimitation] : [])],
-    outDir,
-    startedAt,
-    endedAt: clock.now(),
-  };
-  atomicWriteJson(join(outDir, UI_RESULT_FILE), redactValue(result));
-  return result;
 }
 
 /** Entry that carries a run-level outcome no single journey shows (no journeys ran, or baselines need review). */

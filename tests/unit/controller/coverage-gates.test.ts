@@ -392,4 +392,22 @@ describe('deliveryGate and completionGate with real records', () => {
     expect(ok.details.approved).toBe(true);
     expect(ok.evidence).toEqual([`review ${review.id} by codex: APPROVE on tree ${cand.treeHash}`]);
   });
+
+  it('independentReviewGate decides independence from the reviews of the tree, not from the cleared set alone', () => {
+    lab = makeUnitLab();
+    const ctx = lab.ctx();
+    const cand = addCandidate(lab);
+    const args = { runId: lab.runId, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: 'claude', now: lab.clock.now() };
+    // No review yet: the recorded reviewer selection decides.
+    expect(independentReviewGate(lab.db, args).details.independent).toBe(true);
+    expect(independentReviewGate(lab.db, { ...args, selectionIndependent: false }).details.independent).toBe(false);
+    // A same-provider BLOCK review clears nothing, yet it is not an independent review.
+    addReview(lab, cand, { provider: 'claude', verdict: 'BLOCK' });
+    const blocked = independentReviewGate(lab.db, args);
+    expect(blocked.status).toBe('fail');
+    expect(blocked.details.independent).toBe(false);
+    // Once an independent provider has reviewed the tree, the gate is an independent one, whatever it decided.
+    addReview(lab, cand, { provider: 'codex', verdict: 'BLOCK', round: 2 });
+    expect(independentReviewGate(lab.db, args).details.independent).toBe(true);
+  });
 });

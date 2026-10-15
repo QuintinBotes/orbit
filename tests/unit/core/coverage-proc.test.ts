@@ -324,3 +324,44 @@ describe('killGroup, isGroupAlive and terminateGroup signalling errors', () => {
     expect(result.exited).toBe(true);
   });
 });
+
+describe('findProcesses (injected ps)', () => {
+  it('matches the command line of each process, skipping zombies, ps itself and this process', async () => {
+    const stdout = [`   10 S    node orbit.mjs shim --launch-token abc --`, `   11 Z    abc`, `   99 R    ps abc`, `${process.pid} S  node abc`, `   12 Ss+  other abc`, `garbage abc`, ''].join('\n');
+    const spawnSync = vi.fn(() => ({ status: 0, pid: 99, stdout, stderr: '' }));
+    const proc = await load('darwin', { spawnSync });
+    expect(proc.findProcesses((line) => line.includes('abc'))).toEqual([10, 12]);
+    expect(proc.findProcesses((line) => line === 'node orbit.mjs shim --launch-token abc --')).toEqual([10]);
+    // Under a UTF-8 locale: under C, ps prints a non-ASCII argument vis-encoded ("Código" as "CM-CM-3digo"), and a path in it never matches.
+    expect(spawnSync).toHaveBeenCalledWith('ps', ['-A', '-ww', '-o', 'pid=,stat=,args='], expect.objectContaining({ encoding: 'utf8', env: expect.objectContaining({ LC_ALL: 'en_US.UTF-8' }) }));
+  });
+
+  it('throws when ps cannot run or fails, so an empty answer always means no such process', async () => {
+    const broken = await load('darwin', { spawnSync: vi.fn(() => ({ error: new Error('ENOENT'), status: null, stdout: '', stderr: '' })) });
+    expect(() => broken.findProcesses(() => true)).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('cannot run ps') }));
+    expect(() => broken.findProcessesWithEnv('A', 'b')).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('cannot run ps') }));
+    const failing = await load('darwin', { spawnSync: vi.fn(() => ({ status: 1, stdout: '', stderr: 'bad option' })) });
+    expect(() => failing.findProcesses(() => true)).toThrow(expect.objectContaining({ code: 'INTERNAL', message: expect.stringContaining('exit 1') }));
+  });
+
+  it('on Linux reads /proc, never ps, so a host without procps can still be searched', async () => {
+    const spawnSync = vi.fn(() => ({ status: 0, pid: 99, stdout: '   10 S    node abc', stderr: '' }));
+    const proc = await load('linux', { spawnSync });
+    expect(() => proc.findProcesses(() => true, { procDir: '/nonexistent-orbit-proc' })).toThrow(expect.objectContaining({ code: 'INTERNAL' }));
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it('finds a process by an entry of its environment from ps -E, the whole entry and nothing longer', async () => {
+    const stdout = [
+      `   10 S    node -e x PATH=/usr/bin ORBIT_CHECK_TOKEN=f00d HOME=/h`,
+      `   11 S    node -e x ORBIT_CHECK_TOKEN=f00dd`,
+      `   12 S    node -e x XORBIT_CHECK_TOKEN=f00d`,
+      `   13 Z    node ORBIT_CHECK_TOKEN=f00d`,
+      `   14 S    sh ORBIT_CHECK_TOKEN=f00d`,
+    ].join('\n');
+    const spawnSync = vi.fn(() => ({ status: 0, pid: 99, stdout, stderr: '' }));
+    const proc = await load('darwin', { spawnSync });
+    expect(proc.findProcessesWithEnv('ORBIT_CHECK_TOKEN', 'f00d')).toEqual([10, 14]);
+    expect(spawnSync).toHaveBeenCalledWith('ps', ['-E', '-A', '-ww', '-o', 'pid=,stat=,args='], expect.objectContaining({ env: expect.objectContaining({ LC_ALL: 'en_US.UTF-8' }) }));
+  });
+});

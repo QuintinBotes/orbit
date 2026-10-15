@@ -45,6 +45,22 @@ describe('agents/*.md', () => {
         expect(tools).not.toContain('WebSearch');
       });
 
+      it.runIf(role === 'implementer')('states which shell forms are allowed and which are denied, and what to use instead', () => {
+        const body = stripFrontmatter(text);
+        const rules = /Shell rules\. Allowed: (.*?) Denied[^:]*: (.*?) Instead: (.*?)(?:\n|$)/s.exec(body);
+        expect(rules, 'Shell rules. Allowed: ... Denied: ... Instead: ...').not.toBeNull();
+        const [, allowed, denied, instead] = rules as unknown as [string, string, string, string];
+        // Policy takes the most severe part of a compound command, so a pipeline or chain of allowed commands runs.
+        expect(allowed).toMatch(/pipelines? and chains?/);
+        expect(allowed).toContain('configured check');
+        for (const form of ['for or while loop', 'heredoc', 'run time', 'Scratch director', 'git']) expect(denied, form).toContain(form);
+        // Not denied, whatever the earlier wording said: a pipeline or a chain of allowed commands.
+        expect(denied).not.toMatch(/pipeline|chain|&&/);
+        expect(instead).toContain('Write or Edit tool');
+        expect(instead).toContain('configured check');
+        expect(body).toMatch(/A denied (call|action) is final/);
+      });
+
       it.runIf(['planner', 'reviewer', 'inquisitor', 'curator'].includes(role))('states that it has no shell and uses file-reading tools', () => {
         expect(String(fm.tools)).not.toContain('Bash');
         expect(text).toContain('You have no shell; use Read, Grep and Glob');

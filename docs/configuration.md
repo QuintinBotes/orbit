@@ -917,6 +917,7 @@ providers:
     reasoning_effort: null
     extra_args: []
     tier: auto                    # auto | os-sandbox | codex-sandbox (Codex only)
+    review_reasoning_effort: medium   # low | medium | high | xhigh | max (Codex only)
 ```
 
 `providers.<id>.tier` is the isolation tier of the Codex reviewer (ADR 0001,
@@ -940,6 +941,23 @@ Claude workers choose their own tier (`os-sandbox` with an exported credential
 and `sandbox-runtime`, else `claude-sandbox`; see [installation](installation.md#isolation-tiers))
 and a setting that silently did nothing would read as confinement that is not
 there. A config without the key (an older snapshot) reads as `auto`.
+
+`providers.<id>.review_reasoning_effort` is the reasoning effort of the Codex
+reviewer's sessions (`low`, `medium`, `high`, `xhigh` or `max`; default
+`medium`). Orbit passes it to the Codex CLI as `model_reasoning_effort`. At the
+CLI's own default a retest review of a 21,000 token packet answered in 17
+reasoning tokens with no tool call, which is why the default is `medium`; raise
+it for a risky change, or lower it to save cost. It replaces `reasoning_effort`
+for reviews: a config that sets only `reasoning_effort` keeps that effort for
+reviews, and a config that sets neither reviews at `medium`. The key exists for
+Codex providers only; `providers.claude.review_reasoning_effort` is rejected
+with a config error. A config without the key (an older snapshot) reviews at
+the effort it was selected with. The report's review table shows what each
+review session did (tool calls made and reasoning tokens, read from the
+provider's transcript by the parser of its family, so `codex-review` is read as
+Codex) and flags a review that made no tool calls, so a reviewer that judged
+from the packet alone is visible; see
+[operations](operations.md#the-final-report).
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit
 off. It sets hard per-process limits on every worker shell command and check.
@@ -1039,17 +1057,32 @@ runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more tha
 that many days ago. `orbit gc --keep-days 0` prunes every finished run now. The
 database rows stay and are marked with a `run.artifacts_pruned` event. A
 `BLOCKED` run is never pruned, and neither is a run whose controller still holds
-its lease.
+its lease. A run whose worktrees are still there is released first, the way its
+end releases it (below), so its unfinished work is pinned in refs before
+anything is deleted; a run whose release keeps a checkout is skipped with why.
 
 Worktrees are separate from retention. A run that ends `SUCCEEDED` or
 `CANCELLED` removes its own worktrees when it ends, since its result is the
-branch and the candidate refs, not the checkout (an unsaved edit in the
-implementer's worktree is first saved as a candidate, so nothing is lost; if that
-fails the worktree is kept). A run that stops `BLOCKED` or `EXHAUSTED`, or is
-paused, keeps its worktrees so a person can resume from them. `orbit gc` removes
-the worktrees of an `EXHAUSTED` run (after `keep_runs_days`, or at once with
-`--keep-days 0`); those of a `BLOCKED` run stay until the run is resumed to an
-end or cancelled.
+branch and the candidate refs (`refs/orbit/<run>/candidates/<n>`), not the
+checkout. A run that ends `EXHAUSTED` or `IMPOSSIBLE` keeps them for the
+person who continues by hand, with a `worktrees.retained` event naming each,
+and `orbit gc` removes them after retention. Nothing is lost when worktrees are
+removed: every implementer checkout first has its
+unfinished work (tracked changes, untracked files the repository does not
+ignore, and commits made in the checkout that no ref holds) pinned in a ref, the
+run's worktree as a candidate and each parallel unit's worktree under
+`refs/orbit/<run>/unsaved/<worker>`; a checkout whose work could not be pinned
+is kept. A checkout a worker may still be writing in (stopping it was not
+confirmed) or a check may still run in is kept too, until a later controller
+start confirms the worker stopped or closes the check, and `orbit gc` skips the
+run until then. A release that a crash cut short is finished by the next
+controller start, or by `orbit gc` before it removes anything. The final
+report of an `EXHAUSTED` run says its worktree and evidence are preserved, names
+the latest candidate ref, and says that `orbit gc` removes them after retention;
+every report's next action names every pinned ref and every kept checkout with
+why. A run that
+stops `BLOCKED`, or is paused, keeps its worktrees, because it may resume from
+them; those stay until the run is resumed to an end or cancelled.
 
 ## knowledge and guard
 

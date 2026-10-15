@@ -103,6 +103,34 @@ describe('routeFailBefore', () => {
   });
 });
 
+describe('a reason several criteria share is stated once', () => {
+  const criteria = (ids: string[]) => setContract(lab, { acceptance_criteria: ids.map((id) => ({ id, statement: `${id} holds`, proof: ['a test'], mandatory: true, check_ids: ['unit'] })) });
+
+  it('lists the criteria whose new tests pass on the base revision under one sentence', async () => {
+    const { cand } = setup();
+    criteria(['AC-1', 'AC-2', 'AC-3', 'AC-4']);
+    const passed = (criterion_id: string) => entry({ outcome: 'passed-before', cause: undefined, reason: 'unit passed on the base revision with the new tests' }, { criterion_id });
+    const ev = addEvidence(lab, cand, { verdict: 'INCOMPLETE', acceptance_evidence: ['AC-1', 'AC-2', 'AC-3', 'AC-4'].map(passed) });
+    await routeFailBefore(lab.ctx(), cand, ev, noInquiry);
+    const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+    expect(reason.match(/the new tests pass on the base revision: unit passed/g)).toHaveLength(1);
+    expect(reason).toMatch(/^AC-1, AC-2, AC-3, AC-4: the new tests pass on the base revision/);
+  });
+
+  it('lists the criteria whose probe was not established for the same reason under one sentence, and keeps a different reason apart', async () => {
+    const { cand } = setup();
+    criteria(['AC-1', 'AC-2', 'AC-3']);
+    const ev = addEvidence(lab, cand, {
+      verdict: 'INCOMPLETE',
+      acceptance_evidence: [entry({}, { criterion_id: 'AC-1' }), entry({}, { criterion_id: 'AC-2' }), entry({ reason: 'unit crashed on the probe tree' }, { criterion_id: 'AC-3' })],
+    });
+    await routeFailBefore(lab.ctx(), cand, ev, noInquiry);
+    const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+    expect(reason.match(/unit timed out on the probe tree/g)).toHaveLength(1);
+    expect(reason).toContain('it was not established: AC-1, AC-2: unit timed out on the probe tree; AC-3: unit crashed on the probe tree.');
+  });
+});
+
 describe('askInsteadOfExhausting', () => {
   it('asks a person when the repair attempts run out on new tests that pass on the base revision, and not once they declined', async () => {
     const { cand } = setup();

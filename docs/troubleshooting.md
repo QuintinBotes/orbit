@@ -608,8 +608,20 @@ of these settings is the fix, `orbit doctor` prints the same note.
   policy when they start. Start a new run.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and
   ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
-  `SUCCEEDED` or `CANCELLED` removes its own, and `orbit gc` removes the others
-  (`--keep-days 0` for every finished run now).
+  `SUCCEEDED` or `CANCELLED` removes its own (its work is in its candidate refs,
+  `refs/orbit/<run>/candidates/<n>`, the unfinished edits of a parallel unit under
+  `refs/orbit/<run>/unsaved/<worker>`, and its evidence under `.orbit/runs/<id>`),
+  and a run that ends `EXHAUSTED` or `IMPOSSIBLE` keeps its own, for you to continue
+  from, until `orbit gc` removes them after retention. A checkout the report says was kept
+  is either one whose edits could not be pinned (recover them, then
+  `git worktree remove` it; `orbit gc` skips the run while it is there) or one a
+  worker or a check may still be running in, which the next controller start
+  releases once it confirms the worker stopped or closes the check (`orbit gc`
+  skips that run until then). A worktree left behind by a controller that died
+  as its run ended is released by the next controller start, or pinned and
+  released by `orbit gc`. A `BLOCKED` or paused run keeps its
+  worktrees until it is resumed to an end or cancelled (`orbit cancel <run-id>`);
+  `orbit gc` never removes them: it prunes only finished runs.
 - **`orbit service uninstall` says the service manager is "still stopping" the
   controller.** The controller finishes its current step before it stops. Check with
   `orbit service status`; it exits 1 and says the job is still held until it is gone.

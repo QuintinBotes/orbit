@@ -16,6 +16,7 @@ import {
   EXIT_FILE,
   LOG_FILE,
   PID_FILE,
+  REGISTRATION_FILE,
   STDERR_FILE,
   argvHash,
   groupMembers,
@@ -24,6 +25,7 @@ import {
   readFrom,
   readPgid,
   readPidRecord,
+  readRegistration,
   runShim,
   shimArgs,
   shimMain,
@@ -301,14 +303,24 @@ describe('runShim: a provider that cannot start', () => {
     expect(readPidRecord(r.dir)).toMatchObject({ shimPid: 1, childPid: 9, argvHash: 'sha256:old' });
   });
 
-  it('creates a missing worker directory for its records when the log cannot be opened there', async () => {
+  it('creates a missing worker directory for its records: the registration that comes first makes it', async () => {
     const base = tmp();
     const dir = join(base, 'not-yet');
     const rec = await runShim({ workerDir: dir, argv: [NODE, '-e', '0'], env: {}, cwd: base, timeoutMs: 0, host: { pgidOf: () => process.pid } });
-    expect(rec.error).toMatch(/ENOENT/);
-    expect(rec.firstOutputAt).toBeNull();
+    expect(rec).toMatchObject({ code: 0, error: null });
+    expect(readRegistration(dir)).toMatchObject({ shimPid: process.pid, token: null });
     expect(existsSync(join(dir, EXIT_FILE))).toBe(true);
-    expect(readPidRecord(dir)?.childPid).toBeNull();
+    expect(readPidRecord(dir)?.childPid).toBeGreaterThan(0);
+  });
+
+  it('records the errno when the log cannot be opened, and still writes its records', async () => {
+    const r = rig();
+    mkdirSync(join(r.dir, LOG_FILE));
+    const rec = await r.run();
+    expect(rec.error).toMatch(/EISDIR/);
+    expect(rec.code).toBeNull();
+    expect(existsSync(join(r.dir, EXIT_FILE))).toBe(true);
+    expect(readPidRecord(r.dir)?.childPid).toBeNull();
   });
 
   it('leaves shimStart null when the shim cannot read its own start time', async () => {
@@ -321,6 +333,43 @@ describe('runShim: a provider that cannot start', () => {
     expect(pid.shimStart).toBeNull();
     expect(pid.childStart).toBeNull();
     expect(pid.childPid).toBeGreaterThan(0);
+  });
+});
+
+describe('runShim: registration before anything can change the checkout', () => {
+  it('records its pid, start time, group and launch token in registration.json before it starts the provider', async () => {
+    const r = rig();
+    const reg = join(r.dir, REGISTRATION_FILE);
+    // The provider exits 0 only when the registration is on disk by the time it starts.
+    const rec = await r.run({ argv: [NODE, '-e', `process.exit(require('node:fs').existsSync(${JSON.stringify(reg)}) ? 0 : 7)`], launchToken: 'tok-123' });
+    expect(rec).toMatchObject({ code: 0, error: null });
+    const registered = readRegistration(r.dir)!;
+    expect(registered).toMatchObject({ version: 1, token: 'tok-123', shimPid: process.pid, pgid: process.pid });
+    // The same identity pid.json records once the provider runs, start time included.
+    const pid = readPidRecord(r.dir)!;
+    expect(registered.shimStart).toBe(pid.shimStart);
+    expect(registered.registeredAt).toBe(pid.startedAt);
+    expect(statSync(reg).mode & 0o777).toBe(0o600);
+  });
+
+  it('never starts the provider when it cannot register, and says why in exit.json', async () => {
+    const r = rig();
+    // A directory where the record goes: the atomic rename onto it fails.
+    mkdirSync(join(r.dir, REGISTRATION_FILE));
+    const marker = join(r.dir, 'provider-ran');
+    const rec = await r.run({ argv: [NODE, '-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, '1')`], launchToken: 'tok' });
+    expect(rec.error).toMatch(/^could not register the shim before starting the provider: /);
+    expect(rec.code).toBeNull();
+    expect(existsSync(marker)).toBe(false);
+    expect(readPidRecord(r.dir)?.childPid).toBeNull();
+    expect(readExitRecord(r.dir)?.error).toBe(rec.error);
+  });
+
+  it('reads a registration only when it is whole', () => {
+    const dir = tmp();
+    expect(readRegistration(dir)).toBeNull();
+    writeFileSync(join(dir, REGISTRATION_FILE), '{"version":1,"token":"t"}');
+    expect(readRegistration(dir)).toBeNull();
   });
 });
 
@@ -729,6 +778,12 @@ describe('shimArgs', () => {
     const full = shimArgs({ workerDir: '/w', timeoutMs: 1, sessionId: 's', stdinPath: '/p', cwd: '/c', abortOn: [{ a: 'b' }], cleanupPaths: ['/orbit-x', '/orbit-y'], argv: ['p'] });
     expect(parseShimArgs(full)).toMatchObject({ sessionId: 's', stdinPath: '/p', cwd: '/c', abortOn: [{ a: 'b' }], cleanupPaths: ['/orbit-x', '/orbit-y'] });
   });
+
+  it('puts the launch token on the command line, after the worker directory and before the provider command', () => {
+    const args = shimArgs({ workerDir: '/w', timeoutMs: 7, launchToken: 'abc', argv: ['p', '--launch-token', 'other'] });
+    expect(args).toEqual(['--worker-dir', '/w', '--timeout-ms', '7', '--launch-token', 'abc', '--', 'p', '--launch-token', 'other']);
+    expect(parseShimArgs(args)).toMatchObject({ launchToken: 'abc', argv: ['p', '--launch-token', 'other'] });
+  });
 });
 
 describe('parseShimArgs', () => {
@@ -743,7 +798,7 @@ describe('parseShimArgs', () => {
   });
 
   it('defaults the optional fields', () => {
-    expect(parseShimArgs(['--worker-dir', '/w', '--', 'x', 'y'])).toEqual({ workerDir: '/w', timeoutMs: 0, graceMs: 5000, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], argv: ['x', 'y'] });
+    expect(parseShimArgs(['--worker-dir', '/w', '--', 'x', 'y'])).toEqual({ workerDir: '/w', timeoutMs: 0, graceMs: 5000, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: ['x', 'y'] });
   });
 });
 
@@ -773,10 +828,11 @@ describe('shimMain', () => {
   it('supervises the provider named after -- and answers 0 once exit.json is written', async () => {
     const dir = tmp();
     const host: Partial<ShimHost> = { pgidOf: () => process.pid, onSignal: () => {}, groupMembers: () => [] };
-    const code = await shimMain(['--worker-dir', dir, '--timeout-ms', '0', '--session-id', 's9', '--cwd', dir, '--', NODE, '-e', 'console.log(process.cwd());process.exit(4)'], host);
+    const code = await shimMain(['--worker-dir', dir, '--timeout-ms', '0', '--session-id', 's9', '--cwd', dir, '--launch-token', 'tok-9', '--', NODE, '-e', 'console.log(process.cwd());process.exit(4)'], host);
     expect(code).toBe(0);
     expect(readExitRecord(dir)).toMatchObject({ code: 4, error: null });
     expect(readPidRecord(dir)?.sessionId).toBe('s9');
+    expect(readRegistration(dir)?.token).toBe('tok-9');
     expect(realpathSync(readFileSync(join(dir, LOG_FILE), 'utf8').trim())).toBe(dir);
   });
 

@@ -18,15 +18,28 @@ import { sha256 } from '../core/hash.ts';
  * The check runs in its own process group (distinct from the shim's), so the
  * shim can stop the whole tree on timeout or cancellation and still live to
  * report what happened.
+ *
+ * Nothing of a check may run that no record names. The shim writes
+ * `registration.json` (its own identity) before it spawns the check, so a shim
+ * that died without `pid.json` is known to have reached the spawn or not; it
+ * gives the check the intent's token in the environment (CHECK_TOKEN_ENV),
+ * where core/proc findProcessesWithEnv finds every process of the check that
+ * kept it when no record names the check's group (a shim killed between the
+ * spawn and `pid.json`); and when `pid.json` cannot be written after the spawn,
+ * it stops the check's group before it reports the error in `exit.json`.
  */
 
 export const SHIM_FILES = {
   intent: 'intent.json',
   launch: 'launch.json',
+  registration: 'registration.json',
   pid: 'pid.json',
   exit: 'exit.json',
   output: 'output.raw',
 } as const;
+
+/** The environment variable that carries the intent's token to every process of the check. */
+export const CHECK_TOKEN_ENV = 'ORBIT_CHECK_TOKEN';
 
 /** What the controller tells the shim. Environment travels in the shim's own env, never on disk. */
 export interface ShimIntent {
@@ -45,6 +58,16 @@ export interface ShimLaunch {
   token: string;
   pid: number;
   procStart: string | null;
+}
+
+/**
+ * Written by the shim before it spawns the check: its own identity. Present without `pid.json`, the shim may have
+ * spawned the check (and been killed before it could record it); absent, it never reached the spawn.
+ */
+export interface ShimRegistration {
+  token: string;
+  shimPid: number;
+  registeredAt: number;
 }
 
 export interface ShimPid {
@@ -76,6 +99,10 @@ import { join } from 'node:path';
 
 const dir = process.argv[2];
 const intent = JSON.parse(readFileSync(join(dir, 'intent.json'), 'utf8'));
+
+function message(e) {
+  return String(e && e.message ? e.message : e);
+}
 
 function put(name, value) {
   const tmp = join(dir, '.' + name + '.' + process.pid + '.tmp');
@@ -155,28 +182,44 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
   });
 }
 
+// The shim's identity before the spawn: a shim that dies before pid.json names the check is known to have reached the spawn.
+try {
+  put('registration.json', { token: intent.token, shimPid: process.pid, registeredAt: Date.now() });
+} catch (e) {
+  result.error = 'could not register the check shim: ' + message(e);
+  finish();
+}
+
 try {
   child = spawn(intent.argv[0], intent.argv.slice(1), {
     cwd: intent.cwd,
-    env: process.env,
+    // Every process of the check inherits the token: a search of the process table finds them when no record names the group.
+    env: { ...process.env, ${CHECK_TOKEN_ENV}: intent.token },
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 } catch (e) {
-  result.error = String(e && e.message ? e.message : e);
+  result.error = message(e);
   put('pid.json', { token: intent.token, shimPid: process.pid, childPid: null, childPgid: null, startedAt: Date.now() });
   finish();
 }
 
 if (child) {
   child.on('error', (e) => {
-    result.error = String(e && e.message ? e.message : e);
+    result.error = message(e);
     finish();
   });
   child.stdout.on('data', sink);
   child.stderr.on('data', sink);
   if (child.pid !== undefined) {
-    put('pid.json', { token: intent.token, shimPid: process.pid, childPid: child.pid, childPgid: child.pid, startedAt: Date.now() });
+    try {
+      put('pid.json', { token: intent.token, shimPid: process.pid, childPid: child.pid, childPgid: child.pid, startedAt: Date.now() });
+    } catch (e) {
+      // Nothing would name the check's group: it is stopped before the shim reports, so it never runs unrecorded.
+      result.error = 'could not record the check process: ' + message(e);
+      signalGroup('SIGKILL');
+      finish();
+    }
   }
   child.on('exit', (code, signal) => {
     result.exitCode = code;
@@ -213,6 +256,17 @@ export function readJsonFile<T>(path: string): T | null {
     // A torn read cannot happen (writes are renames), so unreadable JSON means a damaged file: treat as absent.
     return null;
   }
+}
+
+/**
+ * Whether a command line (as core/proc findProcesses reads it, arguments joined by spaces) is the shim of the check in
+ * `dir`. The runner starts it as `node check-shim.mjs <dir> <token>` (the shim reads only the directory; the intent's
+ * token is there for this search), so a shim spawned before launch.json named it can still be found. The match is the
+ * token as a whole argument, an ASCII marker no path can disturb (a random token names one attempt only); a shim
+ * started before the token was added is matched by the directory its command line ends with.
+ */
+export function isCheckShimCommandLine(commandLine: string, dir: string, token: string): boolean {
+  return (token !== '' && ` ${commandLine} `.includes(` ${token} `)) || commandLine.endsWith(` ${dir}`);
 }
 
 export function shimPath(dir: string, file: keyof typeof SHIM_FILES): string {

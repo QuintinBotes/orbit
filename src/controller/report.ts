@@ -37,6 +37,9 @@ import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
+import { clipAtWord } from '../core/text.ts';
+import { REVIEW_DEPTH_KIND, describeDepth, type ReviewDepth } from './review-depth.ts';
+import { WORKTREE_PRESERVED_EVENT, WORKTREES_RELEASED_EVENT, WORKTREES_RETAINED_EVENT, type PreservedEdits, type WorktreesReleased, type WorktreesRetained } from './worktree-cleanup.ts';
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { learnFromRun, type LearnReport } from '../knowledge/learn.ts';
 import { settleRun } from '../knowledge/feedback.ts';
@@ -67,7 +70,13 @@ export interface FinalReport {
   criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[] }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
-  reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number }[];
+  reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
+  /**
+   * On `reviews`, `tool_calls` and `reasoning_tokens` say how deep each review session went (read from the provider's
+   * transcript when it ended; null when that was unavailable; absent in reports written before they existed).
+   */
+  /** Every review finding with its whole claim: the one-line views (outcome, gates, residual risks) cut long claims at a word. Absent in reports written before it existed. */
+  review_findings?: { id: string; review_id: string; severity: string; status: string; claim: string }[];
   /**
    * Who reviewed (docs/decisions/0007-reviewer-availability.md). A same-provider review is never presented as
    * independent: it carries why the independent reviewer was unavailable, and who approved it when a person was
@@ -99,6 +108,12 @@ export interface FinalReport {
   budget: { counters: BudgetSnapshot['counters']; sessions?: BudgetSnapshot['sessions']; cost_measurement: string; cost_usd: number; cost_complete: boolean; tokens: { input: number; output: number; cache_read: number; cache_write: number } } | null;
   unverified: string[];
   residual_risks: string[];
+  /**
+   * The run's checkouts after it ended: where the unfinished edits of each removed implementer checkout were pinned, and
+   * every checkout kept, with why (the run ended EXHAUSTED or IMPOSSIBLE, a worker that may still be writing in it,
+   * edits that could not be pinned). Absent when nothing was released or retained, and in reports written before it existed.
+   */
+  worktrees?: { preserved: { worktree: string; ref: string }[]; retained: { worktree: string; path: string; why: string }[] };
   next_action: string;
   generated_at: number;
 }
@@ -159,6 +174,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [] };
   });
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
+  const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [(d.data as ReviewDepth).review_id, d.data as ReviewDepth] as const));
   const findings = listFindings(db, run.id);
   const decisions = listDecisions(db, run.id).map((d) => ({ kind: d.kind, summary: d.summary, at: d.createdAt }));
   const delivery = readJsonIfExists<{ commit: string; branch: string; pr: { number: number; url?: string } | null }>(join(opts.runDir, 'delivery.json'));
@@ -184,9 +200,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const env = readJsonIfExists<{ gate?: { notes?: string[] } }>(join(opts.runDir, 'environment.json'));
   risks.push(...(env?.gate?.notes ?? []));
   if (!usage.costComplete || budget.cost_measurement.includes('unmeasured')) risks.push(`model spend: ${budget.cost_measurement}`);
-  for (const f of findings.filter((x) => x.status === 'advisory' || x.status === 'open' || x.status === 'claim_pending')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === 'advisory' || x.status === 'open' || x.status === 'claim_pending')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}): ${clipAtWord(f.claim, 200)}`);
   // Confirmed defects not yet resolved are blocking; they must never vanish from the report.
-  for (const f of findings.filter((x) => x.status === 'accepted')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${f.claim.slice(0, 160)}`);
+  for (const f of findings.filter((x) => x.status === 'accepted')) risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, accepted, unresolved, blocking): ${clipAtWord(f.claim, 200)}`);
   let exceptions: { expires?: string }[] = [];
   try {
     if (opts.snapshot) exceptions = readSecurityPolicy(opts.snapshot).exceptions;
@@ -198,13 +214,17 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     const index = typeof ex?.index === 'number' ? ex.index : -1;
     const expires = exceptions[index]?.expires;
     const reason = typeof ex?.reason === 'string' ? ex.reason : (f.resolution ?? 'no reason recorded');
-    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${f.claim.slice(0, 120)}; exception reason: ${reason.slice(0, 160)}; expires: ${expires ?? 'never'}`);
+    risks.push(`review finding ${f.externalId ?? f.id} (${f.severity}, excepted by policy): ${clipAtWord(f.claim, 200)}; exception reason: ${clipAtWord(reason, 160)}; expires: ${expires ?? 'never'}`);
+  }
+  for (const r of reviews) {
+    const d = depths.get(r.id);
+    if (d?.tool_calls === 0) risks.push(`review depth: ${r.provider}/${r.model ?? 'default'} review ${r.id} made no tool calls (${d.reasoning_tokens === null ? 'reasoning tokens unavailable' : `${d.reasoning_tokens} reasoning tokens`}), so it judged from the packet alone and read none of the code`);
   }
   const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
   if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith('same-provider review:'))) {
     risks.push(`same-provider review: ${reviewer.why_not_independent ?? 'no independent reviewer was usable'}; ${reviewer.provider}/${reviewer.model ?? 'default'} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ''}`);
   }
-  for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${q.question.slice(0, 200)}`);
+  for (const q of listQuestions(db, run.id, { status: 'open' })) risks.push(`open question: ${clipAtWord(q.question, 200)}`);
   for (const c of ev?.report.checks.filter((x) => x.flaky) ?? []) risks.push(`check ${c.id} passed only on a rerun (flaky)`);
   const plugins = workerPluginsOf(listWorkers(db, { runId: run.id }));
   risks.push(...plugins.risks);
@@ -214,6 +234,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   // chose is not one for a run that never delivered, which has its candidate ref instead (issue #33).
   const branch = delivery?.branch ?? outcomeJson?.branch ?? createdBranch(db, run);
   const candidateRefName = cand ? candidateRef(run.id, cand.seq) : null;
+  const worktrees = worktreesOf(db, run.id);
+  // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
+  const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -225,9 +248,10 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     criteria,
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
-    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length })),
+    reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
     decisions,
+    review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
     assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
@@ -246,9 +270,51 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     budget,
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
-    next_action: nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run)),
+    ...(worktrees ? { worktrees } : {}),
+    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees)}`,
     generated_at: opts.clock.now(),
   };
+}
+
+/**
+ * Every edit a release pinned (`worktree.preserved`, newest per ref) and the checkouts the run kept: the ones its last
+ * release could not remove, and the ones a run that ended EXHAUSTED or IMPOSSIBLE retained (`worktrees.retained`). Null
+ * when the run's checkouts were never released or retained and nothing was pinned. A release that failed (or was cut
+ * short by a crash) after it pinned an edit has no `worktrees.released` event, but its pins are on record and are named.
+ */
+function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['worktrees']> | null {
+  const data = <T>(type: string): T[] => db.all<{ data_json: string | null }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', runId, type).flatMap((r) => {
+    const v = parseJson<T>(r.data_json);
+    return v === null ? [] : [v];
+  });
+  const preserved = new Map<string, { worktree: string; ref: string }>();
+  for (const p of data<PreservedEdits>(WORKTREE_PRESERVED_EVENT)) preserved.set(p.ref, { worktree: p.worktree, ref: p.ref });
+  // Retentions and releases in the order they happened: a retention keeps the checkouts it names, and a later release
+  // (orbit gc after retention) takes out the ones it removed and keeps the ones it could not.
+  const settled = db.all<{ type: string; data_json: string | null }>('SELECT type, data_json FROM events WHERE run_id = ? AND type IN (?, ?) ORDER BY id', runId, WORKTREES_RETAINED_EVENT, WORKTREES_RELEASED_EVENT);
+  if (settled.length === 0 && preserved.size === 0) return null;
+  const kept = new Map<string, { worktree: string; path: string; why: string }>();
+  for (const e of settled) {
+    if (e.type === WORKTREES_RETAINED_EVENT) {
+      const r = parseJson<Partial<WorktreesRetained>>(e.data_json);
+      kept.clear();
+      for (const k of r?.retained ?? []) kept.set(k.worktree, { worktree: k.worktree, path: k.path, why: k.why });
+    } else {
+      const r = parseJson<Partial<WorktreesReleased>>(e.data_json);
+      for (const name of r?.removed ?? []) kept.delete(name);
+      for (const k of r?.retained ?? []) kept.set(k.worktree, { worktree: k.worktree, path: k.path, why: k.why });
+    }
+  }
+  return { preserved: [...preserved.values()], retained: [...kept.values()] };
+}
+
+/** The sentences the next action gains from a release: where each pinned edit is, and which checkouts were kept and why. */
+function worktreeAdvice(w: FinalReport['worktrees'] | null): string {
+  if (!w) return '';
+  const out: string[] = [];
+  if (w.preserved.length > 0) out.push(`Unfinished edits were pinned in git: ${w.preserved.map((p) => `${p.worktree} at ${p.ref}`).join('; ')} (git checkout <ref> to continue from one).`);
+  if (w.retained.length > 0) out.push(`${w.retained.length === 1 ? 'A checkout was' : 'Checkouts were'} kept: ${w.retained.map((r) => `${r.path} (${r.why})`).join('; ')}.`);
+  return out.length === 0 ? '' : ` ${out.join(' ')}`;
 }
 
 /**
@@ -335,7 +401,7 @@ function outcomeHas(run: RunRecord, key: string): boolean {
   }
 }
 
-function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null): string {
+function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef: string | null }, pr: number | null, openMaterial: readonly { id: string; question: string }[] = [], fresh: string | null = null, pruned = false): string {
   const { branch, candidateRef: ref } = refs;
   // Where no branch was recorded, the reviewed candidate is at its ref (and says so only when there is one).
   const candidate = ref !== null ? `the reviewed candidate at ${ref}` : 'the reviewed candidate';
@@ -358,13 +424,13 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       return `${sentence} Resolve that, then run \`orbit resume ${run.id}\`.`;
     }
     case 'EXHAUSTED': {
-      const advice = exhaustedAdvice(run);
+      const advice = exhaustedAdvice(run, ref, pruned);
       // A material question nobody answered may be the real obstacle: its answer is what a new run needs.
-      const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${q.question.slice(0, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
+      const asked = openMaterial.length === 0 ? '' : ` Open material question(s) were never answered: ${openMaterial.slice(0, 5).map((q) => `${q.id}: ${clipAtWord(q.question, 200)}`).join(' | ')}. Put the answer in the goal of the new run.`;
       return `${advice}${asked}`;
     }
     case 'IMPOSSIBLE':
-      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} Revise the goal or the authorization before trying again.`;
+      return `${run.outcomeReason ?? 'No authorized way to meet the contract was found.'} ${pruned ? PRUNED : 'The worktree and evidence are preserved, and orbit gc removes them after retention.'} Revise the goal or the authorization before trying again.`;
     case 'CANCELLED':
       return 'Nothing further: the run was cancelled on request and its artifacts are preserved.';
     default:
@@ -377,23 +443,30 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
  * budget; a refused extension, a failed diagnosis, a provider outage, spent recovery attempts and the attempt, review
  * and CI repair caps each name their own cause and way forward.
  */
-function exhaustedAdvice(run: RunRecord): string {
+/** What the report says once `orbit gc` has removed a run's files after retention (a `run.artifacts_pruned` event, storage/retention.ts). */
+const PRUNED = 'orbit gc removed this run\'s worktree, evidence and candidate refs after retention; only its record remains, so start a new run to continue.';
+
+function exhaustedAdvice(run: RunRecord, candidateRef: string | null, pruned = false): string {
   const reason = run.outcomeReason ?? 'see decisions';
   const why = `(${reason})`;
-  const kept = 'The worktree and evidence are preserved';
+  // An EXHAUSTED run keeps its worktree: the way forward starts from it and from the candidate refs alike.
+  const where = candidateRef !== null ? `the work is at ${candidateRef} (earlier candidates under refs/orbit/${run.id}/candidates/)` : 'no candidate was recorded';
+  const kept = pruned ? PRUNED.replace(/\.$/, '') : `the worktree and evidence are preserved, and orbit gc removes them after retention; ${where}, and the evidence stays under .orbit/runs/${run.id}`;
+  const Kept = `${kept[0]!.toUpperCase()}${kept.slice(1)}`;
+  const from = candidateRef !== null ? `the candidate at ${candidateRef}` : 'the evidence';
   // Repeated non-progress is a stop on evidence, not on budget: saying the budget is spent would hide the cause.
-  if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; the worktree and evidence are preserved. Revise the goal or the approach and start a new run.`;
-  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
+  if (outcomeHas(run, 'non_progress')) return `The run stopped because repeated attempts made no measurable progress ${why}. More attempts would not change that; ${kept}. Revise the goal or the approach and start a new run.`;
+  if (/^diagnosis produced no valid repair brief/.test(reason)) return `The diagnosis could not produce a usable repair brief ${why}: the failure is unexplained, not out of budget. ${Kept}; read the failing check logs and the diagnosis attempts under the run directory, then fix it by hand or start a new run with a narrower goal.`;
   if (outcomeHas(run, 'extension') || /\band no extension\b/.test(reason)) {
     const denied = /no extension(?: for the review repair)?: (.*?)(?:; open findings:|$)/.exec(reason)?.[1];
-    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ''} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${kept}; continue by hand from them, or start a new run with a revised goal or approach.`;
+    return `The implementation attempt allowance is spent and no extension was granted${denied ? ` because ${denied}` : ''} ${why}. An extension needs measurable progress and a new hypothesis, so more of the same would not help. ${Kept}; continue by hand from ${from}, or start a new run with a revised goal or approach.`;
   }
-  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept.toLowerCase()}).`;
-  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept.toLowerCase()}.`;
-  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
-  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${kept}; continue by hand from them, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
-  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${kept}; read the CI logs and fix it by hand, or start a new run.`;
-  return `The authorized budget is spent ${why}. ${kept}; continue by hand from them or start a new run with a revised goal or limits.`;
+  if (/provider kept failing transiently/.test(reason)) return `The model provider kept failing transiently until the infrastructure retries ran out ${why}; this is an outage, not spend. Check the provider's status and your connection, then start a new run (${kept}).`;
+  if (/^recovery(_attempts| budget) exhausted/.test(reason)) return `The recovery attempts are spent ${why}: the run was restarted after failures as often as the policy allows. Fix what keeps failing (see the run log), then start a new run; ${kept}.`;
+  if (/^review_rounds hard cap reached/.test(reason)) return `The review round cap is reached with review findings still open ${why}. ${Kept}; repair the open findings by hand, or start a new run with a higher scheduler.hard_limits.review_rounds or a revised goal.`;
+  if (/^implementation attempts hard cap reached/.test(reason)) return `The implementation attempts hard cap is reached ${why}. ${Kept}; continue by hand from ${from}, or start a new run with a revised goal or a higher scheduler.hard_limits.implementation_attempts.`;
+  if (/CI repair budget is spent/.test(reason)) return `CI kept failing after the authorized CI repairs ${why}. ${Kept}; read the CI logs and fix it by hand, or start a new run.`;
+  return `The authorized budget is spent ${why}. ${Kept}; continue by hand from ${from} or start a new run with a revised goal or limits.`;
 }
 
 export function renderMarkdown(r: FinalReport): string {
@@ -408,7 +481,8 @@ export function renderMarkdown(r: FinalReport): string {
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
   if (r.reviewer) out.push(reviewerLine(r.reviewer), '');
-  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))`)), '');
+  out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), '');
+  if (r.review_findings && r.review_findings.length > 0) out.push('## Review findings', '', list(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
   out.push('## Assumptions', '', list(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), '');
   if (r.practices && r.practices.length > 0) out.push('## Engineering practices', '', list(r.practices.map((p) => `${p.practice} [${p.applicable ? 'selected' : 'omitted'}]: ${p.justification}`)), '');
@@ -430,6 +504,16 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Residual risks', '', list(r.residual_risks), '');
   out.push('## Next action', '', r.next_action, '');
   return redact(`${out.join('\n')}`);
+}
+
+/** The depth fields of a report review line; empty for a review with no record (an older run). */
+function depthOf(d: ReviewDepth | undefined): { tool_calls?: number | null; reasoning_tokens?: number | null } {
+  return d ? { tool_calls: d.tool_calls, reasoning_tokens: d.reasoning_tokens } : {};
+}
+
+function depthText(v: FinalReport['reviews'][number]): string {
+  if (v.tool_calls === undefined) return '';
+  return `; ${describeDepth({ tool_calls: v.tool_calls, reasoning_tokens: v.reasoning_tokens ?? null })}`;
 }
 
 function round(n: number): string {

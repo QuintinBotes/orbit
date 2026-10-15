@@ -27,6 +27,7 @@ import { appendEvent } from '../storage/events.ts';
 import { heartbeatController, markControllerStopped, registerController, type ControllerMode } from '../storage/controllers.ts';
 import { reconcileOnStart, type ReconcileReport } from '../recovery/reconcile.ts';
 import { watchdogTick, type WatchdogConfig } from '../recovery/watchdog.ts';
+import { releaseIfDue } from '../recovery/release.ts';
 import { checkRunCredentials, credentialCheckDue, providersForRun } from '../recovery/credentials.ts';
 import { reattachCheck, type RunnerContext } from '../evidence/runner.ts';
 import { getCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
@@ -166,7 +167,9 @@ export class Controller {
     for (const t of this.timers) t.unref();
 
     await this.reconcile(this.opts.mode === 'foreground' ? [this.opts.runId!] : undefined);
-    this.ensureFinalReports();
+    // A foreground controller reconciles its own run alone; a finished run whose release a crash cut short is released
+    // at any controller start, as its report is written (a service controller's reconciliation did both already).
+    this.ensureFinalReports(this.opts.mode === 'foreground' ? await this.resumeReleases(this.opts.runId!) : new Set());
     await this.pruneRetention();
     const retentionMs = this.opts.retention?.intervalMs ?? DAY_MS;
     if (this.opts.mode === 'service' && retentionMs > 0) {
@@ -340,6 +343,8 @@ export class Controller {
         ...(this.opts.graceMs !== undefined ? { graceMs: this.opts.graceMs } : {}),
         ...(this.opts.startGraceMs !== undefined ? { startGraceMs: this.opts.startGraceMs } : {}),
         ledgerFor: (id) => this.ledgerFor(id),
+        orbitHome: this.deps.orbitHome,
+        log: this.log,
       });
       for (const e of this.lastReconcile.errors) this.log.warn('reconcile error', { run_id: e.runId, error: e.message });
     } catch (err) {
@@ -370,8 +375,9 @@ export class Controller {
       this.owned.set(run.id, { inflight: null, abort: null });
     }
     if (this.lastReconcile) await this.collectFinishedChecks(this.lastReconcile);
-    // Reconciliation can end a run (recovery budget spent); its report is written now, not at the next start.
-    this.ensureFinalReports();
+    // Reconciliation can end a run (recovery budget spent); its report is written now, not at the next start. A run whose
+    // checkouts it released after the report was written gets the report again, naming what was pinned and kept.
+    this.ensureFinalReports(new Set((this.lastReconcile?.runs ?? []).filter((r) => r.worktreesReleased).map((r) => r.runId)));
   }
 
   /**
@@ -416,6 +422,8 @@ export class Controller {
         ownerId: this.ownerId,
         adapters: this.deps.adapters,
         ledgerFor: (id) => this.ledgerFor(id),
+        orbitHome: this.deps.orbitHome,
+        log: this.log,
         ...(this.opts.watchdog ? { config: this.opts.watchdog } : {}),
       });
       let ended = false;
@@ -590,15 +598,33 @@ export class Controller {
     return isTerminal(run.state);
   }
 
-  /** A terminal run whose report was lost to a crash after the transition gets it written now. */
-  private ensureFinalReports(): void {
+  /**
+   * Release the checkouts of every run that ended in the last day, but `except`, whose release is due (recovery/release
+   * releaseDue: it never completed, or kept a checkout that may go now), each under its lease. Returns the runs released.
+   */
+  private async resumeReleases(except: string): Promise<Set<string>> {
+    const { db, clock } = this.deps;
+    const released = new Set<string>();
+    const since = clock.now() - 24 * 60 * 60_000;
+    for (const row of db.all<{ id: string }>('SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?', since)) {
+      if (row.id === except) continue;
+      if (await releaseIfDue({ db, clock, ownerId: this.ownerId, runId: row.id, orbitHome: this.deps.orbitHome, leaseTtlMs: this.ttl, log: this.log })) released.add(row.id);
+    }
+    return released;
+  }
+
+  /**
+   * A terminal run whose report was lost to a crash after the transition gets it written now, and so does a run in
+   * `rewrite`: reconciliation released its checkouts after its report was written, so that report is stale.
+   */
+  private ensureFinalReports(rewrite: ReadonlySet<string> = new Set()): void {
     const { db, clock } = this.deps;
     const since = clock.now() - 24 * 60 * 60_000;
     for (const row of db.all<{ id: string }>('SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?', since)) {
       try {
         const run = getRun(db, row.id);
         const runDir = dirname(run.policyPath);
-        if (existsSync(join(runDir, 'final.md'))) continue;
+        if (existsSync(join(runDir, 'final.md')) && !rewrite.has(run.id)) continue;
         let snapshot = null;
         try {
           snapshot = verifySnapshot(run.policyPath, run.policyHash);

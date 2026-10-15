@@ -3,7 +3,7 @@
 // one decision per probe, reuse for the same tree, and every way the probe ends not established: its time bound, the
 // run's remaining wall time, a refused tree, a failed install, an environment signal, a cancelled run, a crash.
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -218,12 +218,37 @@ describe('closeInterruptedProbes', () => {
     atomicWriteJson(shimPath(dir, 'pid'), { token: 't1', shimPid: pid, childPgid: pid, startedAt: Date.now() });
     const exited = new Promise<void>((done) => child.on('exit', () => done()));
 
-    expect(closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual([row.id]);
+    expect(await closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual({ closed: [row.id], kept: [] });
     await exited;
     const [closed] = listProbeAttempts(e.run.db, e.run.runId);
     expect(closed).toMatchObject({ id: row.id, status: 'CANCELLED' });
     expect(e.run.db.get<{ excerpt: string }>('SELECT excerpt FROM fail_before_probes WHERE id = ?', row.id)?.excerpt).toMatch(/^interrupted/);
-    expect(closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual([]);
+    expect(await closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual({ closed: [], kept: [] });
+  }, 60_000);
+
+  it('keeps an attempt open, and the probe neither runs nor touches its checkout, while its shim may still run', async () => {
+    const e = await env([unit()], addMul);
+    const request = e.request();
+    const records = probeRecords('probe-crashed');
+    mkdirSync(request.checkoutDir, { recursive: true });
+    write(join(request.checkoutDir, 'sentinel.txt'), 'the crashed probe\'s checkout\n');
+    const row = records.plan(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: 'unit', kind: 'command', treeHash: 'tree-x', checkConfigHash: 'h', policyHash: e.run.policyHash, command: ['node'], cwd: request.checkoutDir, isolation: 'none', limitations: [] }, systemClock);
+    const dir = join(e.run.runDir, 'evidence', String(e.candidate.seq), 'fail-before', 'unit');
+    mkdirSync(dir, { recursive: true });
+    const token = `${process.pid.toString(16)}${Date.now().toString(16)}`;
+    atomicWriteJson(shimPath(dir, 'intent'), { token, checkRunId: row.id, argv: ['node'], cwd: request.checkoutDir, timeoutMs: 1000, killGraceMs: 100, maxOutputBytes: 1000, writtenAt: Date.now() });
+    // The shim was spawned and the controller died before launch.json named it: only its command line says it runs.
+    const shim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', dir, token], { detached: true, stdio: 'ignore' });
+    shim.unref();
+    try {
+      const result = await runFailBeforeProbe(request);
+      expect(result.checks).toEqual([expect.objectContaining({ checkId: 'unit', outcome: 'not-established', cause: 'interrupted', reason: expect.stringContaining('may still be running') })]);
+      expect(e.decisions).toEqual([]);
+      expect(listProbeAttempts(e.run.db, e.run.runId)).toEqual([expect.objectContaining({ id: row.id, status: 'PLANNED' })]);
+      expect(existsSync(join(request.checkoutDir, 'sentinel.txt'))).toBe(true);
+    } finally {
+      process.kill(-shim.pid!, 'SIGKILL');
+    }
   }, 60_000);
 });
 

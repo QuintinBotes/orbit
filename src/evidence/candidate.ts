@@ -84,6 +84,43 @@ export async function snapshotCandidate(input: SnapshotCandidateInput): Promise<
   return { ...done, created: true };
 }
 
+/**
+ * Where a released checkout's unfinished edits are pinned when they are not a candidate of the run (a parallel unit's
+ * checkout, whose partial work is not an attempt's result): refs/orbit/<run>/unsaved/<worker>.
+ */
+export function unsavedRef(runId: string, name: string): string {
+  if (!RUN_ID.test(runId)) throw new OrbitError('INTERNAL', `run id is not safe in a ref name: ${JSON.stringify(runId)}`);
+  const safe = name.replace(/[^A-Za-z0-9_-]/g, '_');
+  if (safe === '') throw new OrbitError('INTERNAL', 'an unsaved-edit ref needs a name');
+  return `refs/orbit/${runId}/unsaved/${safe}`;
+}
+
+/**
+ * Pin a checkout's content under `ref` as a commit on the checkout's own HEAD: its tracked changes and the untracked
+ * files the repository does not ignore, staged into a private index as a candidate is (the checkout's index, HEAD and
+ * branch are never touched). Unlike a candidate it records no row: it is kept work, not an attempt to verify.
+ */
+export async function pinCheckout(input: { repoRoot: string; worktree: string; ref: string; clock: Clock; message: string }): Promise<{ ref: string; commit: string; tree: string }> {
+  const { gitDir, worktree } = await adminDirFor(input.repoRoot, input.worktree);
+  const head = (await git(worktree, ['rev-parse', '--verify', 'HEAD^{commit}'], { env: { GIT_DIR: gitDir, GIT_WORK_TREE: worktree } })).trim();
+  const tree = await stageTree({ gitDir, worktree, base: head, extraExcludes: [] });
+  const when = `${Math.floor(input.clock.now() / 1000)} +0000`;
+  const commit = (
+    await git(input.repoRoot, ['commit-tree', tree, '-p', head, '-m', input.message], {
+      env: {
+        GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name,
+        GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email,
+        GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name,
+        GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email,
+        GIT_AUTHOR_DATE: when,
+        GIT_COMMITTER_DATE: when,
+      },
+    })
+  ).trim();
+  await git(input.repoRoot, ['update-ref', input.ref, commit]);
+  return { ref: input.ref, commit, tree };
+}
+
 async function stageTree(o: { gitDir: string; worktree: string; base: string; extraExcludes: readonly string[] }): Promise<string> {
   const scratch = mkdtempSync(join(tmpdir(), 'orbit-index-'));
   try {

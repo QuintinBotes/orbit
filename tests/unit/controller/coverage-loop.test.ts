@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ProviderAdapter } from '../../../src/adapters/types.ts';
+import { worktreeRootFor } from '../../../src/controller/context.ts';
 
 type StepMod = typeof import('../../../src/controller/steps/index.ts');
 type ReconcileMod = typeof import('../../../src/recovery/reconcile.ts');
@@ -806,6 +807,30 @@ describe('finished checks found by reconciliation', () => {
 });
 
 describe('final reports and retention', () => {
+  it('a foreground controller start finishes the release of another run whose controller died as it ended, then writes its report', async () => {
+    setup(['PREFLIGHT']);
+    // The lab's run ended, but its controller died before releasing its checkouts or writing its report.
+    store.acquireLease(lab.db, lab.runId, OWNER, 60_000, lab.clock);
+    store.transition(lab.db, { runId: lab.runId, to: 'CANCELLED', ownerId: OWNER, reason: 'cancelled by request' }, lab.clock);
+    const root = worktreeRootFor(lab.home, store.getRun(lab.db, lab.runId));
+    mkdirSync(join(root, 'review-1'), { recursive: true });
+    lab.clock.advance(120_000);
+    // A foreground controller for another run, already over, starts.
+    const otherDir = join(lab.base, 'other');
+    mkdirSync(otherDir, { recursive: true });
+    const other = store.createRun(lab.db, { id: 'orb-other', repoRoot: lab.repo, goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: join(otherDir, 'policy.json') }, lab.clock);
+    lab.db.run("UPDATE runs SET state = 'CANCELLED', ended_at = ? WHERE id = ?", lab.clock.now(), other.id);
+    const c = make({ mode: 'foreground', runId: other.id });
+
+    await c.start();
+
+    expect(existsSync(root)).toBe(false);
+    const released = lab.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'worktrees.released'", lab.runId);
+    expect(released.map((r) => JSON.parse(r.data_json) as { removed: string[] })).toEqual([expect.objectContaining({ removed: ['review-1'] })]);
+    expect(existsSync(join(lab.ctx().runDir, 'final.md'))).toBe(true);
+    expect(store.getLease(lab.db, lab.runId)).toBeNull();
+  });
+
   it('writes the report of a recently ended run that lost it, and leaves one that has it', async () => {
     setup(['PREFLIGHT']);
     store.acquireLease(lab.db, lab.runId, OWNER, 60_000, lab.clock);

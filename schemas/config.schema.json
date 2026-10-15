@@ -357,7 +357,8 @@
           "model": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/\\[\\]-]*$" }] },
           "reasoning_effort": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-z]{1,20}$" }] },
           "extra_args": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 4096 } },
-          "tier": { "enum": ["auto", "os-sandbox", "codex-sandbox"] }
+          "tier": { "enum": ["auto", "os-sandbox", "codex-sandbox"] },
+          "review_reasoning_effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
         }
       }
     },

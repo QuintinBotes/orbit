@@ -218,17 +218,43 @@ stays null until a branch exists, and `candidate_ref` carries the ref. In the de
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
+### The final report
+
+`orbit report <run-id>` prints `final.md`; `final.json` has the same content.
+Its review table says, for each review session, who reviewed (an independent
+review, or a same-provider one marked NOT independent with the reason), the
+verdict, the number of findings, and how deep the session went: the tool calls
+it made and the reasoning tokens it used, read from the provider's transcript
+when it ends by the parser of the provider's family (`claude`, `claude-*` and
+`claude_*` as Claude; `codex`, `codex-*` and `codex_*` as Codex), as
+`review.depth` decisions (`tool_calls` and `reasoning_tokens` in `reviews` of
+`final.json`, null when the transcript could not be read or its provider is of
+neither family, never zero). A review
+that made no tool calls is flagged `NO TOOL CALLS` and listed under residual
+risks: it judged from the packet alone. The gate and the transition to delivery
+say the same of a same-provider review (`independent_review gate: review
+approved but it was same-provider review, not independent: ...`), never
+"independent review cleared".
+
+One-line views (the outcome, a gate reason, a finding in the residual risks)
+cut long text at a word, ending in `...`; the whole text of every review
+finding is in the report's Review findings section (`review_findings`). Several
+criteria that share one reason (fail-before evidence that did not show the
+change, say) are listed once under that reason.
+
 ### stats and gc
 
 `orbit stats` prints success rate, cost, token and cache use, repair loops and
 time to green for this repository, read-only. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
 `retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
-Database rows stay and `BLOCKED` runs are never touched. Use `--dry-run` first.
+Database rows stay and `BLOCKED` runs are never touched. A run whose worktrees
+are still there is released first, its unfinished work pinned in refs, and a run
+whose release keeps a checkout is skipped with why. Use `--dry-run` first.
 A pruned run keeps its record for `orbit status` and `orbit stats`, but `orbit
 verify` and `orbit repair` refuse it with "its files were removed by orbit gc":
 its policy, evidence and candidate are gone.
-Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees; see
+Runs that end `SUCCEEDED` or `CANCELLED` already remove their own worktrees, and runs that end `EXHAUSTED` or `IMPOSSIBLE` keep theirs until `orbit gc` removes them after retention; see
 [retention](configuration.md#routing-and-retention).
 
 `orbit gc` leaves the repository's toolchain dependency caches
@@ -397,9 +423,22 @@ Files on disk:
 - `<repo>/.orbit/runs/<run-id>/`: the frozen policy, contract, evidence, the final
   report (`final.md`) and `workers/<worker-id>/` with prompt, log, exit record and result.
 - `~/.orbit/worktrees/<repo-hash>/<run-id>/<worker-id>`: worker checkouts, outside
-  the repository on purpose. A run that ends `SUCCEEDED` or `CANCELLED` removes its
-  worktrees; one that is `BLOCKED`, `EXHAUSTED` or paused keeps them until it
-  finishes or `orbit gc` removes them.
+  the repository on purpose. A run that ends `SUCCEEDED` or `CANCELLED`
+  removes its worktrees (a `worktrees.released` event records what was removed, where each unfinished edit was pinned, and
+  each checkout kept with why); a run that ends `EXHAUSTED` or `IMPOSSIBLE`
+  keeps them (a `worktrees.retained` event names each) until `orbit gc` removes
+  them after retention. The unfinished work of every implementer
+  checkout (edits, and commits made in it that no ref holds) is pinned first:
+  the run's worktree as a candidate, a parallel unit's under
+  `refs/orbit/<run>/unsaved/<worker>` (`git checkout <ref>` to continue from
+  it). A checkout whose work could not be pinned is kept, and so is one a worker
+  may still be writing in (its stop was not confirmed) or a check may still run
+  in, until a later controller start confirms the worker stopped or closes the
+  check. The report's next action names both. A release a crash cut short is
+  finished by the next controller start, and `orbit gc` pins and releases a run
+  before it removes anything, and skips a run whose release keeps a checkout. A
+  run that is `BLOCKED` or paused keeps its worktrees until it is resumed to an
+  end or cancelled (`orbit cancel <run-id>`); `orbit gc` does not remove them.
 
 `<repo>` is the working tree Orbit was started in. Inside a linked worktree
 (`git worktree add`) that is the worktree, not the main working tree: its

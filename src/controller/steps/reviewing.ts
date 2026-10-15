@@ -14,7 +14,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWrite, atomicWriteJson } from '../../core/fsx.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
-import { getDecision } from '../../storage/decisions.ts';
+import { getDecision, listDecisions } from '../../storage/decisions.ts';
+import { clipAtWord } from '../../core/text.ts';
+import { recordReviewDepth } from '../review-depth.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { renderWorkerPrompt } from '../../adapters/prompt.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
@@ -143,7 +145,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
       candidateId: cand.id,
       provider: sel.provider,
       model: sel.model,
-      effort: sel.effort,
+      effort: reviewEffort(ctx, sel),
       cwd: checkout,
       readOnly: true,
       phase: 'final',
@@ -185,6 +187,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
     },
     ctx.clock,
   );
+  recordReviewDepth(ctx, got.worker, `rev-${got.worker.id}`);
   return null;
 }
 
@@ -283,7 +286,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
         candidateId: cand.id,
         provider: sel.provider,
         model: sel.model,
-        effort: sel.effort,
+        effort: reviewEffort(ctx, sel),
         cwd: checkout,
         readOnly: true,
         phase: 'final',
@@ -326,6 +329,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
       },
       ctx.clock,
     );
+    recordReviewDepth(ctx, got.worker, `rev-${got.worker.id}`);
     recorded.add(got.worker.id);
   }
   if (finished < focuses.length) return WAIT(waiting.join('; ') || 'review units running');
@@ -362,13 +366,13 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   markRepaired(resolution, repaired);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
-  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now() });
+  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
     const waiting = await blockOnOpenQuestions(ctx, 'delivery');
     if (waiting) return waiting;
-    return move(ctx, 'DELIVERING', `independent review cleared tree ${cand.treeHash}`);
+    return move(ctx, 'DELIVERING', gate.details.independent ? `independent review cleared tree ${cand.treeHash}` : `review cleared tree ${cand.treeHash}, but it was ${gate.notes[0]}`);
   }
 
   // Review findings drive a repair loop (spec sections 12 and 14). A finding confirmed by evidence, and a
@@ -406,7 +410,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       const blocked = await blockOnOpenQuestions(ctx, 'another review repair', { detail: `non-progress: ${stalled.reason}.`, outcome });
       if (blocked) return blocked;
       decide(ctx, { id: `dec-${ctx.run.id}-non-progress-review-${currentAttempt(ctx)}`, kind: 'repair.non-progress', summary: stalled.reason, data: stalled });
-      return finishRun(ctx, 'EXHAUSTED', `non-progress: ${stalled.reason}; open findings: ${describeFindings(toRepair)}`.slice(0, 2000), { outcome });
+      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`non-progress: ${stalled.reason}; open findings: ${describeFindings(toRepair)}`, 2000), { outcome });
     }
     // Only a disagreement, or a finding about material semantics nobody may guess, needs the Inquisition first;
     // a claim it has already inquired into on this tree goes to its discriminating test instead of back to it.
@@ -461,7 +465,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       outcome: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } },
     };
   }
-  return finishRun(ctx, 'BLOCKED', `independent review does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}${notes}${fresh?.text ?? ''}`.slice(0, 2000), {
+  return finishRun(ctx, 'BLOCKED', `${gate.details.independent ? 'independent review' : 'review'} does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}${notes}${fresh?.text ?? ''}`.slice(0, 2000), {
     outcome: { review_gate: gate.reasons, open_findings: openFindings(open), ...(noted.length > 0 ? { noted_findings: openFindings(noted) } : {}), ...(fresh ? { fresh_review: fresh.outcome } : {}) },
   });
 }
@@ -710,7 +714,7 @@ function settleInquiredClaims(ctx: RunContext, cand: CandidateRecord, resolution
       d.blocking = false;
       // A rejection is stored only with the evidence it rests on: the ledger entry and what that entry cites.
       d.evidenceRefs = [...d.evidenceRefs, `ledger:${refuted.id}`, ...refuted.evidence.map((e) => `${e.kind}:${e.ref}`)];
-      d.reason = `rejected by the Inquisition (inquiry ${key}): ledger entry ${refuted.id} was rejected on evidence: ${refuted.claim.slice(0, 200)}`;
+      d.reason = `rejected by the Inquisition (inquiry ${key}): ledger entry ${refuted.id} was rejected on evidence: ${clipAtWord(refuted.claim, 200)}`;
     } else if (supported || amended) {
       d.status = 'accepted';
       const basis = supported ? `ledger entry ${supported.id} supports it` : `amendment ${amended!.id} (${amended!.record.field}) cites it`;
@@ -748,7 +752,7 @@ function markRepaired(resolution: Resolution, repaired: ReadonlyMap<string, Revi
 }
 
 function openFindings(list: readonly Disposition[]): { id: string; external_id: string | null; severity: string; status: string; claim: string }[] {
-  return list.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: d.claim.slice(0, 300) }));
+  return list.map((d) => ({ id: d.findingId, external_id: d.externalId, severity: d.severity, status: d.status, claim: clipAtWord(d.claim, 300) }));
 }
 
 /**
@@ -778,7 +782,7 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord): NonProgres
 }
 
 function describeFindings(list: readonly Disposition[]): string {
-  return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${d.claim.slice(0, 120)}`).join('; ');
+  return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join('; ');
 }
 
 /** REVIEWING -> REPAIRING with one brief per finding, within the review round and attempt budgets. */
@@ -821,7 +825,7 @@ async function routeToRepair(
     const rec = extensionDecisionRecord(decision);
     decide(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
     if (decision.decision === 'deny_extension') {
-      return finishRun(ctx, 'EXHAUSTED', `implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join('; ')}; open findings: ${describeFindings(toRepair)}`.slice(0, 2000), { outcome: { ...outcome, extension: decision } });
+      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join('; ')}; open findings: ${describeFindings(toRepair)}`, 2000), { outcome: { ...outcome, extension: decision } });
     }
   }
 
@@ -850,7 +854,7 @@ async function routeToRepair(
 /** Spec section 14 repair brief for one finding; the experiment is the reviewer's validation written as a failing test. */
 function reviewBrief(ctx: RunContext, d: Disposition, validation: string | null, t: FindingText | undefined, contract: NonNullable<RunContext['contract']>): RepairBrief & { finding_ids: string[]; severity: string } {
   const name = d.externalId ?? d.findingId;
-  const suggested = validation ?? t?.suggestedValidation ?? `a test that exercises "${d.claim.slice(0, 200)}"${d.location ? ` at ${d.location}` : ''}`;
+  const suggested = validation ?? t?.suggestedValidation ?? `a test that exercises "${clipAtWord(d.claim, 200)}"${d.location ? ` at ${d.location}` : ''}`;
   return {
     fingerprint: d.fingerprint,
     evidence: [`review finding ${name} (${d.severity}, ${d.category ?? 'uncategorized'})${d.location ? ` at ${d.location}` : ''}: ${t?.evidence ?? d.reason}`.slice(0, 1000), ...d.evidenceRefs],
@@ -868,6 +872,31 @@ function reviewBrief(ctx: RunContext, d: Disposition, validation: string | null,
     finding_ids: d.memberIds,
     severity: d.severity,
   };
+}
+
+/**
+ * The reasoning effort a review session runs at. The Codex reviewer's is providers.codex.review_reasoning_effort (default
+ * medium: at the CLI's own default a review answered in tens of reasoning tokens with no tool call); a snapshot written
+ * before the key existed keeps the selection's effort.
+ */
+function reviewEffort(ctx: RunContext, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>): string | null {
+  return ctx.snapshot.config.providers[sel.provider]?.review_reasoning_effort ?? sel.effort;
+}
+
+/** The reviewer selection recorded for this run, the latest that selected a reviewer. */
+function recordedSelection(ctx: RunContext): Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined {
+  return listDecisions(ctx.db, ctx.run.id, { kind: 'review.select' }).map((d) => d.data as ReviewerSelection | null).filter((d): d is Extract<ReviewerSelection, { decision: 'SELECT' }> => d?.decision === 'SELECT').at(-1);
+}
+
+/** Whether the recorded reviewer selection was independent; true when none was recorded. */
+function recordedSelectionIndependent(ctx: RunContext): boolean {
+  return recordedSelection(ctx)?.independent !== false;
+}
+
+/** Why the reviewer was not independent, from the reviewer selection recorded for this run; null when none says. */
+function recordedWhyNotIndependent(ctx: RunContext): string | null {
+  const sel = recordedSelection(ctx);
+  return sel && sel.decision === 'SELECT' && !sel.independent ? (sel.independentUnavailable ?? null) : null;
 }
 
 export function implementerProvider(ctx: RunContext): string {

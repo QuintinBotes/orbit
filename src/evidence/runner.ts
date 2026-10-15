@@ -2,12 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import type { Clock } from '../core/clock.ts';
+import { systemClock, type Clock } from '../core/clock.ts';
 import { isOrbitError, OrbitError } from '../core/errors.ts';
 import { atomicWrite, atomicWriteJson } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
 import { spawnDetached } from '../core/exec.ts';
-import { isAlive, killGroup, processStartTime } from '../core/proc.ts';
+import { findProcesses, isAlive, isGroupAlive, killGroup, processStartTime } from '../core/proc.ts';
 import { isSecretEnvName, redact } from '../core/redact.ts';
 import { RESOURCE_LIMIT_EXIT_CODE, resourceLimitNote } from '../isolation/memory.ts';
 import { checkoutBelowDenied, prepareWorkerTmpDir, profileForCheck, workerTmpDir } from '../isolation/profiles.ts';
@@ -36,7 +36,8 @@ import {
   type FinishedCheck,
   type NewCheckRun,
 } from './store.ts';
-import { ensureShim, readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from './check-shim.ts';
+import { ensureShim, isCheckShimCommandLine, readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid, type ShimRegistration } from './check-shim.ts';
+import { checkTokenSearch } from '../recovery/check-attempt.ts';
 import type { Candidate, CheckResult, CheckStatus, EvidenceBinding } from './types.ts';
 
 /**
@@ -53,8 +54,10 @@ import type { Candidate, CheckResult, CheckStatus, EvidenceBinding } from './typ
 const DEFAULT_POLL_MS = 50;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-// A shim that has not written its pid file this long after intent was recorded is taken as never started.
+// A shim no record names this long after intent was recorded is taken as never started, once no process carries its token.
 const LAUNCH_GRACE_MS = 10_000;
+// How often the process table is searched for such a shim while one carries its token.
+const SHIM_SEARCH_MS = 1_000;
 const MAX_ARTIFACTS = 200;
 const MAX_RAW_READ = 32 * 1024 * 1024;
 const CHECK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -668,19 +671,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
     maxOutputBytes: ctx.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
     writtenAt: ctx.clock.now(),
   };
-  try {
-    atomicWriteJson(shimPath(dirs.checkDir, 'intent'), intent, 0o600);
-    const shim = ensureShim(ctx.runDir);
-    const { pid } = spawnDetached([process.execPath, shim, dirs.checkDir], { cwd: dirs.checkDir, env: wrapped.env, stdoutPath: join(dirs.checkDir, 'shim.out'), stderrPath: join(dirs.checkDir, 'shim.out') });
-    let procStart: string | null = null;
-    try {
-      procStart = processStartTime(pid);
-    } catch {
-      /* ps unavailable: liveness falls back to the bare pid */
-    }
-    atomicWriteJson(shimPath(dirs.checkDir, 'launch'), { token, pid, procStart } satisfies ShimLaunch, 0o600);
-    row = records.running(ctx.db, row.id, pid, ctx.clock);
-  } catch (err) {
+  const notStarted = (err: unknown): void => {
     records.finish(ctx.db, row.id, {
       status: 'ERROR',
       exitCode: null,
@@ -694,9 +685,56 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
       endedAt: ctx.clock.now(),
     });
     wrapped.cleanup();
+  };
+  let spawned: Spawned;
+  try {
+    atomicWriteJson(shimPath(dirs.checkDir, 'intent'), intent, 0o600);
+    const shim = ensureShim(ctx.runDir);
+    // The token after the directory is for recovery's process-table search (isCheckShimCommandLine): until launch.json
+    // names the pid, it is how a shim that was spawned is told from one that never was.
+    const { pid } = spawnDetached([process.execPath, shim, dirs.checkDir, token], { cwd: dirs.checkDir, env: wrapped.env, stdoutPath: join(dirs.checkDir, 'shim.out'), stderrPath: join(dirs.checkDir, 'shim.out') });
+    spawned = { pid, procStart: null };
+  } catch (err) {
+    // Nothing was spawned: the row ends here.
+    notStarted(err);
     throw err;
   }
-  return superviseAttempt(ctx, subject, def, row, wrapped);
+  // From here on a shim runs, and nothing about the bookkeeping may close the row while it (or its check) may still run.
+  try {
+    spawned.procStart = processStartTime(spawned.pid);
+  } catch {
+    /* ps unavailable: liveness falls back to the bare pid */
+  }
+  try {
+    atomicWriteJson(shimPath(dirs.checkDir, 'launch'), { token, pid: spawned.pid, procStart: spawned.procStart } satisfies ShimLaunch, 0o600);
+  } catch {
+    // The identity in hand serves the supervision below; a restarted controller finds the shim by registration.json,
+    // pid.json, or its token on the process table (recovery/check-attempt).
+  }
+  try {
+    row = records.running(ctx.db, row.id, spawned.pid, ctx.clock);
+  } catch (err) {
+    // The attempt cannot be recorded as running: its shim is stopped, and the row ends only once the shim and its check
+    // are confirmed gone. Until then the row stays open (it keeps the checkout from being released beneath the check).
+    const why = await stopAttempt(ctx, dirs.checkDir, token, spawned);
+    if (why !== null) {
+      throw new OrbitError('INTERNAL', `could not record the start of check ${def.id} (${err instanceof Error ? err.message : String(err)}), and ${stillRunsMessage(row, why)}`, { checkRunId: row.id, checkId: def.id, mayRun: true }, { cause: err });
+    }
+    notStarted(err);
+    throw err;
+  }
+  return superviseAttempt(ctx, subject, def, row, wrapped, spawned);
+}
+
+/** The shim the launch in hand spawned, before any file names it. */
+interface Spawned {
+  pid: number;
+  procStart: string | null;
+}
+
+/** The end of the message of an attempt the runner leaves open because it may still run. */
+function stillRunsMessage(row: CheckRunRecord, why: string): string {
+  return `its check could not be confirmed stopped: ${why}; check run ${row.id} stays open, and its checkout is kept, until a later controller start confirms it ended`;
 }
 
 /**
@@ -779,16 +817,25 @@ interface Shim {
   pid: number | null;
   procStart: string | null;
   pgid: number | null;
+  /** The shim registered itself (registration.json), so it may have reached the spawn of the check. */
+  registered: boolean;
 }
 
-function readShim(dir: string, intentToken: string | null): Shim {
+/** The shim of an attempt by its records (launch.json, pid.json, registration.json), else the one this launch spawned. */
+function readShim(dir: string, intentToken: string | null, spawned: Spawned | null = null): Shim {
   const launch = readJsonFile<ShimLaunch>(shimPath(dir, 'launch'));
   const pidFile = readJsonFile<ShimPid>(shimPath(dir, 'pid'));
+  const registration = readJsonFile<ShimRegistration>(shimPath(dir, 'registration'));
   const valid = (t: string | undefined) => intentToken === null || t === intentToken;
+  const ownLaunch = launch && valid(launch.token) ? launch : null;
+  const ownPid = pidFile && valid(pidFile.token) ? pidFile : null;
+  const ownRegistration = registration && valid(registration.token) && typeof registration.shimPid === 'number' ? registration : null;
+  const pid = ownLaunch?.pid ?? ownPid?.shimPid ?? ownRegistration?.shimPid ?? spawned?.pid ?? null;
   return {
-    pid: launch && valid(launch.token) ? launch.pid : pidFile && valid(pidFile.token) ? pidFile.shimPid : null,
-    procStart: launch && valid(launch.token) ? launch.procStart : null,
-    pgid: pidFile && valid(pidFile.token) ? pidFile.childPgid : null,
+    pid,
+    procStart: ownLaunch ? ownLaunch.procStart : spawned !== null && pid === spawned.pid ? spawned.procStart : null,
+    pgid: ownPid ? ownPid.childPgid : null,
+    registered: ownRegistration !== null,
   };
 }
 
@@ -864,8 +911,13 @@ function recordFinalDenial(ctx: RunnerContext, def: CheckDefinition, dirs: Attem
   if (late) atomicWriteJson(join(dirs.checkDir, DENIAL_FILE), { token, note: denialNote(ctx, def, late, false) } satisfies DenialRecord, 0o600);
 }
 
-/** Wait for the attempt to end (or end it), then record the outcome. Returns the final row. */
-async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, row: CheckRunRecord, wrapped: WrappedCommand | null): Promise<CheckRunRecord> {
+/**
+ * Wait for the attempt to end (or end it), then record the outcome. Returns the final row. An outcome the runner has to
+ * make up (cancelled without an exit record, timed out past the backstop, lost) is recorded only once the shim and its
+ * check are confirmed gone; when they cannot be, the row stays open, the wrapper is left in place, and the call rejects
+ * with why (details.mayRun), for a later controller start to settle (recovery/check-attempt).
+ */
+async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, row: CheckRunRecord, wrapped: WrappedCommand | null, spawned: Spawned | null = null): Promise<CheckRunRecord> {
   const index = attemptIndex(ctx, row);
   const dirs = dirsFor(subject, def.id, index);
   const poll = ctx.pollMs ?? DEFAULT_POLL_MS;
@@ -876,6 +928,9 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
   let cancelSentAt: number | null = null;
   let checkedIdentity = false;
   let detachedHere = false;
+  // The attempt may still run: its row stays open, and the wrapper with it.
+  let leftOpen = false;
+  let nextShimSearch = 0;
   // A denial found in the check's temp directory: when the group was told to stop, and whether it was killed.
   let deniedAt: number | null = readDenial(dirs.checkDir) === null ? null : ctx.clock.now();
   let deniedKilled = false;
@@ -897,8 +952,18 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
         throw detachError(ctx);
       }
 
-      const shim = readShim(dirs.checkDir, token);
+      const shim = readShim(dirs.checkDir, token, spawned);
       const now = ctx.clock.now();
+      // A made-up outcome only for an attempt confirmed gone: otherwise the row stays open and the caller is told why.
+      const settle = async (synthetic: Synthetic): Promise<CheckRunRecord> => {
+        const why = await reapAll(ctx, dirs.checkDir, token, shim);
+        if (why !== null) {
+          leftOpen = true;
+          const what = synthetic === 'cancelled' ? 'was cancelled' : synthetic === 'timeout' ? 'outlived its timeout' : 'lost its shim';
+          throw new OrbitError('INTERNAL', `check ${def.id} ${what}, and ${stillRunsMessage(row, why)}`, { checkRunId: row.id, checkId: def.id, mayRun: true });
+        }
+        return finalize(ctx, def, row, dirs, null, synthetic);
+      };
 
       if (cancelSentAt === null && cancelRequested(ctx)) {
         cancelSentAt = now;
@@ -910,10 +975,7 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
           }
         } else if (shim.pgid !== null) killQuiet(shim.pgid, 'SIGTERM');
       }
-      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1_000) {
-        reapAll(shim);
-        return finalize(ctx, def, row, dirs, null, 'cancelled');
-      }
+      if (cancelSentAt !== null && now - cancelSentAt > grace * 2 + 1_000) return await settle('cancelled');
 
       // MSBuild recorded a worker node the sandbox denied its pipe: the build cannot succeed, and MSBuild would wait
       // 30 s for each of ten node starts before saying so. Stop the check's group (not the shim, which would read it as
@@ -932,36 +994,36 @@ async function superviseAttempt(ctx: RunnerContext, subject: CheckSubject, def: 
         killQuiet(shim.pgid, 'SIGKILL');
       }
 
-      if (now > backstop && cancelSentAt === null) {
-        reapAll(shim);
-        return finalize(ctx, def, row, dirs, null, 'timeout');
+      // No record names a shim long after the intent: it never started, unless a process carries its token on a check
+      // shim command line (spawned, not registered yet; it registers before it spawns the check).
+      if (shim.pid === null && now - (intent?.writtenAt ?? row.startedAt) > LAUNCH_GRACE_MS && now >= nextShimSearch) {
+        nextShimSearch = now + SHIM_SEARCH_MS;
+        if (unnamedShim(dirs.checkDir, token) === null) return finalize(ctx, def, row, dirs, null, 'lost');
       }
 
-      if (shim.pid === null) {
-        const waited = now - (intent?.writtenAt ?? row.startedAt);
-        if (waited > LAUNCH_GRACE_MS) return finalize(ctx, def, row, dirs, null, 'lost');
-      } else {
+      if (now > backstop && cancelSentAt === null) return await settle('timeout');
+
+      if (shim.pid !== null) {
         if (!checkedIdentity) {
           checkedIdentity = true;
           // The first look after a restart verifies the start time; later polls use the cheap existence test.
           if (!isAlive(shim.pid, shim.procStart)) {
             const late = readJsonFile<ShimExit>(shimPath(dirs.checkDir, 'exit'));
             if (late) continue;
-            reapAll(shim);
-            return finalize(ctx, def, row, dirs, null, 'lost');
+            return await settle('lost');
           }
         } else if (!pidAlive(shim.pid)) {
           const late = readJsonFile<ShimExit>(shimPath(dirs.checkDir, 'exit'));
           if (late) continue;
-          reapAll(shim);
-          return finalize(ctx, def, row, dirs, null, cancelSentAt !== null ? 'cancelled' : 'lost');
+          return await settle(cancelSentAt !== null ? 'cancelled' : 'lost');
         }
       }
       await sleepOrAbort(ctx, poll);
     }
   } finally {
-    // Cleanup of a wrapper can stop what it wraps (a container is removed); a detached check must keep running.
-    if (!detachedHere) wrapped?.cleanup();
+    // Cleanup of a wrapper can stop what it wraps (a container is removed), or remove what it still uses: a detached check
+    // must keep running, and one that may still run keeps what it runs with.
+    if (!detachedHere && !leftOpen) wrapped?.cleanup();
   }
 }
 
@@ -973,8 +1035,48 @@ function killQuiet(pgid: number, signal: NodeJS.Signals): void {
   }
 }
 
-/** Last resort for a shim that is gone, stuck or deaf to SIGTERM: stop the check's group and the shim. */
-function reapAll(shim: Shim): void {
+/** Whether the shim still runs: by its start time when one is known, otherwise by its bare pid. */
+function shimAlive(shim: Shim): boolean {
+  if (shim.pid === null) return false;
+  if (shim.procStart === null) return pidAlive(shim.pid);
+  try {
+    return isAlive(shim.pid, shim.procStart);
+  } catch {
+    return pidAlive(shim.pid);
+  }
+}
+
+/** Whether process group `pgid` may still have members; a group that cannot be asked about may. */
+function groupRuns(pgid: number): boolean {
+  try {
+    return isGroupAlive(pgid);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Why a shim that no record names may still run, from its token on a check shim command line (isCheckShimCommandLine);
+ * null when no process carries it, or when no intent was recorded (the runner writes it before the spawn).
+ */
+function unnamedShim(dir: string, token: string | null): string | null {
+  if (token === null) return null;
+  let found: number[];
+  try {
+    found = findProcesses((line) => isCheckShimCommandLine(line, dir, token));
+  } catch (err) {
+    return `no record names its shim, and the process table could not be searched for it (${err instanceof Error ? err.message : String(err)})`;
+  }
+  return found.length > 0 ? `process ${found.join(', ')} carries its launch token on a check shim command line, but no record names it` : null;
+}
+
+/**
+ * Last resort for a shim that is gone, stuck or deaf to SIGTERM: kill the check's group and the shim, then confirm that
+ * nothing of the attempt runs. Null when confirmed; otherwise why something may still run (the caller leaves the row
+ * open). A check whose group no record names (its shim registered, then was killed before pid.json) is confirmed gone
+ * only when no process carries its token in its environment; one whose shim never registered never started.
+ */
+async function reapAll(ctx: RunnerContext, dir: string, token: string | null, shim: Shim): Promise<string | null> {
   if (shim.pgid !== null) killQuiet(shim.pgid, 'SIGKILL');
   if (shim.pid !== null && pidAlive(shim.pid)) {
     try {
@@ -983,6 +1085,45 @@ function reapAll(shim: Shim): void {
       /* already gone */
     }
   }
+  // Real time: the waits are for real processes, whatever clock the caller injected.
+  const waitMs = (ctx.killGraceMs ?? DEFAULT_KILL_GRACE_MS) + 1_000;
+  let deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && shimAlive(shim)) await systemClock.sleep(25);
+  if (shimAlive(shim)) return `its shim (process ${shim.pid}) did not end`;
+  // The shim may have recorded its check's group, or itself, meanwhile.
+  const late = readShim(dir, token);
+  if (shim.pid === null && late.pid !== null && shimAlive(late)) return `its shim (process ${late.pid}) recorded itself while the attempt was being stopped`;
+  const pgid = shim.pgid ?? late.pgid;
+  if (pgid !== null) {
+    if (shim.pgid === null) killQuiet(pgid, 'SIGKILL');
+    // Killed members linger as zombies until they are reaped: the group gets a wait of its own.
+    deadline = Date.now() + waitMs;
+    while (Date.now() < deadline && groupRuns(pgid)) await systemClock.sleep(25);
+    return groupRuns(pgid) ? `its check's process group ${pgid} did not end` : null;
+  }
+  if (token === null) return null;
+  if (shim.pid === null && !late.registered) return unnamedShim(dir, token);
+  if (!shim.registered && !late.registered) return null;
+  const found = checkTokenSearch(token);
+  return found === null ? null : `its shim is gone, and ${found}`;
+}
+
+/**
+ * Stop an attempt the runner gives up on before supervising it: SIGTERM its shim (which stops its check and writes
+ * exit.json), wait for it, then reapAll. Null when the shim and its check are confirmed gone; otherwise why not.
+ */
+async function stopAttempt(ctx: RunnerContext, dir: string, token: string, spawned: Spawned): Promise<string | null> {
+  const shim = readShim(dir, token, spawned);
+  if (shimAlive(shim)) {
+    try {
+      process.kill(shim.pid!, 'SIGTERM');
+    } catch {
+      /* exited in between */
+    }
+    const deadline = Date.now() + (ctx.killGraceMs ?? DEFAULT_KILL_GRACE_MS) * 2 + 1_000;
+    while (Date.now() < deadline && shimAlive(shim)) await systemClock.sleep(25);
+  }
+  return reapAll(ctx, dir, token, readShim(dir, token, spawned));
 }
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,9 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
-import { systemClock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { readJsonIfExists } from '../core/fsx.ts';
-import { isAlive, isGroupAlive, terminateGroup } from '../core/proc.ts';
+import { findProcesses, isAlive, terminateGroup } from '../core/proc.ts';
 import { redact } from '../core/redact.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import type { OrbitDb } from '../storage/db.ts';
@@ -13,17 +12,22 @@ import { finishWorker, listWorkers, markWorkerRunning, planWorkerRestart, reques
 import { acquireLease, getRun, listRuns, type RunRecord } from '../controller/run-store.ts';
 import { ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { EXIT_FILE, readExitRecord, readPidRecord } from '../adapters/shim.ts';
-import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
+import { EXIT_FILE, REGISTRATION_FILE, readExitRecord, readPidRecord, readRegistration, type RegistrationRecord } from '../adapters/shim.ts';
+import { LAUNCH_FILE, archiveAttempt, cancelShim, handleFromWorkerDir, isShimCommandLine, launchedShimState, stopLaunchedShim, taskState, type LaunchRecord, type TaskState } from '../adapters/supervise.ts';
 import type { ProviderAdapter, TaskHandle, TaskResult, TaskStatus } from '../adapters/types.ts';
 import { ActionLedger } from '../delivery/actions.ts';
 import { finishCheckRun, isFinalCheckStatus } from '../evidence/store.ts';
 import { closeInterruptedProbes } from '../evidence/fail-before.ts';
-import { readJsonFile, shimPath, type ShimExit, type ShimIntent, type ShimLaunch, type ShimPid } from '../evidence/check-shim.ts';
+import { readJsonFile, shimPath, type ShimIntent } from '../evidence/check-shim.ts';
 import { APP_STATE_FILE, reconcileApp, type ReconcileOutcome } from '../ui/app-fixture.ts';
+import type { Logger } from '../core/log.ts';
+import { releaseIfDue, settleEndedRunWorktrees } from './release.ts';
 import { enterRecovery, exhaustRecovery, recoveryAttemptsRemaining, spendRecoveryAttempt, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { classifyFailure, decideRetry } from './backoff.ts';
-import { groupOwnership, processOwnership } from './identity.ts';
+import { processOwnership } from './identity.ts';
+import { settleCheckAttempt, type CheckObservation } from './check-attempt.ts';
+
+export type { CheckObservation } from './check-attempt.ts';
 
 /**
  * Reconciliation on controller start and on lease takeover (spec section 4
@@ -87,8 +91,6 @@ export interface WorkerReport {
   detail: string | null;
 }
 
-export type CheckObservation = 'running' | 'finished' | 'lost' | 'not-started' | 'orphan-terminated';
-
 export interface CheckReport {
   checkRunId: string;
   runId: string;
@@ -129,6 +131,8 @@ export interface RunReconcileReport {
   probes: string[];
   apps: AppReport[];
   actions: ActionReport[];
+  /** This pass settled the run's checkouts (a `worktrees.released` or `worktrees.retained` event was recorded), so a report written before is stale. */
+  worktreesReleased: boolean;
 }
 
 export interface ReconcileReport {
@@ -179,11 +183,20 @@ export interface ReconcileOptions {
   fallbackRecoveries?: number;
   /** Output schema to validate a worker's result against; default by role (adapters/prompt ROLE_OUTPUT_KIND). */
   outputSchemaFor?: (worker: WorkerRecord) => object;
+  /**
+   * The orbit home, where run worktrees live. With it, a run reconciliation ends EXHAUSTED has its worktrees retained on
+   * record, and a finished SUCCEEDED or CANCELLED run's checkout kept for a worker that might still be writing is
+   * released once the worker is confirmed stopped; without it they are kept.
+   */
+  orbitHome?: string;
+  log?: Logger;
 }
 
 interface Ctx extends Required<Pick<ReconcileOptions, 'db' | 'ownerId' | 'clock' | 'adapters' | 'graceMs' | 'maxWorkerRestarts' | 'startGraceMs' | 'leaseTtlMs'>> {
   opts: ReconcileOptions;
   report: ReconcileReport;
+  /** Runs this pass ended EXHAUSTED through the recovery budget. */
+  exhausted: Set<string>;
 }
 
 const DEFAULT_LEASE_TTL_MS = 60_000;
@@ -206,6 +219,7 @@ export async function reconcileOnStart(opts: ReconcileOptions): Promise<Reconcil
     startGraceMs: opts.startGraceMs ?? DEFAULT_START_GRACE_MS,
     leaseTtlMs: opts.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS,
     opts,
+    exhausted: new Set(),
     report: {
       ownerId: opts.ownerId,
       at: opts.clock.now(),
@@ -248,8 +262,8 @@ function selectRuns(ctx: Ctx): RunRecord[] {
   const nonTerminal = listRuns(db, { states: nonTerminalStates(), limit: 1_000_000 });
   const ids = new Set(nonTerminal.map((r) => r.id));
   const extra: string[] = [];
-  // Terminal runs that still own something: a live process or an open check row.
-  for (const row of db.all<{ run_id: string }>("SELECT DISTINCT run_id FROM workers WHERE state IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM check_runs WHERE status IN ('PLANNED', 'RUNNING')")) {
+  // Terminal runs that still own something: a live process or an open check or probe attempt row.
+  for (const row of db.all<{ run_id: string }>("SELECT DISTINCT run_id FROM workers WHERE state IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM check_runs WHERE status IN ('PLANNED', 'RUNNING') UNION SELECT DISTINCT run_id FROM fail_before_probes WHERE status IN ('PLANNED', 'RUNNING')")) {
     if (!ids.has(row.run_id)) extra.push(row.run_id);
   }
   // And recently ended ones, whose UI app fixture may have outlived them.
@@ -279,7 +293,7 @@ function note(ctx: Ctx, runId: string, type: string, data: unknown): void {
 async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileReport> {
   const { db } = ctx;
   let run = initial;
-  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], probes: [], apps: [], actions: [] };
+  const rep: RunReconcileReport = { runId: run.id, state: run.state, skipped: null, recovery: null, workers: [], checks: [], probes: [], apps: [], actions: [], worktreesReleased: false };
   const ended = isRunTerminal(run.state);
 
   if (!ended) {
@@ -303,6 +317,7 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
       });
       rep.recovery = outcome.outcome;
       run = outcome.run;
+      if (outcome.outcome === 'exhausted') ctx.exhausted.add(run.id);
     }
   }
 
@@ -333,8 +348,11 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
   run = getRun(db, run.id);
 
   rep.checks = await reconcileChecks(ctx, run);
-  // A fail-before probe is never reattached: its open attempts are stopped and closed, and it runs again (ADR 0014).
-  rep.probes = closeInterruptedProbes(db, runDir(ctx, run), run.id, ctx.clock);
+  // A fail-before probe is never reattached: its open attempts are stopped and closed, and it runs again (ADR 0014). One
+  // that may still run stays open, so the release keeps its checkout.
+  const probes = await closeInterruptedProbes(db, runDir(ctx, run), run.id, ctx.clock, { graceMs: ctx.graceMs });
+  rep.probes = probes.closed;
+  for (const k of probes.kept) note(ctx, run.id, 'recovery.stop-unconfirmed', { fail_before_probe_id: k.id, check_id: k.checkId, reason: 'a fail-before probe attempt is never reattached', detail: k.why });
   rep.apps = await reconcileApps(ctx, run);
   rep.actions = flagActions(ctx, run);
   rep.state = run.state;
@@ -348,6 +366,17 @@ async function reconcileRun(ctx: Ctx, initial: RunRecord): Promise<RunReconcileR
       apps: rep.apps.map((a) => a.outcome),
       actions_flagged: rep.actions.filter((a) => a.flagged).map((a) => a.actionId),
     });
+  }
+  // Workers and checks are stopped by now; settle the checkouts as the run's end does (finishRun does the same): released
+  // for SUCCEEDED and CANCELLED, retained on record for the EXHAUSTED run this pass ended.
+  if (ctx.exhausted.has(run.id)) {
+    const settled = await settleEndedRunWorktrees({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, log: ctx.opts.log });
+    rep.worktreesReleased = settled.released !== null || settled.retained !== null;
+  } else if (isRunTerminal(run.state)) {
+    // A release or retention that never completed (the controller died between the terminal transition and it, or it
+    // failed) is resumed, and a release that kept a checkout is tried again (its worker or check has ended, or its edits
+    // may pin now), under the run's lease. An EXHAUSTED or IMPOSSIBLE run is only ever retained here, never released.
+    rep.worktreesReleased = await releaseIfDue({ db, clock: ctx.clock, ownerId: ctx.ownerId, runId: run.id, orbitHome: ctx.opts.orbitHome, leaseTtlMs: ctx.leaseTtlMs, log: ctx.opts.log });
   }
   return rep;
 }
@@ -432,7 +461,16 @@ async function reconcileWorker(ctx: Ctx, run: RunRecord, w: WorkerRecord, stop: 
     case 'unlaunched':
     case 'starting': {
       if (stop) {
-        finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', error: `never started: ${why}` });
+        // A starting shim (spawned, pid.json not written yet) is stopped first: a row finished while it runs on would let
+        // its checkout be released beneath it, and nothing would ever stop it.
+        const { outcome: shim, why: unconfirmed } = await settleLaunch(ctx.graceMs, w.workerDir);
+        if (shim === 'unknown') {
+          rep.observation = obs.kind;
+          rep.detail = `its launch has no pid.json and its shim could not be confirmed stopped or absent: ${unconfirmed} (${why}); left ${w.state} for a later pass`;
+          note(ctx, w.runId, 'recovery.stop-unconfirmed', { worker_id: w.id, reason: why, detail: unconfirmed });
+          break;
+        }
+        finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', error: shim === 'stopped' ? `its starting shim was stopped: ${why}` : `never started: ${why}` });
         rep.observation = 'orphan-terminated';
         rep.state = 'CANCELLED';
         break;
@@ -448,6 +486,14 @@ async function reconcileWorker(ctx: Ctx, run: RunRecord, w: WorkerRecord, stop: 
         break;
       }
       await cancelShim(obs.handle!, ctx.graceMs);
+      // Only a confirmed end finishes the row: one recorded CANCELLED while its process runs on would let its checkout
+      // be released beneath it (cancelShim signals nothing it cannot identify).
+      if (stillRunning(obs.handle!)) {
+        rep.observation = 'running';
+        rep.detail = `its process could not be stopped or verified as stopped (${why}); left ${cur.state} for a later pass`;
+        note(ctx, w.runId, 'recovery.stop-unconfirmed', { worker_id: w.id, reason: why });
+        break;
+      }
       const result = await collect(ctx, cur, obs.handle!);
       finish(ctx, w.id, { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: `process group terminated: ${why}` });
       rep.observation = 'orphan-terminated';
@@ -545,9 +591,31 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
     if (proc === 'stopped') rep.detail = `the worker's files were gone but its recorded process ${w.pid} was still running; its group was stopped`;
   }
 
+  if (!handle) {
+    // No pid.json, but the launch record may name the shim that was spawned (one that hung or died before writing it):
+    // one still running must end before a restart beside it, or a finished row that lets its checkout be released.
+    const { outcome: shim, why: unconfirmed } = await settleLaunch(ctx.graceMs, w.workerDir);
+    if (shim === 'unknown') {
+      rep.state = w.state;
+      rep.restartRefused = 'archive-failed';
+      rep.detail = `the shim of its launch never wrote pid.json and may still run, but could not be confirmed stopped or absent: ${unconfirmed}; left ${w.state} for a later pass`;
+      note(ctx, w.runId, 'recovery.restart-refused', { worker_id: w.id, reason: 'unverified-process', detail: unconfirmed });
+      return;
+    }
+    if (shim === 'stopped') rep.detail = 'the shim never wrote pid.json but was still running; its group was stopped';
+  }
+
   if (handle && obs.task?.state === 'lost' && obs.task.orphans) {
     // The shim died but its provider still runs: stop it before anything else may start in the worktree.
     await cancelShim(handle, ctx.graceMs);
+    if (stillRunning(handle)) {
+      // Neither a restart beside it nor a finished row (which would let its checkout be released) while it may still write.
+      rep.state = w.state;
+      rep.restartRefused = 'archive-failed';
+      rep.detail = `the shim was gone and its provider process could not be stopped or verified as stopped; left ${w.state} for a later pass`;
+      note(ctx, w.runId, 'recovery.restart-refused', { worker_id: w.id, reason: 'unverified-process' });
+      return;
+    }
     rep.detail = 'the shim was gone but its provider process was still running; its group was stopped';
   }
 
@@ -618,7 +686,10 @@ async function restartOrGiveUp(ctx: Ctx, run: RunRecord, w: WorkerRecord, obs: O
 function exhaust(ctx: Ctx, run: RunRecord, why: string): void {
   try {
     const ended = ctx.db.tx(() => exhaustRecovery(ctx.db, ctx.clock, { runId: run.id, ownerId: ctx.ownerId, why }));
-    if (ended) ctx.report.summary.runsExhausted++;
+    if (ended) {
+      ctx.report.summary.runsExhausted++;
+      ctx.exhausted.add(run.id);
+    }
   } catch (err) {
     ctx.report.errors.push({ runId: run.id, message: `could not end the run after a refused restart: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -647,6 +718,12 @@ export async function stopRowProcess(graceMs: number, w: WorkerRecord): Promise<
   return state() === 'gone' ? 'stopped' : 'unknown';
 }
 
+/** Whether the worker's shim or provider may still run after a cancel: alive, or gone with a process of its group left. */
+function stillRunning(handle: TaskHandle): boolean {
+  const after = taskState(handle);
+  return after.state === 'running' || (after.state === 'lost' && after.orphans);
+}
+
 /**
  * Stop one worker on request (the watchdog abandoning a step, a controller
  * cancelling): terminate its process group, record a result when the adapter
@@ -666,8 +743,7 @@ export async function stopWorker(
     await cancelShim(handle, graceMs);
     // cancelShim signals nothing it cannot identify. A worker recorded CANCELLED while its process still runs would let the
     // next attempt start beside it, so a process that survived is an error for the caller, and the row stays active.
-    const after = taskState(handle);
-    if (after.state === 'running' || (after.state === 'lost' && after.orphans)) {
+    if (stillRunning(handle)) {
       throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} could not be stopped (its process could not be verified or did not exit); it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
     }
     try {
@@ -675,10 +751,89 @@ export async function stopWorker(
     } catch {
       result = null;
     }
-  } else if ((await stopRowProcess(graceMs, worker)) === 'unknown') {
-    throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+  } else {
+    // No pid.json: the shim of its launch may still be starting (a PLANNED row has no pid of its own yet).
+    const launch = await settleLaunch(graceMs, worker.workerDir);
+    if (launch.outcome === 'unknown') {
+      throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and the shim of its launch could not be confirmed stopped or absent (${launch.why}); it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+    }
+    if ((await stopRowProcess(graceMs, worker)) === 'unknown') {
+      throw new OrbitError('TRANSITION_INVALID', `worker ${worker.id} has no pid.json and its recorded process ${worker.pid} could not be verified or stopped; it stays ${worker.state} with a cancellation request`, { workerId: worker.id });
+    }
   }
   return finishWorker(ctx.db, worker.id, { state: 'CANCELLED', resultStatus: 'cancelled', exitCode: result?.exitCode ?? null, result, error: reason }, ctx.clock, ctx.ownerId);
+}
+
+export type LaunchStop = 'none' | 'gone' | 'stopped' | 'unknown';
+
+/** settleLaunch's outcome alone, for callers that only need to know whether the launch may still run ('unknown'). */
+export async function stopLaunch(graceMs: number, workerDir: string): Promise<LaunchStop> {
+  return (await settleLaunch(graceMs, workerDir)).outcome;
+}
+
+/**
+ * Stop the shim of a worker's launch while its pid.json is missing (a shim still starting, one that hung or died before
+ * writing it, or one spawned before launch.json named it), and confirm nothing of it runs: 'none' when no launch was
+ * recorded, otherwise 'gone', 'stopped', or 'unknown' when it may still run, which never closes the worker's row (the
+ * release would remove its checkout beneath it). `why` says what kept an 'unknown' from being confirmed.
+ *
+ * The shim is identified by the pid and start time launch.json records after the spawn, else by the identity it
+ * registered itself (registration.json, written before it starts anything in the checkout). Without either (no
+ * registration, a damaged one, or one another launch wrote), the process table is searched for its launch token on a
+ * shim command line (for a record without one, or unreadable, its worker directory): a process found is a shim that was
+ * spawned but has not registered, so it is kept and never signalled, and none found means the spawn never happened or
+ * the shim ended before it could start anything, once the process another launch's registration names (and its
+ * group) is gone too. A record without a start time judges the process by when it was recorded (recovery/identity),
+ * as a check shim is.
+ */
+export async function settleLaunch(graceMs: number, workerDir: string): Promise<{ outcome: LaunchStop; why: string | null }> {
+  const path = join(workerDir, LAUNCH_FILE);
+  if (!existsSync(path)) return { outcome: 'none', why: null };
+  let launch: Partial<LaunchRecord> | null;
+  try {
+    const raw = readJsonIfExists<unknown>(path);
+    launch = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Partial<LaunchRecord>) : null;
+  } catch {
+    // Damaged, or archived since: an existing record without a usable identity is never read as no launch.
+    launch = null;
+  }
+  const byIdentity = async (pid: number, start: string | null, recordedAt: number | null, source: string): Promise<{ outcome: LaunchStop; why: string | null }> => {
+    const outcome = await stopLaunchedShim(pid, start, graceMs, recordedAt === null ? undefined : (p) => processOwnership(p, recordedAt));
+    return outcome === 'unknown' ? { outcome, why: `process ${pid}, which ${source} names, could not be identified as its shim or confirmed stopped` } : { outcome, why: null };
+  };
+  if (launch && typeof launch.pid === 'number') return byIdentity(launch.pid, launch.procStart ?? null, typeof launch.requestedAt === 'number' ? launch.requestedAt : null, 'launch.json');
+
+  const token = launch && typeof launch.token === 'string' && launch.token !== '' ? launch.token : null;
+  const registration = (): { state: 'none' | 'damaged' } | { state: 'ours' | 'foreign'; reg: RegistrationRecord } => {
+    const reg = readRegistration(workerDir);
+    if (reg) return { state: token === null || reg.token === token ? 'ours' : 'foreign', reg };
+    return { state: existsSync(join(workerDir, REGISTRATION_FILE)) ? 'damaged' : 'none' };
+  };
+  const first = registration();
+  if (first.state === 'ours') return byIdentity(first.reg.shimPid, first.reg.shimStart, first.reg.registeredAt, REGISTRATION_FILE);
+
+  // No registration of this launch to go by (none yet, a damaged one, or another launch's): the process table decides.
+  let found: number[];
+  try {
+    found = findProcesses((line) => isShimCommandLine(line, workerDir, token));
+  } catch (err) {
+    return { outcome: 'unknown', why: `the process table could not be searched for its shim (${err instanceof Error ? err.message : String(err)})` };
+  }
+  if (found.length > 0) {
+    const marker = token !== null ? 'carries its launch token' : 'names its worker directory on a shim command line';
+    return { outcome: 'unknown', why: `process ${found.join(', ')} ${marker} but has not registered, so it was not signalled` };
+  }
+  // A shim that registered and ended between the first read and the search left its record, and its group is judged by it.
+  const late = registration();
+  if (late.state === 'ours') return byIdentity(late.reg.shimPid, late.reg.shimStart, late.reg.registeredAt, REGISTRATION_FILE);
+  if (late.state === 'foreign') {
+    // Another launch's shim registered in this directory: it is not signalled, and the launch is closed only once that
+    // process and its group are gone too.
+    const { shimPid, shimStart, registeredAt } = late.reg;
+    const other = launchedShimState(shimPid, shimStart, (p) => processOwnership(p, registeredAt));
+    if (other !== 'gone') return { outcome: 'unknown', why: `${REGISTRATION_FILE} names another launch, whose process ${shimPid} ${other === 'ours' ? 'or its group still runs' : 'cannot be identified'}, so it was not signalled` };
+  }
+  return { outcome: 'gone', why: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -717,44 +872,27 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
   const open = db.all<{ id: string; check_id: string; status: string }>("SELECT id, check_id, status FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, rowid", run.id);
   if (open.length === 0) return [];
   const ended = isRunTerminal(run.state) || run.cancelRequested;
+  const reason = isRunTerminal(run.state) ? `run is ${run.state}` : 'run has a durable cancellation request';
   const dirs = findCheckDirs(runDir(ctx, run));
   const out: CheckReport[] = [];
   for (const row of open) {
     const rep: CheckReport = { checkRunId: row.id, runId: run.id, checkId: row.check_id, observation: 'running', closed: false, terminated: false, detail: null };
+    // A check that may still run is not closed: its open row is what keeps the run's release from removing its checkout.
+    // Only a process confirmed absent (never started, ended, or stopped and confirmed gone) lets it close.
+    let mayRun = false;
     const found = dirs.get(row.id);
     if (!found) {
+      // No intent.json: the runner writes it before the spawn, so no shim was started for this row.
       rep.observation = 'not-started';
     } else {
-      const { dir, intent } = found;
-      const exit = readJsonFile<ShimExit>(shimPath(dir, 'exit'));
-      const launch = readJsonFile<ShimLaunch>(shimPath(dir, 'launch'));
-      const pidFile = readJsonFile<ShimPid>(shimPath(dir, 'pid'));
-      const shimPid = launch && launch.token === intent.token ? launch.pid : pidFile && pidFile.token === intent.token ? pidFile.shimPid : null;
-      const shimStart = launch && launch.token === intent.token ? launch.procStart : null;
-      const childPgid = pidFile && pidFile.token === intent.token ? pidFile.childPgid : null;
-      const startedAt = pidFile && pidFile.token === intent.token ? pidFile.startedAt : null;
-      // Without launch.json's start time, the shim is identified by when it recorded itself (pid.json) or was asked for (intent.json).
-      const identity = shimPid === null ? 'dead' : shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt);
-
-      if (exit && exit.token === intent.token) {
-        rep.observation = 'finished';
-      } else if (shimPid !== null && identity !== 'dead') {
-        rep.observation = 'running';
-        if (ended && identity === 'ours') {
-          rep.terminated = await stopCheck(ctx, dir, shimPid, () => shimIdentity(shimPid, shimStart, startedAt ?? intent.writtenAt) === 'ours', childPgid);
-          rep.observation = 'orphan-terminated';
-        } else if (ended) {
-          rep.detail = `process ${shimPid} may be this check's shim, but its identity cannot be established, so it was not signalled`;
-        }
-      } else if (shimPid === null) {
-        rep.observation = 'not-started';
-      } else {
-        // The shim is gone without exit.json. Its check may still be running; a rerun in the same checkout must not race it.
-        rep.observation = 'lost';
-        if (childPgid !== null && startedAt !== null) rep.terminated = await stopOrphanGroup(ctx, childPgid, startedAt);
-      }
+      const settled = await settleCheckAttempt(found.dir, found.intent, { stop: ended, graceMs: ctx.graceMs });
+      rep.observation = settled.observation;
+      rep.terminated = settled.terminated;
+      rep.detail = settled.detail;
+      mayRun = settled.mayRun;
     }
-    if (ended && !isFinalCheckStatus(row.status)) {
+    if (ended && mayRun) note(ctx, run.id, 'recovery.stop-unconfirmed', { check_run_id: row.id, check_id: row.check_id, reason, detail: rep.detail });
+    if (ended && !mayRun && !isFinalCheckStatus(row.status)) {
       finishCheckRun(db, row.id, {
         status: 'CANCELLED',
         exitCode: null,
@@ -763,7 +901,7 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
         logPath: null,
         logSha256: null,
         fingerprint: null,
-        excerpt: `closed by recovery: run ${isRunTerminal(run.state) ? `is ${run.state}` : 'has a durable cancellation request'}`,
+        excerpt: `closed by recovery: ${reason}`,
         artifacts: [],
         endedAt: ctx.clock.now(),
       });
@@ -772,63 +910,6 @@ async function reconcileChecks(ctx: Ctx, run: RunRecord): Promise<CheckReport[]>
     out.push(rep);
   }
   return out;
-}
-
-type ShimIdentity = 'ours' | 'unknown' | 'dead';
-
-/**
- * Whether `pid` is still the check shim that was started. With launch.json's
- * start time, core/proc compares it exactly. Without it (the controller died
- * before writing launch.json), a bare pid proves nothing: a recycled pid would
- * read as a live shim and be signalled, so the process start is compared with
- * the time the record was written instead. 'unknown' (no ps) is treated as
- * running but never signalled.
- */
-function shimIdentity(pid: number, start: string | null, recordedAtMs: number): ShimIdentity {
-  if (start !== null) {
-    try {
-      return isAlive(pid, start) ? 'ours' : 'dead';
-    } catch {
-      return 'unknown';
-    }
-  }
-  const own = processOwnership(pid, recordedAtMs);
-  return own === 'ours' ? 'ours' : own === 'unknown' ? 'unknown' : 'dead';
-}
-
-/** SIGTERM the shim (it stops its check's group and writes exit.json), then make sure both are gone. */
-async function stopCheck(ctx: Ctx, dir: string, shimPid: number, stillOurs: () => boolean, childPgid: number | null): Promise<boolean> {
-  try {
-    process.kill(shimPid, 'SIGTERM');
-  } catch {
-    /* exited in between */
-  }
-  const deadline = Date.now() + ctx.graceMs * 2 + 1_000;
-  // Real time: the wait is for a real process, whatever clock the caller injected.
-  while (Date.now() < deadline && !existsSync(shimPath(dir, 'exit')) && stillOurs()) await systemClock.sleep(25);
-  // Identity again, not bare liveness: the shim may have exited and its pid been reused during the wait.
-  if (stillOurs()) {
-    try {
-      process.kill(shimPid, 'SIGKILL');
-    } catch {
-      /* gone */
-    }
-  }
-  // The shim was verified alive moments ago, so its check's group is ours.
-  if (childPgid !== null && isGroupAlive(childPgid)) await terminateGroup(childPgid, ctx.graceMs);
-  return true;
-}
-
-async function stopOrphanGroup(ctx: Ctx, pgid: number, startedAt: number): Promise<boolean> {
-  const own = groupOwnership(pgid, startedAt);
-  if (own !== 'ours') return false;
-  try {
-    await terminateGroup(pgid, ctx.graceMs);
-  } catch (err) {
-    if (isOrbitError(err, 'INTERNAL')) return false;
-    throw err;
-  }
-  return true;
 }
 
 // ---------------------------------------------------------------------------

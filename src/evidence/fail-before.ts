@@ -9,7 +9,8 @@
  * probe tree is not the run's, and diagnosis, the repeated-failure counts, the baseline readers, reconcile and the
  * learning layer read those tables. A completed probe is one `verification.fail-before` decision; a later candidate
  * reuses its decisive results when the probe tree, the check configuration and the policy all match (a repair that
- * changed production code only). A probe interrupted by a crash is closed as interrupted and runs again.
+ * changed production code only). A probe interrupted by a crash is closed as interrupted and runs again, once its
+ * attempts are confirmed stopped: one that may still run keeps its record open and its checkout.
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,6 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { newId } from '../core/ids.ts';
-import { isAlive, killGroup } from '../core/proc.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { checkCategory } from '../policy/config.ts';
@@ -27,7 +27,8 @@ import type { OrbitDb } from '../storage/db.ts';
 import { listDecisions } from '../storage/decisions.ts';
 import { cleanupCandidateCheckout, materializeCandidate, ORBIT_GIT_IDENTITY } from './candidate.ts';
 import { classifyProgramNotFound } from './check-misconfigured.ts';
-import { readJsonFile, shimPath, type ShimIntent, type ShimLaunch, type ShimPid } from './check-shim.ts';
+import { readJsonFile, shimPath, type ShimIntent } from './check-shim.ts';
+import { settleCheckAttempt } from '../recovery/check-attempt.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentSignal } from './environment-failure.ts';
 import { git } from './git.ts';
 import { planInstall } from './baseline.ts';
@@ -523,47 +524,46 @@ function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimInten
   return found;
 }
 
-/**
- * Close the probe attempts a stopped controller left open: a probe is never reattached (its outcome is not established
- * and it runs again), so a check still running for it is stopped, when its shim is still the process that was started,
- * and its row is CANCELLED as interrupted. Returns the attempts closed. Called by reconcile and before a probe starts.
- */
-export function closeInterruptedProbes(db: OrbitDb, runDir: string, runId: string, clock: Clock): string[] {
-  const open = db.all<ProbeRow>("SELECT * FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY rowid", runId);
-  if (open.length === 0) return [];
-  const dirs = probeDirs(runDir);
-  for (const row of open) {
-    const found = dirs.get(row.id);
-    if (found) stopProbeAttempt(found.dir, found.intent.token);
-    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', clock.now(), row.id);
-  }
-  return open.map((r) => r.id);
+/** What closeInterruptedProbes did: the attempts it closed, and those it kept open because they may still run. */
+export interface InterruptedProbes {
+  closed: string[];
+  kept: { id: string; checkId: string; why: string }[];
 }
 
-/** Stop an attempt's check group and shim, only while the shim is the process its launch record names. */
-function stopProbeAttempt(dir: string, token: string): void {
-  const launch = readJsonFile<ShimLaunch>(shimPath(dir, 'launch'));
-  const pid = readJsonFile<ShimPid>(shimPath(dir, 'pid'));
-  if (!launch || launch.token !== token) return;
-  let ours = false;
-  try {
-    ours = isAlive(launch.pid, launch.procStart);
-  } catch {
-    ours = false;
-  }
-  if (!ours) return;
-  if (pid && pid.token === token && pid.childPgid !== null) {
-    try {
-      killGroup(pid.childPgid, 'SIGKILL');
-    } catch {
-      /* refused (an unsafe group) or already gone */
+/**
+ * Close the probe attempts a stopped controller left open: a probe is never reattached (its outcome is not established
+ * and it runs again), so a check still running for it is stopped, and its row is CANCELLED as interrupted once the
+ * attempt is confirmed absent (recovery/check-attempt: never started, ended, or stopped and confirmed gone). An attempt
+ * that may still run (its shim or its check cannot be identified or confirmed stopped, a process carries its token) is
+ * kept open, with why: its open row keeps the run's release, and the probe, from removing its checkout beneath it.
+ * Called by reconcile and before a probe starts.
+ */
+export async function closeInterruptedProbes(db: OrbitDb, runDir: string, runId: string, clock: Clock, opts: { graceMs?: number } = {}): Promise<InterruptedProbes> {
+  const out: InterruptedProbes = { closed: [], kept: [] };
+  const open = db.all<ProbeRow>("SELECT * FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY rowid", runId);
+  if (open.length === 0) return out;
+  const dirs = probeDirs(runDir);
+  for (const row of open) {
+    // No intent.json: the runner writes it before the spawn, so no shim was started for this attempt.
+    const found = dirs.get(row.id);
+    if (found) {
+      const settled = await settleCheckAttempt(found.dir, found.intent, { stop: true, graceMs: opts.graceMs ?? DEFAULT_PROBE_STOP_GRACE_MS });
+      if (settled.mayRun) {
+        out.kept.push({ id: row.id, checkId: row.check_id, why: settled.detail ?? 'its shim may still run' });
+        continue;
+      }
     }
+    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', clock.now(), row.id);
+    out.closed.push(row.id);
   }
-  try {
-    process.kill(launch.pid, 'SIGKILL');
-  } catch {
-    /* already gone */
-  }
+  return out;
+}
+
+const DEFAULT_PROBE_STOP_GRACE_MS = 2_000;
+
+/** Whether an attempt of the probe is still open: its check could not be confirmed stopped, and may still run in the checkout. */
+function probeAttemptOpen(db: OrbitDb, probeId: string): boolean {
+  return db.get("SELECT 1 AS x FROM fail_before_probes WHERE probe_id = ? AND status IN ('PLANNED', 'RUNNING') LIMIT 1", probeId) !== undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -666,7 +666,12 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   const checkIds = req.checks.map((c) => c.checkId);
   const testPaths = req.changes.map((c) => c.path).sort();
   const result = (probeTree: string | null, checks: CheckProbe[], probeId: string | null = null, reused = false): ProbeResult => ({ probeId, probeTree, baseRevision: req.baseRev, testPaths, checks, reused });
-  closeInterruptedProbes(db, runDir, runner.run.id, clock);
+  const interrupted = await closeInterruptedProbes(db, runDir, runner.run.id, clock, { graceMs: runner.killGraceMs });
+  if (interrupted.kept.length > 0) {
+    // An earlier probe's check may still run in the checkout this probe would clean and use: the probe waits for it.
+    const why = interrupted.kept.map((k) => `${k.checkId} (${k.why})`).join('; ');
+    return result(null, notEstablished(checkIds, 'interrupted', (id) => `${id} was not probed: an earlier fail-before probe attempt may still be running: ${why}; the probe runs again once it has ended`));
+  }
 
   const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes);
   if ('refused' in built) return result(null, notEstablished(checkIds, 'refused-tree', (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
@@ -713,7 +718,8 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
     try {
       return await runAttempt(ctx, subject, def, configHash);
     } catch (err) {
-      if (!isOrbitError(err) || err.code === 'CANCELLED') throw err;
+      // An attempt whose check could not be confirmed stopped stays open and ends the probe: nothing else may start beside it.
+      if (!isOrbitError(err) || err.code === 'CANCELLED' || err.details?.mayRun === true) throw err;
       return err.message;
     }
   };
@@ -814,7 +820,8 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
     if (!isOrbitError(err, 'CANCELLED') || err.details?.detached === true) throw err;
     stopped = { cause: 'cancelled', reason: (id) => `${id} was not probed: the run was cancelled` };
   } finally {
-    if (runner.detachSignal?.aborted !== true) await cleanupCandidateCheckout(req.repoRoot, req.checkoutDir).catch(() => {});
+    // Not beneath an attempt that may still run (supervision stopped, or its check could not be confirmed stopped).
+    if (runner.detachSignal?.aborted !== true && !probeAttemptOpen(db, probeId)) await cleanupCandidateCheckout(req.repoRoot, req.checkoutDir).catch(() => {});
   }
   const done = new Set(ran.map((c) => c.checkId));
   const rest = stopped ? notEstablished(toRun.filter((id) => !done.has(id)), stopped.cause, stopped.reason) : [];

@@ -25,6 +25,7 @@ import { OrbitError } from '../../core/errors.ts';
 import { applyBaselineExceptionAnswers } from '../../inquisition/baseline-exception.ts';
 import { inspectScope } from '../../policy/scope.ts';
 import { gitTreeReader, loadTestLayout } from '../../policy/test-files.ts';
+import { activeChecksIn, activeChecksReason } from '../../evidence/active-checks.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
 import { git } from '../../evidence/git.ts';
 import { evaluateEvidence, saveEvidenceReport } from '../../evidence/report.ts';
@@ -121,8 +122,19 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     return act(ctx, cand, saved);
   } finally {
     // An interrupted step (lease lost, watchdog) leaves the checkout: the run's next owner may already be
-    // checking this same tree in it, and ensureCheckout reuses or replaces it on the next pass.
-    if (!ctx.signal.aborted) await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {});
+    // checking this same tree in it, and ensureCheckout reuses or replaces it on the next pass. So does a step
+    // whose check record is still active in it: a stop that could not be confirmed leaves the record open, and
+    // its detached shim, or its check, may still run there, so removing the checkout would pull it from under it.
+    if (!ctx.signal.aborted) {
+      const active = activeChecksIn(ctx.db, ctx.run.id, checkoutDir);
+      if (active.length > 0) {
+        const why = activeChecksReason(active);
+        note(ctx, 'verification.checkout-kept', { checkout: checkoutDir, candidate_id: cand.id, checks: active, why });
+        ctx.log.warn('the verification checkout is kept: a check record using it is still active', { run_id: ctx.run.id, checkout: checkoutDir, why });
+      } else {
+        await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {});
+      }
+    }
   }
 }
 

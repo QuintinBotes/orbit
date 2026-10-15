@@ -47,6 +47,7 @@ interface Setup {
   reviewer?: Parameters<typeof scriptedAdapter>[1];
   tweak?: Parameters<typeof makeUnitLab>[0] extends infer O ? (O extends { tweak?: infer T } ? T : never) : never;
   edit?: boolean;
+  onReviewerStart?: Parameters<typeof scriptedAdapter>[2];
 }
 
 async function setup(o: Setup = {}) {
@@ -58,7 +59,7 @@ async function setup(o: Setup = {}) {
       o.tweak?.(c);
     },
   });
-  const reviewer = scriptedAdapter(lab, o.reviewer ?? (({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40), findings: [] })));
+  const reviewer = scriptedAdapter(lab, o.reviewer ?? (({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40), findings: [] })), o.onReviewerStart);
   lab.deps.adapters = { claude: claude(), codex: reviewer };
   validateModels(lab);
   for (const e of lab.deps.registry.list()) if (e.provider === 'codex') lab.deps.registry.markAvailability(e.modelId, 'codex-cli', true, 'test');
@@ -115,6 +116,53 @@ describe('a review that is already recorded', () => {
     expect(decisions('gate.independent_review')[0]?.summary).toContain('pass');
   });
 
+  it('a same-provider approval is never recorded as an independent review that cleared the tree', async () => {
+    const { cand } = await setup();
+    record(cand, 'APPROVE', [], 'claude');
+    expect(await run()).toEqual({ progressed: true });
+    expect(state()).toBe('DELIVERING');
+    const gate = decisions('gate.independent_review')[0]!;
+    expect(gate.summary).toMatch(/not independent/i);
+    expect(gate.summary).not.toMatch(/gate pass/);
+    expect(gate.data).toMatchObject({ independent: false });
+    const moved = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", lab.runId)!;
+    expect(moved.data_json).toMatch(/not independent/i);
+    expect(moved.data_json).not.toMatch(/independent review cleared/);
+  });
+
+  it('a same-provider review that cleared the tree without approving it is not recorded as an approval', async () => {
+    const { cand } = await setup();
+    // REPAIR_REQUIRED whose only finding is advisory: the gate clears the tree, but nobody approved it.
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'claude');
+    await run();
+    const gate = decisions('gate.independent_review')[0]!;
+    expect(gate.data).toMatchObject({ status: 'pass', independent: false, approved: false });
+    expect(gate.summary).not.toMatch(/approved/);
+    expect(gate.summary).toMatch(/without an approval/);
+    expect(gate.summary).toMatch(/not independent/);
+    expect(state()).toBe('BLOCKED');
+    // The outcome does not call the same-provider review an independent one either.
+    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+  });
+
+  it('a same-provider BLOCK review with an advisory finding does not call the block an independent review', async () => {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('STY-1', { severity: 'low' })], 'claude');
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+  });
+
+  it('an independent (Codex) BLOCK review is still recorded as an independent review that does not clear the tree', async () => {
+    const { cand } = await setup();
+    record(cand, 'BLOCK', [finding('STY-1', { severity: 'low' })], 'codex');
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^independent review does not clear tree/);
+  });
+
   it('an approval with a material question still open blocks the run before delivery', async () => {
     const { cand } = await setup();
     record(cand, 'APPROVE');
@@ -137,6 +185,23 @@ describe('a review that is already recorded', () => {
     expect(repairs).toHaveLength(1);
     expect(JSON.parse(repairs[0]!.data_json)).toMatchObject({ attempt: 2, tree_hash: cand.treeHash, findings: [{ external_id: 'COR-1' }] });
     expect(decisions('repair.brief')[0]?.summary).toContain('COR-1 (high)');
+  });
+
+  it('one-line finding text in the gate and the repair brief is cut at a word boundary with an ellipsis, never mid-word', async () => {
+    const { cand } = await setup();
+    const claim = 'The fail-before evidence for AC-1, AC-2 and AC-3 shows only a load failure. It does not show that any assertion about the criteria failed. The new tests depend on the missing method and nothing else, so a stub that compiles would make them fail differently.';
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1', { claim })]);
+    await run();
+    const lines = [decisions('gate.independent_review')[0]!.summary, decisions('repair.brief')[0]!.summary];
+    for (const line of lines) {
+      expect(line).toContain('TEST-1');
+      expect(line).not.toMatch(/about th(\.\.\.)?($|[ ;)])/);
+      const quoted = /(The fail-before[^;]*)/.exec(line)![1]!;
+      expect(quoted.endsWith('...')).toBe(true);
+      const kept = quoted.slice(0, -3);
+      expect(claim.startsWith(kept)).toBe(true);
+      expect(/[\s,;:]/.test(claim[kept.length]!)).toBe(true);
+    }
   });
 
   it('several findings share one brief, a reused brief file is kept, and a finding without a suggested validation gets one built from the claim', async () => {
@@ -298,6 +363,27 @@ describe('a review that has to be run', () => {
     expect(listReviews(lab.db, lab.runId)[0]).toMatchObject({ provider: 'codex', verdict: 'APPROVE' });
     expect(implementerProvider(lab.ctx())).toBe('claude');
     expect(lab.ctx().ledger!.state('review_rounds').used).toBe(1);
+  });
+
+  it('runs the Codex reviewer at the configured review effort, medium unless told otherwise', async () => {
+    const { reviewer } = await setup();
+    await run();
+    expect(reviewer.specs[0]).toMatchObject({ effort: 'medium' });
+    cleanLab();
+    const high = await setup({ tweak: (c) => { c.providers.codex!.review_reasoning_effort = 'high'; } });
+    await run();
+    expect(high.reviewer.specs[0]).toMatchObject({ effort: 'high' });
+  });
+
+  it('records how deep the review session went, from its transcript, when it records the review', async () => {
+    const answerOnly = [{ type: 'item.completed', item: { type: 'agent_message', text: '{}' } }, { type: 'turn.completed', usage: { output_tokens: 69, reasoning_output_tokens: 17 } }];
+    await setup({ onReviewerStart: (spec) => writeFileSync(join(spec.workerDir, 'log.jsonl'), `${answerOnly.map((e) => JSON.stringify(e)).join('\n')}\n`) });
+    await settle();
+    const [review] = listReviews(lab.db, lab.runId);
+    const depth = decisions('review.depth');
+    expect(depth).toHaveLength(1);
+    expect(depth[0]!.data).toMatchObject({ review_id: review!.id, provider: 'codex', tool_calls: 0, reasoning_tokens: 17 });
+    expect(depth[0]!.summary).toContain('NO TOOL CALLS');
   });
 
   it('a review of another revision is asked for again, and after the limit the run ends without a review', async () => {
