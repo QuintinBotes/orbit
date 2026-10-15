@@ -271,9 +271,11 @@ describe('redact: linear time on hostile input', () => {
   ];
   for (const [name, text] of hostile) {
     it(name, () => {
+      // The bound catches catastrophic backtracking, which takes hours on a megabyte, not a busy runner: 1.5 s failed
+      // once on a GitHub runner (1.83 s for query strings) running the suite in parallel.
       const t0 = performance.now();
       R(text);
-      expect(performance.now() - t0).toBeLessThan(1_500);
+      expect(performance.now() - t0).toBeLessThan(6_000);
     });
   }
 });
