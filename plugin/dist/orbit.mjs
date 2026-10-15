@@ -39898,6 +39898,11 @@ function scanProbeLog(text2, input) {
 function readProbeLog(path) {
   return path !== null && existsSync24(path) ? readFileSync19(path, "utf8") : null;
 }
+function dependencyFetchLine(text2) {
+  if (!text2) return null;
+  const line3 = text2.split("\n").find((l) => DEPENDENCY_FETCH_FAILED.test(l))?.trim();
+  return line3 ? redact(line3).slice(0, 300) : null;
+}
 function checkDir(def) {
   const cwd = (def?.cwd ?? ".").replace(/^\.\/+/, "").replace(/\/+$/, "");
   return cwd === "." ? "" : cwd;
@@ -40189,6 +40194,7 @@ async function installProbeCheckout(o) {
   const outOfBudget = (id) => `${id} was not probed to the end: the probe's bound of ${Math.floor(o.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
   for (const def of install.definitions) {
     const attempts = [];
+    const fetches2 = [];
     let refused = null;
     let bounded = false;
     let outOfTime = false;
@@ -40205,10 +40211,17 @@ async function installProbeCheckout(o) {
         refused = row;
         break;
       }
-      attempts.push(probeAttemptFromRow(db, runDir2, checkout, o.checkoutDir, row, def));
+      const attempt = probeAttemptFromRow(db, runDir2, checkout, o.checkoutDir, row, def);
+      attempts.push(attempt);
+      const fetchLine = dependencyFetchLine(readProbeLog(row.logPath));
+      if (fetchLine !== null) fetches2.push({ attempt, line: fetchLine });
       if (row.status !== "FAILED") break;
     }
     const last = attempts.at(-1);
+    const fetch2 = fetches2[0];
+    if (refused === null && fetch2 !== void 0) {
+      return { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows that a dependency could not be fetched or installed (${fetch2.line})${fetch2.attempt.log ? ` (${fetch2.attempt.log})` : ""}` };
+    }
     const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
     if (refused === null && installSignals.length > 0) {
       return { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows an environment cause (${installSignals.join(", ")})${last?.log ? ` (${last.log})` : ""}` };
@@ -40418,12 +40431,13 @@ function probeLogExcerpt(path, max = PROBE_EXCERPT_CHARS) {
     return "";
   }
 }
-var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, REPAIR_PROBE_DECISION_KIND, FAIL_BEFORE_PROBE, REPAIR_PROBE, REPAIR_CONTROL, REPAIR_REPAIRED, FLAVOURS, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, GITLINK, DEFAULT_PROBE_STOP_GRACE_MS, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
+var NEVER_ACCEPTED, FAIL_BEFORE_DECISION_KIND, REPAIR_PROBE_DECISION_KIND, FAIL_BEFORE_PROBE, REPAIR_PROBE, REPAIR_CONTROL, REPAIR_REPAIRED, FLAVOURS, CLASSIFIER_LINES, WINDOW_STRIDE, OUTPUT_DROPPED, DEPENDENCY_FETCH_FAILED, GITLINK, DEFAULT_PROBE_STOP_GRACE_MS, MAX_LISTED_PATHS, PROBE_EXCERPT_CHARS, EXCERPT_LINE_CHARS, EXCERPT_CONTEXT, FAILURE_WORDS, NONE_COUNTED, PATH_LIKE, notShown;
 var init_fail_before = __esm({
   "src/evidence/fail-before.ts"() {
     "use strict";
     init_errors();
     init_ids();
+    init_redact();
     init_run_states();
     init_config();
     init_test_files();
@@ -40447,6 +40461,7 @@ var init_fail_before = __esm({
     CLASSIFIER_LINES = 2e5;
     WINDOW_STRIDE = CLASSIFIER_LINES / 2;
     OUTPUT_DROPPED = /^\[orbit: output truncated: \d+ bytes dropped/m;
+    DEPENDENCY_FETCH_FAILED = /(?:\bnpm error\b[^\n]*\b(?:E403|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ECONNRESET)\b|\b(?:npm|pnpm|yarn|pip3?)\b[^\n]*\b(?:403 Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b|\b403 Forbidden\b[^\n]*(?:registry|GET https?:\/\/)|\b(?:ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b[^\n]*(?:registry|npm|pnpm|yarn|pip)|(?:registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org)[^\n]*(?:\b403\b|Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)|Could not fetch URL https?:\/\/\S*(?:pypi|pythonhosted))/i;
     GITLINK = "160000";
     DEFAULT_PROBE_STOP_GRACE_MS = 2e3;
     MAX_LISTED_PATHS = 20;
@@ -57229,14 +57244,6 @@ function browserNotStarted(journeys) {
   }
   return null;
 }
-function dependencyFetchLine(texts) {
-  for (const text2 of texts) {
-    if (!text2) continue;
-    const line3 = text2.split("\n").find((l) => DEPENDENCY_FETCH_FAILED.test(l))?.trim();
-    if (line3) return redact(line3).slice(0, 300);
-  }
-  return null;
-}
 function logText(path) {
   try {
     return path && existsSync38(path) ? readFileSync30(path, "utf8") : null;
@@ -57245,19 +57252,24 @@ function logText(path) {
   }
 }
 function dependencyFetchFailure(result2, journeys) {
-  return dependencyFetchLine([...result2.reasons, ...journeys.flatMap((j) => [j.error?.message, j.errorContext?.errorDetails]), ...result2.notExecuted.map((x) => x.environment), ...result2.checks.map((c) => logText(c.logPath)), ...result2.notExecuted.map((x) => logText(x.logPath))]);
+  const texts = [...result2.reasons, ...journeys.flatMap((j) => [j.error?.message, j.errorContext?.errorDetails]), ...result2.notExecuted.map((x) => x.environment), ...result2.checks.map((c) => logText(c.logPath)), ...result2.notExecuted.map((x) => logText(x.logPath)), logText(join52(result2.outDir, "app", APP_LOG_FILE))];
+  for (const text2 of texts) {
+    const line3 = dependencyFetchLine(text2);
+    if (line3 !== null) return line3;
+  }
+  return null;
 }
 function attemptOf(ctx, result2, checkId, n2) {
+  const journeys = result2.journeys.filter((j) => j.checkId === checkId);
+  const fetchLine = dependencyFetchFailure(result2, journeys);
+  if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
   const notRun = result2.notExecuted.find((x) => x.checkId === null || x.checkId === checkId);
   if (notRun) {
     const what = notRun.stage === "application" ? "the application" : `the journey process of ${checkId}`;
     return { environment: notRun.environment ?? `${what} never ran the repository's code` };
   }
-  const journeys = result2.journeys.filter((j) => j.checkId === checkId);
   const notStarted = browserNotStarted(journeys);
   if (notStarted) return { environment: notStarted };
-  const fetchLine = dependencyFetchFailure(result2, journeys);
-  if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
   const status2 = result2.verdict === "TIMEOUT" ? "TIMEOUT" : result2.verdict === "CANCELLED" ? "CANCELLED" : result2.verdict === "ERROR" || journeys.length === 0 ? "ERROR" : journeys.some((j) => j.status === "TIMED_OUT") ? "TIMEOUT" : journeys.some((j) => j.status === "INTERRUPTED") ? "CANCELLED" : journeys.some((j) => j.status === "FAILED") ? "FAILED" : "PASSED";
   const run = result2.checks.find((c) => c.checkId === checkId);
   return { attempt: { attempt: n2, status: status2, exitCode: run?.exitCode ?? null, signals: [], log: runRelative2(ctx.runDir, run?.logPath ?? join52(result2.outDir, "ui-result.json")) } };
@@ -57449,7 +57461,7 @@ tree: ${probeTree}
   }
   return done(probeTree, probed);
 }
-var UI_CONTROL_DECISION_KIND, UI_PROBE_DECISION_KIND, sameIds, BROWSER_NOT_STARTED, DEPENDENCY_FETCH_FAILED;
+var UI_CONTROL_DECISION_KIND, UI_PROBE_DECISION_KIND, sameIds, BROWSER_NOT_STARTED;
 var init_fail_before_ui = __esm({
   "src/controller/fail-before-ui.ts"() {
     "use strict";
@@ -57461,6 +57473,7 @@ var init_fail_before_ui = __esm({
     init_fail_before();
     init_git();
     init_decisions();
+    init_app_fixture();
     init_runner2();
     init_context2();
     init_common();
@@ -57468,7 +57481,6 @@ var init_fail_before_ui = __esm({
     UI_PROBE_DECISION_KIND = "verification.fail-before-ui";
     sameIds = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
     BROWSER_NOT_STARTED = /browserType\.launch|Executable doesn't exist|Failed to launch|MachPortRendezvousServer|mach_port_rendezvous|sandbox initialization failed|Target page, context or browser has been closed/i;
-    DEPENDENCY_FETCH_FAILED = /(?:\bnpm error\b[^\n]*\b(?:E403|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ECONNRESET)\b|\b(?:npm|pnpm|yarn|pip3?)\b[^\n]*\b(?:403 Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b|\b403 Forbidden\b[^\n]*(?:registry|GET https?:\/\/)|\b(?:ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b[^\n]*(?:registry|npm|pnpm|yarn|pip)|(?:registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org)[^\n]*(?:\b403\b|Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)|Could not fetch URL https?:\/\/\S*(?:pypi|pythonhosted))/i;
   }
 });
 
