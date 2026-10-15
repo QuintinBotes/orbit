@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { newId } from '../core/ids.ts';
+import { redact } from '../core/redact.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { checkCategory } from '../policy/config.ts';
@@ -224,6 +225,26 @@ export function scanProbeLog(text: string | null, input: Omit<SignalInput, 'outp
 /** An attempt's log as written, or null when there is none. */
 function readProbeLog(path: string | null): string | null {
   return path !== null && existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
+/**
+ * A line that shows a dependency could not be fetched or installed: a package manager's registry or network error
+ * (npm, pnpm, yarn or pip), such as E403, ENOTFOUND, ECONNREFUSED or EAI_AGAIN, or a 403 Forbidden from a registry.
+ * A process that fetches its own tooling or packages at run time (npx playwright in a checkout without
+ * node_modules, a dev server fetching a package as it starts, or the locked install itself behind a shell pipeline
+ * that masks its exit status) can fail this way while its exit status and the environment classifiers say nothing.
+ * Reading this text can only make the probes stricter: a match turns a would-be pass or failure into
+ * "establishes nothing", never the other way, which is the only direction wording may be read. Both probes use
+ * this one definition: the ui probe for a run's output and logs (controller/fail-before-ui.ts), and
+ * installProbeCheckout below for every install attempt's log.
+ */
+export const DEPENDENCY_FETCH_FAILED = /(?:\bnpm error\b[^\n]*\b(?:E403|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ECONNRESET)\b|\b(?:npm|pnpm|yarn|pip3?)\b[^\n]*\b(?:403 Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b|\b403 Forbidden\b[^\n]*(?:registry|GET https?:\/\/)|\b(?:ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b[^\n]*(?:registry|npm|pnpm|yarn|pip)|(?:registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org)[^\n]*(?:\b403\b|Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)|Could not fetch URL https?:\/\/\S*(?:pypi|pythonhosted))/i;
+
+/** The first line of `text` that shows a dependency could not be fetched or installed, redacted and bounded, or null. */
+export function dependencyFetchLine(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const line = text.split('\n').find((l) => DEPENDENCY_FETCH_FAILED.test(l))?.trim();
+  return line ? redact(line).slice(0, 300) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -753,10 +774,11 @@ export interface ProbeInstallStop {
  * The locked install of a probe checkout, as the candidate's checkout had it (ADR 0014 section 2): the install the
  * policy plans for the checkout's manifests, each definition once and a failing one once more. It keeps to the
  * probe's one bound like every check: each attempt gets at most what is left of it, and none starts once it has run
- * out. Null when the install passed or there was nothing to install. An environment signal in any attempt, a
- * passing install whose log could not be read whole, a bound that ran out, or a failed install stops the probe: on
- * the candidate a broken install only fails its tests, but on a probe tree a failing test is the evidence. The
- * command probe shares this step and its judgement with the ui probe (controller/fail-before-ui.ts), which runs it
+ * out. Null when the install passed or there was nothing to install. An environment signal or a dependency fetch
+ * failure in any attempt's log, a passing install whose log could not be read whole, a bound that ran out, or a
+ * failed install stops the probe: on the candidate a broken install only fails its tests, but on a probe tree a
+ * failing test is the evidence. The command probe shares this step and its judgement with the ui probe
+ * (controller/fail-before-ui.ts), which runs it
  * in its control checkout and its probe checkout before the journeys. `where` names the checkout in a reason, as
  * "on the probe tree" or "for the ui control on the base revision".
  */
@@ -772,6 +794,7 @@ export async function installProbeCheckout(o: { runner: ProbeRequest['runner']; 
   const outOfBudget = (id: string): string => `${id} was not probed to the end: the probe's bound of ${Math.floor(o.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
   for (const def of install.definitions) {
     const attempts: ProbeAttempt[] = [];
+    const fetches: { attempt: ProbeAttempt; line: string }[] = [];
     let refused: string | null = null;
     let bounded = false;
     let outOfTime = false;
@@ -788,10 +811,23 @@ export async function installProbeCheckout(o: { runner: ProbeRequest['runner']; 
         refused = row;
         break;
       }
-      attempts.push(probeAttemptFromRow(db, runDir, checkout, o.checkoutDir, row, def));
+      const attempt = probeAttemptFromRow(db, runDir, checkout, o.checkoutDir, row, def);
+      attempts.push(attempt);
+      // The attempt's log is also read for a dependency that could not be fetched or installed, which
+      // scanProbeLog does not recognize: an install command behind a shell pipeline can exit 0 with an
+      // incomplete install, so its exit status is accepted only when no attempt's log shows one. Reading the
+      // log this way can only make the probe stricter (see DEPENDENCY_FETCH_FAILED).
+      const fetchLine = dependencyFetchLine(readProbeLog(row.logPath));
+      if (fetchLine !== null) fetches.push({ attempt, line: fetchLine });
       if (row.status !== 'FAILED') break;
     }
     const last = attempts.at(-1);
+    // A dependency fetch failure in any install attempt's log stops the probe as an environment cause, before
+    // its exit status is accepted: a masked status must not pass with an incomplete install.
+    const fetch = fetches[0];
+    if (refused === null && fetch !== undefined) {
+      return { cause: 'environment', reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows that a dependency could not be fetched or installed (${fetch.line})${fetch.attempt.log ? ` (${fetch.attempt.log})` : ''}` };
+    }
     // An environment signal in any install attempt stops the probe, whatever the exit status (ADR 0014).
     const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
     if (refused === null && installSignals.length > 0) {

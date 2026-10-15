@@ -19,11 +19,12 @@ import { hashObject } from '../core/hash.ts';
 import { newId } from '../core/ids.ts';
 import { redact } from '../core/redact.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
-import { buildProbeTree, commitProbeTree, FAIL_BEFORE_PROBE, installProbeCheckout, judgeProbeAttempts, probeEvidenceDir, probeRef, type CheckProbe, type NotEstablishedCause, type ProbeAttempt, type ProbeChange, type ProbeInstallStop, type ProbeRequest } from '../evidence/fail-before.ts';
+import { buildProbeTree, commitProbeTree, dependencyFetchLine, FAIL_BEFORE_PROBE, installProbeCheckout, judgeProbeAttempts, probeEvidenceDir, probeRef, type CheckProbe, type NotEstablishedCause, type ProbeAttempt, type ProbeChange, type ProbeInstallStop, type ProbeRequest } from '../evidence/fail-before.ts';
 import { resolveCommit, treeOf } from '../evidence/git.ts';
 import type { CandidateRecord } from '../evidence/store.ts';
 import type { CheckStatus } from '../evidence/types.ts';
 import { listDecisions } from '../storage/decisions.ts';
+import { APP_LOG_FILE } from '../ui/app-fixture.ts';
 import { runUiChecks, type UiRunInput } from '../ui/runner.ts';
 import type { UiJourneyResult, UiRunResult } from '../ui/types.ts';
 import { checkRunnerFor, homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from './context.ts';
@@ -124,26 +125,6 @@ function browserNotStarted(journeys: readonly UiJourneyResult[]): string | null 
   return null;
 }
 
-/**
- * A line that shows a dependency could not be fetched or installed: a package manager's registry or network error
- * (npm, pnpm, yarn or pip), such as E403, ENOTFOUND, ECONNREFUSED or EAI_AGAIN, or a 403 Forbidden from a registry.
- * A journey process that fetches its own tooling (npx playwright in a checkout without node_modules, kept from the
- * registry by the sandbox) fails this way before any journey runs, however the locked install left the checkout.
- * Reading this text can only make the probe stricter: a match turns a would-be failure (of the control, or of a
- * probe attempt) into "establishes nothing", never the other way, which is the only direction wording may be read.
- */
-const DEPENDENCY_FETCH_FAILED = /(?:\bnpm error\b[^\n]*\b(?:E403|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|ECONNRESET)\b|\b(?:npm|pnpm|yarn|pip3?)\b[^\n]*\b(?:403 Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b|\b403 Forbidden\b[^\n]*(?:registry|GET https?:\/\/)|\b(?:ENOTFOUND|ECONNREFUSED|EAI_AGAIN)\b[^\n]*(?:registry|npm|pnpm|yarn|pip)|(?:registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org)[^\n]*(?:\b403\b|Forbidden|ENOTFOUND|ECONNREFUSED|EAI_AGAIN)|Could not fetch URL https?:\/\/\S*(?:pypi|pythonhosted))/i;
-
-/** The first line of `texts` that shows a dependency could not be fetched or installed, or null. */
-function dependencyFetchLine(texts: readonly (string | null | undefined)[]): string | null {
-  for (const text of texts) {
-    if (!text) continue;
-    const line = text.split('\n').find((l) => DEPENDENCY_FETCH_FAILED.test(l))?.trim();
-    if (line) return redact(line).slice(0, 300);
-  }
-  return null;
-}
-
 /** A journey or application log as written, or null when there is none: a fetch failure may show only in it. */
 function logText(path: string | null | undefined): string | null {
   try {
@@ -155,21 +136,33 @@ function logText(path: string | null | undefined): string | null {
 
 /** The line that shows a dependency could not be fetched or installed in one ui run, or null. */
 function dependencyFetchFailure(result: UiRunResult, journeys: readonly UiJourneyResult[]): string | null {
-  return dependencyFetchLine([...result.reasons, ...journeys.flatMap((j) => [j.error?.message, j.errorContext?.errorDetails]), ...result.notExecuted.map((x) => x.environment), ...result.checks.map((c) => logText(c.logPath)), ...result.notExecuted.map((x) => logText(x.logPath))]);
+  // The application's log (app/app.log under the run's output directory, APP_LOG_FILE) is read whether or not the
+  // application started: a server that fetches a package as it starts can record the refusal only there while its
+  // journeys then fail as ordinary assertions. When the application never started, the same file is already read
+  // as a notExecuted log. Reading it can only make the probe stricter (see dependencyFetchLine in
+  // evidence/fail-before.ts, the one definition both probes use).
+  const texts = [...result.reasons, ...journeys.flatMap((j) => [j.error?.message, j.errorContext?.errorDetails]), ...result.notExecuted.map((x) => x.environment), ...result.checks.map((c) => logText(c.logPath)), ...result.notExecuted.map((x) => logText(x.logPath)), logText(join(result.outDir, 'app', APP_LOG_FILE))];
+  for (const text of texts) {
+    const line = dependencyFetchLine(text);
+    if (line !== null) return line;
+  }
+  return null;
 }
 
 /** One attempt's standing for a check: its journeys' worst result, or the environment cause that kept them from running. */
 function attemptOf(ctx: RunContext, result: UiRunResult, checkId: string, n: number): { attempt: ProbeAttempt } | { environment: string } {
+  const journeys = result.journeys.filter((j) => j.checkId === checkId);
+  // The run's output and logs, the application's included, are read for a fetch failure first, whether or not the
+  // application started: such a failure is the environment's, never a journey result.
+  const fetchLine = dependencyFetchFailure(result, journeys);
+  if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
   const notRun = result.notExecuted.find((x) => x.checkId === null || x.checkId === checkId);
   if (notRun) {
     const what = notRun.stage === 'application' ? 'the application' : `the journey process of ${checkId}`;
     return { environment: notRun.environment ?? `${what} never ran the repository's code` };
   }
-  const journeys = result.journeys.filter((j) => j.checkId === checkId);
   const notStarted = browserNotStarted(journeys);
   if (notStarted) return { environment: notStarted };
-  const fetchLine = dependencyFetchFailure(result, journeys);
-  if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
   const status: CheckStatus =
     result.verdict === 'TIMEOUT' ? 'TIMEOUT'
     : result.verdict === 'CANCELLED' ? 'CANCELLED'
