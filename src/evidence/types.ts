@@ -112,6 +112,8 @@ export interface CriterionFailBefore {
  */
 export interface AssumptionEvidence {
   assumption_id: string;
+  /** The statement as the report evaluated it: an amendment that later changes it must not inherit this status. */
+  statement: string;
   status: 'supported' | 'unverified';
   reason: string;
   checks: string[];
@@ -132,6 +134,11 @@ export interface EvidenceReport {
   acceptance_evidence: CriterionEvidence[];
   /** The contract assumptions the fail-before probe decided (ADR 0016, item 1); absent when none was evaluated. */
   assumptions?: AssumptionEvidence[];
+  /**
+   * Hash of the contract's assumptions the report saw (their ids and statements, in order); present only with
+   * `assumptions`, so an amendment to one of them makes the evidence stale instead of crediting the new wording.
+   */
+  assumptions_hash?: string;
   verdict: 'PASS' | 'FAIL' | 'INCOMPLETE';
   /** Things the report could not establish, stated rather than implied. */
   unverified: string[];

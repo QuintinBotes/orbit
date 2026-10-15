@@ -8,7 +8,7 @@ import { snapshotHash } from '../policy/snapshot.ts';
 import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { criterionFailBefore, isBrowserCheck as isConfiguredBrowserCheck, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
-import { statesCheckRunsTests, statesFailBefore } from './fail-before-statements.ts';
+import { statesCheckRunsTests, statesFailBefore, unknownNamedChecks } from './fail-before-statements.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
 import { insertEvidenceReport, type EvidenceReportRecord } from './store.ts';
@@ -70,6 +70,11 @@ export interface BaseComparison {
   testLayout?: TestLayout;
   /** Diffs of changed files whose test changes only their content shows (testedByContent: a #[test] added in Rust). */
   diffs?: ReadonlyMap<string, string>;
+}
+
+/** One hash over the contract's assumptions (their ids and statements, in order), as an evidence report records them. */
+export function contractAssumptionsHash(assumptions: GoalContract['assumptions']): string {
+  return hashObject(assumptions.map((a) => ({ id: a.id, statement: a.statement })));
 }
 
 /** One hash over the configuration of the given checks, in id order. */
@@ -400,10 +405,16 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   for (const a of contract.assumptions ?? []) {
     const named = statesCheckRunsTests(a.statement, configuredCheckIds);
     if (named === null) continue;
-    const itsChecks = named.length > 0 ? [...named] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
+    // A check it names as such that is not configured cannot be probed, and no other check's probe stands in for it:
+    // only a statement naming no check at all falls back to every check the probe ran.
+    const unknown = unknownNamedChecks(a.statement, configuredCheckIds);
+    const itsChecks = unknown.length > 0 ? [...unknown] : named.length > 0 ? [...named] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
     let status: AssumptionEvidence['status'];
     let reason: string;
-    if (assumptionProbe === null) {
+    if (unknown.length > 0) {
+      status = 'unverified';
+      reason = unknown.map((name) => `${name}: not a configured check`).join('; ');
+    } else if (assumptionProbe === null) {
       status = 'unverified';
       reason = itsChecks.length > 0 ? `no probe ran for ${itsChecks.join(', ')}` : 'no probe ran';
     } else if (itsChecks.length === 0) {
@@ -419,7 +430,7 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         })
         .join('; ');
     }
-    assumptions.push({ assumption_id: a.id, status, reason, checks: itsChecks });
+    assumptions.push({ assumption_id: a.id, statement: a.statement, status, reason, checks: itsChecks });
     if (status !== 'supported') note(assumptionMode === 'required' ? incomplete : unverified, `assumption ${a.id}: unverified (${reason})`);
   }
 
@@ -469,7 +480,7 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     checks,
     ui: uiRows,
     acceptance_evidence: criteria,
-    ...(assumptions.length > 0 ? { assumptions } : {}),
+    ...(assumptions.length > 0 ? { assumptions, assumptions_hash: contractAssumptionsHash(contract.assumptions ?? []) } : {}),
     verdict: fail.length > 0 ? 'FAIL' : incomplete.length > 0 ? 'INCOMPLETE' : 'PASS',
     unverified,
   };

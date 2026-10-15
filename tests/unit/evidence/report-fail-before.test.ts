@@ -4,9 +4,9 @@
 // supports, passed-before leaves the criterion unverified with the note naming the base and the log, and not established
 // blocks it, unless a person accepted the criterion without fail-before for this tree.
 import { describe, expect, it } from 'vitest';
-import { evaluateEvidence, type BuildReportInput } from '../../../src/evidence/report.ts';
+import { contractAssumptionsHash, evaluateEvidence, type BuildReportInput } from '../../../src/evidence/report.ts';
 import { otherwiseAcceptable, type CheckProbe, type FailBeforeEvidence, type ProbeResult } from '../../../src/evidence/fail-before.ts';
-import { statesCheckRunsTests, statesFailBefore } from '../../../src/evidence/fail-before-statements.ts';
+import { statesCheckRunsTests, statesFailBefore, unknownNamedChecks } from '../../../src/evidence/fail-before-statements.ts';
 import type { FailBeforeMode } from '../../../src/policy/types.ts';
 import { CANDIDATE, CLEAN_SCOPE, contract, fakeSnapshot, result } from './report-fixtures.ts';
 import { checkDef } from './fixtures.ts';
@@ -65,6 +65,7 @@ describe('fail-before statement wording', () => {
       'The new test fails before the fix',
       'Without the change, the new tests fail',
       'On the base revision, the new tests fail',
+      'The new tests on the base revision fail',
       'Prices round up. The new tests fail on the base revision.',
     ]) {
       expect(statesFailBefore(statement), statement).toBe(true);
@@ -79,6 +80,10 @@ describe('fail-before statement wording', () => {
       'The new tests fail to import on Tuesdays',
       'round_price fails before the change and tests cover it',
       'The tests pass before the change and fail afterwards',
+      'The new tests pass on the base revision and fail after the change',
+      'The new tests on the base revision pass and fail on other input',
+      'The new tests do not fail on the base revision',
+      'The new tests never fail on the base revision',
     ]) {
       expect(statesFailBefore(statement), statement).toBe(false);
     }
@@ -94,6 +99,17 @@ describe('fail-before statement wording', () => {
     expect(statesCheckRunsTests('The unit-tests check and the lint check run the new tests', ids)).toEqual(['unit-tests', 'lint']);
     // A longer id that only contains a configured one does not name it, although the check still selects the assumption.
     expect(statesCheckRunsTests('The unit-tests-extra check runs the new tests', ids)).toEqual([]);
+    // A check named as such that is not configured is an unknown named check, not no check at all.
+    expect(statesCheckRunsTests('The integration check runs the new tests', ids)).toEqual([]);
+    expect(unknownNamedChecks('The integration check runs the new tests', ids)).toEqual(['integration']);
+    expect(unknownNamedChecks('The unit-tests-extra check runs the new tests', ids)).toEqual(['unit-tests-extra']);
+    expect(unknownNamedChecks('The check named integration runs the new tests', ids)).toEqual(['integration']);
+    // A check described in general is no check's name: no unknown check, so the fallback to every probed check applies.
+    expect(unknownNamedChecks('The required test check runs the new tests', ids)).toEqual([]);
+    expect(unknownNamedChecks('The configured mandatory check runs the new tests', ids)).toEqual([]);
+    expect(unknownNamedChecks('The check runs the new tests', ids)).toEqual([]);
+    expect(unknownNamedChecks('The unit-tests check runs pytest over tests/ with src on the path', ids)).toEqual([]);
+    expect(unknownNamedChecks('The test runner collects the new tests', ids)).toEqual([]);
     for (const statement of [
       'Prices are in euros',
       'The unit-tests check passes',
@@ -102,6 +118,9 @@ describe('fail-before statement wording', () => {
       'Tests run quickly',
       'The unit-tests check can import shop from src',
       'The check runs in euros',
+      'The lint check does not run tests',
+      "The lint check doesn't run the new tests",
+      'The check never runs the new tests',
     ]) {
       expect(statesCheckRunsTests(statement, ids), statement).toBeNull();
     }
@@ -320,13 +339,13 @@ describe('fail_before per criterion, by mode', () => {
     const inputs = withAssumptions(FLAGGED_ASSUMPTION, BEHAVIOUR_ASSUMPTION);
     const supported = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
     expect(supported.report.assumptions).toEqual([
-      { assumption_id: 'AS-1', status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests (exit 1, 2 attempts))', checks: ['unit'] },
+      { assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'supported', reason: 'unit: failed-before (unit failed on the base revision with the new tests (exit 1, 2 attempts))', checks: ['unit'] },
     ]);
     expect(supported.report.verdict).toBe('PASS');
 
     const passed = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
     expect(passed.report.assumptions).toEqual([
-      { assumption_id: 'AS-1', status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)', checks: ['unit'] },
+      { assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'unit: passed-before (unit passed on the base revision with the new tests)', checks: ['unit'] },
     ]);
     expect(passed.report.verdict).toBe('PASS');
     expect(passed.incompleteReasons).toEqual([]);
@@ -334,13 +353,13 @@ describe('fail_before per criterion, by mode', () => {
 
     const timedOut = judge('advisory', { probe: probe(TIMED_OUT), skipped: null, accepted: [] }, { contract: inputs });
     expect(timedOut.report.assumptions).toEqual([
-      { assumption_id: 'AS-1', status: 'unverified', reason: 'unit: not-established (unit timed out on the probe tree)', checks: ['unit'] },
+      { assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'unit: not-established (unit timed out on the probe tree)', checks: ['unit'] },
     ]);
 
     const noProbe = judge('advisory', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
-    expect(noProbe.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
+    expect(noProbe.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
     const noInput = judge('advisory', null, { contract: inputs });
-    expect(noInput.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
+    expect(noInput.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
     expect(noInput.report.verdict).toBe('PASS');
   });
 
@@ -352,6 +371,7 @@ describe('fail_before per criterion, by mode', () => {
     expect(mixed.report.assumptions).toEqual([
       {
         assumption_id: 'AS-1',
+        statement: 'The check runs the new tests',
         status: 'unverified',
         reason: 'unit: failed-before (unit failed on the base revision with the new tests (exit 1, 2 attempts)); lint: passed-before (lint passed on the base revision with the new tests)',
         checks: ['unit', 'lint'],
@@ -363,7 +383,7 @@ describe('fail_before per criterion, by mode', () => {
     expect(both.report.assumptions![0]).toMatchObject({ status: 'supported', checks: ['unit', 'lint'] });
 
     const none = judge('advisory', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
-    expect(none.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran', checks: [] }]);
+    expect(none.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: 'The check runs the new tests', status: 'unverified', reason: 'no probe ran', checks: [] }]);
   });
 
   it('under required an unverified flagged assumption blocks the PASS; under advisory it does not', () => {
@@ -372,7 +392,7 @@ describe('fail_before per criterion, by mode', () => {
     const inputs = withAssumptions({ id: 'AS-1', statement: 'The lint check discovers tests/mul.test.mjs', status: 'unverified' });
     const required = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
     expect(required.report.acceptance_evidence[0]!.status).toBe('supported');
-    expect(required.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'lint: no probe result', checks: ['lint'] }]);
+    expect(required.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: 'The lint check discovers tests/mul.test.mjs', status: 'unverified', reason: 'lint: no probe result', checks: ['lint'] }]);
     expect(required.report.verdict).toBe('INCOMPLETE');
     expect(required.incompleteReasons).toEqual(['assumption AS-1: unverified (lint: no probe result)']);
 
@@ -382,8 +402,63 @@ describe('fail_before per criterion, by mode', () => {
     expect(advisory.report.unverified).toContain('assumption AS-1: unverified (lint: no probe result)');
 
     const off = judge('off', { probe: null, skipped: null, accepted: [] }, { contract: inputs });
-    expect(off.report.assumptions).toEqual([{ assumption_id: 'AS-1', status: 'unverified', reason: 'no probe ran for lint', checks: ['lint'] }]);
+    expect(off.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: 'The lint check discovers tests/mul.test.mjs', status: 'unverified', reason: 'no probe ran for lint', checks: ['lint'] }]);
     expect(off.report.verdict).toBe('PASS');
+  });
+
+  it('an assumption naming a check that is not configured is unverified and no other probe supports it', () => {
+    const inputs = withAssumptions({ id: 'AS-1', statement: 'The integration check runs the new tests', status: 'unverified' });
+    // The unit probe failed before, which would support a statement naming no check: it must not stand in here.
+    const advisory = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(advisory.report.assumptions).toEqual([
+      { assumption_id: 'AS-1', statement: 'The integration check runs the new tests', status: 'unverified', reason: 'integration: not a configured check', checks: ['integration'] },
+    ]);
+    const required = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(required.report.acceptance_evidence[0]!.status).toBe('supported');
+    expect(required.report.assumptions![0]).toMatchObject({ status: 'unverified', reason: 'integration: not a configured check' });
+    expect(required.report.verdict).toBe('INCOMPLETE');
+    expect(required.incompleteReasons).toContain('assumption AS-1: unverified (integration: not a configured check)');
+  });
+
+  it('a negated assumption is not flagged, so a required report with the other evidence passing stays PASS', () => {
+    const inputs = withAssumptions({ id: 'AS-1', statement: 'The lint check does not run tests', status: 'unverified' });
+    const e = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(e.report.assumptions).toBeUndefined();
+    expect(e.report.assumptions_hash).toBeUndefined();
+    expect(e.report.verdict).toBe('PASS');
+    // The same for a criterion: a negated fail-before statement keeps the status its checks give it.
+    const negated = contract({
+      acceptance_criteria: [{ id: 'AC-1', statement: 'The new tests do not fail on the base revision', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }],
+      required_check_ids: ['unit'],
+    });
+    const c = judge('required', { probe: null, skipped: null, accepted: [] }, { contract: negated, ...baseFlipped });
+    expect(c.report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'not-applicable' } });
+    expect(c.report.verdict).toBe('PASS');
+  });
+
+  it('a criterion in tests-locus-fail order is flagged and unverified with a passed-before probe', () => {
+    const inOrder = contract({
+      acceptance_criteria: [{ id: 'AC-1', statement: 'The new tests on the base revision fail', proof: ['tests/mul.test.mjs'], mandatory: true, check_ids: ['unit'] }],
+      required_check_ids: ['unit'],
+    });
+    const e = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inOrder });
+    const entry = e.report.acceptance_evidence[0]!;
+    expect(entry.status).toBe('unverified');
+    expect(entry.note).toMatch(flaggedNote);
+    expect(e.report.verdict).toBe('PASS');
+    expect(e.report.unverified).toContain(`criterion AC-1: unverified (${entry.note})`);
+  });
+
+  it('a report that evaluated an assumption records its statement and a hash of the contract assumptions', () => {
+    const inputs = withAssumptions(FLAGGED_ASSUMPTION, BEHAVIOUR_ASSUMPTION);
+    const e = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(e.report.assumptions![0]!.statement).toBe(FLAGGED_ASSUMPTION.statement);
+    expect(e.report.assumptions_hash).toBe(contractAssumptionsHash(inputs.assumptions));
+    expect(e.report.assumptions_hash).not.toBe(contractAssumptionsHash(inputs.assumptions.map((a) => (a.id === 'AS-1' ? { ...a, statement: 'The lint check runs the new tests' } : a))));
+    // A report that evaluated nothing records neither field.
+    const none = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: withAssumptions(BEHAVIOUR_ASSUMPTION) });
+    expect(none.report.assumptions).toBeUndefined();
+    expect(none.report.assumptions_hash).toBeUndefined();
   });
 });
 

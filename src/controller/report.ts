@@ -203,7 +203,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? 'unverified', artifacts: e?.artifacts ?? [], ...(e?.check_wide ? { check_wide: e.check_wide } : {}), ...(failBefore ? { fail_before: failBefore } : {}) };
   });
   // A contract assumption the latest evidence report evaluated from the fail-before probe (ADR 0016, item 1) shows
-  // that status and reason, not the contract's own; every other assumption and ledger entry keeps its own status.
+  // that status and reason, not the contract's own, only while its statement is still the one the report evaluated;
+  // every other assumption and ledger entry keeps its own status.
   const evaluatedAssumptions = new Map((ev?.report.assumptions ?? []).map((a) => [a.assumption_id, a] as const));
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [(d.data as ReviewDepth).review_id, d.data as ReviewDepth] as const));
@@ -297,7 +298,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     assumptions: [
       ...(contract?.assumptions ?? []).map((a) => {
         const evaluated = evaluatedAssumptions.get(a.id);
-        return evaluated ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
+        return evaluated && evaluated.statement === a.statement ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
       }),
       ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status })),
     ],

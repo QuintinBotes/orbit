@@ -42,7 +42,7 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is DELIVERING without a candidate`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === 'APPROVE').at(-1) ?? null;
-  if (!ev || !review || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot })) {
+  if (!ev || !review || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot, contract })) {
     // Evidence or review went stale since review (a policy or tree change): verify again rather than deliver.
     return move(ctx, 'VERIFYING', `delivery refused: ${!ev ? 'no live evidence' : !review ? 'no approving review of this tree' : 'the evidence is stale'}; verifying again`);
   }

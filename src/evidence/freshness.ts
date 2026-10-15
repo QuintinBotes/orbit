@@ -4,7 +4,8 @@ import { snapshotHash } from '../policy/snapshot.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
-import { aggregateCheckConfigHash } from './report.ts';
+import type { GoalContract } from '../contract/types.ts';
+import { aggregateCheckConfigHash, contractAssumptionsHash } from './report.ts';
 import type { Candidate, EvidenceReport } from './types.ts';
 
 /**
@@ -18,6 +19,8 @@ import type { Candidate, EvidenceReport } from './types.ts';
 export interface FreshnessContext {
   candidate: Pick<Candidate, 'treeHash' | 'commitSha' | 'id' | 'runId'>;
   snapshot: PolicySnapshot;
+  /** The current contract, when the caller has it: a report that evaluated assumptions goes stale when they change. */
+  contract?: Pick<GoalContract, 'assumptions'>;
 }
 
 /** Every way `report` no longer matches the current state; empty when it is fresh. */
@@ -29,6 +32,9 @@ export function staleReasons(report: EvidenceReport, ctx: FreshnessContext): str
   if (report.policy_hash !== policy) reasons.push(`policy snapshot changed: evidence used ${report.policy_hash}, current is ${policy}`);
   const config = aggregateCheckConfigHash(ctx.snapshot, report.checks.map((c) => c.id));
   if (report.check_config_hash !== config) reasons.push('check configuration changed since the checks ran');
+  if (report.assumptions_hash !== undefined && ctx.contract !== undefined && contractAssumptionsHash(ctx.contract.assumptions) !== report.assumptions_hash) {
+    reasons.push("the contract's assumptions changed after the evidence was recorded");
+  }
   return reasons;
 }
 

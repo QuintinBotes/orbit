@@ -68,7 +68,7 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
   const cand = ctx.candidate;
   if (!cand || !ctx.ledger) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is REVIEWING without a candidate or budget`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
-  if (!ev || ev.verdict !== 'PASS' || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot })) {
+  if (!ev || ev.verdict !== 'PASS' || !isFresh(ev.report, { candidate: cand, snapshot: ctx.snapshot, contract })) {
     throw new OrbitError('STALE_EVIDENCE', `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
 

@@ -17,16 +17,31 @@ function sentences(statement: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** A negation of the verb that follows it: a negated statement is not the statement these rules apply to. */
+const NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|never|no\s+longer|cannot|can['’]t|won['’]t|will\s+not|is\s+not|isn['’]t)`;
+const PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
+
 /**
  * Whether a criterion states that its tests (or the change's tests) fail, or are failing, on or against the base
  * revision, before the change, before the fix, or without the change. Within one sentence the tests come before the
- * failing, and the locus comes after the failing or before the tests: "the function raises ValueError", "tests pass",
- * a test that fails on other input, and code that fails while tests merely cover it do not match.
+ * failing, and the locus comes after the failing, before the tests, or between them: "the function raises
+ * ValueError", "tests pass", a test that fails on other input, and code that fails while tests merely cover it do
+ * not match. A negated fail verb ("do not fail", "never fail") does not match either, and neither does the
+ * tests-locus-fail order when a pass verb stands between the locus and the failing, or the failing is placed after
+ * the change ("fail after", "fail afterwards").
  */
 export function statesFailBefore(statement: string): boolean {
   const testsFailThenLocus = new RegExp(String.raw`\btests?\b.*\b${FAIL_VERB}\b.*\b${LOCUS}\b`, 'i');
   const locusThenTestsFail = new RegExp(String.raw`\b${LOCUS}\b.*\btests?\b.*\b${FAIL_VERB}\b`, 'i');
-  return sentences(statement).some((s) => testsFailThenLocus.test(s) || locusThenTestsFail.test(s));
+  const testsLocusThenFail = new RegExp(String.raw`\btests?\b.*\b${LOCUS}\b(.*)\b${FAIL_VERB}\b`, 'i');
+  const negatedFail = new RegExp(String.raw`\b${NEGATION}\s+${FAIL_VERB}\b`, 'gi');
+  return sentences(statement).some((s) => {
+    const cleaned = s.replace(negatedFail, ' ');
+    if (testsFailThenLocus.test(cleaned) || locusThenTestsFail.test(cleaned)) return true;
+    const m = testsLocusThenFail.exec(cleaned);
+    if (m === null || PASS_VERB.test(m[1]!)) return false;
+    return !/^after(?:wards)?\b/i.test(cleaned.slice(m.index + m[0].length).trimStart());
+  });
 }
 
 function escapeRegExp(text: string): string {
@@ -74,6 +89,8 @@ function sentenceStatesCheckRunsTests(sentence: string, checkIds: readonly strin
   if (subject === undefined) return false;
   const verb = RUN_VERB.exec(sentence.slice(subject.end));
   if (verb === null) return false;
+  // A negation between the subject and the verb states the opposite ("does not run tests"): not this statement.
+  if (new RegExp(String.raw`\b${NEGATION}\b`, 'i').test(sentence.slice(subject.end, subject.end + verb.index))) return false;
   return TEST_OBJECT.test(sentence.slice(subject.end + verb.index + verb[0].length));
 }
 
@@ -85,4 +102,43 @@ function sentenceStatesCheckRunsTests(sentence: string, checkIds: readonly strin
  */
 export function statesCheckRunsTests(statement: string, checkIds: readonly string[]): string[] | null {
   return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
+}
+
+/**
+ * Words that stand next to "check" without naming one: articles, demonstratives, quantifiers, and the adjectives a
+ * statement uses for a check in general ("the required test check"), which are no check's name.
+ */
+const NOT_CHECK_NAMES = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'each', 'every', 'any', 'all', 'one', 'its', 'their', 'our', 'your', 'his', 'her', 'no', 'same', 'other',
+  'required', 'mandatory', 'optional', 'configured', 'existing', 'trusted', 'relevant', 'new', 'test', 'tests', 'testing', 'ci', 'project', 'repository',
+]);
+/** Words that follow "the check" as its verb or auxiliary, not as its name. */
+const AFTER_CHECK_VERBS = new Set([
+  'run', 'runs', 'running', 'discover', 'discovers', 'discovering', 'collect', 'collects', 'collecting', 'execute', 'executes', 'executing', 'pick', 'picks', 'picking', 'find', 'finds', 'finding', 'import', 'imports', 'importing',
+  'is', 'are', 'was', 'were', 'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'can', 'could', 'should', 'must', 'pass', 'passes', 'passed', 'fail', 'fails', 'failed',
+]);
+
+/**
+ * The checks `statement` names as such that are not configured check ids, in the order it names them: a word
+ * directly before "check" or "checks" ("the integration check"), or directly after "the check" where a name
+ * stands there ("the check named integration"). An assumption naming one names a check that does not exist, so
+ * no other check's probe can support it; only a statement naming no check at all falls back to every probed check.
+ */
+export function unknownNamedChecks(statement: string, checkIds: readonly string[]): string[] {
+  const configured = new Set([...checkIds].map((id) => id.toLowerCase()));
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  const add = (word: string): void => {
+    const lower = word.toLowerCase();
+    if (configured.has(lower) || NOT_CHECK_NAMES.has(lower) || seen.has(lower)) return;
+    seen.add(lower);
+    unknown.push(word);
+  };
+  for (const sentence of sentences(statement)) {
+    for (const m of sentence.matchAll(/\b([A-Za-z0-9][A-Za-z0-9_-]*)\s+checks?\b/gi)) add(m[1]!);
+    for (const m of sentence.matchAll(/\bthe\s+checks?\s+(?:named\s+|called\s+)?([A-Za-z0-9][A-Za-z0-9_-]*)\b/gi)) {
+      if (!AFTER_CHECK_VERBS.has(m[1]!.toLowerCase())) add(m[1]!);
+    }
+  }
+  return unknown;
 }
