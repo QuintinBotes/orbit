@@ -460,6 +460,29 @@ describe('configured checks', () => {
     expect(order.checks!.status).toBe('fail');
   });
 
+  // The 0.3.1 retest: dependencies.install_command created .venv in every run's checkout and all three Python runs passed
+  // their checks, but doctor failed the check because .venv/bin/python was not in the source checkout.
+  it('only warns for a check whose relative executable the dependency install may create, and says what it does not know', async () => {
+    const w = world();
+    const venv = (x: OrbitConfig) => {
+      x.dependencies.install_command = ['/bin/sh', '-c', 'python3 -m venv .venv'];
+      x.checks = { 'unit-tests': check('unit-tests', { command: ['.venv/bin/python', '-m', 'pytest'] }) };
+    };
+    const c = await doctor(w, { config: cfg(venv) });
+    expect(c.checks).toMatchObject({ status: 'warn', summary: '1 of 1 check(s) run an executable only dependencies.install_command can create' });
+    expect(c.checks!.details).toEqual(['unit-tests: ".venv/bin/python" is not in the checkout; dependencies.install_command may create it there before the checks run (doctor does not run the install, so if it does not, a run blocks at its baseline)']);
+    expect(c.checks!.fix).toMatch(/dependencies\.install_command/);
+    // With no install command it cannot come from anywhere, and a path outside the repository or an absolute one is not
+    // the install's: those still fail.
+    for (const change of [(x: OrbitConfig) => void (x.dependencies.install_command = null), (x: OrbitConfig) => void (x.checks['unit-tests']!.command = ['../elsewhere/bin/python']), (x: OrbitConfig) => void (x.checks['unit-tests']!.command = ['/nonexistent/bin/python'])]) {
+      const r = await doctor(w, { config: cfg((x) => (venv(x), change(x))) });
+      expect(r.checks).toMatchObject({ status: 'fail', summary: '1 of 1 check(s) cannot run' });
+    }
+    // A check that cannot run still fails beside one the install may create.
+    const both = await doctor(w, { config: cfg((x) => (venv(x), (x.checks.other = check('other', { command: ['no-such-tool'] })))) });
+    expect(both.checks).toMatchObject({ status: 'fail', summary: '1 of 2 check(s) cannot run' });
+  });
+
   it('reports a check with no command, whether argv or shell', async () => {
     const w = world();
     const c = await doctor(w, { config: cfg((x) => (x.checks = { empty: check('empty', { command: [] }), blank: check('blank', { shell: true, command: ['   '] }), assignments: check('assignments', { shell: true, command: ['A=1 B=2'], mandatory: false }) })) });
