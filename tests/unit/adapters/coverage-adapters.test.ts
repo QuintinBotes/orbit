@@ -263,6 +263,18 @@ describe('ClaudeAdapter startTask', () => {
 describe('ClaudeAdapter results', () => {
   const adapter = () => new ClaudeAdapter({ command: ['claude'], baseEnv: {}, clock: new ManualClock() });
   const LOST_PID = 2_147_483_000;
+  const answerSchema = { type: 'object', additionalProperties: false, required: ['answer'], properties: { answer: { type: 'string' } } };
+  const estimate = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
+  const INIT_LINE = '{"type":"system","subtype":"init","session_id":"s1","permissionMode":"dontAsk","mcp_servers":[]}';
+  const resultLine = (over: Record<string, unknown>) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: 's1', ...over });
+  async function collectLines(lines: string[], exitCode: number, budget?: number) {
+    const f = fixture();
+    writeFileSync(join(f.workerDir, 'pid.json'), JSON.stringify({ version: 1, shimPid: LOST_PID, shimStart: null, pgid: LOST_PID, childPid: null, childStart: null, sessionId: 's1', argvHash: 'x', startedAt: 1 }));
+    writeFileSync(join(f.workerDir, 'exit.json'), JSON.stringify({ version: 1, code: exitCode, signal: null, timedOut: false, cancelled: false, aborted: null, escalation: [], error: null, startedAt: 1, endedAt: 2 }));
+    if (budget !== undefined) writeFileSync(join(f.workerDir, LAUNCH_FILE), JSON.stringify({ version: 1, meta: { outputBudgetTokens: budget } }));
+    writeFileSync(join(f.workerDir, 'log.jsonl'), `${lines.join('\n')}\n`);
+    return adapter().collectResult(handleFor(f, { pid: LOST_PID, pgid: LOST_PID }), { outputSchema: answerSchema });
+  }
 
   it('reports nothing while the shim is running, and a lost worker as cancelled or crashed', async () => {
     const f = fixture();
@@ -284,6 +296,45 @@ describe('ClaudeAdapter results', () => {
     const result = await adapter().collectResult(handleFor(f, { pid: LOST_PID, pgid: LOST_PID }), { outputSchema: schema });
     expect(result).toMatchObject({ status: 'succeeded', structured: { answer: 'x' } });
     expect(JSON.parse(readFileSync(join(f.workerDir, 'result.json'), 'utf8')).status).toBe('succeeded');
+  });
+
+  it('measures the raw final answer of a session rejected for a non-zero exit against its budget, and still measures an accepted answer', async () => {
+    const oversized = { answer: 'x'.repeat(400) };
+    const rejected = await collectLines([INIT_LINE, resultLine({ structured_output: oversized, result: JSON.stringify(oversized) })], 1, 10);
+    expect(rejected).toMatchObject({ status: 'failed', reason: 'execution_error', structured: null });
+    expect(rejected?.usage).toMatchObject({ outputBudgetTokens: 10, finalOutputTokens: estimate(oversized) });
+    expect(rejected!.usage.finalOutputTokens!).toBeGreaterThan(rejected!.usage.outputBudgetTokens!);
+    const acceptedAnswer = { answer: 'x' };
+    const accepted = await collectLines([INIT_LINE, resultLine({ structured_output: acceptedAnswer })], 0);
+    expect(accepted).toMatchObject({ status: 'succeeded', structured: acceptedAnswer });
+    expect(accepted?.usage.finalOutputTokens).toBe(estimate(acceptedAnswer));
+  });
+
+  it('measures a raw final answer that fails the output schema, and measures nothing when a session gave no final answer', async () => {
+    const invalid = { wrong: 'y'.repeat(120) };
+    const rejected = await collectLines([INIT_LINE, resultLine({ structured_output: invalid })], 0);
+    expect(rejected).toMatchObject({ status: 'malformed_output', reason: 'structured_output_invalid', structured: null });
+    expect(rejected?.usage.finalOutputTokens).toBe(estimate(invalid));
+    const none = await collectLines([INIT_LINE], 1);
+    expect(none).toMatchObject({ status: 'failed', reason: 'crashed', structured: null });
+    expect(none?.usage.finalOutputTokens).toBeNull();
+  });
+
+  it('measures a final answer left only as result text or as the structured output call input', async () => {
+    const textAnswer = { answer: 'z'.repeat(80) };
+    const missing = await collectLines([INIT_LINE, resultLine({ result: JSON.stringify(textAnswer) })], 0);
+    expect(missing).toMatchObject({ status: 'malformed_output', reason: 'structured_output_missing', structured: null });
+    expect(missing?.usage.finalOutputTokens).toBe(estimate(textAnswer));
+    const prose = `a plain final answer ${'p'.repeat(80)}`;
+    const plain = await collectLines([INIT_LINE, resultLine({ result: prose })], 0);
+    expect(plain).toMatchObject({ status: 'malformed_output', reason: 'structured_output_missing', structured: null });
+    expect(plain?.usage.finalOutputTokens).toBe(estimate(prose));
+    const attempted = { answer: 'q'.repeat(90) };
+    const call = JSON.stringify({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'StructuredOutput', input: attempted }] } });
+    const retries = JSON.stringify({ type: 'result', subtype: 'error_max_structured_output_retries', is_error: true, session_id: 's1', errors: ['Failed to provide valid structured output after 5 attempts'] });
+    const exhausted = await collectLines([INIT_LINE, call, retries], 1);
+    expect(exhausted).toMatchObject({ status: 'malformed_output', reason: 'structured_output_retries', structured: null });
+    expect(exhausted?.usage.finalOutputTokens).toBe(estimate(attempted));
   });
 
   it('reports usage from the log, empty usage without one, and reattaches from files', async () => {
@@ -328,6 +379,19 @@ describe('CodexAdapter', () => {
   const adapter = (over: Record<string, unknown> = {}) => new CodexAdapter({ command: ['codex'], baseEnv: { PATH: '/usr/bin', CODEX_HOME: '/h/.codex' }, shimCommand: ['node', 'shim'], clock: new ManualClock(), ...over });
   const FLAGS = '--sandbox --ephemeral --ignore-user-config --json --output-schema --output-last-message --model --cd --full-auto';
   const reviewSpec = (f: Fixture, over: Partial<TaskSpec> = {}) => implementerSpec(f, { role: 'reviewer', readOnly: true, model: 'codex-alpha', effort: 'high', ...over }) as TaskSpec;
+  const DEAD = 2_147_483_000;
+  const answerSchema = { type: 'object', additionalProperties: false, required: ['answer'], properties: { answer: { type: 'string' } } };
+  const estimate = (value: unknown) => Math.ceil(JSON.stringify(value).length / 4);
+  const agentMessage = (text: string) => JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text } });
+  const turnCompleted = JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 1 } });
+  async function collectLines(lines: string[], exitCode: number, over: { budget?: number; lastMessage?: string } = {}) {
+    const f = fixture();
+    writeFileSync(join(f.workerDir, 'exit.json'), JSON.stringify({ version: 1, code: exitCode, signal: null, timedOut: false, cancelled: false, aborted: null, escalation: [], error: null, startedAt: 1, endedAt: 2 }));
+    writeFileSync(join(f.workerDir, LAUNCH_FILE), JSON.stringify({ version: 1, meta: { model: 'codex-alpha', outputBudgetTokens: over.budget ?? null } }));
+    if (over.lastMessage !== undefined) writeFileSync(join(f.workerDir, 'last-message.json'), over.lastMessage);
+    writeFileSync(join(f.workerDir, 'log.jsonl'), `${lines.join('\n')}\n`);
+    return adapter().collectResult(handleFor(f, { provider: 'codex', pid: DEAD, pgid: DEAD }), { outputSchema: answerSchema });
+  }
 
   it('defaults its command and refuses extra flags', () => {
     expect(new CodexAdapter().id).toBe('codex');
@@ -456,6 +520,32 @@ describe('CodexAdapter', () => {
     await new CodexAdapter({ graceMs: 9, baseEnv: {} }).cancelTask(handleFor(g));
     expect(supMock.cancelShim.mock.calls[1]![1]).toBe(9);
     expect(a.reattach(f.workerDir)).toBeNull();
+  });
+
+  it('measures the raw final answer of a session rejected for a non-zero exit against its budget, and still measures an accepted answer', async () => {
+    const oversized = { answer: 'x'.repeat(400) };
+    const rejected = await collectLines([agentMessage(JSON.stringify(oversized)), turnCompleted], 1, { budget: 10, lastMessage: `${JSON.stringify(oversized)}\n` });
+    expect(rejected).toMatchObject({ status: 'failed', reason: 'crashed', structured: null });
+    expect(rejected?.usage).toMatchObject({ outputBudgetTokens: 10, finalOutputTokens: estimate(oversized) });
+    expect(rejected!.usage.finalOutputTokens!).toBeGreaterThan(rejected!.usage.outputBudgetTokens!);
+    const acceptedAnswer = { answer: 'ok' };
+    const accepted = await collectLines([agentMessage(JSON.stringify(acceptedAnswer)), turnCompleted], 0);
+    expect(accepted).toMatchObject({ status: 'succeeded', structured: acceptedAnswer });
+    expect(accepted?.usage.finalOutputTokens).toBe(estimate(acceptedAnswer));
+  });
+
+  it('measures a raw final answer that fails the output schema or is not JSON, and measures nothing when a session gave no final answer', async () => {
+    const invalid = { wrong: 'y'.repeat(120) };
+    const rejected = await collectLines([agentMessage(JSON.stringify(invalid)), turnCompleted], 0);
+    expect(rejected).toMatchObject({ status: 'malformed_output', reason: 'schema_mismatch', structured: null });
+    expect(rejected?.usage.finalOutputTokens).toBe(estimate(invalid));
+    const prose = `not a json answer ${'p'.repeat(80)}`;
+    const notJson = await collectLines([agentMessage(prose), turnCompleted], 0);
+    expect(notJson).toMatchObject({ status: 'malformed_output', reason: 'invalid_json', structured: null });
+    expect(notJson?.usage.finalOutputTokens).toBe(estimate(prose));
+    const none = await collectLines([turnCompleted], 0);
+    expect(none).toMatchObject({ status: 'malformed_output', reason: 'no_agent_message', structured: null });
+    expect(none?.usage.finalOutputTokens).toBeNull();
   });
 
   it('reads the process environment when none is injected', async () => {
