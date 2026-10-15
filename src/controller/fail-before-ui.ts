@@ -13,6 +13,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { isOrbitError } from '../core/errors.ts';
 import { hashObject } from '../core/hash.ts';
 import { newId } from '../core/ids.ts';
+import { redact } from '../core/redact.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
 import { buildProbeTree, commitProbeTree, FAIL_BEFORE_PROBE, judgeProbeAttempts, probeEvidenceDir, probeRef, type CheckProbe, type NotEstablishedCause, type ProbeAttempt, type ProbeChange } from '../evidence/fail-before.ts';
 import { resolveCommit, treeOf } from '../evidence/git.ts';
@@ -20,7 +21,7 @@ import type { CandidateRecord } from '../evidence/store.ts';
 import type { CheckStatus } from '../evidence/types.ts';
 import { listDecisions } from '../storage/decisions.ts';
 import { runUiChecks, type UiRunInput } from '../ui/runner.ts';
-import type { UiRunResult } from '../ui/types.ts';
+import type { UiJourneyResult, UiRunResult } from '../ui/types.ts';
 import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { decide } from './steps/common.ts';
 
@@ -93,6 +94,27 @@ function judgeControl(data: Pick<ControlData, 'verdict' | 'passed' | 'environmen
   return { passed: false, cause: 'base-failed', reason };
 }
 
+/**
+ * A failed journey's error that shows its browser never started: Playwright's launch error and the launch parts of
+ * what ui/explore.ts treats as an environment failure (its network and module errors are not this), with the
+ * sandbox launch failures ui/runner.ts already names. The ui runner only turns some of these into a `notExecuted`
+ * entry (a missing browser executable, for one, fails the journeys with none), so the journeys' own errors are read
+ * as well. Reading error text here can only make the probe stricter: a match turns a would-be failure into
+ * "establishes nothing", never the other way, which is the only direction wording may be read.
+ */
+const BROWSER_NOT_STARTED = /browserType\.launch|Executable doesn't exist|Failed to launch|MachPortRendezvousServer|mach_port_rendezvous|sandbox initialization failed|Target page, context or browser has been closed/i;
+
+/** Why the browser did not start for one of `journeys`, from its error (UiJourneyResult.error, or its error context), or null. */
+function browserNotStarted(journeys: readonly UiJourneyResult[]): string | null {
+  for (const j of journeys) {
+    if (j.status !== 'FAILED') continue;
+    const text = [j.error?.message, j.errorContext?.errorDetails].filter((t): t is string => t !== null && t !== undefined).join('\n');
+    const line = text.split('\n').find((l) => BROWSER_NOT_STARTED.test(l))?.trim();
+    if (line) return `the browser did not start (${redact(line).slice(0, 300)})`;
+  }
+  return null;
+}
+
 /** One attempt's standing for a check: its journeys' worst result, or the environment cause that kept them from running. */
 function attemptOf(ctx: RunContext, result: UiRunResult, checkId: string, n: number): { attempt: ProbeAttempt } | { environment: string } {
   const notRun = result.notExecuted.find((x) => x.checkId === null || x.checkId === checkId);
@@ -101,6 +123,8 @@ function attemptOf(ctx: RunContext, result: UiRunResult, checkId: string, n: num
     return { environment: notRun.environment ?? `${what} never ran the repository's code` };
   }
   const journeys = result.journeys.filter((j) => j.checkId === checkId);
+  const notStarted = browserNotStarted(journeys);
+  if (notStarted) return { environment: notStarted };
   const status: CheckStatus =
     result.verdict === 'TIMEOUT' ? 'TIMEOUT'
     : result.verdict === 'CANCELLED' ? 'CANCELLED'
@@ -128,16 +152,48 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   const probeId = newId('probe');
   const checks = [...req.checks].sort((a, b) => a.checkId.localeCompare(b.checkId));
   const checkIds = checks.map((c) => c.checkId);
-  const done = (probeTree: string | null, probed: CheckProbe[]): UiProbeResult => ({ probeId, probeTree, checks: probed });
+  // Set once the probe's deadline timer and signal exist (below); every return past there releases them.
+  let releaseBound: () => void = () => {};
+  const done = (probeTree: string | null, probed: CheckProbe[]): UiProbeResult => {
+    releaseBound();
+    return { probeId, probeTree, checks: probed };
+  };
   const ui = ctx.snapshot.config.ui;
   if (!ui || ui.journey_check_ids.length === 0) {
     return done(null, notEstablished(checkIds, 'not-probed', (id) => `${id} was not probed: no ui journeys are configured (ui.journey_check_ids is empty)`));
+  }
+  // With no start command the journeys run against whatever server is already at base_url, which Orbit did not
+  // start from the probe's checkout and which is not bound to the base revision, so no result of theirs can be
+  // fail-before evidence: neither the control nor the probe runs.
+  if (ui.environment.start_command === null) {
+    return done(null, notEstablished(checkIds, 'not-probed', (id) => `${id} was not probed: ui.environment.start_command is not set, so the journeys would run against the application already at ui.environment.base_url, which is not started from the probe's checkout and is not bound to the base revision`));
   }
   if (req.wallRemainingMs !== null && req.wallRemainingMs < req.timeoutMs) {
     const left = Math.max(0, Math.floor(req.wallRemainingMs / 1000));
     return done(null, notEstablished(checkIds, 'budget', (id) => `${id} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds)`));
   }
-  const deadline = ctx.clock.now() + req.timeoutMs;
+  // One deadline for the control (its application start included, through the ui runner) and every probe attempt:
+  // the signal given to the runner aborts when the bound, or what is left of the run's wall time, runs out, not
+  // only between attempts. The controller's own signal aborts it too, as before; `boundOut` tells the two apart, so
+  // a run the bound cuts short is the budget's and never a failure, while the controller's stays a cancellation.
+  const boundMs = req.wallRemainingMs === null ? req.timeoutMs : Math.min(req.timeoutMs, req.wallRemainingMs);
+  const deadline = ctx.clock.now() + boundMs;
+  const boundControl = new AbortController();
+  let boundOut = false;
+  const onBoundSignal = (): void => boundControl.abort();
+  ctx.signal.addEventListener('abort', onBoundSignal, { once: true });
+  if (ctx.signal.aborted) boundControl.abort();
+  const boundTimer = setTimeout(() => {
+    boundOut = true;
+    boundControl.abort();
+  }, Math.max(0, deadline - ctx.clock.now()));
+  boundTimer.unref();
+  releaseBound = () => {
+    clearTimeout(boundTimer);
+    ctx.signal.removeEventListener('abort', onBoundSignal);
+  };
+  const boundRanOut = (): boolean => !ctx.signal.aborted && (boundOut || ctx.clock.now() >= deadline);
+  const boundReason = (id: string): string => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out`;
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
@@ -145,9 +201,10 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   // The runner binds its evidence to the candidate it is given and checks the checkout against it, so each tree
   // gets the candidate record of its own commit: the base revision for the control, the probe commit for the probe.
   const runJourneys = (checkoutDir: string, commitSha: string, treeHash: string, parentSha: string, outDir: string): Promise<UiRunResult> =>
-    runner({ checkoutDir, snapshot: ctx.snapshot, candidate: { ...cand, commitSha, treeHash, parentSha }, uiConfig: ui, journeyCheckIds: [...checkIds], isolation: ctx.isolation(), outDir, clock: ctx.clock, abortSignal: ctx.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
+    runner({ checkoutDir, snapshot: ctx.snapshot, candidate: { ...cand, commitSha, treeHash, parentSha }, uiConfig: ui, journeyCheckIds: [...checkIds], isolation: ctx.isolation(), outDir, clock: ctx.clock, abortSignal: boundControl.signal, homeDir: homeOf(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env, toolchainCacheRoot: toolchainCacheRootFor(ctx) });
 
   // The control: the same journeys on the base revision alone, once per run, reused by the base tree.
+  let controlCut = false;
   let control = listDecisions(ctx.db, ctx.run.id, { kind: UI_CONTROL_DECISION_KIND })
     .map((d) => d.data as ControlData | null)
     .find((d) => d !== null && d.base_tree === baseTree && sameIds(d.checks, checkIds));
@@ -170,16 +227,22 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
       checks: [...checkIds],
       verdict: ran?.verdict ?? 'ERROR',
       passed: ran !== null && ran.verdict === 'PASS',
-      environment: (ran?.notExecuted.length ?? 0) > 0,
+      environment: (ran?.notExecuted.length ?? 0) > 0 || (ran !== null && browserNotStarted(ran.journeys) !== null),
       reasons: ran !== null ? [...ran.reasons] : [`the journeys could not run on the base revision: ${controlThrown ?? 'no result'}`],
     };
-    decide(ctx, {
-      id: `dec-${ctx.run.id}-fail-before-ui-control-${hashObject({ tree: baseTree, checks: [...checkIds] }).slice(7, 19)}`,
-      kind: UI_CONTROL_DECISION_KIND,
-      summary: control.passed ? `the journeys (${checkIds.join(', ')}) pass on the base revision alone: the fail-before ui control` : `the journeys (${checkIds.join(', ')}) do not pass on the base revision alone, so no browser check is probed: ${control.reasons.join('; ')}`,
-      data: control,
-    });
+    // A control the bound cut short says nothing about the base revision, so it is not recorded for reuse: a later
+    // candidate's probe, with a bound of its own, runs the control again.
+    controlCut = boundRanOut();
+    if (!controlCut) {
+      decide(ctx, {
+        id: `dec-${ctx.run.id}-fail-before-ui-control-${hashObject({ tree: baseTree, checks: [...checkIds] }).slice(7, 19)}`,
+        kind: UI_CONTROL_DECISION_KIND,
+        summary: control.passed ? `the journeys (${checkIds.join(', ')}) pass on the base revision alone: the fail-before ui control` : `the journeys (${checkIds.join(', ')}) do not pass on the base revision alone, so no browser check is probed: ${control.reasons.join('; ')}`,
+        data: control,
+      });
+    }
   }
+  if (controlCut) return done(null, notEstablished(checkIds, 'budget', boundReason));
   const judgedControl = judgeControl(control);
   if (!judgedControl.passed) {
     return done(null, notEstablished(checkIds, judgedControl.cause, (id) => `${id} was not probed: ${judgedControl.reason}, so a failure with the new journeys would not be theirs alone`));
@@ -193,6 +256,7 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   const attempts = new Map<string, ProbeAttempt[]>(checkIds.map((id) => [id, []]));
   const environments = new Map<string, string>();
   let thrown: { cause: NotEstablishedCause; message: string } | null = null;
+  let cutShort = false;
   let runs = 0;
   const checkout = join(runWorktreeRoot(ctx), `fail-before-ui-${cand.seq}`);
   await cleanupCandidateCheckout(repoRoot, checkout).catch(() => {});
@@ -203,15 +267,21 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
   }
   try {
     for (let n = 1; thrown === null && n <= 2; n++) {
-      if (ctx.clock.now() >= deadline) break;
+      if (boundRanOut()) break;
       let result: UiRunResult;
       try {
         result = await runJourneys(checkout, commit, probeTree, baseCommit, join(uiDir, `probe-${n}`));
       } catch (err) {
-        thrown = { cause: isOrbitError(err, 'CANCELLED') ? 'cancelled' : 'error', message: err instanceof Error ? err.message : String(err) };
+        // The bound cutting a run short is the budget's, whatever the runner then throws or reports.
+        if (boundRanOut()) cutShort = true;
+        else thrown = { cause: isOrbitError(err, 'CANCELLED') ? 'cancelled' : 'error', message: err instanceof Error ? err.message : String(err) };
         break;
       }
       runs++;
+      if (boundRanOut()) {
+        cutShort = true;
+        break;
+      }
       let failed = false;
       for (const id of checkIds) {
         const a = attemptOf(ctx, result, id, n);
@@ -231,11 +301,12 @@ export async function runUiFailBeforeProbe(ctx: RunContext, cand: CandidateRecor
     const environment = environments.get(id);
     if (environment !== undefined) return { checkId: id, outcome: 'not-established', cause: 'environment', reason: `${id} could not run on the base revision with the new tests: ${environment}, not a journey result`, attempts: mine };
     if (thrown !== null) return { checkId: id, outcome: 'not-established', cause: thrown.cause, reason: `${id} could not be run on the probe tree: ${thrown.message}`, attempts: mine };
-    if (mine.length === 0) return { checkId: id, outcome: 'not-established', cause: 'budget', reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out`, attempts: mine };
+    if (cutShort) return { checkId: id, outcome: 'not-established', cause: 'budget', reason: boundReason(id), attempts: mine };
+    if (mine.length === 0) return { checkId: id, outcome: 'not-established', cause: 'budget', reason: boundReason(id), attempts: mine };
     const judged = judgeProbeAttempts(id, mine, FAIL_BEFORE_PROBE.where);
     // A failure that could not be repeated for want of time is the bound's, as in the command probe.
-    if (judged.outcome === 'not-established' && judged.cause === 'once' && ctx.clock.now() >= deadline - 1000) {
-      return { ...judged, cause: 'budget', reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1000)} s (verification.fail_before_timeout_seconds) ran out` };
+    if (judged.outcome === 'not-established' && judged.cause === 'once' && (boundRanOut() || ctx.clock.now() >= deadline - 1000)) {
+      return { ...judged, cause: 'budget', reason: boundReason(id) };
     }
     return judged;
   });

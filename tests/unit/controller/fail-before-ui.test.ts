@@ -23,7 +23,7 @@ afterEach(() => {
   for (const l of labs.splice(0)) l.cleanup();
 });
 
-function journey(status: UiJourneyStatus): UiJourneyResult {
+function journey(status: UiJourneyStatus, error: string | null = null): UiJourneyResult {
   return {
     id: 'chromium/e2e/login.spec.ts#login signs in',
     title: 'login signs in',
@@ -39,7 +39,7 @@ function journey(status: UiJourneyStatus): UiJourneyResult {
     viewport: null,
     steps: [],
     failedStep: null,
-    error: null,
+    error: error === null ? null : { message: error, location: null, snippet: null, expected: null, observed: null, diff: null },
     artifacts: [],
     diagnostics: null,
     a11y: [],
@@ -53,6 +53,7 @@ function journey(status: UiJourneyStatus): UiJourneyResult {
 interface Script {
   verdict?: UiRunVerdict;
   journeyStatus?: UiJourneyStatus;
+  error?: string;
   notExecuted?: UiNotExecuted[];
   reasons?: string[];
 }
@@ -65,7 +66,7 @@ function uiRun(input: UiRunInput, s: Script): UiRunResult {
     passed: verdict === 'PASS',
     reasons: s.reasons ?? (verdict === 'PASS' ? [] : ['journey login signs in failed']),
     binding: { candidateId: input.candidate.id, treeHash: input.candidate.treeHash, checkConfigHash: 'h', policyHash: 'p', commitSha: input.candidate.commitSha, playwrightVersion: null, browsers: [], viewports: [], baseUrl: 'http://127.0.0.1:9', keyboard: { scans: 0, failed: 0 }, accessibilityFailOn: 'none' },
-    journeys: [journey(status)],
+    journeys: [journey(status, s.error ?? null)],
     checks: [{ checkId: 'journeys', argv: [], exitCode: status === 'PASSED' ? 0 : 1, timedOut: false, cancelled: false, durationMs: 5, logPath: join(input.outDir, 'journeys', 'run.log'), reportPath: join(input.outDir, 'journeys', 'report.json'), reportFound: true, isolation: 'none', isolationLimitations: [], playwrightVersion: null }],
     stats: { passed: status === 'PASSED' ? 1 : 0, failed: status === 'PASSED' ? 0 : 1, flaky: 0, skipped: 0, other: 0 },
     flaky: false,
@@ -111,12 +112,14 @@ interface BrowserLab {
   comparison: BaseComparison;
 }
 
-async function browserLab(): Promise<BrowserLab> {
+async function browserLab(opts: { startCommand?: string[] | null; timeoutSeconds?: number } = {}): Promise<BrowserLab> {
   const lab = makeUnitLab({
     tweak: (c) => {
       c.checks.journeys = { ...defaultCheck('journeys'), kind: 'playwright', category: 'ui', command: ['npx', 'playwright', 'test'] };
-      c.ui = { ...defaultUi(), journey_check_ids: ['journeys'] };
+      const ui = defaultUi();
+      c.ui = { ...ui, journey_check_ids: ['journeys'], environment: { ...ui.environment, start_command: opts.startCommand === undefined ? ['node', 'server.mjs'] : opts.startCommand } };
       c.verification.fail_before = 'required';
+      if (opts.timeoutSeconds !== undefined) c.verification.fail_before_timeout_seconds = opts.timeoutSeconds;
     },
   });
   labs.push(lab);
@@ -201,6 +204,69 @@ describe('the fail-before ui probe', () => {
     const check = probed(evidence);
     expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
     expect(check.reason).toMatch(/never ran the repository's code/);
+  }, 60_000);
+
+  // A missing browser executable fails the journeys with no notExecuted entry: its launch error belongs to the
+  // environment, so repeated such runs on the probe tree must not become failed-before.
+  it('journeys failing because the browser never launched are an environment cause, not failed-before', async () => {
+    const b = await browserLab();
+    const s = scripted({}, { journeyStatus: 'FAILED', error: "browserType.launch: Executable doesn't exist at /cache/chromium/chrome" });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(1);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
+    expect(check.reason).toMatch(/the browser did not start/);
+  }, 60_000);
+
+  it('with no start command the ui probe establishes nothing and runs no journeys', async () => {
+    const b = await browserLab({ startCommand: null });
+    const s = scripted({}, { journeyStatus: 'FAILED' });
+    const evidence = await collect(b, s.runner);
+    expect(s.controls).toHaveLength(0);
+    expect(s.probes).toHaveLength(0);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'not-probed' });
+    expect(check.reason).toMatch(/ui\.environment\.start_command is not set/);
+    expect(check.reason).toMatch(/not started from the probe's checkout/);
+  }, 60_000);
+
+  // The wait is capped, so a runner that is never aborted still returns (its failed journeys then speak for
+  // themselves); with the bound enforced the abort comes first and its failures establish nothing.
+  it('a run the probe bound cuts short is the budget, even when it reports failed journeys', async () => {
+    // The bound is real time (an abort is observed, not a clock value): 8 s leaves the control and the checkout setup
+    // room on a slow runner, and the scripted run waits far longer, so only the abort ends it.
+    const b = await browserLab({ timeoutSeconds: 8 });
+    let sawAbort = false;
+    let probes = 0;
+    const runner: UiRunner = async (input) => {
+      if (input.checkoutDir.endsWith('fail-before-ui-control')) return uiRun(input, {});
+      probes++;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), 20_000);
+        if (input.abortSignal?.aborted) {
+          sawAbort = true;
+          clearTimeout(timer);
+          resolve();
+          return;
+        }
+        input.abortSignal?.addEventListener(
+          'abort',
+          () => {
+            sawAbort = true;
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      return uiRun(input, { journeyStatus: 'FAILED' });
+    };
+    const evidence = await collect(b, runner);
+    expect(sawAbort).toBe(true);
+    expect(probes).toBe(1);
+    const check = probed(evidence);
+    expect(check).toMatchObject({ outcome: 'not-established', cause: 'budget' });
+    expect(check.reason).toMatch(/the probe's bound of 8 s \(verification\.fail_before_timeout_seconds\) ran out/);
   }, 60_000);
 
   it('the control runs once per run: a second candidate reuses it by the base tree', async () => {
