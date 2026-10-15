@@ -50887,6 +50887,59 @@ var init_channels = __esm({
   }
 });
 
+// src/evidence/fail-before-statements.ts
+function sentences(statement) {
+  return statement.split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+function statesFailBefore(statement) {
+  const testsFailThenLocus = new RegExp(String.raw`\btests?\b.*\b${FAIL_VERB}\b.*\b${LOCUS}\b`, "i");
+  const locusThenTestsFail = new RegExp(String.raw`\b${LOCUS}\b.*\btests?\b.*\b${FAIL_VERB}\b`, "i");
+  return sentences(statement).some((s) => testsFailThenLocus.test(s) || locusThenTestsFail.test(s));
+}
+function escapeRegExp3(text2) {
+  return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function namedAt(text2, checkId) {
+  if (checkId.length === 0) return null;
+  const m = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp3(checkId)}(?![A-Za-z0-9_-])`, "i").exec(text2);
+  return m === null ? null : { index: m.index, end: m.index + m[0].length };
+}
+function namedCheckIds(text2, checkIds) {
+  return [...new Set(checkIds)].flatMap((id) => {
+    const at = namedAt(text2, id);
+    return at === null ? [] : [{ id, index: at.index }];
+  }).sort((a, b) => a.index - b.index).map((x) => x.id);
+}
+function sentenceStatesCheckRunsTests(sentence, checkIds) {
+  const subjects = [];
+  const generic2 = SUBJECT.exec(sentence);
+  if (generic2 !== null) subjects.push({ index: generic2.index, end: generic2.index + generic2[0].length });
+  for (const id of new Set(checkIds)) {
+    const at = namedAt(sentence, id);
+    if (at !== null) subjects.push(at);
+  }
+  subjects.sort((a, b) => a.index - b.index || b.end - a.end);
+  const subject = subjects[0];
+  if (subject === void 0) return false;
+  const verb2 = RUN_VERB.exec(sentence.slice(subject.end));
+  if (verb2 === null) return false;
+  return TEST_OBJECT.test(sentence.slice(subject.end + verb2.index + verb2[0].length));
+}
+function statesCheckRunsTests(statement, checkIds) {
+  return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
+}
+var LOCUS, FAIL_VERB, SUBJECT, RUN_VERB, TEST_OBJECT;
+var init_fail_before_statements = __esm({
+  "src/evidence/fail-before-statements.ts"() {
+    "use strict";
+    LOCUS = String.raw`(?:(?:on|against)\s+(?:the\s+)?base revision|before\s+(?:the|this)\s+(?:change|fix)|without\s+(?:the|this)\s+change)`;
+    FAIL_VERB = String.raw`(?:fails?|failing|failed)`;
+    SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
+    RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
+    TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
+  }
+});
+
 // src/evidence/report.ts
 import { basename as basename15, isAbsolute as isAbsolute19, join as join41, relative as relative5, sep as sep11 } from "node:path";
 function aggregateCheckConfigHash(snapshot2, checkIds) {
@@ -51105,18 +51158,57 @@ function evaluateEvidence(input) {
         }
       }
     }
-    if (c.mandatory) {
+    const entry = failBeforeOf.get(c.id);
+    let statementResidual = false;
+    if (status2 === "supported" && statesFailBefore(c.statement)) {
+      const mode = entry?.mode ?? input.failBefore?.mode ?? failBeforePolicy(snapshot2.config).mode;
+      const accepted = mode === "required" && entry?.accepted !== void 0;
+      if (entry?.outcome !== "failed-before" && !accepted) {
+        status2 = "unverified";
+        why = `it states that its tests fail on the base revision, which only the fail-before probe establishes: ${entry?.reason ?? "no probe ran for it"}`;
+        statementResidual = mode !== "required";
+      }
+    }
+    if (statementResidual) {
+      note3(unverified, `${c.mandatory ? "criterion" : "optional criterion"} ${c.id}: unverified (${why})`);
+    } else if (c.mandatory) {
       if (status2 === "unsupported") note3(fail3, `criterion ${c.id}: ${why}`);
       else if (status2 !== "supported") note3(incomplete, `criterion ${c.id}: ${status2}${why ? ` (${why})` : ""}`);
     } else if (status2 !== "supported") {
       note3(unverified, `optional criterion ${c.id}: ${status2}${why ? ` (${why})` : ""}`);
     }
-    const entry = failBeforeOf.get(c.id);
     const wide = checkWide(ids);
     return { criterion_id: c.id, status: status2, artifacts, ...why ? { note: why } : {}, ...wide !== void 0 ? { check_wide: wide } : {}, ...entry ? { fail_before: entry } : {} };
   });
   if (notRun.length > 0) note3(unverified, `fail-before: the probe was not run (verification.fail_before: off), so no new test was shown to fail on the base revision: ${notRun.join(", ")}`);
   if (advisoryGaps.length > 0) note3(unverified, `fail-before (advisory): ${advisoryGaps.join("; ")}`);
+  const assumptions = [];
+  const assumptionMode = fb?.mode ?? input.failBefore?.mode ?? failBeforePolicy(snapshot2.config).mode;
+  const assumptionProbe = fb?.probe ?? null;
+  const configuredCheckIds = Object.keys(snapshot2.config.checks);
+  for (const a of contract.assumptions ?? []) {
+    const named2 = statesCheckRunsTests(a.statement, configuredCheckIds);
+    if (named2 === null) continue;
+    const itsChecks = named2.length > 0 ? [...named2] : assumptionProbe === null ? [] : [...new Set(assumptionProbe.checks.map((x) => x.checkId))];
+    let status2;
+    let reason;
+    if (assumptionProbe === null) {
+      status2 = "unverified";
+      reason = itsChecks.length > 0 ? `no probe ran for ${itsChecks.join(", ")}` : "no probe ran";
+    } else if (itsChecks.length === 0) {
+      status2 = "unverified";
+      reason = "the probe ran no check";
+    } else {
+      const byId = new Map(assumptionProbe.checks.map((x) => [x.checkId, x]));
+      status2 = itsChecks.every((id) => byId.get(id)?.outcome === "failed-before") ? "supported" : "unverified";
+      reason = itsChecks.map((id) => {
+        const probed = byId.get(id);
+        return probed === void 0 ? `${id}: no probe result` : `${id}: ${probed.outcome} (${probed.reason})`;
+      }).join("; ");
+    }
+    assumptions.push({ assumption_id: a.id, status: status2, reason, checks: itsChecks });
+    if (status2 !== "supported") note3(assumptionMode === "required" ? incomplete : unverified, `assumption ${a.id}: unverified (${reason})`);
+  }
   const uiRows = (input.uiResults ?? []).map((u) => ({ journey: u.journey, status: u.status, artifacts: [...u.artifacts] }));
   if (input.uiRequired === true) {
     const journeyChecks = new Set(snapshot2.config.ui?.journey_check_ids ?? []);
@@ -51155,6 +51247,7 @@ function evaluateEvidence(input) {
     checks,
     ui: uiRows,
     acceptance_evidence: criteria,
+    ...assumptions.length > 0 ? { assumptions } : {},
     verdict: fail3.length > 0 ? "FAIL" : incomplete.length > 0 ? "INCOMPLETE" : "PASS",
     unverified
   };
@@ -51176,6 +51269,7 @@ var init_report = __esm({
     init_config();
     init_snapshot();
     init_fail_before();
+    init_fail_before_statements();
     init_runner();
     init_store();
   }
@@ -53896,6 +53990,7 @@ function assembleFinalReport(db, run, opts) {
     const failBefore = fb ? { mode: fb.mode, outcome: fb.outcome, ...fb.cause ? { cause: fb.cause } : {}, reason: fb.reason, ...fb.check_wide ? { check_wide: fb.check_wide } : {} } : void 0;
     return { id: c.id, statement: c.statement, mandatory: c.mandatory, status: e?.status ?? "unverified", artifacts: e?.artifacts ?? [], ...e?.check_wide ? { check_wide: e.check_wide } : {}, ...failBefore ? { fail_before: failBefore } : {} };
   });
+  const evaluatedAssumptions = new Map((ev?.report.assumptions ?? []).map((a) => [a.assumption_id, a]));
   const reviews = listReviews(db, run.id, { includeInvalidated: true });
   const depths = new Map(listDecisions(db, run.id, { kind: REVIEW_DEPTH_KIND }).map((d) => [d.data.review_id, d.data]));
   const findings = listFindings(db, run.id);
@@ -53978,7 +54073,13 @@ function assembleFinalReport(db, run, opts) {
     reviewer,
     decisions,
     review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
-    assumptions: [...(contract?.assumptions ?? []).map((a) => ({ id: a.id, statement: a.statement, status: a.status })), ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))],
+    assumptions: [
+      ...(contract?.assumptions ?? []).map((a) => {
+        const evaluated = evaluatedAssumptions.get(a.id);
+        return evaluated ? { id: a.id, statement: a.statement, status: evaluated.status, reason: evaluated.reason } : { id: a.id, statement: a.statement, status: a.status };
+      }),
+      ...listLedger(db, run.id).map((l) => ({ id: l.id, statement: l.claim, status: l.status }))
+    ],
     practices: (contract?.practices ?? []).map((p) => ({ practice: p.practice, applicable: p.applicable, justification: p.justification })),
     repairs: repairs(opts.runDir),
     worker_plugins: plugins.plugins,
@@ -54153,7 +54254,7 @@ function renderMarkdown(r) {
   out.push(list3(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), "");
   if (r.review_findings && r.review_findings.length > 0) out.push("## Review findings", "", list3(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), "");
   out.push("## Decisions", "", list3(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
-  out.push("## Assumptions", "", list3(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}`)), "");
+  out.push("## Assumptions", "", list3(r.assumptions.map((a) => `${a.id} [${a.status}]: ${a.statement}${a.reason ? ` (${a.reason})` : ""}`)), "");
   if (r.practices && r.practices.length > 0) out.push("## Engineering practices", "", list3(r.practices.map((p) => `${p.practice} [${p.applicable ? "selected" : "omitted"}]: ${p.justification}`)), "");
   if (r.worker_plugins && r.worker_plugins.length > 0) {
     const named2 = (p) => `${p.id ?? "an unidentified plugin"} (scope ${p.scope ?? "unknown"})`;
@@ -55347,7 +55448,7 @@ function buildJourney(test, ctx, checkDir2, cwd) {
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
   const projectFlag = `--project=${test.projectName}`;
-  const grep = ["-g", escapeRegExp3(title)];
+  const grep = ["-g", escapeRegExp4(title)];
   const reproFlags = ["--update-snapshots=none", "--trace=retain-on-failure", "--reporter=list", projectFlag, ...grep];
   const reproArgv = buildArgv(ctx.check, reproFlags);
   const reproduction = {
@@ -55396,7 +55497,7 @@ function journeyStatus(test) {
       return test.results.some((r) => r.status === "timedOut") ? "TIMED_OUT" : "FAILED";
   }
 }
-function escapeRegExp3(text2) {
+function escapeRegExp4(text2) {
   return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function fallbackBrowser(checkoutDir, configured) {
@@ -57411,31 +57512,31 @@ function environmentBlockReason(input) {
   const { runId, candidateSeq, failures } = input;
   const sameAsBase = failures.filter((f) => f.fingerprint !== null);
   const notExecuted = failures.filter((f) => f.fingerprint === null);
-  const sentences = [];
+  const sentences2 = [];
   if (sameAsBase.length > 0) {
     const causes = evidenceOf(sameAsBase.map((f) => ({ checkId: f.checkId, cause: f.cause, lines: f.lines.slice(0, 1) })));
-    sentences.push(`${named(sameAsBase)} ${sameAsBase.length > 1 ? "fail" : "fails"} on candidate ${candidateSeq} exactly as on the base revision, and the output shows an environment cause, not a defect in the change: ${causes}`);
+    sentences2.push(`${named(sameAsBase)} ${sameAsBase.length > 1 ? "fail" : "fails"} on candidate ${candidateSeq} exactly as on the base revision, and the output shows an environment cause, not a defect in the change: ${causes}`);
   }
   if (notExecuted.length > 0) {
-    sentences.push(`${named(notExecuted)} could not execute on candidate ${candidateSeq}, and the output shows an environment cause, not a defect in the change: ${evidenceOf(notExecuted)}`);
+    sentences2.push(`${named(notExecuted)} could not execute on candidate ${candidateSeq}, and the output shows an environment cause, not a defect in the change: ${evidenceOf(notExecuted)}`);
   }
-  sentences.push("No repair attempt was spent, because changing the code cannot fix it");
+  sentences2.push("No repair attempt was spent, because changing the code cannot fix it");
   const answers = failures.filter((f) => f.questionId !== null).map((f) => `orbit decide ${runId} ${f.questionId} Approve`);
   const frozen = "this run's policy and recorded check results are frozen";
   if (answers.length > 0) {
-    sentences.push(`Two ways forward: fix the environment or the check definition and start a new run (${frozen}), or approve a baseline exception for the pre-existing failure with ${answers.join(" and ")}, then orbit resume ${runId}`);
+    sentences2.push(`Two ways forward: fix the environment or the check definition and start a new run (${frozen}), or approve a baseline exception for the pre-existing failure with ${answers.join(" and ")}, then orbit resume ${runId}`);
   } else {
-    sentences.push(`Way forward: fix the environment (orbit doctor checks the isolation provider and its limits) or the check definition and start a new run (${frozen}); there is no baseline exception to approve, because the check never ran`);
+    sentences2.push(`Way forward: fix the environment (orbit doctor checks the isolation provider and its limits) or the check definition and start a new run (${frozen}); there is no baseline exception to approve, because the check never ran`);
   }
   const fix = environmentFix(notExecuted);
-  if (fix) sentences.push(`Fix: ${fix}`);
-  return joinSentences(sentences);
+  if (fix) sentences2.push(`Fix: ${fix}`);
+  return joinSentences(sentences2);
 }
 function named(items) {
   return `${items.length > 1 ? "Checks" : "Check"} ${items.map((f) => f.checkId).join(", ")}`;
 }
-function joinSentences(sentences) {
-  return `${sentences.join(". ")}.`;
+function joinSentences(sentences2) {
+  return `${sentences2.join(". ")}.`;
 }
 function evidenceOf(items) {
   const groups = [];
@@ -57835,21 +57936,21 @@ function baselineBlockReason(input) {
       afterEnvironmentFix(input.runId, environmentFixSettings(environment))
     ]);
   }
-  const sentences = [
+  const sentences2 = [
     `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${misconfigured.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: a check whose command is wrong never tested anything, so accepting its failure would let a run pass with a check that never ran`
   ];
   if (environment.length > 0) {
-    sentences.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf(environment)}`);
-    sentences.push(`Fix for ${environment.length > 1 ? "them" : "it"}: ${environmentFix(environment) ?? ENVIRONMENT_FALLBACK_FIX}`);
+    sentences2.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf(environment)}`);
+    sentences2.push(`Fix for ${environment.length > 1 ? "them" : "it"}: ${environmentFix(environment) ?? ENVIRONMENT_FALLBACK_FIX}`);
   }
   if (incomplete.length > 0) {
-    sentences.push(incompleteBaseSentence(input.baseRevision, incomplete));
-    sentences.push(incompleteExceptionSentence(incomplete));
+    sentences2.push(incompleteBaseSentence(input.baseRevision, incomplete));
+    sentences2.push(incompleteExceptionSentence(incomplete));
   }
-  sentences.push(commandFix(misconfigured));
-  return joinSentences(sentences);
+  sentences2.push(commandFix(misconfigured));
+  return joinSentences(sentences2);
 }
 function missingTargetBlockReason(input) {
   const { checks } = input;
