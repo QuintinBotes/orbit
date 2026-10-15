@@ -76,56 +76,53 @@ const TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpyte
  * configured check id), then one of those verbs, then the tests or a test file. A check that merely passes, a test
  * runner with no object, and the application running tests are not it.
  */
-/**
- * What may follow a joined agent's name for it to be an agent: nothing, or a preposition ("the unit-tests check with
- * coverage"). Anything else (a verb, an adverb before one) makes the check the subject of a clause of its own: listing
- * what may follow, not the verbs that may not, so an unlisted verb cannot make a clause an agent.
- */
-const AGENT_TAIL = /^\s*(?:$|(?:with|on|in|for|using|over|under|at|from|via|through|against)\b)/i;
-
-/** What an agent joined by "and" or "or" starts as: a check named as such, the test command or the test runner. */
-const AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
-
 /** A form of "to be" or "get" directly before the run verb's participle: the passive "the tests are run by the check". */
 const PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
 
+/** One agent of the passive form: a short noun phrase, at most three words ("CI", "GitHub Actions", "the unit-tests check"). */
+const AGENT_ELEMENT = String.raw`(?:the\s+)?[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,2}`;
+/** What may follow the agents: the end, punctuation, a preposition, or a word that starts another clause. */
+const AFTER_AGENTS = String.raw`(?=\s*(?:$|[,;:.]|\b(?:with|on|in|for|using|over|under|at|from|via|through|against|after|when|whenever|once|before|while|if|because|until|unless|since|so|then|where)\b))`;
+/** "by" right after the participle, then agents joined by "and" or "or", then nothing else but AFTER_AGENTS. */
+const PASSIVE_AGENTS = new RegExp(String.raw`^\s*by\s+(${AGENT_ELEMENT}(?:\s*,?\s+(?:and|or)\s+${AGENT_ELEMENT})*)${AFTER_AGENTS}`, 'i');
+/** An agent that is a check named as such, the test command or the test runner. */
+const CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)$/i;
+
 /**
- * The passive order of the same statement: the tests or a test file, then "are run" (or executed, collected,
- * discovered, picked up, found, imported), then "by" a check (a check named as such, the test command, the test runner,
- * or a configured check id). A negation stands between the auxiliary and the participle ("are not run by"), so
- * PASSIVE_RUN does not match it and such a statement is not flagged, as its active form is not. The third 0.3.1
- * retest's planner wrote "The pytest suite is run by the unit-tests check with src on the path".
+ * The passive order of the statement ("The pytest suite is run by the unit-tests check with src on the path", which the
+ * third 0.3.1 retest's planner wrote): the tests or a test file, then "are run" (or executed, collected, discovered,
+ * picked up, found, imported), then "by" and the agents, short noun phrases joined by "and" or "or", followed by nothing
+ * but the end, punctuation, a preposition or the start of another clause. It is this statement only when an agent is a
+ * check (a configured id, a check named as such, the test command or the test runner), and the checks it names are the
+ * agents' alone. A strict grammar on purpose: a missed phrasing keeps the planner's own status, as before, while a
+ * loose one flagged ordinary sentences ("run by CI without the lint check", "and the lint check runs eslint") and could
+ * block a valid run. A negation anywhere from the start of the sentence to the participle ("No tests are", "will not
+ * be run", "couldn't be run") rules it out. Returns the configured ids the agents name (possibly none), or null.
  */
-function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly string[]): boolean {
+function sentenceTestsRunByChecks(sentence: string, checkIds: readonly string[]): string[] | null {
   const object = TEST_OBJECT.exec(sentence);
-  if (object === null) return false;
+  if (object === null) return null;
   const rest = sentence.slice(object.index + object[0].length);
   const verb = PASSIVE_RUN.exec(rest);
-  if (verb === null) return false;
-  // A negation anywhere between the tests and the participle states the opposite, compound auxiliaries included
-  // ("will not be run", "have not been collected", "cannot be executed").
-  if (new RegExp(String.raw`\b${NEGATION}\b`, 'i').test(rest.slice(0, verb.index + verb[0].length))) return false;
-  const after = rest.slice(verb.index + verb[0].length);
-  const by = /^\s*by\b/i.exec(after);
-  if (by === null) return false;
-  // The agent is the phrase "by" introduces, up to the end of its clause: a check named in a later clause ("run by CI
-  // after the lint check passes") is not what runs the tests.
-  const clause = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|but|because|until|unless|so|then|where)\b/i)[0] ?? '';
-  // "and" or "or" joins another agent ("by CI and the unit-tests check") when what follows starts as one; anything else
-  // after it begins a new clause, which names no agent of this statement.
-  const [first, ...joined] = clause.split(/\b(?:and|or)\b/i);
-  let agent = first ?? '';
-  for (const part of joined) {
-    const named = AGENT_START.exec(part) ?? [...new Set(checkIds)].map((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])(?:\s+checks?\b)?`, 'i').exec(part)).find((m) => m !== null) ?? null;
-    // A check followed by a verb of its own ("and the lint check runs eslint") is the subject of a new clause, not an agent.
-    if (named === null || !AGENT_TAIL.test(part.slice(named[0].length))) break;
-    agent += ` and ${part}`;
+  if (verb === null) return null;
+  const upToParticiple = sentence.slice(0, object.index + object[0].length + verb.index + verb[0].length);
+  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, 'i').test(upToParticiple)) return null;
+  const agents = PASSIVE_AGENTS.exec(rest.slice(verb.index + verb[0].length));
+  if (agents === null) return null;
+  const ids = [...new Set(checkIds)];
+  const named: string[] = [];
+  let aCheck = false;
+  for (const element of agents[1]!.split(/\s*,?\s+(?:and|or)\s+/i).map((e) => e.trim())) {
+    const id = ids.find((x) => new RegExp(String.raw`^(?:the\s+)?${escapeRegExp(x)}(?:\s+checks?)?$`, 'i').test(element));
+    if (id !== undefined) {
+      if (!named.includes(id)) named.push(id);
+      aCheck = true;
+    } else if (CHECK_AGENT.test(element)) aCheck = true;
   }
-  return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
+  return aCheck ? named : null;
 }
 
 function sentenceStatesCheckRunsTests(sentence: string, checkIds: readonly string[]): boolean {
-  if (sentenceStatesTestsRunByCheck(sentence, checkIds)) return true;
   const subjects: { index: number; end: number }[] = [];
   const generic = SUBJECT.exec(sentence);
   if (generic !== null) subjects.push({ index: generic.index, end: generic.index + generic[0].length });
@@ -150,7 +147,14 @@ function sentenceStatesCheckRunsTests(sentence: string, checkIds: readonly strin
  * establish, never the statement's.
  */
 export function statesCheckRunsTests(statement: string, checkIds: readonly string[]): string[] | null {
-  return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
+  const all = sentences(statement);
+  if (all.some((s) => sentenceStatesCheckRunsTests(s, checkIds))) return namedCheckIds(statement, checkIds);
+  // The passive form names only its agents' checks.
+  for (const s of all) {
+    const named = sentenceTestsRunByChecks(s, checkIds);
+    if (named !== null) return named;
+  }
+  return null;
 }
 
 /**

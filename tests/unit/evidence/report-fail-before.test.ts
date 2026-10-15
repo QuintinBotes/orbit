@@ -122,6 +122,10 @@ describe('fail-before statement wording', () => {
     // Contracted negations, straight or curly.
     expect(statesCheckRunsTests("The new tests couldn't be run by the lint check", ids)).toBeNull();
     expect(statesCheckRunsTests('The new tests wouldn’t be run by the lint check', ids)).toBeNull();
+    // A negative subject, and a check that is mentioned but is no agent.
+    expect(statesCheckRunsTests('No tests are run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('None of the new tests are run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI without the lint check', ids)).toBeNull();
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);

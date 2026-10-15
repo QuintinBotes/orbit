@@ -50939,28 +50939,29 @@ function namedCheckIds(text2, checkIds) {
     return at === null ? [] : [{ id, index: at.index }];
   }).sort((a, b) => a.index - b.index).map((x) => x.id);
 }
-function sentenceStatesTestsRunByCheck(sentence, checkIds) {
+function sentenceTestsRunByChecks(sentence, checkIds) {
   const object = TEST_OBJECT.exec(sentence);
-  if (object === null) return false;
+  if (object === null) return null;
   const rest = sentence.slice(object.index + object[0].length);
   const verb2 = PASSIVE_RUN.exec(rest);
-  if (verb2 === null) return false;
-  if (new RegExp(String.raw`\b${NEGATION}\b`, "i").test(rest.slice(0, verb2.index + verb2[0].length))) return false;
-  const after = rest.slice(verb2.index + verb2[0].length);
-  const by = /^\s*by\b/i.exec(after);
-  if (by === null) return false;
-  const clause = after.slice(by[0].length).split(/[,;:]|\b(?:after|when|whenever|once|before|while|if|but|because|until|unless|so|then|where)\b/i)[0] ?? "";
-  const [first, ...joined] = clause.split(/\b(?:and|or)\b/i);
-  let agent = first ?? "";
-  for (const part of joined) {
-    const named2 = AGENT_START.exec(part) ?? [...new Set(checkIds)].map((id) => new RegExp(String.raw`^\s*(?:the\s+)?${escapeRegExp3(id)}(?![A-Za-z0-9_-]|\.[A-Za-z0-9])(?:\s+checks?\b)?`, "i").exec(part)).find((m) => m !== null) ?? null;
-    if (named2 === null || !AGENT_TAIL.test(part.slice(named2[0].length))) break;
-    agent += ` and ${part}`;
+  if (verb2 === null) return null;
+  const upToParticiple = sentence.slice(0, object.index + object[0].length + verb2.index + verb2[0].length);
+  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, "i").test(upToParticiple)) return null;
+  const agents = PASSIVE_AGENTS.exec(rest.slice(verb2.index + verb2[0].length));
+  if (agents === null) return null;
+  const ids = [...new Set(checkIds)];
+  const named2 = [];
+  let aCheck = false;
+  for (const element2 of agents[1].split(/\s*,?\s+(?:and|or)\s+/i).map((e) => e.trim())) {
+    const id = ids.find((x) => new RegExp(String.raw`^(?:the\s+)?${escapeRegExp3(x)}(?:\s+checks?)?$`, "i").test(element2));
+    if (id !== void 0) {
+      if (!named2.includes(id)) named2.push(id);
+      aCheck = true;
+    } else if (CHECK_AGENT.test(element2)) aCheck = true;
   }
-  return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
+  return aCheck ? named2 : null;
 }
 function sentenceStatesCheckRunsTests(sentence, checkIds) {
-  if (sentenceStatesTestsRunByCheck(sentence, checkIds)) return true;
   const subjects = [];
   const generic2 = SUBJECT.exec(sentence);
   if (generic2 !== null) subjects.push({ index: generic2.index, end: generic2.index + generic2[0].length });
@@ -50977,7 +50978,13 @@ function sentenceStatesCheckRunsTests(sentence, checkIds) {
   return TEST_OBJECT.test(sentence.slice(subject.end + verb2.index + verb2[0].length));
 }
 function statesCheckRunsTests(statement, checkIds) {
-  return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
+  const all = sentences(statement);
+  if (all.some((s) => sentenceStatesCheckRunsTests(s, checkIds))) return namedCheckIds(statement, checkIds);
+  for (const s of all) {
+    const named2 = sentenceTestsRunByChecks(s, checkIds);
+    if (named2 !== null) return named2;
+  }
+  return null;
 }
 function unknownNamedChecks(statement, checkIds) {
   const configured = new Set([...checkIds].map((id) => id.toLowerCase()));
@@ -51000,7 +51007,7 @@ function unknownNamedChecks(statement, checkIds) {
   }
   return unknown;
 }
-var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, AGENT_TAIL, AGENT_START, PASSIVE_RUN, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, AGENT_ELEMENT, AFTER_AGENTS, PASSIVE_AGENTS, CHECK_AGENT, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
@@ -51011,9 +51018,11 @@ var init_fail_before_statements = __esm({
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
     TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
-    AGENT_TAIL = /^\s*(?:$|(?:with|on|in|for|using|over|under|at|from|via|through|against)\b)/i;
-    AGENT_START = /^\s*(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)\b/i;
     PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
+    AGENT_ELEMENT = String.raw`(?:the\s+)?[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,2}`;
+    AFTER_AGENTS = String.raw`(?=\s*(?:$|[,;:.]|\b(?:with|on|in|for|using|over|under|at|from|via|through|against|after|when|whenever|once|before|while|if|because|until|unless|since|so|then|where)\b))`;
+    PASSIVE_AGENTS = new RegExp(String.raw`^\s*by\s+(${AGENT_ELEMENT}(?:\s*,?\s+(?:and|or)\s+${AGENT_ELEMENT})*)${AFTER_AGENTS}`, "i");
+    CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)$/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
       "a",
