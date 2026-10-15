@@ -423,13 +423,13 @@ function environmentFixes(failures: readonly FailureWithCommand[], platform: Nod
   // (program-not-found). Moving it changes the check's command, whatever the tool (0.3.0 retest), and for a bare name
   // the PATH it was looked up on.
   const located = failures.filter((f) => f.programDenial !== undefined && (f.signals.includes('program-denied') || f.signals.includes('program-not-found')));
-  const byPath = located.filter((f) => f.programDenial!.onPath !== undefined);
-  const byCommand = located.filter((f) => f.programDenial!.onPath === undefined);
   // A program outside the denied folders that is refused only for where it links to (`/opt/tools/python` into the
-  // repository's virtualenv): moving the environment and repointing that link cures it without changing the check's
-  // command, so no policy change is recorded and a resume runs the check again.
-  const byExternalLink = byCommand.filter((f) => f.programDenial!.target !== undefined && isAbsolute(f.programDenial!.program));
-  const byPlaced = byCommand.filter((f) => !byExternalLink.includes(f));
+  // repository's virtualenv), whether the command names it or the check finds it on a PATH: moving the environment and
+  // repointing that link cures it without changing the check's command or its PATH, so no policy change is recorded and
+  // a resume runs the check again.
+  const byExternalLink = located.filter((f) => f.programDenial!.target !== undefined && isAbsolute(f.programDenial!.program));
+  const byPath = located.filter((f) => f.programDenial!.onPath !== undefined && !byExternalLink.includes(f));
+  const byPlaced = located.filter((f) => f.programDenial!.onPath === undefined && !byExternalLink.includes(f));
   if (byExternalLink.length > 0) {
     const d = byExternalLink[0]!.programDenial!;
     const programs = [...new Set(byExternalLink.map((f) => f.programDenial!.program))];

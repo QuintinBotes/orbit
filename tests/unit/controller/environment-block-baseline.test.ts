@@ -139,6 +139,27 @@ describe('environmentFix', () => {
     expect(reason).not.toMatch(/[\u2013\u2014]/);
   });
 
+  // Regression (review): the same external link found through a PATH the check's env sets (`python -m pytest` with
+  // checks.unit.env.PATH=/opt/tools:/usr/bin:/bin) was grouped with a PATH into a denied folder, so checks.unit.env was
+  // recorded as the fix and the advice said to start a new run, although repointing the link changes neither the PATH
+  // nor the command.
+  it('keeps the resume for an external link the check finds through the PATH its env sets', () => {
+    const linked: BlockedCheck = {
+      ...dotnet,
+      checkId: 'unit',
+      signals: ['program-denied'],
+      lines: ['orbit-limits: /opt/tools/python: Operation not permitted'],
+      programDenial: { program: '/opt/tools/python', repository: '/home/acme/projects/shop', parent: '/home/acme/projects', under: 'repository', target: '/home/acme/projects/shop/.venv/bin/python', onPath: { name: 'python', setBy: 'checks.unit.env' } },
+    };
+    expect(environmentFixSettings([linked])).toEqual([]);
+    const fix = environmentFix([linked])!;
+    expect(fix).toMatch(/move that tool environment outside \/home\/acme\/projects, repoint that link at it, then resume the run/);
+    expect(fix).not.toMatch(/correct checks\.unit\.env/);
+    const reason = baselineEnvironmentBlockReason({ runId: 'orb-9', baseRevision: BASE_REV, failures: [linked] });
+    expect(reason).toMatch(/Then orbit resume orb-9 runs the baseline again/);
+    expect(reason).not.toMatch(/cancel this run/);
+  });
+
   // Regression: an absolute program outside the denied folders that links into the repository's virtualenv was
   // recorded as needing checks.<id>.command changed, so the block reason (and the status and report built on it)
   // said to cancel and start a new run, although moving the environment and repointing that external link cures it

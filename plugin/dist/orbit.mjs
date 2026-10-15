@@ -55928,10 +55928,9 @@ function environmentFixes(failures, platform3) {
     fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
   const located = failures.filter((f) => f.programDenial !== void 0 && (f.signals.includes("program-denied") || f.signals.includes("program-not-found")));
-  const byPath2 = located.filter((f) => f.programDenial.onPath !== void 0);
-  const byCommand = located.filter((f) => f.programDenial.onPath === void 0);
-  const byExternalLink = byCommand.filter((f) => f.programDenial.target !== void 0 && isAbsolute21(f.programDenial.program));
-  const byPlaced = byCommand.filter((f) => !byExternalLink.includes(f));
+  const byExternalLink = located.filter((f) => f.programDenial.target !== void 0 && isAbsolute21(f.programDenial.program));
+  const byPath2 = located.filter((f) => f.programDenial.onPath !== void 0 && !byExternalLink.includes(f));
+  const byPlaced = located.filter((f) => f.programDenial.onPath === void 0 && !byExternalLink.includes(f));
   if (byExternalLink.length > 0) {
     const d = byExternalLink[0].programDenial;
     const programs2 = [...new Set(byExternalLink.map((f) => f.programDenial.program))];
