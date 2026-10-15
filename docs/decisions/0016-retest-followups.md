@@ -52,10 +52,14 @@ review of a tree that changes nothing, and a provider that records no depth, are
 
 ### 4. Fail-before probes ui journeys
 
-A required check of category `ui` that passed on the base revision is probed like a test check: it runs on the base
-revision with the candidate's new test-owned journeys, through the same ui runner and app fixture as verification,
-and its outcome is recorded per criterion as a test check's is. It adds one browser run per candidate, two when it
-fails.
+A browser check (a journey check of `ui.journey_check_ids`, or a check of kind `playwright`) whose directory holds a
+journey the candidate adds or changes is probed as a test check is: it runs on the base revision with the candidate's
+test-owned changes, through the same ui runner and app fixture as verification, and its outcome is recorded per
+criterion as a test check's is. The baseline runs command checks only, so a browser check has no result on the base
+revision to stand for the probe's control: the probe runs the same journeys on the base revision alone first, once per
+run (the result is reused by tree), and a failure is the new journeys' only when that control passed. A failure of the
+app or the browser to start, or any process that never reached the repository's code, is an environment cause and
+establishes nothing. It adds one browser run per candidate (two when it fails) and one control run per run.
 
 ## Consequences
 
@@ -64,4 +68,5 @@ fails.
 - Routine implementer sessions run at `high` unless failures repeat; the demo's time is measured again by the next
   retest against 13 minutes.
 - A packet-only approval costs one more review round, and blocks a run whose reviewer never inspects the change.
-- Probing ui journeys makes required runs with browser criteria slower by one or two browser runs per candidate.
+- Probing ui journeys makes runs with browser criteria slower by one or two browser runs per candidate, and one
+  control run per run.
