@@ -78,6 +78,9 @@ try {
     minify: false,
     // Resolve dependencies from this repository even when the entry lives elsewhere.
     nodePaths: [join(root, 'node_modules')],
+    // A node_modules that is a symlink (a worktree sharing another checkout's install) must not put that checkout's
+    // path into the bundle's module ids: 0.3.1's bundle carried "../<other checkout>/node_modules/..." 346 times.
+    preserveSymlinks: true,
     // `orbit init` writes this starter config; src/cli/commands/init.ts reads the file itself when run from the sources.
     define: { __ORBIT_CONFIG_TEMPLATE__: JSON.stringify(readFileSync(join(root, 'templates/config.yaml'), 'utf8')) },
   });
