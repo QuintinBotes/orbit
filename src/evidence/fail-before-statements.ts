@@ -100,12 +100,26 @@ const CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|te
  * be run", "couldn't be run") rules it out. Returns the configured ids the agents name (possibly none), or null.
  */
 function sentenceTestsRunByChecks(sentence: string, checkIds: readonly string[]): string[] | null {
-  const object = TEST_OBJECT.exec(sentence);
-  if (object === null) return null;
-  const rest = sentence.slice(object.index + object[0].length);
+  for (const object of sentence.matchAll(new RegExp(TEST_OBJECT.source, 'gi'))) {
+    const named = testsRunByChecksFrom(sentence, object.index! + object[0].length, checkIds);
+    if (named !== null) return named;
+  }
+  return null;
+}
+
+/**
+ * What may stand between the tests and the passive verb: at most three words that continue the tests' noun phrase
+ * ("The pytest suite is run", "the new tests in tests/unit are run"), with no punctuation, conjunction or relative word,
+ * so another clause's verb ("The tests pass locally and ESLint is run by the lint check") is never the tests'.
+ */
+const SUBJECT_GAP = /^(?:\s+(?!(?:and|or|but|while|whereas|which|that|who|when|so|then)\b)[A-Za-z0-9][A-Za-z0-9._/-]*){0,3}\s+$/i;
+
+/** The passive form from the end of one mention of the tests at `from`: see sentenceTestsRunByChecks. */
+function testsRunByChecksFrom(sentence: string, from: number, checkIds: readonly string[]): string[] | null {
+  const rest = sentence.slice(from);
   const verb = PASSIVE_RUN.exec(rest);
-  if (verb === null) return null;
-  const upToParticiple = sentence.slice(0, object.index + object[0].length + verb.index + verb[0].length);
+  if (verb === null || !SUBJECT_GAP.test(rest.slice(0, verb.index))) return null;
+  const upToParticiple = sentence.slice(0, from + verb.index + verb[0].length);
   if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, 'i').test(upToParticiple)) return null;
   const agents = PASSIVE_AGENTS.exec(rest.slice(verb.index + verb[0].length));
   if (agents === null) return null;

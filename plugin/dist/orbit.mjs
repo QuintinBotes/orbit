@@ -50940,12 +50940,17 @@ function namedCheckIds(text2, checkIds) {
   }).sort((a, b) => a.index - b.index).map((x) => x.id);
 }
 function sentenceTestsRunByChecks(sentence, checkIds) {
-  const object = TEST_OBJECT.exec(sentence);
-  if (object === null) return null;
-  const rest = sentence.slice(object.index + object[0].length);
+  for (const object of sentence.matchAll(new RegExp(TEST_OBJECT.source, "gi"))) {
+    const named2 = testsRunByChecksFrom(sentence, object.index + object[0].length, checkIds);
+    if (named2 !== null) return named2;
+  }
+  return null;
+}
+function testsRunByChecksFrom(sentence, from, checkIds) {
+  const rest = sentence.slice(from);
   const verb2 = PASSIVE_RUN.exec(rest);
-  if (verb2 === null) return null;
-  const upToParticiple = sentence.slice(0, object.index + object[0].length + verb2.index + verb2[0].length);
+  if (verb2 === null || !SUBJECT_GAP.test(rest.slice(0, verb2.index))) return null;
+  const upToParticiple = sentence.slice(0, from + verb2.index + verb2[0].length);
   if (new RegExp(String.raw`\b(?:${NEGATION}|no|none)\b`, "i").test(upToParticiple)) return null;
   const agents = PASSIVE_AGENTS.exec(rest.slice(verb2.index + verb2[0].length));
   if (agents === null) return null;
@@ -51007,7 +51012,7 @@ function unknownNamedChecks(statement, checkIds) {
   }
   return unknown;
 }
-var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, AGENT_ELEMENT, AFTER_AGENTS, PASSIVE_AGENTS, CHECK_AGENT, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, AGENT_ELEMENT, AFTER_AGENTS, PASSIVE_AGENTS, CHECK_AGENT, SUBJECT_GAP, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
@@ -51023,6 +51028,7 @@ var init_fail_before_statements = __esm({
     AFTER_AGENTS = String.raw`(?=\s*(?:$|[,;:.]|\b(?:with|on|in|for|using|over|under|at|from|via|through|against|after|when|whenever|once|before|while|if|because|until|unless|since|so|then|where)\b))`;
     PASSIVE_AGENTS = new RegExp(String.raw`^\s*by\s+(${AGENT_ELEMENT}(?:\s*,?\s+(?:and|or)\s+${AGENT_ELEMENT})*)${AFTER_AGENTS}`, "i");
     CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)$/i;
+    SUBJECT_GAP = /^(?:\s+(?!(?:and|or|but|while|whereas|which|that|who|when|so|then)\b)[A-Za-z0-9][A-Za-z0-9._/-]*){0,3}\s+$/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
       "a",
