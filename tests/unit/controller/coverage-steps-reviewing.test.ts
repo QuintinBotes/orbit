@@ -10,6 +10,7 @@ import { listFindings, listReviews, recordReview } from '../../../src/review/sto
 import type { IngestedFinding } from '../../../src/review/types.ts';
 import { getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
+import { newRunNeeded } from '../../../src/controller/resume.ts';
 import { REVIEW_REPAIR_EVENT, cancelObsoleteWork, implementerProvider, prepareReview, reviewFocuses, reviewingStep } from '../../../src/controller/steps/reviewing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { defaultUi } from '../../../src/policy/config.ts';
@@ -417,9 +418,9 @@ describe('a review that has to be run', () => {
     const answerOnly = [{ type: 'item.completed', item: { type: 'agent_message', text: '{}' } }, { type: 'turn.completed', usage: { output_tokens: 69, reasoning_output_tokens: 17 } }];
     await setup({ onReviewerStart: (spec) => writeFileSync(join(spec.workerDir, 'log.jsonl'), `${answerOnly.map((e) => JSON.stringify(e)).join('\n')}\n`) });
     await settle();
-    const [review] = listReviews(lab.db, lab.runId);
+    const [review] = listReviews(lab.db, lab.runId, { includeInvalidated: true });
     const depth = decisions('review.depth');
-    expect(depth).toHaveLength(1);
+    expect(depth.length).toBeGreaterThanOrEqual(1);
     expect(depth[0]!.data).toMatchObject({ review_id: review!.id, provider: 'codex', tool_calls: 0, reasoning_tokens: 17 });
     expect(depth[0]!.summary).toContain('NO TOOL CALLS');
   });
@@ -463,6 +464,58 @@ describe('a review that has to be run', () => {
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('BLOCKED');
     expect(existsSync(join(lab.home, 'worktrees', `review-${lab.ctx().candidate!.seq}`))).toBe(false);
+  });
+});
+
+// ADR 0016, item 3: on the 0.3.1 retest every Codex review approved from the packet alone (no tool call). An APPROVE
+// that inspected nothing does not clear the tree: one fresh review at high effort must open the files.
+describe('a review that inspected nothing does not clear the tree', () => {
+  const answerOnly = [{ type: 'item.completed', item: { type: 'agent_message', text: '{}' } }, { type: 'turn.completed', usage: { output_tokens: 69, reasoning_output_tokens: 17 } }];
+  const inspected = [{ type: 'item.completed', item: { type: 'command_execution', command: 'cat apps/calc.mjs', exit_code: 0 } }, ...answerOnly];
+  /** Each reviewer session writes the next transcript (the last one repeats). */
+  const transcripts = (...ts: Record<string, unknown>[][]) => {
+    let n = 0;
+    return (spec: { workerDir: string }) => writeFileSync(join(spec.workerDir, 'log.jsonl'), `${ts[Math.min(n++, ts.length - 1)]!.map((e) => JSON.stringify(e)).join('\n')}\n`);
+  };
+
+  it('asks one fresh review at high effort that must open the files, and one that does clears the tree', async () => {
+    const { reviewer } = await setup({ onReviewerStart: transcripts(answerOnly, inspected) });
+    await settle();
+    expect(state()).toBe('DELIVERING');
+    expect(reviewer.specs).toHaveLength(2);
+    expect(reviewer.specs[0]).toMatchObject({ effort: 'medium' });
+    expect(reviewer.specs[1]).toMatchObject({ effort: 'high' });
+    expect(reviewer.specs[1]!.prompt).toMatch(/approved from the review packet alone/);
+    expect(decisions('review.fresh').map((d) => (d.data as { reason?: string }).reason)).toEqual(['shallow']);
+    const [first, second] = listReviews(lab.db, lab.runId, { includeInvalidated: true });
+    expect(first!.invalidatedAt).not.toBeNull();
+    expect(second!.invalidatedAt).toBeNull();
+  });
+
+  it('blocks when the fresh review inspects nothing either, and a resume would only block again', async () => {
+    const { reviewer } = await setup({ onReviewerStart: transcripts(answerOnly) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(reviewer.specs).toHaveLength(2);
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason).toMatch(/inspected nothing/);
+    expect(newRunNeeded(lab.db, run)).toMatch(/one fresh review/);
+  });
+
+  it('is unaffected when the review depth is not known', async () => {
+    const { reviewer } = await setup();
+    await settle();
+    expect(state()).toBe('DELIVERING');
+    expect(reviewer.specs).toHaveLength(1);
+    expect(decisions('review.fresh')).toEqual([]);
+  });
+
+  it('blocks rather than start the fresh review when review_rounds is spent', async () => {
+    const { reviewer } = await setup({ onReviewerStart: transcripts(answerOnly), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 1) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(reviewer.specs).toHaveLength(1);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/inspected nothing[\s\S]*review_rounds hard cap reached/);
   });
 });
 

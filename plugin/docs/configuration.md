@@ -1081,6 +1081,13 @@ and `sandbox-runtime`, else `claude-sandbox`; see [installation](installation.md
 and a setting that silently did nothing would read as confinement that is not
 there. A config without the key (an older snapshot) reads as `auto`.
 
+An approval whose recorded review depth shows no tool call does not clear the
+tree (ADR 0016): the review answered from the packet alone. The tree gets its
+one fresh review at `high` effort, told to open the changed files and tests
+before its verdict; if that review inspects nothing either, or no review round
+is left, the run blocks and says so. A review whose depth was not recorded is
+unaffected.
+
 `providers.<id>.review_reasoning_effort` is the reasoning effort of the Codex
 reviewer's sessions (`low`, `medium`, `high`, `xhigh` or `max`; default
 `medium`). Orbit passes it to the Codex CLI as `model_reasoning_effort`. At the

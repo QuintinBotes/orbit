@@ -47864,6 +47864,10 @@ function readReviewDepth(worker) {
   if (events.length === 0) return { toolCalls: null, reasoningTokens: null };
   return family === "codex" ? codexDepth(events) : claudeDepth(events);
 }
+function reviewDepthOf(ctx, reviewId) {
+  const d = getDecision(ctx.db, `dec-${ctx.run.id}-review-depth-${reviewId}`);
+  return d ? d.data : null;
+}
 function recordReviewDepth(ctx, worker, reviewId) {
   const id = `dec-${ctx.run.id}-review-depth-${reviewId}`;
   if (getDecision(ctx.db, id)) return;
@@ -63100,7 +63104,7 @@ async function singleReview(ctx, cand, sel, opts) {
       candidateId: cand.id,
       provider: sel.provider,
       model: sel.model,
-      effort: reviewEffort(ctx, sel),
+      effort: opts.fresh?.reason === "shallow" ? SHALLOW_REVIEW_EFFORT : reviewEffort(ctx, sel),
       cwd: checkout,
       readOnly: true,
       phase: "final",
@@ -63319,6 +63323,8 @@ async function resolveAndDecide(ctx, cand) {
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
+    const shallow = shallowApprovals(ctx, state);
+    if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
     progress(ctx, "review.approved", { candidate_id: cand.id, tree_hash: cand.treeHash });
     const waiting = await blockOnOpenQuestions(ctx, "delivery");
     if (waiting) return waiting;
@@ -63440,6 +63446,29 @@ async function startFreshReview(ctx, cand, state, noted) {
   });
   return freshReview(ctx, cand, rec2);
 }
+function shallowApprovals(ctx, state) {
+  return state.reviews.filter((r) => r.verdict === "APPROVE" && reviewDepthOf(ctx, r.id)?.tool_calls === 0);
+}
+async function decideShallowApproval(ctx, cand, shallow, gateReasons) {
+  const ids = shallow.map((r) => r.id);
+  const what = `review(s) ${ids.join(", ")} approved tree ${cand.treeHash} from the packet alone and inspected nothing (no tool call)`;
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (!asked) {
+    const rounds = ctx.ledger.state("review_rounds");
+    if (rounds.used < rounds.allowance) {
+      const rec2 = { reason: "shallow", tree_hash: cand.treeHash, candidate_id: cand.id, base: `review-fresh:${cand.id}`, superseded: ids, noted: [] };
+      decide2(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: ${what}`, data: rec2 });
+      return freshReview(ctx, cand, rec2);
+    }
+    return finishRun(ctx, "BLOCKED", `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`, {
+      outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } } }
+    });
+  }
+  const fresh = recordedFreshReview(ctx, asked);
+  return finishRun(ctx, "BLOCKED", `the review inspected nothing: ${what}, and the tree already had its one fresh review${fresh ? ` (${fresh.id})` : ""}, so no other review is asked`, {
+    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? null, reason: asked.reason ?? "notes" } }
+  });
+}
 async function freshReview(ctx, cand, rec2) {
   let review = recordedFreshReview(ctx, rec2);
   if (!review) {
@@ -63463,8 +63492,9 @@ function describeFreshReview(ctx, rec2, resolution, state) {
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
+  const why = rec2.reason === "shallow" ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} raised only the note(s) ${earlier}, did not approve it either: ${named2}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, did not approve it either: ${named2}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
   };
 }
@@ -63952,7 +63982,7 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null) {
     ...fresh ? freshReviewText(fresh) : [],
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`
   ].join("\n");
-  const noted = fresh ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
+  const noted = fresh && fresh.noted.length > 0 ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
   return renderWorkerPrompt({
     role: "reviewer",
     task,
@@ -63965,6 +63995,12 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null) {
   });
 }
 function freshReviewText(rec2) {
+  if (rec2.reason === "shallow") {
+    return [
+      `This is a fresh review of a tree that an earlier review (${rec2.superseded.join(", ")}) approved from the review packet alone, without opening any file or running any command.`,
+      "Before your verdict, open the changed files and the tests that cover them in this read-only checkout, with your tools, and check the change against the contract and the evidence. A verdict given without inspecting the checkout does not clear the tree."
+    ];
+  }
   const names = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
   const what = [...new Set(rec2.noted.map((n2) => n2.classification))];
   return [
@@ -63983,7 +64019,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync45(checkout) || readdirSync13(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -64036,6 +64072,7 @@ var init_reviewing = __esm({
       ui: "Focus: the user interface. User-visible states (empty, loading, error), accessibility, layout and interaction regressions on the changed screens. Report any other defect you see as well."
     };
     FRESH_REVIEW_KIND = "review.fresh";
+    SHALLOW_REVIEW_EFFORT = "high";
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
     NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";

@@ -16,7 +16,7 @@ import { atomicWrite, atomicWriteJson } from '../../core/fsx.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { getDecision, listDecisions } from '../../storage/decisions.ts';
 import { clipAtWord } from '../../core/text.ts';
-import { recordReviewDepth } from '../review-depth.ts';
+import { recordReviewDepth, reviewDepthOf } from '../review-depth.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { renderWorkerPrompt } from '../../adapters/prompt.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/candidate.ts';
@@ -147,7 +147,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
       candidateId: cand.id,
       provider: sel.provider,
       model: sel.model,
-      effort: reviewEffort(ctx, sel),
+      effort: opts.fresh?.reason === 'shallow' ? SHALLOW_REVIEW_EFFORT : reviewEffort(ctx, sel),
       cwd: checkout,
       readOnly: true,
       phase: 'final',
@@ -402,6 +402,10 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
+    // An APPROVE that inspected nothing (no tool call recorded) does not clear the tree (ADR 0016, item 3): one fresh
+    // review must open the files; if that one inspects nothing either, the run stops and says so.
+    const shallow = shallowApprovals(ctx, state);
+    if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
     const waiting = await blockOnOpenQuestions(ctx, 'delivery');
     if (waiting) return waiting;
@@ -524,6 +528,11 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
 const FRESH_REVIEW_KIND = 'review.fresh';
 
 interface FreshReviewRecord {
+  /**
+   * Why the tree gets its one fresh review: an earlier review asked for repair only through notes (`notes`, the
+   * default for records written before the field), or approved it without inspecting anything (`shallow`, ADR 0016).
+   */
+  reason?: 'notes' | 'shallow';
   tree_hash: string;
   candidate_id: string;
   /** The purpose base of the fresh reviewer's sessions. */
@@ -575,6 +584,40 @@ async function startFreshReview(ctx: RunContext, cand: CandidateRecord, state: R
   return freshReview(ctx, cand, rec);
 }
 
+/** The reasoning effort of a fresh review asked because the tree's approval inspected nothing (ADR 0016). */
+const SHALLOW_REVIEW_EFFORT = 'high';
+
+/** The approving reviews of the tree whose recorded depth shows no tool call; a review with no recorded depth is not one. */
+function shallowApprovals(ctx: RunContext, state: ReturnType<typeof loadResolverState>): ReturnType<typeof loadResolverState>['reviews'] {
+  return state.reviews.filter((r) => r.verdict === 'APPROVE' && reviewDepthOf(ctx, r.id)?.tool_calls === 0);
+}
+
+/**
+ * A tree whose approval inspected nothing gets the one fresh review of the tree, at high effort, told to open the files
+ * (a review round like any other, so none starts at the cap). When the tree already had its fresh review and an approval
+ * still inspected nothing, or no round is left, the run stops and says why: a resume would decide the tree the same way.
+ */
+async function decideShallowApproval(ctx: RunContext, cand: CandidateRecord, shallow: ReturnType<typeof loadResolverState>['reviews'], gateReasons: readonly string[]): Promise<StepResult> {
+  const ids = shallow.map((r) => r.id);
+  const what = `review(s) ${ids.join(', ')} approved tree ${cand.treeHash} from the packet alone and inspected nothing (no tool call)`;
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (!asked) {
+    const rounds = ctx.ledger!.state('review_rounds');
+    if (rounds.used < rounds.allowance) {
+      const rec: FreshReviewRecord = { reason: 'shallow', tree_hash: cand.treeHash, candidate_id: cand.id, base: `review-fresh:${cand.id}`, superseded: ids, noted: [] };
+      decide(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: ${what}`, data: rec });
+      return freshReview(ctx, cand, rec);
+    }
+    return finishRun(ctx, 'BLOCKED', `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`, {
+      outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } } },
+    });
+  }
+  const fresh = recordedFreshReview(ctx, asked);
+  return finishRun(ctx, 'BLOCKED', `the review inspected nothing: ${what}, and the tree already had its one fresh review${fresh ? ` (${fresh.id})` : ''}, so no other review is asked`, {
+    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? null, reason: asked.reason ?? 'notes' } },
+  });
+}
+
 /**
  * The fresh review: started (or collected) unless it is recorded, then the reviews it supersedes are set aside and the
  * tree is decided again. A superseded review approved nothing and has no open finding, so setting it aside clears
@@ -605,8 +648,9 @@ function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named = findings.length === 0 ? 'it named no finding' : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== undefined ? 'a note' : d.status})`).join(', ');
+  const why = rec.reason === 'shallow' ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec.superseded.join(', ')} raised only the note(s) ${earlier}, did not approve it either: ${named}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec.superseded.join(', ')} ${why}, did not approve it either: ${named}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec.noted },
   };
 }
@@ -1311,7 +1355,7 @@ function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: strin
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`,
   ].join('\n');
   // The noted findings are an earlier reviewer's words: data for this reviewer, never instructions.
-  const noted = fresh ? [{ label: 'findings noted in the earlier review', content: fresh.noted.map((n) => `${n.external_id ?? n.id} (${n.severity}): ${n.claim}`).join('\n') }] : [];
+  const noted = fresh && fresh.noted.length > 0 ? [{ label: 'findings noted in the earlier review', content: fresh.noted.map((n) => `${n.external_id ?? n.id} (${n.severity}): ${n.claim}`).join('\n') }] : [];
   return renderWorkerPrompt({
     role: 'reviewer',
     task,
@@ -1326,6 +1370,12 @@ function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: strin
 
 /** The fresh reviewer's task: which notes it follows, and why none of them is a finding a repair could answer. */
 function freshReviewText(rec: FreshReviewRecord): string[] {
+  if (rec.reason === 'shallow') {
+    return [
+      `This is a fresh review of a tree that an earlier review (${rec.superseded.join(', ')}) approved from the review packet alone, without opening any file or running any command.`,
+      'Before your verdict, open the changed files and the tests that cover them in this read-only checkout, with your tools, and check the change against the contract and the evidence. A verdict given without inspecting the checkout does not clear the tree.',
+    ];
+  }
   const names = rec.noted.map((n) => `${n.external_id ?? n.id} (${n.severity})`).join(', ');
   const what = [...new Set(rec.noted.map((n) => n.classification))];
   return [
