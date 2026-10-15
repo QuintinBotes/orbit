@@ -76,7 +76,31 @@ const TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpyte
  * configured check id), then one of those verbs, then the tests or a test file. A check that merely passes, a test
  * runner with no object, and the application running tests are not it.
  */
+/** A form of "to be" or "get" directly before the run verb's participle: the passive "the tests are run by the check". */
+const PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
+
+/**
+ * The passive order of the same statement: the tests or a test file, then "are run" (or executed, collected,
+ * discovered, picked up, found, imported), then "by" a check (a check named as such, the test command, the test runner,
+ * or a configured check id). A negation stands between the auxiliary and the participle ("are not run by"), so
+ * PASSIVE_RUN does not match it and such a statement is not flagged, as its active form is not. The third 0.3.1
+ * retest's planner wrote "The pytest suite is run by the unit-tests check with src on the path".
+ */
+function sentenceStatesTestsRunByCheck(sentence: string, checkIds: readonly string[]): boolean {
+  const object = TEST_OBJECT.exec(sentence);
+  if (object === null) return false;
+  const rest = sentence.slice(object.index + object[0].length);
+  const verb = PASSIVE_RUN.exec(rest);
+  if (verb === null) return false;
+  const after = rest.slice(verb.index + verb[0].length);
+  const by = /\bby\b/i.exec(after);
+  if (by === null) return false;
+  const agent = after.slice(by.index + by[0].length);
+  return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
+}
+
 function sentenceStatesCheckRunsTests(sentence: string, checkIds: readonly string[]): boolean {
+  if (sentenceStatesTestsRunByCheck(sentence, checkIds)) return true;
   const subjects: { index: number; end: number }[] = [];
   const generic = SUBJECT.exec(sentence);
   if (generic !== null) subjects.push({ index: generic.index, end: generic.index + generic[0].length });

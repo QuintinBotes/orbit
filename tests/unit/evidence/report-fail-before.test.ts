@@ -95,6 +95,14 @@ describe('fail-before statement wording', () => {
   it('statesCheckRunsTests returns the named whole-word check ids, or null for other assumptions', () => {
     const ids = ['unit-tests', 'lint'];
     expect(statesCheckRunsTests('The unit-tests check runs pytest over tests/ with src on the path', ids)).toEqual(['unit-tests']);
+    // The third 0.3.1 retest's audit: the passive form slipped past the rule ("The pytest suite is run by the unit-tests
+    // check with src on the path" stayed unverified with no probe-derived reason).
+    expect(statesCheckRunsTests('The pytest suite is run by the unit-tests check with src on the path', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests are run by the unit-tests check', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests are collected by the test runner', ids)).toEqual([]);
+    // A negated passive, and tests run by something that is no check, are not this statement.
+    expect(statesCheckRunsTests('The new tests are not run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI every night', ids)).toBeNull();
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);
@@ -370,6 +378,19 @@ describe('fail_before per criterion, by mode', () => {
     const noInput = judge('advisory', null, { contract: inputs });
     expect(noInput.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
     expect(noInput.report.verdict).toBe('PASS');
+  });
+
+  it('a passive assumption that a check runs the new tests is decided by the probe as an active one is', () => {
+    const passive = { id: 'AS-1', statement: 'The pytest suite is run by the unit check with src on the path', status: 'unverified' as const };
+    const inputs = withAssumptions(passive);
+    const supported = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(supported.report.assumptions).toEqual([expect.objectContaining({ assumption_id: 'AS-1', status: 'supported', checks: ['unit'] })]);
+    const passed = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
+    expect(passed.report.assumptions).toEqual([expect.objectContaining({ assumption_id: 'AS-1', status: 'unverified' })]);
+    expect(passed.report.verdict).toBe('PASS');
+    expect(passed.report.unverified).toContain('assumption AS-1: unverified (unit: passed-before (unit passed on the base revision with the new tests))');
+    const required = judge('required', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
+    expect(required.report.verdict).not.toBe('PASS');
   });
 
   it('a flagged assumption that names no check uses every check the probe ran', () => {

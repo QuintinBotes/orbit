@@ -50939,7 +50939,20 @@ function namedCheckIds(text2, checkIds) {
     return at === null ? [] : [{ id, index: at.index }];
   }).sort((a, b) => a.index - b.index).map((x) => x.id);
 }
+function sentenceStatesTestsRunByCheck(sentence, checkIds) {
+  const object = TEST_OBJECT.exec(sentence);
+  if (object === null) return false;
+  const rest = sentence.slice(object.index + object[0].length);
+  const verb2 = PASSIVE_RUN.exec(rest);
+  if (verb2 === null) return false;
+  const after = rest.slice(verb2.index + verb2[0].length);
+  const by = /\bby\b/i.exec(after);
+  if (by === null) return false;
+  const agent = after.slice(by.index + by[0].length);
+  return SUBJECT.test(agent) || [...new Set(checkIds)].some((id) => namedAt(agent, id) !== null);
+}
 function sentenceStatesCheckRunsTests(sentence, checkIds) {
+  if (sentenceStatesTestsRunByCheck(sentence, checkIds)) return true;
   const subjects = [];
   const generic2 = SUBJECT.exec(sentence);
   if (generic2 !== null) subjects.push({ index: generic2.index, end: generic2.index + generic2[0].length });
@@ -50979,7 +50992,7 @@ function unknownNamedChecks(statement, checkIds) {
   }
   return unknown;
 }
-var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
@@ -50990,6 +51003,7 @@ var init_fail_before_statements = __esm({
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
     TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
+    PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
       "a",
