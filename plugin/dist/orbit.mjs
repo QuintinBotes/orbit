@@ -55202,7 +55202,9 @@ async function runUiChecks(input) {
             clock,
             pollMs: input.appPollMs,
             hostEnv: input.hostEnv,
-            stopWhen: appNodeDenialWatch(appStart, tmpDir)
+            // An aborted run stops an application that is not ready yet at its next look, rather than leaving it to wait
+            // out its ready timeout (the fail-before ui probe aborts a run that outlives its bound, ADR 0016).
+            stopWhen: /* @__PURE__ */ ((denial) => (exited) => input.abortSignal?.aborted ? "the run was aborted" : denial(exited))(appNodeDenialWatch(appStart, tmpDir))
           });
         } catch (err) {
           if (err instanceof OrbitError && (err.code === "ISOLATION_UNAVAILABLE" || err.code === "POLICY_DENIED")) throw err;
