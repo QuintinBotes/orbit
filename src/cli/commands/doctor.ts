@@ -10,7 +10,7 @@ import { accessSync, constants, existsSync, mkdtempSync, readFileSync, realpathS
 import { randomInt } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, isAbsolute, join, resolve, sep } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
 import { redact } from '../../core/redact.ts';
@@ -301,6 +301,21 @@ function checkWord(check: OrbitConfig['checks'][string]): string | null {
   return check.command[0] ?? null;
 }
 
+/** How doctor describes a check's executable that only the dependency install can supply (the summary counts these). */
+const FROM_INSTALL = 'is not in the checkout; dependencies.install_command may create it there before the checks run (doctor does not run the install, so if it does not, a run blocks at its baseline)';
+
+/**
+ * Whether a check's executable that doctor did not find may come from the configured dependency install: a relative path
+ * inside the repository (.venv/bin/python), with dependencies.install_command set. A run installs into its checkout before
+ * any check, so doctor, which does not run the install, cannot know and only warns (the 0.3.1 retest failed a valid venv
+ * check). A bare name, an absolute path or one outside the repository is not the install's.
+ */
+function installMayCreate(word: string, cwd: string, repo: string | null, config: OrbitConfig): boolean {
+  if (!repo || !config.dependencies.install_command?.length || isAbsolute(word) || !word.includes('/')) return false;
+  const target = resolve(cwd, word);
+  return target.startsWith(repo.endsWith(sep) ? repo : repo + sep);
+}
+
 const SHELL_BUILTINS = new Set(['cd', 'export', 'set', 'test', '[', 'true', 'false', 'echo', 'exit', 'exec', ':', 'source', '.', 'eval', 'unset']);
 
 function checkConfiguredChecks(p: Probe): DoctorCheck {
@@ -326,6 +341,11 @@ function checkConfiguredChecks(p: Probe): DoctorCheck {
       continue;
     }
     const found = which(word, ctx.env, cwd) ?? (repo && !word.includes('/') ? which(join(repo, 'node_modules', '.bin', word), ctx.env) : null);
+    if (!found && installMayCreate(word, cwd, repo, config)) {
+      details.push(`${c.id}: "${word}" ${FROM_INSTALL}`);
+      bump('warn');
+      continue;
+    }
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? '' : ' (optional check)'}${c.cwd !== '.' ? ` (cwd ${c.cwd})` : ''}`);
       bump(level);
@@ -349,7 +369,12 @@ function checkConfiguredChecks(p: Probe): DoctorCheck {
     }
     details.push(`${c.id}: ${word} -> ${found}`);
   }
-  const summary = status === 'pass' ? `${entries.length} check(s) resolve` : `${details.filter((d) => /not found|not defined|no command/.test(d)).length} of ${entries.length} check(s) cannot run`;
+  const cannot = details.filter((d) => /not found|not defined|no command/.test(d)).length;
+  const fromInstall = details.filter((d) => d.endsWith(FROM_INSTALL)).length;
+  if (status !== 'pass' && cannot === 0 && fromInstall > 0) {
+    return { id: 'checks', area: 'checks', status, summary: `${fromInstall} of ${entries.length} check(s) run an executable only dependencies.install_command can create`, details, missing: 'nothing doctor can see: the executable is created by dependencies.install_command in a run\'s checkout', fix: 'make sure dependencies.install_command creates it; to see it here, run the install in this checkout' };
+  }
+  const summary = status === 'pass' ? `${entries.length} check(s) resolve` : `${cannot} of ${entries.length} check(s) cannot run`;
   return status === 'pass' ? pass('checks', 'checks', summary, details) : { id: 'checks', area: 'checks', status, summary, details, missing: 'the executable or script a configured check runs', fix: 'install it, or correct the check in .orbit/config.yaml' };
 }
 

@@ -527,9 +527,9 @@ var init_redact = __esm({
         hintRe: KEYWORD_HINT,
         re: new RegExp(String.raw`(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]{0,64}?${KEYWORDS})\1([ \t]*[:=][ \t]*)(${DQ}|${SQ})`, "gi"),
         replace: (m, g) => {
-          const [q, key2, sep15, value] = g;
+          const [q, key2, sep16, value] = g;
           if (isLiteralPlaceholder(value.slice(1, -1))) return m;
-          return `${q}${key2}${q}${sep15}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
+          return `${q}${key2}${q}${sep16}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
         }
       },
       {
@@ -9828,10 +9828,10 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   let offset = bm.offset;
   let commentEnd = null;
   for (const collItem of bm.items) {
-    const { start, key: key2, sep: sep15, value } = collItem;
+    const { start, key: key2, sep: sep16, value } = collItem;
     const keyProps = resolveProps(start, {
       indicator: "explicit-key-ind",
-      next: key2 ?? sep15?.[0],
+      next: key2 ?? sep16?.[0],
       offset,
       onError,
       parentIndent: bm.indent,
@@ -9845,7 +9845,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         else if ("indent" in key2 && key2.indent !== bm.indent)
           onError(offset, "BAD_INDENT", startColMsg);
       }
-      if (!keyProps.anchor && !keyProps.tag && !sep15) {
+      if (!keyProps.anchor && !keyProps.tag && !sep16) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
           if (map2.comment)
@@ -9869,7 +9869,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
     ctx.atKey = false;
     if (mapIncludes(ctx, map2.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    const valueProps = resolveProps(sep15 ?? [], {
+    const valueProps = resolveProps(sep16 ?? [], {
       indicator: "map-value-ind",
       next: value,
       offset: keyNode.range[2],
@@ -9885,7 +9885,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
           onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep15, null, valueProps, onError);
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep16, null, valueProps, onError);
       if (ctx.schema.compat)
         flowIndentCheck(bm.indent, value, onError);
       offset = valueNode.range[2];
@@ -9980,7 +9980,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
     let hasSpace = false;
-    let sep15 = "";
+    let sep16 = "";
     for (const token of end) {
       const { source, type } = token;
       switch (type) {
@@ -9994,13 +9994,13 @@ function resolveEnd(end, offset, reqSpace, onError) {
           if (!comment)
             comment = cb;
           else
-            comment += sep15 + cb;
-          sep15 = "";
+            comment += sep16 + cb;
+          sep16 = "";
           break;
         }
         case "newline":
           if (comment)
-            sep15 += source;
+            sep16 += source;
           hasSpace = true;
           break;
         default:
@@ -10031,18 +10031,18 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   let offset = fc.offset + fc.start.source.length;
   for (let i = 0; i < fc.items.length; ++i) {
     const collItem = fc.items[i];
-    const { start, key: key2, sep: sep15, value } = collItem;
+    const { start, key: key2, sep: sep16, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
       indicator: "explicit-key-ind",
-      next: key2 ?? sep15?.[0],
+      next: key2 ?? sep16?.[0],
       offset,
       onError,
       parentIndent: fc.indent,
       startOnNewline: false
     });
     if (!props.found) {
-      if (!props.anchor && !props.tag && !sep15 && !value) {
+      if (!props.anchor && !props.tag && !sep16 && !value) {
         if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
         else if (i < fc.items.length - 1)
@@ -10096,8 +10096,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         }
       }
     }
-    if (!isMap2 && !sep15 && !props.found) {
-      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep15, null, props, onError);
+    if (!isMap2 && !sep16 && !props.found) {
+      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep16, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
       if (isBlock(value))
@@ -10109,7 +10109,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       if (isBlock(key2))
         onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
       ctx.atKey = false;
-      const valueProps = resolveProps(sep15 ?? [], {
+      const valueProps = resolveProps(sep16 ?? [], {
         flow: fcName,
         indicator: "map-value-ind",
         next: value,
@@ -10120,8 +10120,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       });
       if (valueProps.found) {
         if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep15)
-            for (const st of sep15) {
+          if (sep16)
+            for (const st of sep16) {
               if (st === valueProps.found)
                 break;
               if (st.type === "newline") {
@@ -10138,7 +10138,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         else
           onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep15, null, valueProps, onError) : null;
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep16, null, valueProps, onError) : null;
       if (valueNode) {
         if (isBlock(value))
           onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -10324,7 +10324,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       chompStart = i + 1;
   }
   let value = "";
-  let sep15 = "";
+  let sep16 = "";
   let prevMoreIndented = false;
   for (let i = 0; i < contentStart; ++i)
     value += lines[i][0].slice(trimIndent) + "\n";
@@ -10341,24 +10341,24 @@ function resolveBlockScalar(ctx, scalar, onError) {
       indent = "";
     }
     if (type === Scalar.BLOCK_LITERAL) {
-      value += sep15 + indent.slice(trimIndent) + content;
-      sep15 = "\n";
+      value += sep16 + indent.slice(trimIndent) + content;
+      sep16 = "\n";
     } else if (indent.length > trimIndent || content[0] === "	") {
-      if (sep15 === " ")
-        sep15 = "\n";
-      else if (!prevMoreIndented && sep15 === "\n")
-        sep15 = "\n\n";
-      value += sep15 + indent.slice(trimIndent) + content;
-      sep15 = "\n";
+      if (sep16 === " ")
+        sep16 = "\n";
+      else if (!prevMoreIndented && sep16 === "\n")
+        sep16 = "\n\n";
+      value += sep16 + indent.slice(trimIndent) + content;
+      sep16 = "\n";
       prevMoreIndented = true;
     } else if (content === "") {
-      if (sep15 === "\n")
+      if (sep16 === "\n")
         value += "\n";
       else
-        sep15 = "\n";
+        sep16 = "\n";
     } else {
-      value += sep15 + content;
-      sep15 = " ";
+      value += sep16 + content;
+      sep16 = " ";
       prevMoreIndented = false;
     }
   }
@@ -10538,25 +10538,25 @@ function unfoldLines(source) {
     trimBoth = /^[ \t]+|[ \t]+$/g;
   }
   let res = match[1].replace(trimEnd, "");
-  let sep15 = " ";
+  let sep16 = " ";
   let pos = line3.lastIndex;
   while (match = line3.exec(source)) {
     const lm = match[1].replace(trimBoth, "");
     if (lm === "") {
-      if (sep15 === "\n")
-        res += sep15;
+      if (sep16 === "\n")
+        res += sep16;
       else
-        sep15 = "\n";
+        sep16 = "\n";
     } else {
-      res += sep15 + lm;
-      sep15 = " ";
+      res += sep16 + lm;
+      sep16 = " ";
     }
     pos = line3.lastIndex;
   }
   const last = /[ \t]*(.*)/sy;
   last.lastIndex = pos;
   match = last.exec(source);
-  return res + sep15 + (match?.[1] ?? "");
+  return res + sep16 + (match?.[1] ?? "");
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
@@ -12267,18 +12267,18 @@ var init_parser = __esm({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep15;
+          let sep16;
           if (scalar.end) {
-            sep15 = scalar.end;
-            sep15.push(this.sourceToken);
+            sep16 = scalar.end;
+            sep16.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep15 = [this.sourceToken];
+            sep16 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep15 }]
+            items: [{ start, key: scalar, sep: sep16 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -12431,15 +12431,15 @@ var init_parser = __esm({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key2 = it.key;
-                  const sep15 = it.sep;
-                  sep15.push(this.sourceToken);
+                  const sep16 = it.sep;
+                  sep16.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key: key2, sep: sep15 }]
+                    items: [{ start: start2, key: key2, sep: sep16 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -12633,13 +12633,13 @@ var init_parser = __esm({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep15 = fc.end.splice(1, fc.end.length);
-            sep15.push(this.sourceToken);
+            const sep16 = fc.end.splice(1, fc.end.length);
+            sep16.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep15 }]
+              items: [{ start, key: fc, sep: sep16 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -27661,10 +27661,10 @@ function shimArgs(opts) {
   return [...out, "--", ...opts.argv];
 }
 function parseShimArgs(args) {
-  const sep15 = args.indexOf("--");
-  if (sep15 === -1 || sep15 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep15);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep15 + 1) };
+  const sep16 = args.indexOf("--");
+  if (sep16 === -1 || sep16 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep16);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep16 + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i];
     const value = opts[i + 1];
@@ -67862,7 +67862,7 @@ import { accessSync as accessSync3, constants as constants5, existsSync as exist
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir14 } from "node:os";
-import { delimiter as delimiter5, isAbsolute as isAbsolute25, join as join78, resolve as resolve24 } from "node:path";
+import { delimiter as delimiter5, isAbsolute as isAbsolute25, join as join78, resolve as resolve24, sep as sep15 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -68043,6 +68043,11 @@ function checkWord2(check) {
   }
   return check.command[0] ?? null;
 }
+function installMayCreate(word, cwd, repo, config) {
+  if (!repo || !config.dependencies.install_command?.length || isAbsolute25(word) || !word.includes("/")) return false;
+  const target = resolve24(cwd, word);
+  return target.startsWith(repo.endsWith(sep15) ? repo : repo + sep15);
+}
 function checkConfiguredChecks(p) {
   const { repo, config, ctx } = p;
   const entries = Object.values(config.checks);
@@ -68066,6 +68071,11 @@ function checkConfiguredChecks(p) {
       continue;
     }
     const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join78(repo, "node_modules", ".bin", word), ctx.env) : null);
+    if (!found && installMayCreate(word, cwd, repo, config)) {
+      details.push(`${c.id}: "${word}" ${FROM_INSTALL}`);
+      bump("warn");
+      continue;
+    }
     if (!found) {
       details.push(`${c.id}: "${word}" was not found${c.mandatory ? "" : " (optional check)"}${c.cwd !== "." ? ` (cwd ${c.cwd})` : ""}`);
       bump(level);
@@ -68088,7 +68098,12 @@ function checkConfiguredChecks(p) {
     }
     details.push(`${c.id}: ${word} -> ${found}`);
   }
-  const summary = status2 === "pass" ? `${entries.length} check(s) resolve` : `${details.filter((d) => /not found|not defined|no command/.test(d)).length} of ${entries.length} check(s) cannot run`;
+  const cannot = details.filter((d) => /not found|not defined|no command/.test(d)).length;
+  const fromInstall = details.filter((d) => d.endsWith(FROM_INSTALL)).length;
+  if (status2 !== "pass" && cannot === 0 && fromInstall > 0) {
+    return { id: "checks", area: "checks", status: status2, summary: `${fromInstall} of ${entries.length} check(s) run an executable only dependencies.install_command can create`, details, missing: "nothing doctor can see: the executable is created by dependencies.install_command in a run's checkout", fix: "make sure dependencies.install_command creates it; to see it here, run the install in this checkout" };
+  }
+  const summary = status2 === "pass" ? `${entries.length} check(s) resolve` : `${cannot} of ${entries.length} check(s) cannot run`;
   return status2 === "pass" ? pass("checks", "checks", summary, details) : { id: "checks", area: "checks", status: status2, summary, details, missing: "the executable or script a configured check runs", fix: "install it, or correct the check in .orbit/config.yaml" };
 }
 function isolationFix(kind, detail) {
@@ -68688,7 +68703,7 @@ function renderDoctorReport(report2, verbose = false) {
   return `${lines.join("\n")}
 `;
 }
-var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, SHELL_BUILTINS2, SRT_INSTALL, launchWrapped2;
+var DOCTOR_OPTIONS, MIN_NODE, MIN_GIT, FROM_INSTALL, SHELL_BUILTINS2, SRT_INSTALL, launchWrapped2;
 var init_doctor = __esm({
   "src/cli/commands/doctor.ts"() {
     "use strict";
@@ -68736,6 +68751,7 @@ var init_doctor = __esm({
     };
     MIN_NODE = "22.16.0";
     MIN_GIT = "2.31.0";
+    FROM_INSTALL = "is not in the checkout; dependencies.install_command may create it there before the checks run (doctor does not run the install, so if it does not, a run blocks at its baseline)";
     SHELL_BUILTINS2 = /* @__PURE__ */ new Set(["cd", "export", "set", "test", "[", "true", "false", "echo", "exit", "exec", ":", "source", ".", "eval", "unset"]);
     SRT_INSTALL = "npm install --global @anthropic-ai/sandbox-runtime";
     launchWrapped2 = async (argv2, opts) => {
