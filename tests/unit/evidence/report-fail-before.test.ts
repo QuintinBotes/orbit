@@ -95,6 +95,44 @@ describe('fail-before statement wording', () => {
   it('statesCheckRunsTests returns the named whole-word check ids, or null for other assumptions', () => {
     const ids = ['unit-tests', 'lint'];
     expect(statesCheckRunsTests('The unit-tests check runs pytest over tests/ with src on the path', ids)).toEqual(['unit-tests']);
+    // The third 0.3.1 retest's audit: the passive form slipped past the rule ("The pytest suite is run by the unit-tests
+    // check with src on the path" stayed unverified with no probe-derived reason).
+    expect(statesCheckRunsTests('The pytest suite is run by the unit-tests check with src on the path', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests are run by the unit-tests check', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests are collected by the test runner', ids)).toEqual([]);
+    // A negated passive, and tests run by something that is no check, are not this statement.
+    expect(statesCheckRunsTests('The new tests are not run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI every night', ids)).toBeNull();
+    // A review of the passive form: a negation before a compound auxiliary, and a check in a later clause, are not it.
+    expect(statesCheckRunsTests('The new tests will not be run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests have not been collected by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests cannot be executed by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI after the lint check passes', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI, and the lint check runs eslint', ids)).toBeNull();
+    // Two agents joined in one clause: the check is one of the agents.
+    expect(statesCheckRunsTests('The new tests are run by CI and the unit-tests check', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests are run by the unit-tests check or the test runner', ids)).toEqual(['unit-tests']);
+    // A check after "and" with a verb of its own starts a new clause, comma or not.
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check runs eslint', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check passes', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the unit-tests check with coverage', ids)).toEqual(['unit-tests']);
+    // Only nothing, or a preposition, may follow a joined agent's name; any verb, with or without an adverb, starts a clause.
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check only runs eslint', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI and the lint check validates formatting', ids)).toBeNull();
+    // Contracted negations, straight or curly.
+    expect(statesCheckRunsTests("The new tests couldn't be run by the lint check", ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests wouldn’t be run by the lint check', ids)).toBeNull();
+    // A negative subject, and a check that is mentioned but is no agent.
+    expect(statesCheckRunsTests('No tests are run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('None of the new tests are run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('Neither test is run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The new tests are run by CI without the lint check', ids)).toBeNull();
+    // The passive verb must belong to the tests, not to another clause; a later mention of the tests can still be it.
+    expect(statesCheckRunsTests('The tests pass locally and ESLint is run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The tests start after ESLint is run by the lint check', ids)).toBeNull();
+    expect(statesCheckRunsTests('The test files under tests/ are collected by the unit-tests check', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('The new tests in tests/unit are run by the unit-tests check', ids)).toEqual(['unit-tests']);
+    expect(statesCheckRunsTests('Old tests pass, and the new tests are run by the unit-tests check', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The unit-tests check discovers tests/test_pricing.py and can import shop from src', ids)).toEqual(['unit-tests']);
     expect(statesCheckRunsTests('The check runs the new tests', ids)).toEqual([]);
     expect(statesCheckRunsTests('The test runner collects the new tests', ids)).toEqual([]);
@@ -370,6 +408,28 @@ describe('fail_before per criterion, by mode', () => {
     const noInput = judge('advisory', null, { contract: inputs });
     expect(noInput.report.assumptions).toEqual([{ assumption_id: 'AS-1', statement: FLAGGED_ASSUMPTION.statement, status: 'unverified', reason: 'no probe ran for unit', checks: ['unit'] }]);
     expect(noInput.report.verdict).toBe('PASS');
+  });
+
+  it('a passive assumption that a check runs the new tests is decided by the probe as an active one is', () => {
+    const passive = { id: 'AS-1', statement: 'The pytest suite is run by the unit check with src on the path', status: 'unverified' as const };
+    const inputs = withAssumptions(passive);
+    const supported = judge('advisory', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+    expect(supported.report.assumptions).toEqual([expect.objectContaining({ assumption_id: 'AS-1', status: 'supported', checks: ['unit'] })]);
+    const passed = judge('advisory', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
+    expect(passed.report.assumptions).toEqual([expect.objectContaining({ assumption_id: 'AS-1', status: 'unverified' })]);
+    expect(passed.report.verdict).toBe('PASS');
+    expect(passed.report.unverified).toContain('assumption AS-1: unverified (unit: passed-before (unit passed on the base revision with the new tests))');
+    const required = judge('required', { probe: probe(PASSED_BEFORE), skipped: null, accepted: [] }, { contract: inputs });
+    expect(required.report.verdict).not.toBe('PASS');
+  });
+
+  it('an ordinary assumption that only mentions a check is not flagged, so a required run with passing evidence stays PASS', () => {
+    for (const statement of ['The new tests will not be run by the lint check', 'The new tests are run by CI after the lint check passes', 'Neither test is run by the lint check']) {
+      const inputs = withAssumptions({ id: 'AS-1', statement, status: 'unverified' as const });
+      const e = judge('required', { probe: probe({}), skipped: null, accepted: [] }, { contract: inputs });
+      expect(e.report.assumptions, statement).toBeUndefined();
+      expect(e.report.verdict, statement).toBe('PASS');
+    }
   });
 
   it('a flagged assumption that names no check uses every check the probe ran', () => {

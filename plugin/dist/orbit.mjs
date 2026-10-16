@@ -50939,6 +50939,33 @@ function namedCheckIds(text2, checkIds) {
     return at === null ? [] : [{ id, index: at.index }];
   }).sort((a, b) => a.index - b.index).map((x) => x.id);
 }
+function sentenceTestsRunByChecks(sentence, checkIds) {
+  for (const object of sentence.matchAll(new RegExp(TEST_OBJECT.source, "gi"))) {
+    const named2 = testsRunByChecksFrom(sentence, object.index + object[0].length, checkIds);
+    if (named2 !== null) return named2;
+  }
+  return null;
+}
+function testsRunByChecksFrom(sentence, from, checkIds) {
+  const rest = sentence.slice(from);
+  const verb2 = PASSIVE_RUN.exec(rest);
+  if (verb2 === null || !SUBJECT_GAP.test(rest.slice(0, verb2.index))) return null;
+  const upToParticiple = sentence.slice(0, from + verb2.index + verb2[0].length);
+  if (new RegExp(String.raw`\b(?:${NEGATION}|no|none|neither|nor|nothing|nobody|nowhere)\b`, "i").test(upToParticiple)) return null;
+  const agents = PASSIVE_AGENTS.exec(rest.slice(verb2.index + verb2[0].length));
+  if (agents === null) return null;
+  const ids = [...new Set(checkIds)];
+  const named2 = [];
+  let aCheck = false;
+  for (const element2 of agents[1].split(/\s*,?\s+(?:and|or)\s+/i).map((e) => e.trim())) {
+    const id = ids.find((x) => new RegExp(String.raw`^(?:the\s+)?${escapeRegExp3(x)}(?:\s+checks?)?$`, "i").test(element2));
+    if (id !== void 0) {
+      if (!named2.includes(id)) named2.push(id);
+      aCheck = true;
+    } else if (CHECK_AGENT.test(element2)) aCheck = true;
+  }
+  return aCheck ? named2 : null;
+}
 function sentenceStatesCheckRunsTests(sentence, checkIds) {
   const subjects = [];
   const generic2 = SUBJECT.exec(sentence);
@@ -50956,7 +50983,13 @@ function sentenceStatesCheckRunsTests(sentence, checkIds) {
   return TEST_OBJECT.test(sentence.slice(subject.end + verb2.index + verb2[0].length));
 }
 function statesCheckRunsTests(statement, checkIds) {
-  return sentences(statement).some((s) => sentenceStatesCheckRunsTests(s, checkIds)) ? namedCheckIds(statement, checkIds) : null;
+  const all = sentences(statement);
+  if (all.some((s) => sentenceStatesCheckRunsTests(s, checkIds))) return namedCheckIds(statement, checkIds);
+  for (const s of all) {
+    const named2 = sentenceTestsRunByChecks(s, checkIds);
+    if (named2 !== null) return named2;
+  }
+  return null;
 }
 function unknownNamedChecks(statement, checkIds) {
   const configured = new Set([...checkIds].map((id) => id.toLowerCase()));
@@ -50979,17 +51012,23 @@ function unknownNamedChecks(statement, checkIds) {
   }
   return unknown;
 }
-var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
+var LOCUS, FAIL_VERB, NEGATION, PASS_VERB, SUBJECT, RUN_VERB, TEST_OBJECT, PASSIVE_RUN, AGENT_ELEMENT, AFTER_AGENTS, PASSIVE_AGENTS, CHECK_AGENT, SUBJECT_GAP, NOT_CHECK_NAMES, AFTER_CHECK_VERBS;
 var init_fail_before_statements = __esm({
   "src/evidence/fail-before-statements.ts"() {
     "use strict";
     LOCUS = String.raw`(?:(?:on|against)\s+(?:the\s+)?base revision|before\s+(?:the|this)\s+(?:change|fix)|without\s+(?:the|this)\s+change)`;
     FAIL_VERB = String.raw`(?:fails?|failing|failed)`;
-    NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not)`;
+    NEGATION = String.raw`(?:does\s+not|doesn['’]t|do\s+not|don['’]t|did\s+not|didn['’]t|is\s+not|isn['’]t|are\s+not|aren['’]t|was\s+not|wasn['’]t|were\s+not|weren['’]t|has\s+not|hasn['’]t|have\s+not|haven['’]t|will\s+not|won['’]t|cannot|can['’]t|should\s+not|shouldn['’]t|must\s+not|never|no\s+longer|not|[A-Za-z]+n['’]t)`;
     PASS_VERB = /\bpass(?:es|ed|ing)?\b/i;
     SUBJECT = /\bchecks?\b|\btest[-\s]+command\b|\btest[-\s]+runner\b/i;
     RUN_VERB = /\b(?:runs?|running|discovers?|discovering|collects?|collecting|executes?|executing|picks?\s+up|picking\s+up|finds?|finding|imports?|importing)\b/i;
     TEST_OBJECT = /\btests?\b|test_[a-z0-9_]|[a-z0-9_]+_test\b|\.test\.|\bpytest\b/i;
+    PASSIVE_RUN = /\b(?:is|are|was|were|be|been|being|gets?|got)\s+(?:run|executed|collected|discovered|picked\s+up|found|imported)\b/i;
+    AGENT_ELEMENT = String.raw`(?:the\s+)?[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*){0,2}`;
+    AFTER_AGENTS = String.raw`(?=\s*(?:$|[,;:.]|\b(?:with|on|in|for|using|over|under|at|from|via|through|against|after|when|whenever|once|before|while|if|because|until|unless|since|so|then|where)\b))`;
+    PASSIVE_AGENTS = new RegExp(String.raw`^\s*by\s+(${AGENT_ELEMENT}(?:\s*,?\s+(?:and|or)\s+${AGENT_ELEMENT})*)${AFTER_AGENTS}`, "i");
+    CHECK_AGENT = /^(?:the\s+)?(?:[A-Za-z0-9][A-Za-z0-9._-]*\s+)?(?:checks?|test[-\s]+command|test[-\s]+runner)$/i;
+    SUBJECT_GAP = /^\s+(?:(?:suite|suites|files?|cases?|modules?|specs?)\s+)?(?:(?:in|under|from|of)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s+)?$/i;
     NOT_CHECK_NAMES = /* @__PURE__ */ new Set([
       "the",
       "a",

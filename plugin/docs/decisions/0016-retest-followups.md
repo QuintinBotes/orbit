@@ -61,6 +61,16 @@ run (the result is reused by tree), and a failure is the new journeys' only when
 app or the browser to start, or any process that never reached the repository's code, is an environment cause and
 establishes nothing. It adds one browser run per candidate (two when it fails) and one control run per run.
 
+## Limits
+
+The wording that selects a statement for item 1 is a strict grammar, on purpose: the active form ("the unit-tests
+check runs the new tests") and one passive shape ("the pytest suite is run by the unit-tests check": the tests, a form
+of be or get with the participle, "by", then short agents of which one is a check). Adversarial reviews found a looser
+match flagging ordinary sentences ("run by CI without the lint check", "The tests start after ESLint is run by the
+lint check"), which under `required` would block a valid run for want of a probe of that check. A phrasing the grammar
+misses keeps the planner's own status, as every release before 0.3.1 did, and the planner's brief still forbids such
+assumptions; a negated statement is never selected.
+
 ## Consequences
 
 - A run whose planner writes a fail-before statement succeeds in advisory mode with it supported or listed as a
