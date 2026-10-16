@@ -33,9 +33,9 @@
     "test:coverage": "vitest run --coverage && node scripts/check-coverage-floor.mjs"
   },
   "devDependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.78",
+    "@anthropic-ai/sandbox-runtime": "^0.0.79",
     "@axe-core/playwright": "^4.13.0",
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.64.0",
     "@types/node": "^22.10.0",
     "@types/picomatch": "^4.0.3",
     "@vitest/coverage-v8": "^5.0.3",
