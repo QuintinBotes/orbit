@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `/orbit:inquisition` without a run no longer promises a record it does not keep (#95). Its description said it records the decisions the person gives, but with no run the grill stayed in the conversation and the summary was lost when the session ended. The description now promises recording only when a run is attached, and once the person is satisfied the skill offers to write the decisions (with evidence), the assumptions left unverified and the remaining questions to a Markdown file at a path the person chooses, only with their agreement and never over an existing file. The `/orbit:run` it then offers carries the decisions and unverified assumptions in the sharpened goal.
+
 ## 0.3.1 (2026-10-16)
 
 - Each reviewer is told the tools it really has (ADR 0016). On the second 0.3.1 retest every demo goal ended `EXHAUSTED`: a packet-only approval started the tree's fresh review, and the Codex reviewer, told by the shared role prompt "You have no shell; use Read, Grep and Glob" (tools only the Claude CLI has), looked for them through MCP tool discovery, opened nothing, and blocked with a finding no repair could answer. That prompt is also why Codex reviews never made a tool call. The role prompt now names no tools; the review task names the provider's own (read-only shell commands for Codex, Read, Grep and Glob for Claude); and a Codex review's depth counts only completed commands, so tool discovery is not an inspection and such a review blocks the run with "the review inspected nothing" instead of looping through repair.
