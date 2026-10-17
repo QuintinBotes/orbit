@@ -238,7 +238,10 @@ goal `Repair: <description>`.
 Orbit Inquisition is not a command. The controller runs it for unclear goals,
 weak evidence and repeated failures, and `/orbit:inquisition` runs it
 interactively inside Claude Code. Questions it persists appear in
-`orbit questions` and are answered with `orbit decide`.
+`orbit questions` and are answered with `orbit decide`. Without a run,
+`/orbit:inquisition` records nothing in Orbit; it can end by writing its
+decisions, unverified assumptions and remaining questions to a Markdown file
+the person chooses, if they agree.
 
 A choice the Inquisition will not make on its own (a decision it refused, a
 hidden decision, sources of equal authority that disagree) is recorded in the

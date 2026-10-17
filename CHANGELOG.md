@@ -4,6 +4,7 @@
 
 - Tests: the .NET runner test whose stand-in MSBuild records a denied node now prints its restore line before it writes that record, as MSBuild does. The runner stops a check as soon as it sees the record, so on a loaded CI runner it stopped the check between the two and the log held no check output (once, on main). No change to Orbit itself.
 - Tests: the container test that kills `docker run` with SIGKILL kills it once its container reports that it runs, not after a fixed 2.5 s (#61). On a loaded engine docker had not yet created the container when the kill came, so the test found none (6 of 200 local runs). A second case runs the same test against a docker that holds `docker run` for 4 s: it failed with the fixed wait and passes now. No change to Orbit itself.
+- `/orbit:inquisition` without a run no longer promises a record it does not keep (#95). Its description said it records the decisions the person gives, but with no run the grill stayed in the conversation and the summary was lost when the session ended. The description now promises recording only when a run is attached, and once the person is satisfied the skill offers to write the decisions (with evidence), the assumptions left unverified and the remaining questions to a Markdown file at a path the person chooses, only with their agreement and never over an existing file. The `/orbit:run` it then offers carries the decisions and unverified assumptions in the sharpened goal.
 
 ## 0.3.1 (2026-10-16)
 
