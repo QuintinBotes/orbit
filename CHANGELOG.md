@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `orbit init` advises committing `.orbit/config.yaml` whenever git does not track it, not only right after writing it (#96). In one repository the config stayed untracked for over a week with nothing to point it out, since Orbit's clean-tree checks exclude `.orbit`. A tracked config gets no advice; one that git ignores gets a line saying so and how to find the rule (`git check-ignore -v .orbit/config.yaml`) instead. `--json` carries the advice in `config.commit_advice` for a new and an existing config alike. `/orbit:init` relays it and offers to commit that one file, only if the person agrees. The exclude rules and what init writes are unchanged.
+
 ## 0.3.1 (2026-10-16)
 
 - Each reviewer is told the tools it really has (ADR 0016). On the second 0.3.1 retest every demo goal ended `EXHAUSTED`: a packet-only approval started the tree's fresh review, and the Codex reviewer, told by the shared role prompt "You have no shell; use Read, Grep and Glob" (tools only the Claude CLI has), looked for them through MCP tool discovery, opened nothing, and blocked with a finding no repair could answer. That prompt is also why Codex reviews never made a tool call. The role prompt now names no tools; the review task names the provider's own (read-only shell commands for Codex, Read, Grep and Glob for Claude); and a Codex review's depth counts only completed commands, so tool discovery is not an inspection and such a review blocks the run with "the review inspected nothing" instead of looping through repair.

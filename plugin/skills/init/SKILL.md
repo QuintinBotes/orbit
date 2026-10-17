@@ -35,8 +35,16 @@ write into the main checkout's git directory. Offer to help edit `.orbit/config.
 
 Relay any warning that no scope or checks were derived, including the reason,
 the example scope paths that must be edited, and the marker files init looked
-for. When the config was created, also relay this line:
-".orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed."
+for. Whenever git does not track `.orbit/config.yaml`, including a config that
+already existed, `init` prints a line about committing it: relay it as printed.
+Once the person has reviewed the file, offer to commit it, and commit only if
+they agree, with only that file so nothing else they staged goes in:
+`git add -- .orbit/config.yaml`, then
+`git commit -m "<message>" -- .orbit/config.yaml`.
+When `init` says git ignores the file, do not force-add it: pass on how to find
+the rule, `git check-ignore -v .orbit/config.yaml`, and leave changing it to the
+person. Never add `.orbit/` to `.gitignore` to quiet `git status`, since that
+hides the policy.
 
 ## The background service
 
