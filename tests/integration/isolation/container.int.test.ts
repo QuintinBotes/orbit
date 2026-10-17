@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContainerIsolation } from '../../../src/isolation/container.ts';
 import type { SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
+import { which } from '../../../src/isolation/util.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped, type RunResult } from './run.ts';
 
@@ -29,6 +30,9 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
   const t = status.ok ? tempRoot('orbit-docker-int-') : { root: '/nonexistent-orbit-test', remove: () => {} };
   const worktree = join(t.root, 'wt');
   const readonlyDir = join(t.root, 'repo-git');
+  // An engine slower to create a container than any fixed wait in a test: its docker holds `docker run` for 4 s.
+  const slowDocker = join(t.root, 'slow-docker');
+  const slowProvider = new ContainerIsolation({ image: IMAGE, labels: { 'orbit.test': 'isolation' }, dockerPath: slowDocker });
   const wraps: WrappedCommand[] = [];
   const base: SandboxProfile = {
     writablePaths: [worktree],
@@ -44,6 +48,7 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     writeFileSync(join(worktree, 'input.txt'), 'from host\n');
     mkdirSync(readonlyDir);
     writeFileSync(join(readonlyDir, 'HEAD'), 'ref: refs/heads/main\n');
+    writeFileSync(slowDocker, `#!/bin/sh\n[ "$1" = run ] && sleep 4\nexec ${JSON.stringify(which('docker', process.env.PATH))} "$@"\n`, { mode: 0o755 });
   });
 
   afterAll(() => {
@@ -51,8 +56,8 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     t.remove();
   });
 
-  function wrap(argv: string[], profile: SandboxProfile = base, env: Record<string, string> = {}): WrappedCommand {
-    const w = provider.wrap(argv, profile, { cwd: worktree, env });
+  function wrap(argv: string[], profile: SandboxProfile = base, env: Record<string, string> = {}, p = provider): WrappedCommand {
+    const w = p.wrap(argv, profile, { cwd: worktree, env });
     wraps.push(w);
     return w;
   }
@@ -122,12 +127,20 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     expect(r.stdout).toBe('bar baz|/tmp|/tmp\n');
   });
 
-  it('removes a container its killed CLI left running', async () => {
-    const w = wrap(['sleep', '30']);
+  // The CLI is killed once its container says it runs, not after a fixed wait: on a loaded engine a 2.5 s kill came
+  // before docker had created the container, so there was nothing to find (issue #61).
+  for (const [engine, p, marker] of [['the engine', provider, 'started'], ['an engine slower than a fixed wait', slowProvider, 'started-slow']] as const) it(`removes a container its killed CLI left running, on ${engine}`, async () => {
+    const started = join(worktree, marker);
+    const w = wrap(['sh', '-c', `touch '${started}' && exec sleep 30`], base, {}, p);
     const docker = w.argv[0]!;
     const running = () => execFileSync(docker, ['ps', '-aq', '--filter', `name=^${(w as unknown as { containerName: string }).containerName}$`], { env: w.env, encoding: 'utf8' }).trim();
-    const done = runWrapped(w, worktree, { killAfterMs: 2_500, killSignal: 'SIGKILL' });
-    await done;
+    let pid = 0;
+    let ended = false;
+    const done = runWrapped(w, worktree, { onSpawn: (spawned) => (pid = spawned) }).finally(() => (ended = true));
+    while (!existsSync(started) && !ended) await new Promise((r) => setTimeout(r, 50));
+    if (ended) expect.fail(`docker run ended before its container started; its stderr: ${(await done).stderr.trim() || '(empty)'}`);
+    process.kill(-pid, 'SIGKILL');
+    expect((await done).signal).toBe('SIGKILL');
     // SIGKILL of the CLI does not stop the container (platform-runtime.md section 5).
     expect(running()).not.toBe('');
     w.cleanup();

@@ -41,6 +41,7 @@ Entry format:
 | Three tests flaky under full parallel load | tests | open G49 |
 | One writer per run; merge overhead not weighed | scheduler | open G14 |
 | Smaller items | various | open G4, G50 to G54 |
+| A container whose create was in flight when its CLI was killed outlives `cleanup()` | isolation | watch |
 
 Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G38, G41 to G45 and the six acceptance and fault-injection defects.
 
@@ -56,6 +57,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 | Live demo with real providers never run | demo | open G39 |
 
 ---
+
+### 2026-10-17: issue #61's bar on the container isolation test, and a cleanup race it exposed
+- Tested: `tests/integration/isolation/container.int.test.ts` 50 runs in a row in each of 4 parallel lanes on OrbStack (macOS), while two workers built and tested in other worktrees; then a probe that kills a real `docker run` at offsets from 0 to 3 s and calls `cleanup()` at once.
+- Went well: none of the 200 runs reproduced the failure #61 stays open for ("hides denied paths", where docker printed nothing on a CI runner); every other test passed every time.
+- Went wrong: "removes a container its killed CLI left running" failed 6 times in 200, all within the same two minutes of load: `expected '' not to be ''`, so no container of that name existed at all once the CLI was dead. Two of those runs left a container in the `created` state behind, created seconds before each failure ended.
+- Root cause: the test killed the CLI at a fixed 2.5 s and assumed the container existed by then; under load docker had not yet created it (other runs in the same window took 4 to 9 s). The probe found the window on an idle engine: killed about 30 to 120 ms after spawn, the CLI had sent the create but not seen it finish, and the daemon completed it after the CLI died. A `cleanup()` (`docker rm -f <name>`) that ran before that point removed nothing, and the container stayed `created` (2 of 2 at 30 ms). It never starts, so it runs nothing, but it keeps the check's environment and mounts in its configuration until something removes it.
+- Change: the test kills the CLI once its container has written a marker into the worktree, and runs a second time against a docker that holds `docker run` for 4 s, which failed with the fixed wait and passes now. Then 50 runs in a row in each of 4 lanes with 6 CPU burners: 200 of 200 passed, with no container left behind. The cleanup race is a product defect of low severity: watch, fix not decided.
 
 ### 2026-10-16: the second and third 0.3.1 retests
 - Tested: the same three journeys twice more on main, after the six ADR 0016 items landed (#90) and again after the fixes the second retest led to (#91, #92), each with an independent audit of the evidence.
