@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tests: the container test that kills `docker run` with SIGKILL kills it once its container reports that it runs, not after a fixed 2.5 s (#61). On a loaded engine docker had not yet created the container when the kill came, so the test found none (6 of 200 local runs). A second case runs the same test against a docker that holds `docker run` for 4 s: it failed with the fixed wait and passes now. No change to Orbit itself.
+
 ## 0.3.1 (2026-10-16)
 
 - Each reviewer is told the tools it really has (ADR 0016). On the second 0.3.1 retest every demo goal ended `EXHAUSTED`: a packet-only approval started the tree's fresh review, and the Codex reviewer, told by the shared role prompt "You have no shell; use Read, Grep and Glob" (tools only the Claude CLI has), looked for them through MCP tool discovery, opened nothing, and blocked with a finding no repair could answer. That prompt is also why Codex reviews never made a tool call. The role prompt now names no tools; the review task names the provider's own (read-only shell commands for Codex, Read, Grep and Glob for Claude); and a Codex review's depth counts only completed commands, so tool discovery is not an inspection and such a review blocks the run with "the review inspected nothing" instead of looping through repair.
