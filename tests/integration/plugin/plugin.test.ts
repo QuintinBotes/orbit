@@ -324,6 +324,21 @@ describe('skills call commands that exist', () => {
     expect(skillInvocations().some((c) => c.skill === 'inquisition' && c.text === 'questions <run-id>')).toBe(true);
   });
 
+  it('lets an inquisition without a run end in a decision record file (#95)', () => {
+    const HEADINGS = ['## Decisions (with evidence)', '## Assumptions left unverified', '## Remaining questions'];
+    const text = skillText('inquisition');
+    const noRun = text.slice(text.indexOf('With no run')).split(/^## /m)[0]!;
+    expect(noRun).toContain('decision record file');
+    expect(noRun).toContain('only if the person agrees');
+    for (const h of HEADINGS) expect(noRun, h).toContain(h);
+    expect(noRun).toContain('/orbit:run');
+    const reading = text.slice(text.indexOf('## Reading the result'));
+    for (const h of HEADINGS) expect(reading, h).toContain(h.slice(3));
+    const description = String(skillMeta('inquisition').description);
+    expect(description).toMatch(/only when a run is attached/);
+    expect(description).toMatch(/decision record/);
+  });
+
   it('names only real run states in the status skill', () => {
     const body = skillText('status').split('---').slice(2).join('---');
     expect(body).not.toMatch(/\b(RUNNING|DONE|FAILED)\b/);

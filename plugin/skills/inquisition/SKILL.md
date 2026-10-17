@@ -1,6 +1,6 @@
 ---
 name: inquisition
-description: Interactively grill a goal or plan with Orbit Inquisition. Asks the minimum high-leverage questions and records the decisions the person gives. Use to sharpen a goal before an Orbit run, or to answer the questions a blocked run is waiting on. Invoke as /orbit:inquisition.
+description: Interactively grill a goal or plan with Orbit Inquisition. Asks the minimum high-leverage questions. It records the decisions the person gives into a run only when a run is attached; without one it can end in a decision record file the person chooses. Use to sharpen a goal before an Orbit run, or to answer the questions a blocked run is waiting on. Invoke as /orbit:inquisition.
 argument-hint: "<goal-or-plan> [--run <run-id>]"
 ---
 # /orbit:inquisition
@@ -52,8 +52,12 @@ answers the person actually gave in this conversation. Never answer on their
 behalf, and never record a model or worker as the decider. When a BLOCKED run
 has no open questions left, point to `/orbit:resume <run-id>`.
 
-With no run, the grill stays in this conversation: work through the procedure above over the goal or plan text in the arguments, and nothing is recorded or started. Once the person is satisfied, offer `/orbit:run` with the sharpened goal.
+With no run, the grill stays in this conversation: work through the procedure above over the goal or plan text in the arguments. Nothing is started and nothing goes into Orbit's state. Once the person is satisfied:
+
+1. Offer to write the summary to a Markdown decision record file, and ask where. Suggest a tracked path such as `docs/decisions/<YYYY-MM-DD>-<slug>.md`, or one that follows the repository's own convention when it already keeps decision records. The path must be inside the repository and not under `.orbit/` or `.git/`.
+2. Write it only if the person agrees, and never over an existing file (propose another name instead). The file has a title naming the goal or plan, the date, then exactly these headings in this order: "## Decisions (with evidence)", "## Assumptions left unverified", "## Remaining questions". Each decision carries the evidence it rests on and says whether the person decided it or it was resolved from evidence in the repository. Leave out secrets and credentials.
+3. Then offer `/orbit:run` with the sharpened goal for the person to start, and put the decisions and the assumptions left unverified into that goal text, so the run starts from them instead of rediscovering them.
 
 ## Reading the result
 
-Summarise as: decisions made (with evidence), assumptions left unverified, and the remaining questions. A non-zero exit prints an error code; report it as printed.
+Summarise under the headings Decisions (with evidence), Assumptions left unverified and Remaining questions, which are also the decision record's headings. A non-zero exit prints an error code; report it as printed.
