@@ -96,7 +96,8 @@ in parentheses, what to use instead in Claude Code with the plugin installed.
 
 This writes `.orbit/config.yaml` from the starter template and adds rules to
 `.git/info/exclude`, so run state stays out of `git status` (the config file
-itself shows up as untracked: commit it if you want it shared). The starter mode
+itself shows up as untracked: commit it if you want it shared; `init` repeats
+that advice until git tracks the file). The starter mode
 is `autonomous`: Orbit works on a local branch `orbit/<run-id>` and never
 pushes. In a linked worktree (`git worktree add`) that file is shared by every
 worktree of the clone and lives in the main checkout's git directory, outside
