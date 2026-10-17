@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tests: the .NET runner test whose stand-in MSBuild records a denied node now prints its restore line before it writes that record, as MSBuild does. The runner stops a check as soon as it sees the record, so on a loaded CI runner it stopped the check between the two and the log held no check output (once, on main). No change to Orbit itself.
+
 ## 0.3.1 (2026-10-16)
 
 - Each reviewer is told the tools it really has (ADR 0016). On the second 0.3.1 retest every demo goal ended `EXHAUSTED`: a packet-only approval started the tree's fresh review, and the Codex reviewer, told by the shared role prompt "You have no shell; use Read, Grep and Glob" (tools only the Claude CLI has), looked for them through MCP tool discovery, opened nothing, and blocked with a finding no repair could answer. That prompt is also why Codex reviews never made a tool call. The role prompt now names no tools; the review task names the provider's own (read-only shell commands for Codex, Read, Grep and Glob for Claude); and a Codex review's depth counts only completed commands, so tool discovery is not an inspection and such a review blocks the run with "the review inspected nothing" instead of looping through repair.
