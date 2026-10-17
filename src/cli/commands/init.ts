@@ -13,6 +13,9 @@
  * added or already there, and --json carries `exclude_file` (the path and
  * `shared_across_worktrees`) next to the unchanged `exclude`. A normal
  * checkout prints exactly what it always did.
+ *
+ * Init gives the commit advice whenever git does not track the config, not
+ * only right after writing it, and says so when git ignores it (issue #96).
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -75,6 +78,8 @@ const EXCLUDE_HEADER = '# Orbit runtime state (added by "orbit init")';
 
 const COMMIT_ADVICE = '.orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.';
 
+const IGNORED_ADVICE = '.orbit/config.yaml is ignored by git, so the policy is not shared or reviewed like code: remove the rule that ignores it (git check-ignore -v .orbit/config.yaml names it), then commit the file. Runtime state stays excluded and is never committed.';
+
 /** Describe the existing detectors only; an empty proposal does not mean these files are absent. */
 const NO_CHECKS_WARNING = 'no checks were derived from the repository declarations; looked for package.json (root and workspaces), read with the tsconfig.json, pnpm-workspace.yaml, pnpm-lock.yaml, yarn.lock, package-lock.json or npm-shrinkwrap.json beside it; tracked *.sln, *.slnx, *.csproj, *.fsproj, *.vbproj; pyproject.toml, setup.cfg, tox.ini, pytest.ini, mypy.ini, ruff.toml or .flake8, read with the requirements*.txt, requirements*.in, .mypy.ini or .ruff.toml beside it (those alone are not enough); go.mod, go.work; Cargo.toml. Define the checks that prove a change in .orbit/config.yaml.';
 
@@ -101,6 +106,17 @@ async function currentBranch(ctx: CliContext, repo: string): Promise<string | nu
     return r.exitCode === 0 && name !== '' ? name : null;
   } catch {
     return null;
+  }
+}
+
+/** The advice for a config git does not track (issue #96), or null when it does. A git that cannot answer gets the commit advice. */
+async function configAdvice(ctx: CliContext, repo: string): Promise<string | null> {
+  const git = (...a: string[]) => execCapture(['git', ...a, '--', '.orbit/config.yaml'], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
+  try {
+    if ((await git('ls-files', '--error-unmatch')).exitCode === 0) return null;
+    return (await git('check-ignore', '-q')).exitCode === 0 ? IGNORED_ADVICE : COMMIT_ADVICE;
+  } catch {
+    return COMMIT_ADVICE;
   }
 }
 
@@ -270,6 +286,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   }
 
   const models = await seedModels(ctx, repo);
+  const advice = await configAdvice(ctx, repo);
 
   // What the configuration on disk says, for the review sentence and the next step (issue #33): whether Codex is
   // eligible, and which checks it already defines. A configuration that does not validate says nothing of Codex, but its
@@ -284,11 +301,11 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const reviewPolicy = reviewPolicyProposal(codexEligible);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(config === 'created' ? { commit_advice: COMMIT_ADVICE } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(advice !== null ? { commit_advice: advice } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
-  if (config === 'created') line(ctx.io, COMMIT_ADVICE);
+  if (advice !== null) line(ctx.io, advice);
   if (config === 'created' && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === 'created' && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(', ')}`);
