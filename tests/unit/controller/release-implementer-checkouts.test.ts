@@ -189,6 +189,21 @@ describe('a terminal run preserves the unfinished edits of every implementer che
     expect(ev.preserved).toEqual([expect.objectContaining({ worktree: 'implementer', ref })]);
     expect(final().next_action).toContain(ref);
   });
+
+  it('a SUCCEEDED run does not call its own reviewed candidate unfinished edits', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'REVIEWING', 'DELIVERING'] });
+    const { base, main } = await repoWithImplementer(lab);
+    implementer(lab, 'wrk-main', main, 'implement:1#1', 'finished');
+    writeFileSync(join(main, 'apps', 'mul.mjs'), 'export const mul = (a, b) => a * b;\n');
+    await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: main, runId: lab.runId, baseRev: base, attempt: 1, workerId: 'wrk-main' });
+
+    await finishRun(lab.ctx(), 'SUCCEEDED', 'all mandatory requirements hold');
+
+    const ref = `refs/orbit/${lab.runId}/candidates/1`;
+    expect(released().at(-1)!.preserved).toEqual([expect.objectContaining({ worktree: 'implementer', ref })]);
+    expect(final().next_action).toContain(ref);
+    expect(final().next_action).not.toMatch(/Unfinished edits/);
+  });
 });
 
 describe('a retained run that orbit gc pruned', () => {
