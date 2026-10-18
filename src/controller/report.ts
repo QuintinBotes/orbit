@@ -320,7 +320,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
     ...(worktrees ? { worktrees } : {}),
-    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees)}`,
+    next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees, run.state === 'SUCCEEDED' ? candidateRefName : null)}`,
     generated_at: opts.clock.now(),
   };
 }
@@ -357,11 +357,15 @@ function worktreesOf(db: OrbitDb, runId: string): NonNullable<FinalReport['workt
   return { preserved: [...preserved.values()], retained: [...kept.values()] };
 }
 
-/** The sentences the next action gains from a release: where each pinned edit is, and which checkouts were kept and why. */
-function worktreeAdvice(w: FinalReport['worktrees'] | null): string {
+/**
+ * The sentences the next action gains from a release: where each pinned edit is, and which checkouts were kept and why.
+ * `result` is the ref of a SUCCEEDED run's own candidate: the next action already names it, and it is not unfinished.
+ */
+function worktreeAdvice(w: FinalReport['worktrees'] | null, result: string | null): string {
   if (!w) return '';
   const out: string[] = [];
-  if (w.preserved.length > 0) out.push(`Unfinished edits were pinned in git: ${w.preserved.map((p) => `${p.worktree} at ${p.ref}`).join('; ')} (git checkout <ref> to continue from one).`);
+  const unfinished = w.preserved.filter((p) => p.ref !== result);
+  if (unfinished.length > 0) out.push(`Unfinished edits were pinned in git: ${unfinished.map((p) => `${p.worktree} at ${p.ref}`).join('; ')} (git checkout <ref> to continue from one).`);
   if (w.retained.length > 0) out.push(`${w.retained.length === 1 ? 'A checkout was' : 'Checkouts were'} kept: ${w.retained.map((r) => `${r.path} (${r.why})`).join('; ')}.`);
   return out.length === 0 ? '' : ` ${out.join(' ')}`;
 }
