@@ -21,7 +21,8 @@ describe.skipIf(!canStripTypes)('watchdog with a real worker', () => {
       // The worker is silent: no log activity counts as life in this test.
       workerActivityAt: () => null,
     });
-    expect(rep.findings).toMatchObject([{ kind: 'stuck-step', runId: env.runId, action: 'abandoned-to-recovering' }]);
+    // The findings go into the message: a failure's detail names what the watchdog could not do, and the diff omits it.
+    expect(rep.findings, JSON.stringify(rep.findings)).toMatchObject([{ kind: 'stuck-step', runId: env.runId, action: 'abandoned-to-recovering' }]);
     await waitFor(() => (!alive(shimPid) && !alive(childPid)) || null);
     expect(getRun(env.db, env.runId)).toMatchObject({ state: 'RECOVERING', resumeState: 'IMPLEMENTING' });
     expect(workerRow(env)).toMatchObject({ state: 'CANCELLED' });
