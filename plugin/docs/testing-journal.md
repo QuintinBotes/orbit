@@ -42,6 +42,7 @@ Entry format:
 | One writer per run; merge overhead not weighed | scheduler | open G14 |
 | Smaller items | various | open G4, G50 to G54 |
 | A container whose create was in flight when its CLI was killed outlives `cleanup()` | isolation | watch |
+| Watchdog "a hung step is abandoned" test failed once with an `error` finding | tests | watch |
 
 Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G38, G41 to G45 and the six acceptance and fault-injection defects.
 
@@ -57,6 +58,13 @@ Closed in 30e6e5c: G1 to G3, G5 to G13, G16 to G23, G26, G28, G29, G31 to G36, G
 | Live demo with real providers never run | demo | open G39 |
 
 ---
+
+### 2026-10-18: the 0.3.2 retest
+- Tested: main with the six 0.3.2 pull requests (#97 to #102) merged locally as the release candidate: `npm run verify` twice (8,715 tests); the candidate plugin loaded alone into headless Claude Code (Sonnet) for `/orbit:init` in a fresh repository, and for `/orbit:inquisition` with no run on the demo app, answered and accepted in a second turn; the demo's simple goal with the live providers (Claude writing, Codex reviewing) in mode `autonomous` with delivery off; the container isolation test 15 runs in each of 4 parallel lanes.
+- Went well: `/orbit:init` relayed the commit advice, offered to commit only `.orbit/config.yaml` and only with consent, and committed nothing; `git status` showed only `?? .orbit/config.yaml`. `/orbit:inquisition` summarised under the three headings, wrote `docs/decisions/2026-10-18-csv-export.md` with exactly those headings only once it was told to, and the `/orbit:run` goal it offered carried the decisions and the assumptions left unverified ($0.43 for the three sessions). The simple goal SUCCEEDED in 2 minutes for $0.49: unit and lint ran, the new tests failed on the base revision, and Codex reviewed independently with 2 tool calls. The container test passed 60 of 60 and left no container behind.
+- Went wrong: (1) the simple goal's report ended "Unfinished edits were pinned in git: implementer at refs/orbit/<run>/candidates/1 (git checkout <ref> to continue from one)", on a SUCCEEDED run whose result is that very candidate. (2) The second `npm run verify` failed once in `tests/integration/recovery/watchdog.test.ts` > "a hung step is abandoned": the watchdog returned a finding of kind `error` where `stuck-step` was expected, and the diff left out its `detail`. It passed in the first full run, in 100 runs with 6 CPU burners and in 80 runs beside the integration suite. (3) In the retest harness, not Orbit: the first doctor failed because `mode: autonomous` with the demo's delivery actions left on is invalid (doctor named the fix), and the copy of the plugin had no `srt`.
+- Root cause: (1) releasing a SUCCEEDED run's checkout pins what it holds, which is the reviewed candidate, and the report turned every pin into the "Unfinished edits" sentence. (2) not established: an `error` finding means `watchRun` threw, and on this path `stopWorker` throws when the worker's group still shows after the test's 300 ms grace per signal, or when `ps` fails while the worker's state is read.
+- Change: (1) the sentence leaves out a SUCCEEDED run's own candidate (#101); rebuilt from the same run's records with the new bundle, the report no longer says it, and `worktrees.preserved` still records the pin. (2) the assertion carries the findings in its message, so the next failure names its cause (#102): watch. (3) none needed.
 
 ### 2026-10-17: issue #61's bar on the container isolation test, and a cleanup race it exposed
 - Tested: `tests/integration/isolation/container.int.test.ts` 50 runs in a row in each of 4 parallel lanes on OrbStack (macOS), while two workers built and tested in other worktrees; then a probe that kills a real `docker run` at offsets from 0 to 3 s and calls `cleanup()` at once.
