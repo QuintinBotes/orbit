@@ -19,6 +19,10 @@ function repoWith(files: Record<string, string> = {}): Lab {
   return l;
 }
 
+function gitIn(l: Lab, ...args: string[]): string {
+  return execFileSync('git', args, { cwd: l.repo, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'acme', GIT_AUTHOR_EMAIL: 'dev@acme.test', GIT_COMMITTER_NAME: 'acme', GIT_COMMITTER_EMAIL: 'dev@acme.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+}
+
 interface InitJson {
   config: { path: string; status: string; allowed_paths?: string[]; commit_advice?: string };
   checks: { proposed: unknown[]; not_proposed: unknown[] };
@@ -26,6 +30,7 @@ interface InitJson {
 }
 
 const COMMIT_ADVICE = '.orbit/config.yaml is reviewed like code: commit it to share the policy. It shows as untracked until committed; runtime state stays excluded and is never committed.';
+const IGNORED_ADVICE = '.orbit/config.yaml is ignored by git, so the policy is not shared or reviewed like code: remove the rule that ignores it (git check-ignore -v .orbit/config.yaml names it), then commit the file. Runtime state stays excluded and is never committed.';
 const markers = ['package.json', 'tsconfig.json', '*.sln', '*.slnx', '*.csproj', '*.fsproj', '*.vbproj', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'pytest.ini', 'mypy.ini', '.mypy.ini', 'ruff.toml', '.ruff.toml', '.flake8', 'requirements*.txt', 'requirements*.in', 'go.mod', 'go.work', 'Cargo.toml'];
 
 describe('init explains missing derivations and config ownership', () => {
@@ -84,14 +89,48 @@ describe('init explains missing derivations and config ownership', () => {
     });
   }
 
-  it('does not report derivation or creation advice when a config already exists', async () => {
+  it('does not report derivation or creation advice when a committed config already exists', async () => {
     const l = repoWith();
     await l.cli(['init']);
+    gitIn(l, 'add', '.orbit/config.yaml');
+    gitIn(l, 'commit', '-q', '-m', 'policy');
     const text = await l.cli(['init']);
     expect(text.out).not.toMatch(/no scope was derived|no checks were derived|commit it to share the policy/);
     const j = JSON.parse((await l.cli(['init', '--json'])).out) as InitJson;
     expect(j.config.commit_advice).toBeUndefined();
     expect(j.warnings.join('\n')).not.toMatch(/no scope was derived|no checks were derived/);
+  });
+
+  // Issue #96: the advice follows git, so it repeats until git tracks the file.
+  for (const json of [false, true]) {
+    it(`repeats the commit advice for an existing config git does not track in ${json ? 'JSON' : 'text'}`, async () => {
+      const l = repoWith();
+      await l.cli(['init']);
+      const r = await l.cli(['init', ...(json ? ['--json'] : [])]);
+      expect(r.code, r.err).toBe(0);
+      if (json) {
+        const j = JSON.parse(r.out) as InitJson;
+        expect(j.config.status).toBe('exists');
+        expect(j.config.commit_advice).toBe(COMMIT_ADVICE);
+      } else expect(r.out.split('\n')).toContain(COMMIT_ADVICE);
+    });
+
+    it(`says git ignores the config, not to commit it, in ${json ? 'JSON' : 'text'}`, async () => {
+      const l = repoWith({ '.gitignore': '.orbit/\n' });
+      const r = await l.cli(['init', ...(json ? ['--json'] : [])]);
+      expect(r.code, r.err).toBe(0);
+      if (json) expect((JSON.parse(r.out) as InitJson).config.commit_advice).toBe(IGNORED_ADVICE);
+      else {
+        expect(r.out.split('\n')).toContain(IGNORED_ADVICE);
+        expect(r.out).not.toContain(COMMIT_ADVICE);
+      }
+    });
+  }
+
+  it('leaves only the config untracked after init, runtime state stays excluded', async () => {
+    const l = repoWith();
+    await l.cli(['init']);
+    expect(gitIn(l, 'status', '--porcelain', '--untracked-files=all', '--', '.orbit')).toBe('?? .orbit/config.yaml\n');
   });
 
   it('reports empty check derivation even when a marker declares no checks', async () => {

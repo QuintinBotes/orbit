@@ -162,7 +162,9 @@ orbit doctor
 state files to `.git/info/exclude`, so nothing runtime-related shows in `git
 status` (the config file itself shows as untracked) and nothing is committed for
 you. The starter mode is `autonomous`: runs end on a local branch and never push.
-Review the file like code and commit it if you want it shared. In a linked
+Review the file like code and commit it if you want it shared: until git tracks
+it, `init` says so each time it runs, and when git ignores it, `init` says that
+instead and how to find the rule. In a linked
 worktree (`git worktree add`), `.git/info/exclude` is the one file git reads for
 the whole clone, so the rules go to the common git directory (the main
 checkout's `.git`), outside your worktree, and cover every worktree at once;
