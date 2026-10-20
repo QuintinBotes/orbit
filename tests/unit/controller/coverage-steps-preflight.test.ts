@@ -187,6 +187,9 @@ describe('ensureWorktree', () => {
     // -z prints a rename as the new path, then the old one as an entry of its own.
     hooks.git.mockResolvedValue('R  READ.md\0README.md\0 M a.txt\0?? notes.md\0');
     expect(await dirtyPathSplit(lab.repo)).toEqual({ changed: ['READ.md', 'a.txt'], untracked: ['notes.md'] });
+    // A rename git finds in the work tree (an intent-to-add file) is reported in the second column.
+    hooks.git.mockResolvedValue(' R new.txt\0old.txt\0');
+    expect(await dirtyPathSplit(lab.repo)).toEqual({ changed: ['new.txt'], untracked: [] });
   });
 
   it('names fixes that clear untracked files when nothing tracked changed, and says git stash leaves them (#110)', () => {

@@ -59450,14 +59450,16 @@ async function gitCredentialProblems(repo) {
   return problems;
 }
 async function dirtyPathSplit(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
+  return parseDirtyStatus(await git2(repo, [...DIRTY_STATUS_ARGS]));
+}
+function parseDirtyStatus(out) {
   const split = { changed: [], untracked: [] };
   const entries = out.split("\0");
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
     if (e.length <= 3) continue;
     (e.startsWith("??") ? split.untracked : split.changed).push(e.slice(3));
-    if (e[0] === "R" || e[0] === "C") i++;
+    if ("RC".includes(e[0]) || "RC".includes(e[1])) i++;
   }
   return split;
 }
@@ -59530,7 +59532,7 @@ async function checkEnvironment(ctx) {
   });
   return { gate, credentials: all, capabilities, reviewer };
 }
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER, DIRTY_STATUS_ARGS;
 var init_preflight = __esm({
   "src/controller/steps/preflight.ts"() {
     "use strict";
@@ -59552,6 +59554,7 @@ var init_preflight = __esm({
     IMPLEMENTER_PROVIDER = "claude";
     URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
     AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+    DIRTY_STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"];
   }
 });
 
@@ -68658,7 +68661,8 @@ async function checkGit(p) {
       details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
     }
   }
-  const split = await dirtyPathSplit(repo).catch(() => null);
+  const porcelain = await g([...DIRTY_STATUS_ARGS]);
+  const split = porcelain.exitCode === 0 ? parseDirtyStatus(porcelain.stdout) : null;
   const refusal = split ? dirtyStartRefusal(split) : null;
   if (split && refusal !== null && !config.repository.allow_dirty_start) {
     problems.push({ missing: "a clean working tree", fix: refusal.fix, severity: "warn" });

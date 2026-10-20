@@ -361,16 +361,24 @@ export interface DirtySplit {
   untracked: string[];
 }
 
+/** The `git status` arguments both the run and doctor judge a tree by. */
+export const DIRTY_STATUS_ARGS: readonly string[] = ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ':(exclude).orbit'];
+
 export async function dirtyPathSplit(repo: string): Promise<DirtySplit> {
-  const out = await git(repo, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ':(exclude).orbit']);
+  return parseDirtyStatus(await git(repo, [...DIRTY_STATUS_ARGS]));
+}
+
+/** `git status --porcelain=v1 -z` output, split into changed and untracked paths. */
+export function parseDirtyStatus(out: string): DirtySplit {
   const split: DirtySplit = { changed: [], untracked: [] };
   const entries = out.split('\0');
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]!;
     if (e.length <= 3) continue;
     (e.startsWith('??') ? split.untracked : split.changed).push(e.slice(3));
-    // A rename or copy is followed by its source path as an entry of its own, which is not a change by itself.
-    if (e[0] === 'R' || e[0] === 'C') i++;
+    // A rename or copy, in the index (X) or the work tree (Y, an intent-to-add file), is followed by its source path
+    // as an entry of its own, which is not a change by itself.
+    if ('RC'.includes(e[0]!) || 'RC'.includes(e[1]!)) i++;
   }
   return split;
 }

@@ -32,7 +32,7 @@ import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
 import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
-import { dirtyPathSplit, dirtyStartRefusal } from '../../controller/steps/preflight.ts';
+import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus } from '../../controller/steps/preflight.ts';
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
@@ -209,7 +209,8 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
       details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
     }
   }
-  const split = await dirtyPathSplit(repo).catch(() => null);
+  const porcelain = await g([...DIRTY_STATUS_ARGS]);
+  const split = porcelain.exitCode === 0 ? parseDirtyStatus(porcelain.stdout) : null;
   const refusal = split ? dirtyStartRefusal(split) : null;
   if (split && refusal !== null && !config.repository.allow_dirty_start) {
     problems.push({ missing: 'a clean working tree', fix: refusal.fix, severity: 'warn' });
