@@ -6,6 +6,6 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.78"
+    "@anthropic-ai/sandbox-runtime": "0.0.80"
   }
 }
