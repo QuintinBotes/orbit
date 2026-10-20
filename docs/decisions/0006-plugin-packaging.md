@@ -99,6 +99,10 @@ Decision.
    or edits config is pre-approved.
 
 Consequences. An agent can check and set up Orbit and grill a goal without a
-person typing a slash command, but cannot start, resume, repair or verify a
-run on its own. Skills with `disable-model-invocation: true` still cannot be
+person typing a slash command. The run, resume, repair and verify skills are
+user-only, so an agent cannot invoke them, but the `orbit` CLI is not gated:
+nothing in `orbit run`, `resume`, `repair` or `verify` checks who invoked it,
+and it refuses them only inside a worker session (`ORBIT_WORKER`). An
+interactive agent with a shell can run those commands, and the host's
+permission prompts are what stand between it and a run (issue #111). Skills with `disable-model-invocation: true` still cannot be
 preloaded into subagents; the four model-invocable ones can.

@@ -67651,7 +67651,7 @@ var HUMAN_POLICY_CONFIG_NOTE;
 var init_doctor_policy_note = __esm({
   "src/cli/commands/doctor-policy-note.ts"() {
     "use strict";
-    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.";
+    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches. Orbit does not enforce this: only worker sessions are blocked from editing .orbit/config.yaml.";
   }
 });
 

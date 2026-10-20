@@ -64,6 +64,9 @@ never on the PATH of your own terminal: for that, use the clone below.
 An agent asked to use Orbit uses the model-invocable skills (`/orbit:status`,
 `/orbit:doctor`, `/orbit:init` and `/orbit:inquisition`) and the `orbit` CLI; a
 person starts `/orbit:run`, `/orbit:resume`, `/orbit:repair` and `/orbit:verify`.
+Only those skills are user-only: the CLI does not check who runs `orbit run`,
+`resume`, `repair` or `verify`, so your agent host's permission prompts are what
+keep an agent from starting a run.
 
 **From a clone** (the CLI, and a way to try the plugin before it is released):
 
@@ -141,6 +144,8 @@ A person, not an agent, must make any edit to `agents.allowed_plugins` or
 `providers.codex.data_policy_eligible` confirms that sending sanitized code to
 Codex is permitted. An auto-mode classifier may flag worker launches. Review
 that prompt yourself rather than asking an agent to apply either edit.
+Orbit does not enforce this: only worker sessions are blocked from editing
+`.orbit/config.yaml`, so a person's edit and an interactive agent's edit look the same to it.
 
 **3. Read the Codex model catalog.** `orbit models refresh`
 (plugin: ask Claude to run it, or accept it when `/orbit:doctor` suggests it)
