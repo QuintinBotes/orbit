@@ -11,7 +11,8 @@ import { OrbitError } from '../core/errors.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
 import type { OrbitConfig, ProviderConfig } from '../policy/types.ts';
 import { ClaudeAdapter, type ClaudeTier } from './claude.ts';
-import { CodexAdapter } from './codex.ts';
+import { CodexAdapter, type CodexTierSetting } from './codex.ts';
+import { MuseAdapter, type MuseTierSetting } from './muse.ts';
 import { FakeAdapter, fakeKind } from './fake.ts';
 import type { ProviderAdapter } from './types.ts';
 
@@ -25,6 +26,10 @@ export type { ClaudeTaskResult, ClaudeEndReason } from './claude-transcript.ts';
 export { CodexAdapter, buildCodexArgv, decideCodexTier, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
 export type { CodexAdapterOptions, CodexSrtStatus, CodexTaskHandle, CodexTaskSpec, CodexTier, CodexTierDecision, CodexTierInput, CodexTierSetting } from './codex.ts';
 export { classifyCodexTranscript, codexUsage, codexEvents, CODEX_END_REASONS } from './codex-events.ts';
+export { MuseAdapter, buildMuseArgv, assertSafeMuseArgv, decideMuseTier, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION } from './muse.ts';
+export type { MuseAdapterOptions, MuseSrtStatus, MuseTaskHandle, MuseTier, MuseTierDecision, MuseTierInput, MuseTierSetting } from './muse.ts';
+export { classifyMuseTranscript, museUsage, museEvents, museDepth, MUSE_END_REASONS } from './muse-events.ts';
+export type { MuseTaskResult, MuseEndReason } from './muse-events.ts';
 export type { CodexTaskResult, CodexEndReason } from './codex-events.ts';
 export { FakeAdapter, FAKE_ENV_KEYS, FAKE_SCRIPTS, fakeKind } from './fake.ts';
 export type { FakeAdapterOptions, FakeProvider } from './fake.ts';
@@ -32,12 +37,12 @@ export { runShim, shimMain, parseShimArgs, shimArgs, readPidRecord, readExitReco
 export type { ShimOptions, PidRecord, ExitRecord, AbortPattern } from './shim.ts';
 export { launchShim, reattachLaunch, handleFromWorkerDir, taskState, cancelShim, archiveAttempt, archivedAttempts, ATTEMPT_FILES, nextSessionId, sessionIdFor, readLogLines, readNewLines, LAUNCH_FILE, CANCEL_FILE } from './supervise.ts';
 export type { TaskState, LaunchRecord } from './supervise.ts';
-export { buildWorkerEnv, claudeEnvCredential, codexEnvCredential, passThrough, CLAUDE_WORKER_ENV, CODEX_ENV_CREDENTIALS, PROVIDER_ENV_KEYS, ENV_MAX_OUTPUT_TOKENS } from './env.ts';
+export { buildWorkerEnv, claudeEnvCredential, codexEnvCredential, museEnvCredential, passThrough, CLAUDE_WORKER_ENV, CODEX_ENV_CREDENTIALS, MUSE_ENV_CREDENTIALS, MUSE_WORKER_ENV, PROVIDER_ENV_KEYS, ENV_MAX_OUTPUT_TOKENS } from './env.ts';
 export { renderWorkerPrompt, renderSystemPrompt, readRolePrompt, stripFrontmatter, fence, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, AGENT_ROLES, outputBudgetFor, outputBudgetInstruction } from './prompt.ts';
 export type { AgentRole, WorkerPromptInput, EvidenceRef, PromptBrief } from './prompt.ts';
 export { defaultOrbitCommands, orbitCommands, sourceCommands } from './commands.ts';
 
-export type ProviderKind = 'claude' | 'codex';
+export type ProviderKind = 'claude' | 'codex' | 'muse';
 
 export interface AdapterDeps {
   /** Isolation provider for os-sandbox tiers; null disables wrapping. */
@@ -53,11 +58,12 @@ export interface AdapterDeps {
   models?: (provider: ProviderKind) => string[];
 }
 
-/** The provider family an id configures: `claude`, `codex`, or an id starting with one of them (`claude-review`). */
+/** The provider family an id configures: `claude`, `codex`, `muse`, or an id starting with one of them (`claude-review`). */
 export function providerKind(id: string): ProviderKind {
-  if (id === 'claude' || id.startsWith('claude-') || id.startsWith('claude_')) return 'claude';
-  if (id === 'codex' || id.startsWith('codex-') || id.startsWith('codex_')) return 'codex';
-  throw new OrbitError('CONFIG_INVALID', `providers.${id}: unknown provider; Orbit has adapters for claude and codex`, { provider: id });
+  for (const kind of ['claude', 'codex', 'muse'] as const) {
+    if (id === kind || id.startsWith(`${kind}-`) || id.startsWith(`${kind}_`)) return kind;
+  }
+  throw new OrbitError('CONFIG_INVALID', `providers.${id}: unknown provider; Orbit has adapters for claude, codex and muse`, { provider: id });
 }
 
 /** argv for a configured command string: scripts run under this Node, binaries as they are. */
@@ -73,7 +79,9 @@ export function createAdapter(id: string, config: ProviderConfig, deps: AdapterD
     if (fake !== kind) throw new OrbitError('CONFIG_INVALID', `providers.${id}.command points at the ${fake} fake`, { provider: id });
     return fake === 'claude'
       ? new FakeAdapter({ provider: 'claude', script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models!('claude') : undefined })
-      : new FakeAdapter({ provider: 'codex', script: config.command, ...common, tier: config.tier });
+      : fake === 'codex'
+        ? new FakeAdapter({ provider: 'codex', script: config.command, ...common, tier: codexTier(id, config.tier) })
+        : new FakeAdapter({ provider: 'muse', script: config.command, ...common, tier: museTier(id, config.tier), model: config.model });
   }
   if (kind === 'claude') {
     return new ClaudeAdapter({
@@ -85,7 +93,19 @@ export function createAdapter(id: string, config: ProviderConfig, deps: AdapterD
       models: deps.models ? () => deps.models!('claude') : undefined,
     });
   }
-  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: config.tier });
+  if (kind === 'muse') return new MuseAdapter({ ...common, command: commandArgv(config.command), tier: museTier(id, config.tier), model: config.model });
+  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: codexTier(id, config.tier) });
+}
+
+/** A tier name of the other reviewer family is a config error (policy/config.ts providerTiers); refused here too, never reinterpreted. */
+function codexTier(id: string, tier: ProviderConfig['tier']): CodexTierSetting | undefined {
+  if (tier === 'muse-sandbox') throw new OrbitError('CONFIG_INVALID', `providers.${id}.tier: muse-sandbox is a Muse tier`, { provider: id });
+  return tier;
+}
+
+function museTier(id: string, tier: ProviderConfig['tier']): MuseTierSetting | undefined {
+  if (tier === 'codex-sandbox') throw new OrbitError('CONFIG_INVALID', `providers.${id}.tier: codex-sandbox is a Codex tier`, { provider: id });
+  return tier;
 }
 
 /** One adapter per configured provider. */

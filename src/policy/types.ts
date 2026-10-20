@@ -176,6 +176,13 @@ export interface IsolationLimits {
  */
 export type CodexTierSetting = 'auto' | 'os-sandbox' | 'codex-sandbox';
 
+/**
+ * Isolation tier of the Muse reviewer (ADR 0017): `auto` picks `os-sandbox` (srt around the whole muse process) only
+ * with META_API_KEY in the worker environment and an srt that starts, else `muse-sandbox` (unwrapped, Muse's own
+ * `:read-only` profile against the write-protected review checkout).
+ */
+export type MuseTierSetting = 'auto' | 'os-sandbox' | 'muse-sandbox';
+
 export interface ProviderConfig {
   command: string;
   /** User attests that sending sanitized code and diffs to this provider is permitted. */
@@ -184,10 +191,10 @@ export interface ProviderConfig {
   reasoning_effort: string | null;
   extra_args: string[];
   /**
-   * Codex providers only (a Claude provider rejects the key). Parsed configs
-   * carry it for every Codex provider; absent in older snapshots, which read as `auto`.
+   * Codex and Muse providers only (a Claude provider rejects the key; each family accepts only its own tier names).
+   * Parsed configs carry it for every Codex and Muse provider; absent in older snapshots, which read as `auto`.
    */
-  tier?: CodexTierSetting;
+  tier?: CodexTierSetting | MuseTierSetting;
   /**
    * Codex providers only: the reasoning effort of a review session (low, medium, high, xhigh or max; default medium). It
    * replaces `reasoning_effort` for reviews, which a person who set only that key keeps as this key's value. Absent in

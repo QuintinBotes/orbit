@@ -32,13 +32,13 @@ import { stopLaunch, stopWorker, WORKER_RESTART_EVENT } from '../recovery/reconc
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
 import { recordUsage, routeStats } from '../routing/usage.ts';
-import type { RouteSignals, WorkKind } from '../routing/types.ts';
+import { FAMILY_SURFACE, type RouteSignals, type WorkKind } from '../routing/types.ts';
 import { chargeBasis, dearestPricing, ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_MS, USAGE_CHARGED_EVENT, type ChargeBasis, type TokenEstimate } from '../scheduling/budget.ts';
 import { marksCharges } from '../scheduling/accounting.ts';
 import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgets } from '../policy/config.ts';
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, providerFamily } from '../policy/config.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -207,15 +207,15 @@ async function spawn(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): Prom
 function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpec & { maxBudgetUsd?: number | null } {
   const home = homeOf(ctx.deps);
   const env = ctx.deps.hostEnv ?? process.env;
-  const provider = w.provider.startsWith('codex') ? 'codex' : 'claude';
+  const provider = providerFamily(w.provider) ?? 'claude';
   const timeoutMs = workerTimeoutMs(ctx, w.role);
   const outputCap = raisedOutputCap(ctx, req.purpose);
   // Every session runs under the run's frozen snapshot; nothing (an approve-once grant included) widens a worker.
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
   // The toolchains the worktree uses: the repository's dependency caches read-only, build state private to the worker
   // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
-  // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex worker, a read-only reviewer, is
-  // confined to its provider's hosts by its adapter (codexReviewerProfile).
+  // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex or Muse worker, a read-only reviewer,
+  // is confined to its provider's hosts by its adapter (codexReviewerProfile, museReviewerProfile).
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
@@ -224,7 +224,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home,
     hostEnv: env,
-    networkHosts: provider === 'codex' ? PROVIDER_HOSTS.codex : workerAllowedHosts(provider, policy.snapshot),
+    networkHosts: provider === 'claude' ? workerAllowedHosts(provider, policy.snapshot) : PROVIDER_HOSTS[provider],
   });
   prepareToolchainLayout(toolchains);
   const sandbox = profileForWorker({
@@ -516,7 +516,7 @@ function settle(ctx: RunContext, w: WorkerRecord, result: TaskResult, phase: Bud
 function markObserved(ctx: RunContext, w: WorkerRecord, observed: string | null, status: string): void {
   if (!observed || status !== 'succeeded') return;
   try {
-    if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, w.provider.startsWith('codex') ? 'codex-cli' : 'claude-cli', true, `observed in worker ${w.id}`);
+    if (ctx.deps.registry.get(observed)) ctx.deps.registry.markAvailability(observed, FAMILY_SURFACE[providerFamily(w.provider) ?? 'claude'], true, `observed in worker ${w.id}`);
   } catch {
     /* the registry is advisory here; a failure to update it never fails the step */
   }
@@ -906,7 +906,7 @@ export function tokenEstimateFor(ctx: RunContext, w: Pick<WorkerRecord, 'provide
   const est = estimateCost(
     { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens },
     pricing,
-    { inputIncludesCacheRead: inputIncludesCacheRead(w.provider.startsWith('codex') ? 'codex' : w.provider) },
+    { inputIncludesCacheRead: inputIncludesCacheRead(providerFamily(w.provider) ?? w.provider) },
   );
   if (est.costUsd === null) return null;
   return { costUsd: est.costUsd, basis: own ? 'model pricing' : 'dearest listed pricing', model };

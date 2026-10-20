@@ -8,6 +8,7 @@
  */
 import { join } from 'node:path';
 import { codexDepth } from '../adapters/codex-events.ts';
+import { museDepth } from '../adapters/muse-events.ts';
 import { providerFamily } from '../policy/config.ts';
 import { LOG_FILE } from '../adapters/shim.ts';
 import { readLogLines } from '../adapters/supervise.ts';
@@ -66,7 +67,7 @@ export function readReviewDepth(worker: Pick<WorkerRecord, 'provider' | 'workerD
     return { toolCalls: null, reasoningTokens: null };
   }
   if (events.length === 0) return { toolCalls: null, reasoningTokens: null };
-  return family === 'codex' ? codexDepth(events) : claudeDepth(events);
+  return family === 'codex' ? codexDepth(events) : family === 'muse' ? museDepth(events) : claudeDepth(events);
 }
 
 /** The recorded depth of a review, or null when none was recorded (an older run, or a review not started by a session). */
