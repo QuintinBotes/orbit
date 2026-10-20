@@ -84,7 +84,7 @@ describe('#109: init takes base_branch from the remote default, not a checked-ou
     expect(chooseBaseBranch({ ...base, checkedOut: null, remoteDefault: 'develop' })).toMatchObject({ branch: 'develop', warning: null });
     const wt = chooseBaseBranch({ remote: 'origin', linkedWorktree: true, checkedOut: 'B', remoteDefault: 'develop' });
     expect(wt).toMatchObject({ branch: 'B', note: expect.stringMatching(/from the branch this linked worktree is on/) });
-    expect(wt.warning).toMatch(/repository\.base_branch is B, but origin's default branch is develop \(refs\/remotes\/origin\/HEAD\): every run branches from B/);
+    expect(wt.warning).toMatch(/repository\.base_branch is B, but origin's default branch is develop \(refs\/remotes\/origin\/HEAD\): every run opens its pull request against B/);
     expect(chooseBaseBranch({ remote: 'upstream', linkedWorktree: false, checkedOut: 'x', remoteDefault: 'trunk' }).note).toMatch(/upstream's default branch \(refs\/remotes\/upstream\/HEAD\)/);
   });
 });

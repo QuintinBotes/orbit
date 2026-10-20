@@ -70427,9 +70427,9 @@ async function currentBranch(ctx, repo) {
 }
 async function remoteDefaultBranch(ctx, repo, remote) {
   try {
-    const r = await execCapture(["git", "symbolic-ref", "--short", "-q", `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
+    const r = await execCapture(["git", "symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
     const name = r.stdout.trim();
-    const prefix = `${remote}/`;
+    const prefix = `refs/remotes/${remote}/`;
     return r.exitCode === 0 && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null;
   } catch {
     return null;
@@ -70444,9 +70444,9 @@ function chooseBaseBranch(i) {
   const written = pick ?? "main";
   let warning = null;
   if (i.remoteDefault !== null && written !== i.remoteDefault) {
-    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run branches from ${written} and opens its pull request against it; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the base you want`;
+    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run opens its pull request against ${written}; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the target you want`;
   } else if (i.remoteDefault !== null && i.checkedOut !== null && i.checkedOut !== written) {
-    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: runs branch from ${written}; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the base you want`;
+    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: a run starts from the commit checked out when it starts and opens its pull request against ${written}, so a run started on ${i.checkedOut} carries its unmerged commits; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the target you want`;
   }
   return { branch, note: note3, warning };
 }

@@ -112,9 +112,10 @@ async function currentBranch(ctx: CliContext, repo: string): Promise<string | nu
 /** The remote's default branch, from refs/remotes/<remote>/HEAD (written by clone and `git remote set-head`); null when it does not resolve. */
 async function remoteDefaultBranch(ctx: CliContext, repo: string, remote: string): Promise<string | null> {
   try {
-    const r = await execCapture(['git', 'symbolic-ref', '--short', '-q', `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
+    // The full ref, not --short: a short name git finds ambiguous comes back as remotes/<remote>/<b>.
+    const r = await execCapture(['git', 'symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
     const name = r.stdout.trim();
-    const prefix = `${remote}/`;
+    const prefix = `refs/remotes/${remote}/`;
     return r.exitCode === 0 && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null;
   } catch {
     return null;
@@ -126,7 +127,7 @@ export interface BaseBranchChoice {
   branch: string | null;
   /** The line init prints about it, or null when the template's main stands and nothing disagrees. */
   note: string | null;
-  /** Set when the branch written differs from the remote's default branch: runs would branch from and target it. */
+  /** Set when the branch written differs from the remote's default branch or the checked-out one: pull requests would target it. */
   warning: string | null;
 }
 
@@ -153,9 +154,9 @@ export function chooseBaseBranch(i: { checkedOut: string | null; remoteDefault: 
   const written = pick ?? 'main';
   let warning: string | null = null;
   if (i.remoteDefault !== null && written !== i.remoteDefault) {
-    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run branches from ${written} and opens its pull request against it; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the base you want`;
+    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run opens its pull request against ${written}; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the target you want`;
   } else if (i.remoteDefault !== null && i.checkedOut !== null && i.checkedOut !== written) {
-    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: runs branch from ${written}; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the base you want`;
+    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: a run starts from the commit checked out when it starts and opens its pull request against ${written}, so a run started on ${i.checkedOut} carries its unmerged commits; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the target you want`;
   }
   return { branch, note, warning };
 }
