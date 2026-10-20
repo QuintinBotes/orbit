@@ -64,10 +64,12 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   }
   const head = await resolveCommit(repo, 'HEAD');
   const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
+  const split = await dirtyPathSplit(repo);
+  const dirty = [...split.changed, ...split.untracked].sort();
+  const refusal = dirtyStartRefusal(split);
+  if (refusal !== null) {
     if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, 'BLOCKED', `the repository has uncommitted changes (${dirty.slice(0, 10).join(', ')}${dirty.length > 10 ? ', ...' : ''}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+      return finishRun(ctx, 'BLOCKED', `${refusal.reason}; ${refusal.fix}`, { outcome: { dirty: dirty.slice(0, 50), dirty_untracked: split.untracked.length, dirty_modified: split.changed.length } });
     }
     decide(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: 'preflight.dirty-start', summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
@@ -349,11 +351,46 @@ export async function gitCredentialProblems(repo: string): Promise<string[]> {
 
 /** Paths git reports as changed or untracked, leaving out Orbit's own state directory. */
 export async function dirtyPaths(repo: string): Promise<string[]> {
+  const split = await dirtyPathSplit(repo);
+  return [...split.changed, ...split.untracked].sort();
+}
+
+/** The uncommitted paths, split into changes to tracked files and untracked files (issue #110). */
+export interface DirtySplit {
+  changed: string[];
+  untracked: string[];
+}
+
+export async function dirtyPathSplit(repo: string): Promise<DirtySplit> {
   const out = await git(repo, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.', ':(exclude).orbit']);
-  return out
-    .split('\0')
-    .filter((e) => e.length > 3)
-    .map((e) => e.slice(3));
+  const split: DirtySplit = { changed: [], untracked: [] };
+  const entries = out.split('\0');
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (e.length <= 3) continue;
+    (e.startsWith('??') ? split.untracked : split.changed).push(e.slice(3));
+    // A rename or copy is followed by its source path as an entry of its own, which is not a change by itself.
+    if (e[0] === 'R' || e[0] === 'C') i++;
+  }
+  return split;
+}
+
+/**
+ * Why a run refuses this tree, and the fixes that work for what is in it; null for a clean tree. Untracked files count
+ * as uncommitted although the run starts from HEAD and never sees them, and `git stash` leaves them in place, so a tree
+ * with only untracked files is told how to clear them instead (issue #110).
+ */
+export function dirtyStartRefusal(d: DirtySplit): { reason: string; fix: string } | null {
+  const total = d.changed.length + d.untracked.length;
+  if (total === 0) return null;
+  const sample = [...d.changed, ...d.untracked].slice(0, 10);
+  const counts = [d.changed.length > 0 ? `${d.changed.length} modified` : null, d.untracked.length > 0 ? `${d.untracked.length} untracked` : null].filter((x) => x !== null).join(' and ');
+  const reason = `the repository has uncommitted changes (${sample.join(', ')}${total > sample.length ? ', ...' : ''}): ${counts}`;
+  const fix =
+    d.changed.length === 0
+      ? 'untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start'
+      : `commit or stash the modified files${d.untracked.length > 0 ? ' (git stash -u takes the untracked ones too; plain git stash leaves them)' : ''}, or set repository.allow_dirty_start`;
+  return { reason, fix };
 }
 
 /**

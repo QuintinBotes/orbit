@@ -32,6 +32,7 @@ import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
 import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
+import { dirtyPathSplit, dirtyStartRefusal } from '../../controller/steps/preflight.ts';
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
@@ -208,10 +209,11 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
       details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
     }
   }
-  const dirty = await g(['status', '--porcelain=v1', '--untracked-files=normal', '--', '.', ':(exclude).orbit']);
-  if (dirty.stdout.trim() !== '' && !config.repository.allow_dirty_start) {
-    problems.push({ missing: 'a clean working tree', fix: 'commit or stash the changes, or set repository.allow_dirty_start', severity: 'warn' });
-    details.push(`${dirty.stdout.trim().split('\n').length} uncommitted path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
+  const split = await dirtyPathSplit(repo).catch(() => null);
+  const refusal = split ? dirtyStartRefusal(split) : null;
+  if (split && refusal !== null && !config.repository.allow_dirty_start) {
+    problems.push({ missing: 'a clean working tree', fix: refusal.fix, severity: 'warn' });
+    details.push(`${split.changed.length} modified and ${split.untracked.length} untracked path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
   }
   if (problems.length === 0) {
     out.push(pass('git.repo', 'git', `repository ${repo}; worktrees supported`, details));

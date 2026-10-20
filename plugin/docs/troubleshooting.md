@@ -14,7 +14,7 @@ degraded but usable.
 | `runtime.node` | Node is older than 22.16.0 | Install a current Node 22 LTS. The service uses the Node that ran `orbit service install`. |
 | `runtime.sqlite` | `node:sqlite` is not usable | The Node build lacks `node:sqlite` or FTS5. Use Node 22.16 or newer from nodejs.org or a version manager. |
 | `git.cli` | git is missing or too old | Install git 2.5 or newer. |
-| `git.repo` | not a repository, base branch or remote missing, dirty tree | Run inside a git repository. Create the base branch, add the remote (`git remote add origin <url>`), or commit or stash changes (or set `repository.allow_dirty_start: true`). |
+| `git.repo` | not a repository, base branch or remote missing, dirty tree | Run inside a git repository. Create the base branch, add the remote (`git remote add origin <url>`), or commit or stash changes (or set `repository.allow_dirty_start: true`). Untracked files count as uncommitted: when only untracked files remain, list them in `.git/info/exclude` or `.gitignore`, move them out, or run `git stash -u` (plain `git stash` leaves them). |
 | `config` | no `.orbit/config.yaml` | Run `orbit init` (plugin: `/orbit:init`). |
 | `config` | configuration is invalid | Fix each listed problem; unknown keys and contradictory settings are errors. Compare with `templates/config.yaml`. |
 | `storage` | SQLite cannot use WAL | The repository is on a network share or a container bind mount. Use a local disk. |

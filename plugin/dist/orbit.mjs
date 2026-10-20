@@ -59263,10 +59263,12 @@ async function preflightStep(ctx) {
   }
   const head = await resolveCommit(repo, "HEAD");
   const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
+  const split = await dirtyPathSplit(repo);
+  const dirty = [...split.changed, ...split.untracked].sort();
+  const refusal = dirtyStartRefusal(split);
+  if (refusal !== null) {
     if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+      return finishRun(ctx, "BLOCKED", `${refusal.reason}; ${refusal.fix}`, { outcome: { dirty: dirty.slice(0, 50), dirty_untracked: split.untracked.length, dirty_modified: split.changed.length } });
     }
     decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
@@ -59447,9 +59449,26 @@ async function gitCredentialProblems(repo) {
   }
   return problems;
 }
-async function dirtyPaths(repo) {
+async function dirtyPathSplit(repo) {
   const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+  const split = { changed: [], untracked: [] };
+  const entries = out.split("\0");
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.length <= 3) continue;
+    (e.startsWith("??") ? split.untracked : split.changed).push(e.slice(3));
+    if (e[0] === "R" || e[0] === "C") i++;
+  }
+  return split;
+}
+function dirtyStartRefusal(d) {
+  const total = d.changed.length + d.untracked.length;
+  if (total === 0) return null;
+  const sample = [...d.changed, ...d.untracked].slice(0, 10);
+  const counts = [d.changed.length > 0 ? `${d.changed.length} modified` : null, d.untracked.length > 0 ? `${d.untracked.length} untracked` : null].filter((x) => x !== null).join(" and ");
+  const reason = `the repository has uncommitted changes (${sample.join(", ")}${total > sample.length ? ", ..." : ""}): ${counts}`;
+  const fix = d.changed.length === 0 ? "untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start" : `commit or stash the modified files${d.untracked.length > 0 ? " (git stash -u takes the untracked ones too; plain git stash leaves them)" : ""}, or set repository.allow_dirty_start`;
+  return { reason, fix };
 }
 async function ensureWorktree(repo, path, base) {
   if (existsSync39(path)) {
@@ -68639,10 +68658,11 @@ async function checkGit(p) {
       details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
     }
   }
-  const dirty = await g(["status", "--porcelain=v1", "--untracked-files=normal", "--", ".", ":(exclude).orbit"]);
-  if (dirty.stdout.trim() !== "" && !config.repository.allow_dirty_start) {
-    problems.push({ missing: "a clean working tree", fix: "commit or stash the changes, or set repository.allow_dirty_start", severity: "warn" });
-    details.push(`${dirty.stdout.trim().split("\n").length} uncommitted path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
+  const split = await dirtyPathSplit(repo).catch(() => null);
+  const refusal = split ? dirtyStartRefusal(split) : null;
+  if (split && refusal !== null && !config.repository.allow_dirty_start) {
+    problems.push({ missing: "a clean working tree", fix: refusal.fix, severity: "warn" });
+    details.push(`${split.changed.length} modified and ${split.untracked.length} untracked path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
   }
   if (problems.length === 0) {
     out.push(pass("git.repo", "git", `repository ${repo}; worktrees supported`, details));
@@ -69406,6 +69426,7 @@ var init_doctor = __esm({
     init_publication();
     init_config();
     init_shared_catalog();
+    init_preflight();
     init_delivery_env();
     init_db();
     init_schema4();
@@ -71692,10 +71713,10 @@ var init_admission = __esm({
         cheap.push(`the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")})`);
         fixes.push("remove them and authenticate through a credential helper outside the repository");
       }
-      const dirty = hasCommits ? await dirtyPaths(repo) : [];
-      if (dirty.length > 0 && !config.repository.allow_dirty_start) {
-        cheap.push(`the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""})`);
-        fixes.push("commit or stash them, or set repository.allow_dirty_start in .orbit/config.yaml, then run again");
+      const refusal = hasCommits ? dirtyStartRefusal(await dirtyPathSplit(repo)) : null;
+      if (refusal !== null && !config.repository.allow_dirty_start) {
+        cheap.push(refusal.reason);
+        fixes.push(`${refusal.fix.replace(/repository\.allow_dirty_start$/, "repository.allow_dirty_start in .orbit/config.yaml")}, then run again`);
       }
       if (cheap.length > 0) return { reasons: cheap, code: "POLICY_DENIED", fix: fixes.join("; ") };
       if (!input.foreground) return null;
