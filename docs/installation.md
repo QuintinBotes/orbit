@@ -61,7 +61,9 @@ Who starts which skill: `/orbit:status`, `/orbit:doctor`, `/orbit:init` and
 use them itself (status and doctor run their own read-only `orbit` command
 without a permission prompt). `/orbit:run`, `/orbit:resume`, `/orbit:repair`
 and `/orbit:verify` are started by a person; an agent may prepare the goal and
-suggest the command (ADR 0006, addendum). Inside Claude Code (its Bash tool, skills and hooks), messages that tell
+suggest the command (ADR 0006, addendum). Only the skills are user-only: the
+`orbit` CLI does not check who runs it, so the agent host's permission prompts
+are what keep an agent from starting a run. Inside Claude Code (its Bash tool, skills and hooks), messages that tell
 you to run `orbit <command>` name the `/orbit:<skill>` instead when they exist (`init`, `doctor`, `run`, `status`, `resume`, `verify`,
 `repair`); the other commands (`models refresh`, `decide`, `questions`,
 `service install`, `report`, `logs`) run through Claude Code's Bash tool, which

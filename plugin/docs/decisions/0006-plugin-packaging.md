@@ -102,7 +102,8 @@ Consequences. An agent can check and set up Orbit and grill a goal without a
 person typing a slash command. The run, resume, repair and verify skills are
 user-only, so an agent cannot invoke them, but the `orbit` CLI is not gated:
 nothing in `orbit run`, `resume`, `repair` or `verify` checks who invoked it,
-and it refuses them only inside a worker session (`ORBIT_WORKER`). An
+and it refuses them only inside a worker session (`ORBIT_WORKER`, or the
+policy variables a worker carries). An
 interactive agent with a shell can run those commands, and the host's
 permission prompts are what stand between it and a run (issue #111). Skills with `disable-model-invocation: true` still cannot be
 preloaded into subagents; the four model-invocable ones can.
