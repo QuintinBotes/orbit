@@ -144,7 +144,7 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
     notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
 
     for (const [id, pc] of Object.entries(config.providers)) {
-      let kind: 'claude' | 'codex';
+      let kind: 'claude' | 'codex' | 'muse';
       try {
         kind = providerKind(id);
       } catch (err) {
@@ -181,6 +181,9 @@ export async function modelsRefreshCommand(args: Args, ctx: CliContext): Promise
             } else notes.push(`  ${e.modelId}: probe inconclusive (${st.state}: ${flat(st.detail)}); not marked`);
           }
         }
+      } else if (kind === 'muse') {
+        // Muse has no model catalog command; its configured model is passed through unchanged.
+        notes.push(`provider ${id}: Muse has no model catalog; it reviews with providers.${id}.model (${pc.model ?? 'default'})`);
       } else {
         const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx);
         if (outcome.change !== undefined) changes[`catalog:${id}`] = outcome.change;

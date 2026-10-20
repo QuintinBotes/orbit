@@ -1356,9 +1356,10 @@ function readText(p: string): string {
  * and judged from the packet alone.
  */
 function inspectionText(provider: string | null): string {
-  return providerFamily(provider ?? '') === 'codex'
-    ? 'Inspect the checkout with read-only shell commands (cat, sed -n, rg, ls, git diff, git show, git log); they run in a read-only sandbox, so never try to write, install anything or reach the network.'
-    : 'Inspect the checkout with Read, Grep and Glob; you have no shell.';
+  const family = providerFamily(provider ?? '');
+  if (family === 'codex') return 'Inspect the checkout with read-only shell commands (cat, sed -n, rg, ls, git diff, git show, git log); they run in a read-only sandbox, so never try to write, install anything or reach the network.';
+  if (family === 'muse') return 'Inspect the checkout with your file reading and search tools; the session is read-only, so never try to write, install anything or reach the network.';
+  return 'Inspect the checkout with Read, Grep and Glob; you have no shell.';
 }
 
 function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: string, focus: ReviewFocus = 'general', fresh: FreshReviewRecord | null = null, provider: string | null = null): string {

@@ -15,7 +15,7 @@ import { memoryIo } from '../../../src/cli/io.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 
 const GIT_ENV = { GIT_AUTHOR_NAME: 'acme', GIT_AUTHOR_EMAIL: 'dev@acme.test', GIT_COMMITTER_NAME: 'acme', GIT_COMMITTER_EMAIL: 'dev@acme.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
-const HUMAN_POLICY_NOTE = 'A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.';
+const HUMAN_POLICY_NOTE = 'A person, not an agent, must make any edit to agents.allowed_plugins, providers.codex.data_policy_eligible or providers.muse.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.';
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
