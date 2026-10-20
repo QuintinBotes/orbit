@@ -263,3 +263,48 @@ describe('selectReviewer: same-provider review', () => {
     expect(sel.reason).toContain('"claude" cannot review');
   });
 });
+
+describe('selectReviewer: muse as an independent reviewer (issue #108)', () => {
+  function withMuse(museEligible = true) {
+    const r = ready();
+    return {
+      snapshot: snapshotOf((c) => {
+        c.providers.muse = { command: 'muse', data_policy_eligible: museEligible, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier: 'auto' };
+        c.review.providers = ['codex', 'muse'];
+      }),
+      capabilities: { ...r.capabilities, muse: cap('muse') },
+      credentials: { ...r.credentials, muse: cred('valid') },
+    };
+  }
+
+  it('picks codex first when it is usable, with muse listed second', () => {
+    expect(selectReviewer({ ...withMuse(), implementer: IMPL })).toMatchObject({ decision: 'SELECT', provider: 'codex', independent: true, substitutedForPreferred: false });
+  });
+
+  it('picks muse when codex is not eligible, through its configured model, and records it as independent of a claude implementer', () => {
+    const f = withMuse();
+    f.snapshot = snapshotOf((c) => {
+      c.providers.codex!.data_policy_eligible = false;
+      c.providers.muse = { command: 'muse', data_policy_eligible: true, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier: 'auto' };
+      c.review.providers = ['codex', 'muse'];
+    });
+    const sel = selectReviewer({ ...f, implementer: IMPL });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'muse', model: 'muse-wonder-full-1.0', effort: 'high', independent: true, basis: 'configured', substitutedForPreferred: true, independentUnavailable: null });
+    if (sel.decision === 'SELECT') {
+      expect(sel.reason).toContain('preferred provider "codex" is unusable');
+      expect(sel.alternatives).toContainEqual({ provider: 'codex', model: null, reason: expect.stringContaining('providers.codex.data_policy_eligible') });
+    }
+  });
+
+  it('refuses muse when it is not data_policy_eligible, with the eligibility reason', () => {
+    const f = withMuse(false);
+    f.snapshot = snapshotOf((c) => {
+      c.review.when_unavailable = 'block';
+      c.providers.muse = { command: 'muse', data_policy_eligible: false, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier: 'auto' };
+      c.review.providers = ['muse'];
+    });
+    const sel = blocked(selectReviewer({ snapshot: f.snapshot, capabilities: f.capabilities, credentials: f.credentials, implementer: IMPL }));
+    expect(sel.reason).toContain('providers.muse.data_policy_eligible is not true');
+    expect(sel.alternatives).toContainEqual({ provider: 'muse', model: null, reason: expect.stringContaining('data_policy_eligible') });
+  });
+});
