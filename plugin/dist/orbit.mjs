@@ -70425,6 +70425,31 @@ async function currentBranch(ctx, repo) {
     return null;
   }
 }
+async function remoteDefaultBranch(ctx, repo, remote) {
+  try {
+    const r = await execCapture(["git", "symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
+    const name = r.stdout.trim();
+    const prefix = `refs/remotes/${remote}/`;
+    return r.exitCode === 0 && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null;
+  } catch {
+    return null;
+  }
+}
+function chooseBaseBranch(i) {
+  const head = `refs/remotes/${i.remote}/HEAD`;
+  const pick = i.linkedWorktree && i.checkedOut !== null ? i.checkedOut : i.remoteDefault ?? i.checkedOut;
+  const branch = pick !== null && pick !== "main" ? pick : null;
+  const from = pick === null ? null : pick === i.remoteDefault && !(i.linkedWorktree && i.checkedOut !== null) ? `${i.remote}'s default branch (${head})` : i.linkedWorktree ? "the branch this linked worktree is on" : "the checked-out branch";
+  const note3 = branch !== null ? `repository.base_branch set to ${branch} from ${from} (the template says main); review it` : null;
+  const written = pick ?? "main";
+  let warning = null;
+  if (i.remoteDefault !== null && written !== i.remoteDefault) {
+    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run opens its pull request against ${written}; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the target you want`;
+  } else if (i.remoteDefault !== null && i.checkedOut !== null && i.checkedOut !== written) {
+    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: a run starts from the commit checked out when it starts and opens its pull request against ${written}, so a run started on ${i.checkedOut} carries its unmerged commits; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the target you want`;
+  }
+  return { branch, note: note3, warning };
+}
 async function configAdvice(ctx, repo) {
   const git6 = (...a) => execCapture(["git", ...a, "--", ".orbit/config.yaml"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
   try {
@@ -70502,6 +70527,8 @@ async function initCommand(args, ctx) {
   let protectedAdded = [];
   let excludedDirs = [];
   let baseBranch = null;
+  let baseBranchNote = null;
+  let baseBranchWarning = null;
   let checkProposal = { proposed: [], notProposed: [] };
   if (existsSync60(configPath)) config = "exists";
   else {
@@ -70516,9 +70543,12 @@ async function initCommand(args, ctx) {
     excludedDirs = proposal.excluded;
     const have2 = text2.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? "";
     protectedAdded = proposal.protectedExtra.filter((g) => !have2.includes(JSON.stringify(g)));
-    baseBranch = await currentBranch(ctx, repo);
-    if (baseBranch !== null && baseBranch !== "main") text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
-    else baseBranch = null;
+    const remote = text2.match(/^\s*remote: "?([^"\s#]+)"?/m)?.[1] ?? "origin";
+    const choice = chooseBaseBranch({ checkedOut: await currentBranch(ctx, repo), remoteDefault: await remoteDefaultBranch(ctx, repo, remote), linkedWorktree: await inLinkedWorktree(ctx, repo), remote });
+    baseBranch = choice.branch;
+    baseBranchNote = choice.note;
+    baseBranchWarning = choice.warning;
+    if (baseBranch !== null) text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     if (derivedPaths.length > 0) text2 = text2.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(", ")}]`);
     if (protectedAdded.length > 0) {
       text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
@@ -70566,6 +70596,7 @@ ${block2}`);
   }
   if (config === "created") {
     if (noScopeWarning !== void 0) warnings.push(noScopeWarning);
+    if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
   const models = await seedModels(ctx, repo);
@@ -70584,7 +70615,7 @@ ${block2}`);
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (advice !== null) line(ctx.io, advice);
-  if (config === "created" && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
+  if (config === "created" && baseBranchNote !== null) line(ctx.io, baseBranchNote);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(", ")} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
   if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
