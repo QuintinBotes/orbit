@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { cleanupCandidateCheckout, materializeCandidate } from '../../../src/evidence/candidate.ts';
 import { join } from 'node:path';
 import { FakeAdapter } from '../../../src/adapters/fake.ts';
 import { createAdapter } from '../../../src/adapters/index.ts';
@@ -13,29 +14,31 @@ import { FAKES, REVIEW_OUTPUT, alive, implementerSpec, makeFixture, waitFor, wri
 const FAKE_MUSE = join(FAKES, 'fake-muse.mjs');
 const MODEL = 'muse-wonder-full-1.0';
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
-const fixtures: Fixture[] = [];
-afterEach(() => {
+type ReviewFixture = Fixture & { checkout: string };
+const fixtures: ReviewFixture[] = [];
+afterEach(async () => {
   for (const f of fixtures.splice(0)) {
-    // The review checkout was write-protected; make it removable again.
-    try {
-      chmodSync(f.repo, 0o755);
-    } catch {
-      // Already gone.
-    }
+    // The review checkout is write-protected; cleanupCandidateCheckout makes it removable again, as a run does.
+    await cleanupCandidateCheckout(f.repo, f.checkout).catch(() => {});
     rmSync(f.base, { recursive: true, force: true });
   }
 });
 
-function fixture(writeProtected = true): Fixture {
+/**
+ * The review checkout exactly as a run makes it (evidence/candidate.ts materializeCandidate, reviewing.ts
+ * prepareReview): a detached worktree of the commit, write-protected throughout when `writeProtected`.
+ */
+async function fixture(writeProtected = true): Promise<ReviewFixture> {
   const f = makeFixture();
-  fixtures.push(f);
-  // The muse-sandbox tier's external boundary: a checkout Orbit made read-only on disk.
-  if (writeProtected) chmodSync(f.repo, 0o555);
-  return f;
+  const checkout = join(f.base, 'review-1');
+  await materializeCandidate(f.repo, 'HEAD', checkout, { readOnly: writeProtected });
+  const rf = { ...f, checkout };
+  fixtures.push(rf);
+  return rf;
 }
 
-function reviewSpec(f: Fixture, over: Partial<TaskSpec> = {}): TaskSpec {
-  return { ...implementerSpec(f), role: 'reviewer', model: MODEL, effort: 'high', readOnly: true, outputSchema: MODEL_OUTPUT_SCHEMAS.review, prompt: 'Review candidate abc123.', systemPrompt: 'You are the reviewer.', ...over };
+function reviewSpec(f: ReviewFixture, over: Partial<TaskSpec> = {}): TaskSpec {
+  return { ...implementerSpec(f), cwd: f.checkout, role: 'reviewer', model: MODEL, effort: 'high', readOnly: true, outputSchema: MODEL_OUTPUT_SCHEMAS.review, prompt: 'Review candidate abc123.', systemPrompt: 'You are the reviewer.', ...over };
 }
 
 function baseEnv(f: Fixture, env: Record<string, string> = {}) {
@@ -59,7 +62,7 @@ function argvCalls(f: Fixture): { argv: string[]; envKeys: string[]; role: strin
 
 describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   it('runs a read-only review: fixed flags, prompt in a file, output validated with Orbit\'s schema copy', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, { roles: { reviewer: [{ structured: REVIEW_OUTPUT }] } });
     const a = muse(f);
     expect(a).toBeInstanceOf(FakeAdapter);
@@ -71,12 +74,12 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
 
     const call = argvCalls(f).at(-1)!;
     expect(call.role).toBe('reviewer');
-    expect(call.cwd).toBe(f.repo);
+    expect(call.cwd).toBe(f.checkout);
     for (const flag of MUSE_REQUIRED_FLAGS) expect(call.argv, flag).toContain(flag);
     const value = (flag: string) => call.argv[call.argv.indexOf(flag) + 1];
     expect(value('--model')).toBe(MODEL);
     expect(value('--reasoning-effort')).toBe('high');
-    expect(value('--workspace')).toBe(f.repo);
+    expect(value('--workspace')).toBe(f.checkout);
     expect(value('--permission-profile')).toBe(':read-only');
     expect(value('--max-model-steps')).toBe('200');
     expect(value('--prompt-file')).toBe(join(f.workerDir, 'prompt.md'));
@@ -99,14 +102,14 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('classifies output that does not match the review schema as malformed, never as a verdict', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, { roles: { reviewer: [{ text: '{"verdict":"MAYBE","findings":[]}' }] } });
     const { result } = await run(muse(f), reviewSpec(f));
     expect(result).toMatchObject({ status: 'malformed_output', reason: 'schema_mismatch', structured: null, exitCode: 0 });
   });
 
   it('hangs only until the wall-clock cap: status timeout, and the whole process group is killed', async () => {
-    const f = fixture();
+    const f = await fixture();
     const gc = join(f.base, 'grandchild.pid');
     writeScenario(f, { roles: { reviewer: [{ sleepMs: 60_000, ignoreSignals: true, grandchildPidFile: gc, structured: REVIEW_OUTPUT }] } });
     const a = muse(f);
@@ -121,7 +124,7 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('records a non-zero exit as a failed review with the run\'s reason', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, { roles: { reviewer: [{ failReason: 'the provider exploded', exitCode: 1 }] } });
     const { result } = await run(muse(f), reviewSpec(f));
     expect(result).toMatchObject({ status: 'failed', reason: 'run_failed', structured: null, exitCode: 1 });
@@ -129,23 +132,39 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('records a step cap as its own failure reason', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, { roles: { reviewer: [{ failReason: 'model did not reach a terminal state within 200 step(s)', exitCode: 1 }] } });
     const { result } = await run(muse(f), reviewSpec(f));
     expect(result).toMatchObject({ status: 'failed', reason: 'step_cap', exitCode: 1 });
   });
 
-  it('an attempted write into the write-protected checkout is denied: the file is absent afterwards', async () => {
-    const f = fixture();
-    writeScenario(f, { roles: { reviewer: [{ forbiddenWrite: { path: 'pwned.txt', content: 'x' }, structured: REVIEW_OUTPUT }] } });
+  // The model may try any write; the write-protected checkout, not Muse's settings, is what refuses each one.
+  it.each([
+    ['a new file at the root', 'pwned.txt'],
+    ['an existing file', 'apps/a.ts'],
+    ['a new file in a subdirectory', 'apps/x.ts'],
+  ])('an attempted write into the write-protected checkout is denied: %s', async (_what, path) => {
+    const f = await fixture();
+    const before = existsSync(join(f.checkout, path)) ? readFileSync(join(f.checkout, path), 'utf8') : null;
+    writeScenario(f, { roles: { reviewer: [{ forbiddenWrite: { path, content: 'pwned' }, structured: REVIEW_OUTPUT }] } });
     const { handle, result } = await run(muse(f), reviewSpec(f));
     expect(result.status).toBe('succeeded');
-    expect(existsSync(join(f.repo, 'pwned.txt'))).toBe(false);
+    expect(existsSync(join(f.checkout, path)) ? readFileSync(join(f.checkout, path), 'utf8') : null).toBe(before);
     expect(readFileSync(handle.logPath, 'utf8')).toContain('denied:');
   });
 
+  it('refuses a checkout whose root is write-protected but a file below it is not', async () => {
+    const f = await fixture();
+    chmodSync(join(f.checkout, 'apps'), 0o755);
+    chmodSync(join(f.checkout, 'apps', 'a.ts'), 0o644);
+    chmodSync(join(f.checkout, 'apps'), 0o555);
+    writeScenario(f, { roles: { reviewer: [{ structured: REVIEW_OUTPUT }] } });
+    await expect(muse(f).startTask(reviewSpec(f))).rejects.toThrow(/apps\/a\.ts is writable/);
+    expect(existsSync(join(f.workerDir, 'launch.json'))).toBe(false);
+  });
+
   it('refuses a writable checkout in the muse-sandbox tier before anything launches', async () => {
-    const f = fixture(false);
+    const f = await fixture(false);
     writeScenario(f, { roles: { reviewer: [{ structured: REVIEW_OUTPUT }] } });
     await expect(muse(f).startTask(reviewSpec(f))).rejects.toMatchObject({ code: 'POLICY_DENIED' });
     await expect(muse(f).startTask(reviewSpec(f))).rejects.toThrow(/writable checkout/);
@@ -154,7 +173,7 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('refuses a task that is not read-only, and an implicit or unsupported effort', async () => {
-    const f = fixture();
+    const f = await fixture();
     const a = muse(f);
     await expect(a.startTask(reviewSpec(f, { readOnly: false }))).rejects.toMatchObject({ code: 'POLICY_DENIED' });
     await expect(a.startTask(reviewSpec(f, { model: null }))).rejects.toMatchObject({ code: 'CONFIG_INVALID' });
@@ -163,7 +182,7 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('discovers capabilities from --version and exec --help, and refuses an old Muse', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, {});
     expect(await muse(f).discoverCapabilities()).toMatchObject({ available: true, version: '1.4.11', structuredOutput: true, readOnlySandbox: true, usageReporting: 'partial', costReporting: false });
     const old = await muse(f, { ORBIT_FAKE_MUSE_VERSION: '1.3.0' }).discoverCapabilities();
@@ -172,7 +191,7 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
   });
 
   it('validates credentials with the one-step exec: valid with a login, missing without one', async () => {
-    const f = fixture();
+    const f = await fixture();
     writeScenario(f, { roles: { reviewer: [{ structured: REVIEW_OUTPUT }] } });
     expect(await muse(f).validateCredentials()).toMatchObject({ state: 'valid' });
     // The check consumed no scenario step: the review that follows still gets step 0.

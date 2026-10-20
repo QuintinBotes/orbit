@@ -30907,7 +30907,7 @@ var init_muse_events = __esm({
 });
 
 // src/adapters/muse.ts
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync14, mkdirSync as mkdirSync9, mkdtempSync as mkdtempSync2, readFileSync as readFileSync12, rmSync as rmSync5, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync14, lstatSync as lstatSync6, mkdirSync as mkdirSync9, mkdtempSync as mkdtempSync2, readdirSync as readdirSync5, readFileSync as readFileSync12, rmSync as rmSync5, statSync as statSync8, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as tmpdir6 } from "node:os";
 import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute12, join as join17 } from "node:path";
 function decideMuseTier(i) {
@@ -30940,6 +30940,8 @@ function buildMuseArgv(i) {
     ":read-only",
     "--disable-request-user-input",
     "--disable-write",
+    // No shell: a shell running as the checkout's owner could chmod it writable again. Search and file reading remain.
+    "--disable-shell",
     "--no-foreign-personal-context",
     "--disable-web-tools",
     "--no-session-log",
@@ -30963,14 +30965,26 @@ function assertSafeMuseArgv(argv2) {
   }
 }
 function assertWriteProtected(checkout) {
-  let writable = true;
+  const refuse = (path) => {
+    throw new OrbitError("POLICY_DENIED", `refusing to run Muse in the muse-sandbox tier against a writable checkout (${path} is writable); the review checkout must be write-protected on disk`, { path });
+  };
   try {
     accessSync2(checkout, constants3.W_OK);
-  } catch {
-    writable = false;
+    refuse(checkout);
+  } catch (err) {
+    if (err instanceof OrbitError) throw err;
   }
-  if (writable) {
-    throw new OrbitError("POLICY_DENIED", `refusing to run Muse in the muse-sandbox tier against a writable checkout (${checkout}); the review checkout must be write-protected on disk`, { path: checkout });
+  const stack = [checkout];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    for (const name of readdirSync5(dir)) {
+      const p = join17(dir, name);
+      const st = lstatSync6(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory() && name === ".git") continue;
+      if ((st.mode & 146) !== 0) refuse(p);
+      if (st.isDirectory()) stack.push(p);
+    }
   }
 }
 function launchModel2(workerDir) {
@@ -31016,6 +31030,7 @@ var init_muse = __esm({
       "--permission-profile",
       "--disable-request-user-input",
       "--disable-write",
+      "--disable-shell",
       "--no-foreign-personal-context",
       "--disable-web-tools",
       "--no-session-log",
@@ -31046,7 +31061,7 @@ var init_muse = __esm({
         this.command = opts.command && opts.command.length > 0 ? [...opts.command] : ["muse"];
         this.clock = opts.clock ?? systemClock;
         for (const a of opts.extraArgs ?? []) {
-          if (a.startsWith("-") && !MUSE_EXTRA_ARGS_ALLOWED.includes(a.split("=")[0])) {
+          if (!MUSE_EXTRA_ARGS_ALLOWED.includes(a.split("=")[0])) {
             throw new OrbitError("CONFIG_INVALID", `providers.${this.id}.extra_args: ${a} is not allowed; the review invocation is fixed`, { flag: a });
           }
         }
@@ -36207,7 +36222,7 @@ var init_store = __esm({
 });
 
 // src/evidence/git.ts
-import { readdirSync as readdirSync5, readFileSync as readFileSync15, realpathSync as realpathSync8 } from "node:fs";
+import { readdirSync as readdirSync6, readFileSync as readFileSync15, realpathSync as realpathSync8 } from "node:fs";
 import { tmpdir as tmpdir9 } from "node:os";
 import { join as join22 } from "node:path";
 function gitEnv3(extra = {}) {
@@ -36270,7 +36285,7 @@ async function adminDirFor(repoRoot, worktree) {
   const admin = join22(common, "worktrees");
   let names = [];
   try {
-    names = readdirSync5(admin);
+    names = readdirSync6(admin);
   } catch {
   }
   for (const name of names) {
@@ -36294,7 +36309,7 @@ var init_git = __esm({
 });
 
 // src/evidence/candidate.ts
-import { chmodSync as chmodSync7, existsSync as existsSync20, lstatSync as lstatSync6, mkdirSync as mkdirSync11, mkdtempSync as mkdtempSync5, readdirSync as readdirSync6, realpathSync as realpathSync9, rmSync as rmSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { chmodSync as chmodSync7, existsSync as existsSync20, lstatSync as lstatSync7, mkdirSync as mkdirSync11, mkdtempSync as mkdtempSync5, readdirSync as readdirSync7, realpathSync as realpathSync9, rmSync as rmSync8, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir10 } from "node:os";
 import { dirname as dirname16, join as join23, parse as parse4, sep as sep4 } from "node:path";
 function candidateRef(runId, seq2) {
@@ -36389,7 +36404,7 @@ async function diffStat(repoRoot, fromTree, toTree) {
 }
 async function materializeCandidate(repoRoot, commit, dir, opts = {}) {
   const sha = await resolveCommit(repoRoot, commit);
-  if (existsSync20(dir) && readdirSync6(dir).length > 0) {
+  if (existsSync20(dir) && readdirSync7(dir).length > 0) {
     throw new OrbitError("GIT_FAILED", `checkout directory is not empty: ${dir}`, { dir });
   }
   mkdirSync11(dirname16(dir), { recursive: true });
@@ -36421,16 +36436,16 @@ function assertDisposableCheckout(repoRoot, dir) {
   if (target === parse4(target).root) refuse("it is a filesystem root");
   let dotGit;
   try {
-    dotGit = lstatSync6(join23(target, ".git"));
+    dotGit = lstatSync7(join23(target, ".git"));
   } catch {
     return;
   }
   if (dotGit.isDirectory()) refuse("it holds its own .git directory, so it is a repository, not a checkout");
 }
 function walk3(dir, visit3) {
-  for (const name of readdirSync6(dir)) {
+  for (const name of readdirSync7(dir)) {
     const p = join23(dir, name);
-    const st = lstatSync6(p);
+    const st = lstatSync7(p);
     if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) {
       if (name === ".git") continue;
@@ -36440,7 +36455,7 @@ function walk3(dir, visit3) {
   }
 }
 function makeReadOnly(dir) {
-  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync6(p).mode & 365));
+  walk3(dir, (p, isDir) => chmodSync7(p, isDir ? 365 : lstatSync7(p).mode & 365));
   chmodSync7(dir, 365);
 }
 function makeWritable(dir) {
@@ -36449,9 +36464,9 @@ function makeWritable(dir) {
     const stack = [dir];
     while (stack.length) {
       const d = stack.pop();
-      for (const name of readdirSync6(d)) {
+      for (const name of readdirSync7(d)) {
         const p = join23(d, name);
-        const st = lstatSync6(p);
+        const st = lstatSync7(p);
         if (st.isSymbolicLink()) continue;
         if (st.isDirectory()) {
           chmodSync7(p, 493);
@@ -38608,11 +38623,11 @@ var init_active_checks = __esm({
 });
 
 // src/evidence/msbuild.ts
-import { closeSync as closeSync6, constants as constants4, fstatSync as fstatSync4, lstatSync as lstatSync7, opendirSync, openSync as openSync6, readSync as readSync3 } from "node:fs";
+import { closeSync as closeSync6, constants as constants4, fstatSync as fstatSync4, lstatSync as lstatSync8, opendirSync, openSync as openSync6, readSync as readSync3 } from "node:fs";
 import { basename as basename14, join as join25 } from "node:path";
 function identity(path, kind) {
   try {
-    const st = lstatSync7(path);
+    const st = lstatSync8(path);
     return (kind === "dir" ? st.isDirectory() : st.isFile()) ? { dev: st.dev, ino: st.ino } : null;
   } catch {
     return null;
@@ -38947,7 +38962,7 @@ var init_msbuild = __esm({
 });
 
 // src/evidence/dotnet-format.ts
-import { lstatSync as lstatSync8, readFileSync as readFileSync18 } from "node:fs";
+import { lstatSync as lstatSync9, readFileSync as readFileSync18 } from "node:fs";
 import { basename as basename15, dirname as dirname17, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute16 } from "node:path";
 function formatOutsideFix(check, where2 = null) {
   if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
@@ -39044,7 +39059,7 @@ function sdkFormatsInProcess(dir, root) {
 }
 function readGlobalJson(path) {
   try {
-    const st = lstatSync8(path);
+    const st = lstatSync9(path);
     return st.isFile() && st.size <= 64 * 1024 ? readFileSync18(path, "utf8") : null;
   } catch {
     return null;
@@ -39172,7 +39187,7 @@ var init_dotnet_format = __esm({
 
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes6 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync23, lstatSync as lstatSync9, mkdirSync as mkdirSync12, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync7, realpathSync as realpathSync11, rmSync as rmSync9, statSync as statSync10 } from "node:fs";
+import { closeSync as closeSync7, existsSync as existsSync23, lstatSync as lstatSync10, mkdirSync as mkdirSync12, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync8, realpathSync as realpathSync11, rmSync as rmSync9, statSync as statSync10 } from "node:fs";
 import { homedir as homedir9, platform } from "node:os";
 import { join as join27, resolve as resolve9, sep as sep6 } from "node:path";
 function recordsOf(ctx) {
@@ -39927,7 +39942,7 @@ function collectArtifacts(dir) {
     const d = stack.pop();
     let names;
     try {
-      names = readdirSync7(d).sort();
+      names = readdirSync8(d).sort();
     } catch {
       continue;
     }
@@ -39935,7 +39950,7 @@ function collectArtifacts(dir) {
       const p = join27(d, name);
       let st;
       try {
-        st = lstatSync9(p);
+        st = lstatSync10(p);
       } catch {
         continue;
       }
@@ -40407,7 +40422,7 @@ var init_baseline = __esm({
 });
 
 // src/evidence/fail-before.ts
-import { existsSync as existsSync25, mkdtempSync as mkdtempSync6, readdirSync as readdirSync8, readFileSync as readFileSync20, realpathSync as realpathSync12, rmSync as rmSync10 } from "node:fs";
+import { existsSync as existsSync25, mkdtempSync as mkdtempSync6, readdirSync as readdirSync9, readFileSync as readFileSync20, realpathSync as realpathSync12, rmSync as rmSync10 } from "node:fs";
 import { tmpdir as tmpdir11 } from "node:os";
 import { dirname as dirname18, isAbsolute as isAbsolute17, join as join29, relative as relative3, sep as sep7 } from "node:path";
 function acceptableCause(cause) {
@@ -40658,7 +40673,7 @@ function probeDirs(runDir2) {
   const found = /* @__PURE__ */ new Map();
   const subdirs = (d) => {
     try {
-      return readdirSync8(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+      return readdirSync9(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
     } catch {
       return [];
     }
@@ -43075,7 +43090,7 @@ var init_text2 = __esm({
 });
 
 // src/controller/worktree-cleanup.ts
-import { existsSync as existsSync27, readdirSync as readdirSync9, realpathSync as realpathSync15, rmSync as rmSync11 } from "node:fs";
+import { existsSync as existsSync27, readdirSync as readdirSync10, realpathSync as realpathSync15, rmSync as rmSync11 } from "node:fs";
 import { join as join32, resolve as resolve11, sep as sep9 } from "node:path";
 async function hasUnsavedWork(worktree, repoRoot, baseRevision) {
   const admin = await adminDirFor(repoRoot, worktree);
@@ -43106,7 +43121,7 @@ function retainWorktrees(input) {
   const root = worktreeRootFor(input.orbitHome, run);
   if (!existsSync27(root)) return null;
   const why = `the run ended ${run.state}, so the worktree and evidence are preserved; orbit gc removes them after retention`;
-  const names = readdirSync9(root).sort();
+  const names = readdirSync10(root).sort();
   const out = { state: run.state, worktrees: names, retained: names.map((name) => ({ worktree: name, path: join32(root, name), why })) };
   const last = input.db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", run.id, WORKTREES_RETAINED_EVENT);
   if (last?.data_json) {
@@ -43134,7 +43149,7 @@ async function releaseWorktrees(input) {
     out.retained.push({ worktree: name, path: dir, cause, why });
     log.warn("a finished run's worktree is kept", { run_id: run.id, worktree: name, cause, why });
   };
-  for (const name of readdirSync9(root)) {
+  for (const name of readdirSync10(root)) {
     const dir = join32(root, name);
     const users = workers.filter((w) => within3(w.cwd, dir));
     const live = users.filter((w) => isWorkerActive(w.state));
@@ -43722,7 +43737,7 @@ var init_backoff = __esm({
 });
 
 // src/recovery/reconcile.ts
-import { existsSync as existsSync29, readdirSync as readdirSync10 } from "node:fs";
+import { existsSync as existsSync29, readdirSync as readdirSync11 } from "node:fs";
 import { dirname as dirname20, join as join33 } from "node:path";
 async function reconcileOnStart(opts) {
   const ctx = {
@@ -44240,7 +44255,7 @@ function findCheckDirs(root) {
 }
 function safeDirs(dir) {
   try {
-    return readdirSync10(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    return readdirSync11(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
   }
@@ -54710,7 +54725,7 @@ var init_notify = __esm({
 });
 
 // src/controller/report.ts
-import { existsSync as existsSync35, mkdirSync as mkdirSync17, readdirSync as readdirSync11, readFileSync as readFileSync26 } from "node:fs";
+import { existsSync as existsSync35, mkdirSync as mkdirSync17, readdirSync as readdirSync12, readFileSync as readFileSync26 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { join as join48 } from "node:path";
 function writeFinalReport(db, runId, opts) {
@@ -54927,7 +54942,7 @@ function tokens(t) {
 function repairs(runDir2) {
   const dir = join48(runDir2, "briefs");
   if (!existsSync35(dir)) return [];
-  return readdirSync11(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join48(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
+  return readdirSync12(dir).filter((f) => /^attempt-\d+\.json$/.test(f)).map((f) => readJsonIfExists(join48(dir, f))).filter((b) => b !== null).map((b) => ({ attempt: b.attempt, source: b.source, fingerprint: b.fingerprint })).sort((a, b) => a.attempt - b.attempt);
 }
 function outcomeHas(run, key2) {
   try {
@@ -63574,7 +63589,7 @@ var init_implementing = __esm({
 });
 
 // src/controller/steps/verifying.ts
-import { existsSync as existsSync45, readdirSync as readdirSync12 } from "node:fs";
+import { existsSync as existsSync45, readdirSync as readdirSync13 } from "node:fs";
 import { join as join65 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -63782,7 +63797,7 @@ function scopeFingerprint(scope) {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 async function ensureCheckout(ctx, cand, dir) {
-  if (existsSync45(dir) && readdirSync12(dir).length > 0) {
+  if (existsSync45(dir) && readdirSync13(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
       if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
@@ -64218,7 +64233,7 @@ var init_review_approval = __esm({
 });
 
 // src/controller/steps/reviewing.ts
-import { existsSync as existsSync47, readdirSync as readdirSync13, readFileSync as readFileSync34 } from "node:fs";
+import { existsSync as existsSync47, readdirSync as readdirSync14, readFileSync as readFileSync34 } from "node:fs";
 import { join as join66 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
@@ -65214,7 +65229,7 @@ async function prepareReview(ctx, cand, provider) {
   const reviewDir = join66(ctx.runDir, "reviews", String(cand.seq));
   const checkout = join66(runWorktreeRoot(ctx), `review-${cand.seq}`);
   if (!existsSync47(join66(reviewDir, "packet.md"))) await preparePacket(ctx, cand, reviewDir, provider);
-  if (!existsSync47(checkout) || readdirSync13(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
+  if (!existsSync47(checkout) || readdirSync14(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
 var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
@@ -66173,7 +66188,7 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync49, lstatSync as lstatSync10, realpathSync as realpathSync20, rmSync as rmSync18 } from "node:fs";
+import { existsSync as existsSync49, lstatSync as lstatSync11, realpathSync as realpathSync20, rmSync as rmSync18 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
 import { dirname as dirname29, join as join71, resolve as resolve18 } from "node:path";
 function repoKeyFor(repoRoot) {
@@ -66265,7 +66280,7 @@ function realOrResolved3(p) {
 }
 function isRealDirectory(p) {
   try {
-    return lstatSync10(p).isDirectory();
+    return lstatSync11(p).isDirectory();
   } catch {
     return false;
   }
@@ -66881,7 +66896,7 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { chmodSync as chmodSync8, existsSync as existsSync51, lstatSync as lstatSync11, mkdirSync as mkdirSync23, readFileSync as readFileSync35, readdirSync as readdirSync14, rmSync as rmSync19, rmdirSync, statSync as statSync15 } from "node:fs";
+import { chmodSync as chmodSync8, existsSync as existsSync51, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync35, readdirSync as readdirSync15, rmSync as rmSync19, rmdirSync, statSync as statSync15 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
 import { dirname as dirname31, isAbsolute as isAbsolute25, join as join73 } from "node:path";
 function serviceLabel(repoRoot) {
@@ -66948,7 +66963,7 @@ function secureLauncherDir(orbitHome) {
   if ((home2.mode & 18) !== 0) chmodSync8(orbitHome, home2.mode & 493 & ~18);
   const bin = join73(orbitHome, "bin");
   mkdirSync23(bin, { recursive: true, mode: 448 });
-  const st = lstatSync11(bin);
+  const st = lstatSync12(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
   if (uid !== void 0 && st.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${bin} is not owned by this user; refusing to put the service launcher in it`, { path: bin });
   if ((st.mode & 63) !== 0) chmodSync8(bin, 448);
@@ -66976,7 +66991,7 @@ function refreshLauncher(input) {
   const path = launcherPath(input.orbitHome);
   let st;
   try {
-    st = lstatSync11(path);
+    st = lstatSync12(path);
   } catch {
     return "absent";
   }
@@ -67142,7 +67157,7 @@ async function uninstallService(label, opts) {
 function installedDefinitions(opts) {
   const dir = opts.platform === "darwin" ? join73(opts.homeDir, "Library", "LaunchAgents") : join73(opts.homeDir, ".config", "systemd", "user");
   try {
-    return readdirSync14(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
+    return readdirSync15(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
   } catch {
     return [];
   }
@@ -68240,7 +68255,7 @@ var init_doctor_plugins = __esm({
 });
 
 // src/cli/commands/doctor-dotnet.ts
-import { existsSync as existsSync55, lstatSync as lstatSync12, readdirSync as readdirSync15, readFileSync as readFileSync37 } from "node:fs";
+import { existsSync as existsSync55, lstatSync as lstatSync13, readdirSync as readdirSync16, readFileSync as readFileSync37 } from "node:fs";
 import { basename as basename20, join as join78, posix as posix6, resolve as resolve21 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
@@ -68263,7 +68278,7 @@ function before28(version) {
 }
 function readSmall(path) {
   try {
-    const st = lstatSync12(path);
+    const st = lstatSync13(path);
     if (!st.isFile() || st.size > MAX_FILE_BYTES2) return null;
     return readFileSync37(path, "utf8");
   } catch {
@@ -68408,7 +68423,7 @@ function restoresPackages(command) {
 function cachedPackages(cache2) {
   if (!existsSync55(cache2)) return null;
   try {
-    return readdirSync15(cache2, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
+    return readdirSync16(cache2, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
   } catch {
     return 0;
   }

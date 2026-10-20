@@ -88,6 +88,9 @@ describe('muse invocation', () => {
     expect(MUSE_MIN_VERSION).toBe('1.4.11');
     expect(argv.slice(0, 2)).toEqual(['muse', 'exec']);
     for (const flag of MUSE_REQUIRED_FLAGS) expect(argv, flag).toContain(flag);
+    // Spelled out, not read from the source: dropping one of these from the adapter must fail here (issue #108 claim 5).
+    // --disable-shell keeps a shell from making the write-protected checkout writable again.
+    for (const flag of ['--disable-request-user-input', '--disable-write', '--disable-shell', '--no-foreign-personal-context', '--disable-web-tools', '--no-session-log', '--json']) expect(argv, flag).toContain(flag);
     const value = (flag: string) => argv[argv.indexOf(flag) + 1];
     expect(value('--model')).toBe(MODEL);
     expect(value('--reasoning-effort')).toBe('high');
@@ -137,6 +140,8 @@ describe('muse invocation', () => {
       expect(isOrbitError(caught, 'CONFIG_INVALID'), flag).toBe(true);
       expect((caught as Error).message).toMatch(/extra_args/);
     }
+    // A positional argument would be dropped from the fixed invocation, so it is refused rather than ignored.
+    expect(() => new MuseAdapter({ extraArgs: ['foo'] })).toThrow(/extra_args: foo is not allowed/);
     expect(() => new MuseAdapter({ extraArgs: [] })).not.toThrow();
   });
 });

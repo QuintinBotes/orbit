@@ -20,7 +20,7 @@
  * can still never wait on a person: --disable-request-user-input withholds the question tool, and the reviewer's
  * wall-clock cap kills the whole process group (shim.ts).
  */
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
@@ -61,6 +61,7 @@ export const MUSE_REQUIRED_FLAGS: readonly string[] = [
   '--permission-profile',
   '--disable-request-user-input',
   '--disable-write',
+  '--disable-shell',
   '--no-foreign-personal-context',
   '--disable-web-tools',
   '--no-session-log',
@@ -170,8 +171,9 @@ export class MuseAdapter implements ProviderAdapter {
     this.id = opts.id ?? 'muse';
     this.command = opts.command && opts.command.length > 0 ? [...opts.command] : ['muse'];
     this.clock = opts.clock ?? systemClock;
+    // Refused rather than ignored: the invocation is fixed, so an argument here would read as having an effect it does not.
     for (const a of opts.extraArgs ?? []) {
-      if (a.startsWith('-') && !MUSE_EXTRA_ARGS_ALLOWED.includes(a.split('=')[0]!)) {
+      if (!MUSE_EXTRA_ARGS_ALLOWED.includes(a.split('=')[0]!)) {
         throw new OrbitError('CONFIG_INVALID', `providers.${this.id}.extra_args: ${a} is not allowed; the review invocation is fixed`, { flag: a });
       }
     }
@@ -405,6 +407,8 @@ export function buildMuseArgv(i: MuseArgvInput): string[] {
     ':read-only',
     '--disable-request-user-input',
     '--disable-write',
+    // No shell: a shell running as the checkout's owner could chmod it writable again. Search and file reading remain.
+    '--disable-shell',
     '--no-foreign-personal-context',
     '--disable-web-tools',
     '--no-session-log',
@@ -430,16 +434,32 @@ export function assertSafeMuseArgv(argv: readonly string[]): void {
   }
 }
 
-/** The muse-sandbox tier's boundary: the checkout must not be writable by this user. */
-function assertWriteProtected(checkout: string): void {
-  let writable = true;
+/**
+ * The muse-sandbox tier's boundary: no directory or file of the checkout may be writable, as evidence/candidate.ts
+ * makeReadOnly leaves it (symbolic links and a nested .git directory are skipped there too). Checked in full, since a
+ * write-protected root says nothing of the files below it.
+ */
+export function assertWriteProtected(checkout: string): void {
+  const refuse = (path: string): never => {
+    throw new OrbitError('POLICY_DENIED', `refusing to run Muse in the muse-sandbox tier against a writable checkout (${path} is writable); the review checkout must be write-protected on disk`, { path });
+  };
   try {
     accessSync(checkout, constants.W_OK);
-  } catch {
-    writable = false;
+    refuse(checkout);
+  } catch (err) {
+    if (err instanceof OrbitError) throw err;
   }
-  if (writable) {
-    throw new OrbitError('POLICY_DENIED', `refusing to run Muse in the muse-sandbox tier against a writable checkout (${checkout}); the review checkout must be write-protected on disk`, { path: checkout });
+  const stack = [checkout];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory() && name === '.git') continue;
+      if ((st.mode & 0o222) !== 0) refuse(p);
+      if (st.isDirectory()) stack.push(p);
+    }
   }
 }
 

@@ -1140,7 +1140,7 @@ Muse reviewer, chosen the way the Codex tier is, by credential:
 | --- | --- | --- |
 | `auto` (default) | `os-sandbox` when `META_API_KEY` is set (not blank) in the worker environment and `srt` starts here; otherwise `muse-sandbox` | the usual choice |
 | `os-sandbox` | `muse exec` inside `srt`: writes to the worker directory only, egress to `api.meta.ai` only, the user's Muse login directory denied, a private config directory as `XDG_CONFIG_HOME` | refuses with `ISOLATION_UNAVAILABLE` when `srt` is not in use or does not start, or when `META_API_KEY` is not set (the login file is denied there); it never falls back to an unwrapped Muse |
-| `muse-sandbox` | `muse exec` never wrapped in `srt`, under its own `:read-only` profile, against the review checkout Orbit has write-protected on disk | the adapter refuses a writable checkout; reads are unrestricted, and the worker record says so |
+| `muse-sandbox` | `muse exec` never wrapped in `srt`, under its own `:read-only` profile with the shell disabled, against the review checkout Orbit has write-protected on disk | the adapter refuses a checkout with any writable directory or file; outside the checkout only Muse's own profile applies, and reads are unrestricted; the worker record says so |
 
 Each family accepts only its own tier names: `muse-sandbox` on a Codex
 provider and `codex-sandbox` on a Muse provider are configuration errors, and

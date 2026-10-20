@@ -14,6 +14,7 @@ muse exec \
   --permission-profile :read-only \
   --disable-request-user-input \
   --disable-write \
+  --disable-shell \
   --no-foreign-personal-context \
   --disable-web-tools \
   --no-session-log \
@@ -27,8 +28,13 @@ The prompt goes in a file (`--prompt-file`), never on stdin. Read-only never
 rests on these flags alone: the review runs either inside `srt` (tier
 `os-sandbox`, writes to the worker directory only, egress to `api.meta.ai`
 only) or against a checkout Orbit has write-protected on disk (tier
-`muse-sandbox`), and the adapter refuses to launch the second tier against a
-writable checkout.
+`muse-sandbox`), and the adapter refuses to launch the second tier unless every
+directory and file of the checkout is write-protected. The shell is disabled so
+that nothing running as the checkout's owner can make it writable again. In the
+`muse-sandbox` tier nothing outside Muse confines writes outside the checkout
+(the user's home, the repository's `.git`): there the boundary is Muse's own
+`:read-only` profile and `--disable-write`, as `codex-sandbox` rests on Codex's
+own sandbox. Use `os-sandbox` where that matters.
 
 ## 1. Flags, as probed
 
@@ -41,6 +47,7 @@ writable checkout.
 | `--output-schema <FILE>` | The final answer in `run.terminal.completed` was schema-shaped JSON. Orbit still parses and validates it with its own copy of the schema; anything else is a malformed review. |
 | `--max-model-steps <N>` | The step cap. At the cap the run ends failed (below). Orbit uses 200 for a review. |
 | `--no-session-log` | Keeps session logs off disk. |
+| `--disable-shell` | Accepted. With it the reviewer still inspects the checkout through its `search` and `read_file` tools: asked to find a function in a nested file of a write-protected tree, it found it, and asked to make a file writable and change it, it reported that it had no tool to do so and the file was unchanged. |
 | `--disable-write`, `--disable-request-user-input`, `--no-foreign-personal-context`, `--disable-web-tools` | Accepted. Asked to write a file under `:read-only` with `--disable-write`, the model declined without attempting a write, so the probe could not show Muse itself denying one. The design relies on the external boundary, not on this. |
 
 Never passed, and refused if they appear in any argv Orbit launches:
@@ -71,7 +78,9 @@ The `payload_type` names the event. Types seen:
 - `tool.result` (`payload.correlation_facts.tool_name`, `payload.text`)
 - `run.output.delta`
 - `run.usage` (`payload.models[]`, each with `input_tokens`, `cached_tokens`,
-  `output_tokens`, `reasoning_tokens`, `calls`); no cost is reported
+  `output_tokens`, `reasoning_tokens`, `calls`); no cost is reported. Whether
+  `input_tokens` already includes `cached_tokens` was not established, so the
+  cost estimate counts them separately, which can only overstate spend
 - `run.terminal.completed` (`payload.text` is the final answer,
   `payload.reason` null)
 - `run.terminal.failed` (`payload.text` empty, `payload.reason` set)
@@ -85,7 +94,11 @@ neither was interrupted or crashed, and Orbit classifies it that way
 The login is a file at `$XDG_CONFIG_HOME/muse/auth.json` (default
 `~/.config/muse`), not a keychain entry. `META_API_KEY` wins over that login.
 There is no login status command, so Orbit's credential check is the smallest
-real request: one model step, no tools, in an empty private directory. A
+real request: `--max-model-steps 1`, `--reasoning-effort minimal`,
+`--disable-shell` and the other read-only flags, a positional prompt, in an
+empty private directory. Probed: with a login it exited 0 in 8 s with
+`run.terminal.completed` (one step is enough for a reply that calls no tool);
+with an empty `XDG_CONFIG_HOME` it exited 1 at once. A
 missing login fails before any request, with the message in section 2.
 
 Inside `srt` the user's login directory is denied, so the `os-sandbox` tier

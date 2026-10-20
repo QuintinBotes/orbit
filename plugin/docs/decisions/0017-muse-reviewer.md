@@ -35,25 +35,30 @@ review:
   provider are configuration errors that name the key. The model is passed
   through unchanged; Orbit never substitutes another. `reasoning_effort: none`
   is refused, since the meta provider rejects it.
-- Read-only rests on an external boundary, never on Muse's own settings
-  alone. Two tiers, chosen by `providers.muse.tier`:
+- The review checkout's read-only state rests on an external boundary,
+  never on Muse's own settings alone. Two tiers, chosen by `providers.muse.tier`:
   - `os-sandbox`: `srt` wraps the whole muse process. Writes to the worker
     directory only, egress to `api.meta.ai` only, the user's Muse login
     directory denied, so the tier runs on `META_API_KEY` with a private
     config directory. Chosen explicitly, it fails closed
     (`ISOLATION_UNAVAILABLE`) without `srt` or without `META_API_KEY`.
-  - `muse-sandbox`: no `srt`. Muse's own `:read-only` profile and shell
-    sandbox apply against a review checkout Orbit has already write-protected
-    on disk, and the adapter refuses to launch against a writable one. Reads
-    are unrestricted in this tier, and the worker record says so.
+  - `muse-sandbox`: no `srt`. Muse's own `:read-only` profile applies, with
+    the shell disabled, against a review checkout Orbit has already
+    write-protected on disk; the adapter refuses to launch unless every
+    directory and file in it is write-protected. Without a shell nothing
+    running as the checkout's owner can chmod it back. Outside the checkout
+    (the home directory, the repository's `.git`) this tier rests on Muse's
+    own profile and `--disable-write`, as `codex-sandbox` rests on Codex's
+    sandbox; reads are unrestricted. The worker record says so, and
+    `os-sandbox` is the tier where that matters.
   - `auto` (default) picks `os-sandbox` only with `META_API_KEY` in the
     worker environment and an `srt` that starts, else `muse-sandbox`.
 - The invocation is fixed: `muse exec` with `--model`, `--reasoning-effort`,
   `--workspace`, `--permission-profile :read-only`,
-  `--disable-request-user-input`, `--disable-write`,
+  `--disable-request-user-input`, `--disable-write`, `--disable-shell`,
   `--no-foreign-personal-context`, `--disable-web-tools`, `--no-session-log`,
   `--json`, `--output-schema`, `--max-model-steps 200` and the packet in
-  `--prompt-file`. `extra_args` flags are refused, as are `--yolo`,
+  `--prompt-file`. Any `extra_args` entry is refused, as are `--yolo`,
   `--disable-sandbox`, `--disable-approval`, `--trust-workspace` and an
   `:unrestricted` profile in any argv. The step cap of 200 bounds a review
   session the way a turn cap bounds a Claude one.
