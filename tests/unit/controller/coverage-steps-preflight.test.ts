@@ -8,7 +8,7 @@ const hooks = vi.hoisted(() => ({ git: vi.fn(), resolveCommit: vi.fn(), treeOf: 
 vi.mock('../../../src/evidence/git.ts', async (orig) => ({ ...(await orig<Git>()), git: hooks.git, resolveCommit: hooks.resolveCommit, treeOf: hooks.treeOf, adminDirFor: hooks.adminDirFor }));
 vi.mock('../../../src/evidence/baseline.ts', async (orig) => ({ ...(await orig<Base>()), runBaseline: hooks.runBaseline }));
 
-const { checkEnvironment, dirtyPaths, ensureWorktree, preflightStep, IMPLEMENTER_PROVIDER, recordGate } = await import('../../../src/controller/steps/preflight.ts');
+const { checkEnvironment, dirtyPathSplit, dirtyPaths, dirtyStartRefusal, ensureWorktree, preflightStep, IMPLEMENTER_PROVIDER, recordGate } = await import('../../../src/controller/steps/preflight.ts');
 const { OrbitError } = await import('../../../src/core/errors.ts');
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { listDecisions } = await import('../../../src/storage/decisions.ts');
@@ -178,6 +178,32 @@ describe('ensureWorktree', () => {
     hooks.adminDirFor.mockReset();
     hooks.adminDirFor.mockRejectedValueOnce(new TypeError('bug'));
     await expect(ensureWorktree(lab.repo, path, 'b'.repeat(40))).rejects.toThrow('bug');
+  });
+
+  it('splits untracked files from changes to tracked files, and a rename counts once (#110)', async () => {
+    setup();
+    hooks.git.mockResolvedValue('?? notes.md\0?? tmp/x.txt\0');
+    expect(await dirtyPathSplit(lab.repo)).toEqual({ changed: [], untracked: ['notes.md', 'tmp/x.txt'] });
+    // -z prints a rename as the new path, then the old one as an entry of its own.
+    hooks.git.mockResolvedValue('R  READ.md\0README.md\0 M a.txt\0?? notes.md\0');
+    expect(await dirtyPathSplit(lab.repo)).toEqual({ changed: ['READ.md', 'a.txt'], untracked: ['notes.md'] });
+    // A rename git finds in the work tree (an intent-to-add file) is reported in the second column.
+    hooks.git.mockResolvedValue(' R new.txt\0old.txt\0');
+    expect(await dirtyPathSplit(lab.repo)).toEqual({ changed: ['new.txt'], untracked: [] });
+  });
+
+  it('names fixes that clear untracked files when nothing tracked changed, and says git stash leaves them (#110)', () => {
+    expect(dirtyStartRefusal({ changed: [], untracked: [] })).toBeNull();
+    const only = dirtyStartRefusal({ changed: [], untracked: ['notes.md'] })!;
+    expect(only.reason).toBe('the repository has uncommitted changes (notes.md): 1 untracked');
+    expect(only.fix).toMatch(/untracked files count as uncommitted changes, although a run starts from HEAD and never sees them/);
+    expect(only.fix).toMatch(/\.git\/info\/exclude or \.gitignore/);
+    expect(only.fix).toMatch(/git stash -u \(plain git stash leaves them\)/);
+    expect(only.fix).not.toMatch(/^commit/);
+    const both = dirtyStartRefusal({ changed: ['a.ts'], untracked: ['notes.md'] })!;
+    expect(both.reason).toBe('the repository has uncommitted changes (a.ts, notes.md): 1 modified and 1 untracked');
+    expect(both.fix).toBe('commit or stash the modified files (git stash -u takes the untracked ones too; plain git stash leaves them), or set repository.allow_dirty_start');
+    expect(dirtyStartRefusal({ changed: ['a.ts'], untracked: [] })!.fix).toBe('commit or stash the modified files, or set repository.allow_dirty_start');
   });
 
   it('dirtyPaths leaves out entries too short to be paths and reads the porcelain output', async () => {

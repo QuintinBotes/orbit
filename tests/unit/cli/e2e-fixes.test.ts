@@ -70,6 +70,11 @@ describe('P20: orbit run refuses cheap-to-detect problems before it creates a ru
     const r = await l.cli(['run', '--goal', 'x', '--mode', 'autonomous', '--detach']);
     expect(r.code).not.toBe(0);
     expect(r.err).toMatch(/uncommitted changes \(scratch\.txt\)/);
+    // Only an untracked file: the fix names what clears it, not commit or stash (#110).
+    expect(r.err).toMatch(/uncommitted changes \(scratch\.txt\): 1 untracked/);
+    expect(r.err).toMatch(/\.git\/info\/exclude or \.gitignore/);
+    expect(r.err).toMatch(/git stash -u \(plain git stash leaves them\)/);
+    expect(r.err).toMatch(/repository\.allow_dirty_start in \.orbit\/config\.yaml, then run again/);
     expect(r.err).toMatch(/No run was created/);
     expect(r.err).toMatch(/allow_dirty_start/);
     expect(runCount(l)).toBe(0);
