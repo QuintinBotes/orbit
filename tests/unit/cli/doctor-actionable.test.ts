@@ -122,6 +122,7 @@ describe('P6: the review fix matches the reason', () => {
     expect(c.review!.fix).not.toContain('orbit models refresh');
     expect(c.review!.fix).toContain('A person, not an agent, must make any edit to agents.allowed_plugins or providers.codex.data_policy_eligible in .orbit/config.yaml.');
     expect(c.review!.fix).toContain('An auto-mode classifier may flag worker launches.');
+    expect(c.review!.fix).toContain('Orbit does not enforce this: only worker sessions are blocked from editing .orbit/config.yaml.');
   });
 
   it('issue 7: with codex not eligible AND no model qualified, both prerequisites and both fixes are listed at once', async () => {
