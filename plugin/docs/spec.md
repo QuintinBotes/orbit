@@ -685,6 +685,27 @@ reportUsage()
 
 Support Claude and Codex initially. Other providers may implement the same interface.
 
+Muse implements the same interface as a reviewer only (ADR 0017,
+docs/interfaces/muse.md). A repository opts in with a `providers.muse` block
+(defaults: model `muse-wonder-full-1.0`, reasoning effort `high`, tier `auto`,
+not data-policy eligible until a person attests it) and lists it in
+`review.providers`, in any order with Codex. The adapter refuses any task that
+is not read-only, and read-only rests on an external boundary, never on
+Muse's own settings alone: either `srt` wraps the whole muse process (tier
+`os-sandbox`, only on `META_API_KEY`, writes to the worker directory only,
+egress to the provider host only, failing closed without `srt` or the key),
+or Muse runs unwrapped under its `:read-only` profile against a checkout
+Orbit has write-protected on disk (tier `muse-sandbox`, refused when the
+checkout is writable). The invocation is fixed and bounded (no question tool,
+a 200-step cap, the reviewer's wall-clock cap over the whole process group),
+so a Muse review can never wait on a person; a timeout, a non-zero exit or a
+step cap is a reviewer failure with its reason, never a verdict. The verdict
+comes only from the schema-shaped final answer, validated against Orbit's own
+copy of the review schema exactly as for Codex. A Muse review of a Claude
+implementer's work counts as independent, and the evidence names the
+reviewer, model, tier and why it was chosen; `orbit doctor` reports the same
+before a run.
+
 ### Review packet
 
 Provide goal, criteria, policy constraints, exact candidate, diff, relevant source/tests, verification results, assumptions, and review questions. Exclude secrets and unrelated content. Record provider/data-policy eligibility.

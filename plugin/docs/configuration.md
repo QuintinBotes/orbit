@@ -452,10 +452,14 @@ review:
 `review.providers` lists the independent reviewers (a provider other than the
 one that wrote the change) in preference order. The first that is installed,
 logged in, `data_policy_eligible` and has a qualified model reviews. Only
-providers Orbit has an adapter for can be listed: today that is `codex` (or a
-second Codex configuration such as `codex-review` defined under `providers`).
+providers Orbit has an adapter for can be listed: today that is `codex` and
+`muse` (or a second configuration of either, such as `codex-review`, defined
+under `providers`), in any order, for example `providers: [codex, muse]`.
 Any other id, such as `gemini`, is a configuration error that names the
-supported ones. Each listed id must be defined under `providers`.
+supported ones. Each listed id must be defined under `providers`. Muse is a
+reviewer only and needs Muse 1.4.11 or later; see
+`providers.muse` under [isolation and providers](#isolation-and-providers)
+and [ADR 0017](decisions/0017-muse-reviewer.md).
 
 `review.when_unavailable` decides what happens when none of them is usable at
 run time ([ADR 0007](decisions/0007-reviewer-availability.md)):
@@ -1057,6 +1061,13 @@ providers:
     extra_args: []
     tier: auto                    # auto | os-sandbox | codex-sandbox (Codex only)
     review_reasoning_effort: medium   # low | medium | high | xhigh | max (Codex only)
+  muse:                           # opt in: present only when you add it
+    command: muse
+    data_policy_eligible: false   # true only if sending sanitized code to this provider is permitted
+    model: muse-wonder-full-1.0
+    reasoning_effort: high        # minimal | low | medium | high | xhigh | max | ultra
+    extra_args: []
+    tier: auto                    # auto | os-sandbox | muse-sandbox (Muse only)
 ```
 
 `providers.<id>.tier` is the isolation tier of the Codex reviewer (ADR 0001,
@@ -1104,6 +1115,39 @@ provider's transcript by the parser of its family, so `codex-review` is read as
 Codex) and flags a review that made no tool calls, so a reviewer that judged
 from the packet alone is visible; see
 [operations](operations.md#the-final-report).
+
+`providers.muse` configures Muse as an independent reviewer
+([ADR 0017](decisions/0017-muse-reviewer.md); the verified CLI surface is
+[interfaces/muse](interfaces/muse.md)). Muse never implements: the adapter
+runs read-only review tasks only and needs Muse 1.4.11 or later. There is no
+`muse` provider in the defaults; adding the block (under `muse`, or an id
+starting with `muse-` or `muse_`) creates it with the defaults shown above.
+The model is passed through unchanged (Muse has no model catalog command, so
+Orbit never substitutes another), and the reasoning effort of a review is
+`reasoning_effort` itself: `review_reasoning_effort` on a Muse provider is
+rejected, since that key is the Codex reviewer's. `reasoning_effort: none` is
+rejected too, because the meta provider refuses it. The invocation is fixed:
+`extra_args` flags are refused, and the review always runs `muse exec` with
+`--permission-profile :read-only`, writes and web tools and the question tool
+disabled, the packet in `--prompt-file`, `--output-schema` and a cap of 200
+model steps. The worker environment passes `META_API_KEY` and
+`XDG_CONFIG_HOME` (the login is a file at `$XDG_CONFIG_HOME/muse/auth.json`,
+and the key wins over it), sets `MUSE_NO_AUTO_UPDATE=1`, and refuses every
+other `MUSE_*` variable. `providers.muse.tier` is the isolation tier of the
+Muse reviewer, chosen the way the Codex tier is, by credential:
+
+| value | what runs | when |
+| --- | --- | --- |
+| `auto` (default) | `os-sandbox` when `META_API_KEY` is set (not blank) in the worker environment and `srt` starts here; otherwise `muse-sandbox` | the usual choice |
+| `os-sandbox` | `muse exec` inside `srt`: writes to the worker directory only, egress to `api.meta.ai` only, the user's Muse login directory denied, a private config directory as `XDG_CONFIG_HOME` | refuses with `ISOLATION_UNAVAILABLE` when `srt` is not in use or does not start, or when `META_API_KEY` is not set (the login file is denied there); it never falls back to an unwrapped Muse |
+| `muse-sandbox` | `muse exec` never wrapped in `srt`, under its own `:read-only` profile, against the review checkout Orbit has write-protected on disk | the adapter refuses a writable checkout; reads are unrestricted, and the worker record says so |
+
+Each family accepts only its own tier names: `muse-sandbox` on a Codex
+provider and `codex-sandbox` on a Muse provider are configuration errors, and
+`tier` on a Claude provider stays one. `orbit doctor` reports the tier the
+Muse reviewer will use and why, the credential source, the model and the
+eligibility (`muse.worker-tier`). As with Codex, a person, not an agent, must
+make any edit to `providers.muse.data_policy_eligible`.
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit
 off. It sets hard per-process limits on every worker shell command and check.
