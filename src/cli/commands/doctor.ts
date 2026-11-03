@@ -15,9 +15,9 @@ import { OrbitError } from '../../core/errors.ts';
 import { execCapture } from '../../core/exec.ts';
 import { redact } from '../../core/redact.ts';
 import { defaultConfig } from '../../policy/index.ts';
-import type { OrbitConfig } from '../../policy/types.ts';
+import type { OrbitConfig, ProviderConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
-import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, providerKind, type CodexTierDecision, type CodexTierSetting } from '../../adapters/index.ts';
+import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, decideMuseTier, museEnvCredential, providerKind, MUSE_LIMITATIONS, MUSE_MIN_VERSION, MUSE_OS_SANDBOX_LIMITATIONS, type CodexTierDecision, type CodexTierSetting, type MuseTierDecision, type MuseTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
@@ -46,7 +46,7 @@ import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
-import { withHumanPolicyConfigNote } from './doctor-policy-note.ts';
+import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
 import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
@@ -142,7 +142,7 @@ interface Probe {
  */
 export function toolEnv(env: Env): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
-  for (const k of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_API_KEY']) if (env[k] !== undefined) out[k] = env[k];
+  for (const k of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CODEX_API_KEY', 'META_API_KEY']) if (env[k] !== undefined) out[k] = env[k];
   return out;
 }
 
@@ -513,7 +513,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     const kind = providerKind(id);
     const exe = config.providers[id]!.command;
     if (!cap.available) {
-      checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
+      checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : kind === 'muse' ? `install Muse ${MUSE_MIN_VERSION} or later` : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
       continue;
     }
     const cliDetails = [`structured output: ${cap.structuredOutput ? 'yes' : 'no'}`, `read-only sandbox: ${cap.readOnlySandbox ? 'yes' : 'no'}`, `usage reporting: ${cap.usageReporting}`, `cost reporting: ${cap.costReporting ? 'yes' : 'no'}`];
@@ -523,7 +523,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     if (!cred) continue;
     const st = cred.status;
     if (cred.verdict === 'blocked' && st) {
-      const alt = kind === 'claude' ? 'or set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from "claude setup-token")' : 'or set CODEX_API_KEY';
+      const alt = kind === 'claude' ? 'or set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from "claude setup-token")' : kind === 'muse' ? 'or set META_API_KEY' : 'or set CODEX_API_KEY';
       checks.push(level(`${id}.auth`, 'providers', `${id} credentials are ${st.state}: ${flat(st.detail)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? 'log in'} ${alt}`));
     } else if (cred.verdict === 'error') {
       checks.push(level(`${id}.auth`, 'providers', `${id} credentials could not be checked: ${cred.error ?? 'unknown error'}`, `a ${kind} credential check`, null));
@@ -543,7 +543,9 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
       }
       const plugins = await workerPluginsCheck(id, adapters[id], config);
       if (plugins) checks.push(plugins);
-    } else checks.push(codexTierCheck(id, config.providers[id]!.tier ?? 'auto', codexEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
+    } else if (kind === 'muse') {
+      checks.push(museTierCheck(id, config.providers[id]!, museEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
+    } else checks.push(codexTierCheck(id, (config.providers[id]!.tier ?? 'auto') as CodexTierSetting, codexEnvCredential(ctx.env), iso.available && iso.provider?.kind === 'sandbox-runtime', level));
   }
 
   // Who reviews: judged exactly as a run would judge it, in every review.when_unavailable mode (decision 0007).
@@ -630,6 +632,27 @@ function codexTierCheck(id: string, setting: CodexTierSetting, apiKeyVar: string
   }
   if (!decision.automatic) return pass(check, 'providers', summary, limitations);
   return warn(check, 'providers', summary, 'an exported API key (CODEX_API_KEY or OPENAI_API_KEY) plus sandbox-runtime for the os-sandbox tier', 'export CODEX_API_KEY or OPENAI_API_KEY (an API-key login, not a ChatGPT login)', limitations);
+}
+
+/**
+ * The Muse reviewer's tier and why, its credential source and its eligibility, from the adapter's own decision
+ * (decideMuseTier) applied to what doctor can see. An explicit os-sandbox without srt or META_API_KEY would fail the
+ * run (ISOLATION_UNAVAILABLE), so it is judged like a missing reviewer.
+ */
+function museTierCheck(id: string, provider: ProviderConfig, apiKeyVar: string | null, srtInUse: boolean, level: typeof fail): DoctorCheck {
+  const check = `${id}.worker-tier`;
+  const setting = (provider.tier ?? 'auto') as MuseTierSetting;
+  const facts = [`credential source: ${apiKeyVar ?? 'login file (muse login)'}`, `model: ${provider.model ?? 'default'}`, `data_policy_eligible: ${provider.data_policy_eligible ? 'true' : `false (${HUMAN_POLICY_CONFIG_NOTE})`}`];
+  let decision: MuseTierDecision;
+  try {
+    decision = decideMuseTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: 'sandbox-runtime isolation is not in use' } });
+  } catch (err) {
+    return level(check, 'providers', errText(err, 300), 'sandbox-runtime isolation and META_API_KEY, or providers.<id>.tier set to auto or muse-sandbox', 'set isolation.provider to sandbox-runtime and export META_API_KEY, or set the tier to auto or muse-sandbox', facts);
+  }
+  const summary = `the Muse reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}`;
+  const details = [...facts, ...(decision.tier === 'os-sandbox' ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS).map((l) => `limitation: ${l}`)];
+  if (decision.tier === 'os-sandbox' || !decision.automatic) return pass(check, 'providers', summary, details);
+  return warn(check, 'providers', summary, 'META_API_KEY plus sandbox-runtime for the os-sandbox tier', 'export META_API_KEY and use sandbox-runtime isolation', details);
 }
 
 async function checkModels(p: Probe, registry: ModelRegistry, facts: ProviderFacts): Promise<DoctorCheck> {

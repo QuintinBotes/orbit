@@ -5,7 +5,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
 import { transition, getRun, type RunRecord } from '../controller/run-store.ts';
 import { TERMINAL_STATES } from '../core/run-states.ts';
-import { claudeEnvCredential, codexEnvCredential } from '../adapters/env.ts';
+import { claudeEnvCredential, codexEnvCredential, museEnvCredential } from '../adapters/env.ts';
 import type { CredentialState, CredentialStatus, ProviderAdapter } from '../adapters/types.ts';
 
 /**
@@ -27,12 +27,14 @@ import type { CredentialState, CredentialStatus, ProviderAdapter } from '../adap
 export const LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   claude: 'claude auth login',
   codex: 'codex login',
+  muse: 'muse login',
 };
 
 /** Providers whose key can be exported instead of a login, for unattended runs (ADR 0003). */
 const KEY_ALTERNATIVES: Readonly<Record<string, string>> = {
   claude: 'set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)',
   codex: 'set CODEX_API_KEY',
+  muse: 'set META_API_KEY',
 };
 
 export type BlockedCredentialState = Exclude<CredentialState, 'valid' | 'unknown'> | 'auth_failed';
@@ -67,6 +69,7 @@ export interface AuthBlockerInput {
 export function exportedCredential(provider: string, env: Readonly<Record<string, string | undefined>>): string | null {
   if (provider === 'claude') return claudeEnvCredential(env);
   if (provider === 'codex') return codexEnvCredential(env);
+  if (provider === 'muse') return museEnvCredential(env);
   return null;
 }
 

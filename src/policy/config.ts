@@ -386,15 +386,25 @@ export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): Isolati
 export const REVIEW_REASONING_EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DEFAULT_REVIEW_REASONING_EFFORT = 'medium';
 
+/** The reasoning efforts `muse exec --reasoning-effort` accepts with the meta provider (Muse 1.4.11 refuses none there; docs/interfaces/muse.md). */
+export const MUSE_REASONING_EFFORTS: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+/** The Muse reviewer's model and effort when the config names none. Passed through unchanged; never substituted. */
+export const MUSE_DEFAULT_MODEL = 'muse-wonder-full-1.0';
+export const MUSE_DEFAULT_REASONING_EFFORT = 'high';
+
 function defaultProvider(id: string, eligible: boolean): ProviderConfig {
   const base: ProviderConfig = { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
-  // The isolation tier and the review effort are Codex reviewer settings; no other provider carries the keys.
-  return providerFamily(id) === 'codex' ? { ...base, tier: 'auto', review_reasoning_effort: DEFAULT_REVIEW_REASONING_EFFORT } : base;
+  // The isolation tier is a reviewer setting (Codex and Muse) and the review effort a Codex one; Claude carries neither.
+  const family = providerFamily(id);
+  if (family === 'codex') return { ...base, tier: 'auto', review_reasoning_effort: DEFAULT_REVIEW_REASONING_EFFORT };
+  // The command defaults to `muse` for every Muse id, as `codex` would for codex-* if the binary were named by family.
+  if (family === 'muse') return { ...base, command: 'muse', model: MUSE_DEFAULT_MODEL, reasoning_effort: MUSE_DEFAULT_REASONING_EFFORT, tier: 'auto' };
+  return base;
 }
 
-/** The provider family an id names: `claude`, `codex`, or an id starting with one of them (`codex-review`); null for any other. */
-export function providerFamily(id: string): 'claude' | 'codex' | null {
-  for (const family of ['claude', 'codex'] as const) {
+/** The provider family an id names: `claude`, `codex`, `muse`, or an id starting with one of them (`codex-review`); null for any other. */
+export function providerFamily(id: string): 'claude' | 'codex' | 'muse' | null {
+  for (const family of ['claude', 'codex', 'muse'] as const) {
     if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
   }
   return null;
@@ -823,18 +833,35 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
   function providerTiers(c, problems) {
     for (const [id, provider] of Object.entries(c.providers)) {
       // Rejected rather than ignored: a tier that silently did nothing would read as confinement that is not there.
-      if (isPlainObject(provider) && provider.tier !== undefined && providerFamily(id) === 'claude') {
-        problems.push(`providers.${id}.tier: is a setting of the Codex reviewer only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+      if (!isPlainObject(provider) || provider.tier === undefined) continue;
+      const family = providerFamily(id);
+      if (family === 'claude') {
+        problems.push(`providers.${id}.tier: is a setting of the Codex and Muse reviewers only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+      } else if (family === 'codex' && provider.tier === 'muse-sandbox') {
+        problems.push(`providers.${id}.tier: muse-sandbox is a Muse tier; a Codex provider takes auto, os-sandbox or codex-sandbox`);
+      } else if (family === 'muse' && provider.tier === 'codex-sandbox') {
+        problems.push(`providers.${id}.tier: codex-sandbox is a Codex tier; a Muse provider takes auto, os-sandbox or muse-sandbox`);
       }
     }
   },
   function providerReviewEfforts(c, problems) {
     for (const [id, provider] of Object.entries(c.providers)) {
       if (!isPlainObject(provider) || provider.review_reasoning_effort === undefined) continue;
-      if (providerFamily(id) !== 'codex') {
-        problems.push(`providers.${id}.review_reasoning_effort: is a setting of the Codex reviewer only; a Claude reviewer's effort comes from providers.${id}.reasoning_effort and the router`);
+      const family = providerFamily(id);
+      if (family !== 'codex') {
+        const own = family === 'muse' ? `a Muse reviewer's effort is providers.${id}.reasoning_effort` : `a Claude reviewer's effort comes from providers.${id}.reasoning_effort and the router`;
+        problems.push(`providers.${id}.review_reasoning_effort: is a setting of the Codex reviewer only; ${own}`);
       } else if (!REVIEW_REASONING_EFFORTS.includes(provider.review_reasoning_effort as string)) {
         problems.push(`providers.${id}.review_reasoning_effort: ${JSON.stringify(provider.review_reasoning_effort)} is not one of ${REVIEW_REASONING_EFFORTS.join(', ')}`);
+      }
+    }
+  },
+  function museEfforts(c, problems) {
+    for (const [id, provider] of Object.entries(c.providers)) {
+      if (!isPlainObject(provider) || providerFamily(id) !== 'muse') continue;
+      const effort = provider.reasoning_effort;
+      if (effort !== null && effort !== undefined && !MUSE_REASONING_EFFORTS.includes(effort as string)) {
+        problems.push(`providers.${id}.reasoning_effort: ${JSON.stringify(effort)} is not one of ${MUSE_REASONING_EFFORTS.join(', ')}`);
       }
     }
   },

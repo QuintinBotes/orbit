@@ -26,7 +26,7 @@ export const SAME_PROVIDER_APPROVED_KIND = 'review.same-provider-approved';
 /** Opus-class, matching routing's safety-review floor. */
 export const REVIEW_QUALITY_FLOOR_TIER = 3;
 
-const PROVIDER_SURFACE: Readonly<Record<string, Surface>> = { claude: 'claude-cli', codex: 'codex-cli' };
+const PROVIDER_SURFACE: Readonly<Record<string, Surface>> = { claude: 'claude-cli', codex: 'codex-cli', muse: 'muse-cli' };
 
 /** The slice of the model registry selection reads. ModelRegistry satisfies it. */
 export interface ReviewerRegistry {
