@@ -74,6 +74,14 @@ describe('agents/*.md', () => {
         expect(text).not.toContain('You have no shell');
       });
 
+      // #122: used directly as a plugin agent, the reviewer has no packet and cannot run git, so a deleted line is invisible.
+      it.runIf(role === 'reviewer')('outside a run, reviews a named diff file and refuses to review whole files without one', () => {
+        const body = stripFrontmatter(text);
+        expect(body).toContain('When your task names a diff file, read it first');
+        expect(body).toMatch(/names neither a diff file nor a packet, do not review whole files/);
+        expect(body).toContain('return BLOCK with candidate_revision null');
+      });
+
       it('ends with an example of exactly the structured output the role schema requires', () => {
         const blocks = [...text.matchAll(/```json\n([\s\S]*?)\n```/g)];
         expect(blocks.length).toBeGreaterThan(0);

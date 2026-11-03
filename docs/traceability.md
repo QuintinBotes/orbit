@@ -282,7 +282,7 @@ sometimes shortened.
 | S9.1 | Planner: read-only; behaviour, mappings, proof plan, files, non-goals, risks, assumptions, decisions | `agents/planner.md`, `schemas/planner-output.schema.json` | U/schemas/model-output-schemas.test.ts, U/adapters/prompt-agents.test.ts "gives read-only roles no edit tool" | done |
 | S9.2 | Implementer: isolated worktree, small change, behaviour tests, artifacts, no protected edits | `agents/implementer.md`, `isolation/profiles.ts` | U/schemas/model-output-schemas.test.ts "gives the implementer no way to claim completion" | done |
 | S9.3 | Verifier: no edits; fingerprints, excerpts, hypotheses, experiments, constraints | `agents/verifier.md`, `schemas/diagnosis-output.schema.json` | U/schemas/model-output-schemas.test.ts "mirrors RepairBrief exactly in the diagnosis output" | done |
-| S9.4 | Reviewer: no edits; exact diff, tests, contract, evidence; rejects weak proof and leakage | `agents/reviewer.md`, `review/packet.ts` | I/review/packet.test.ts, I/adapters/codex-fake.test.ts | done |
+| S9.4 | Reviewer: no edits; exact diff, tests, contract, evidence; rejects weak proof and leakage | `agents/reviewer.md`, `review/packet.ts` | I/review/packet.test.ts, I/adapters/codex-fake.test.ts, U/adapters/prompt-agents.test.ts "outside a run, reviews a named diff file and refuses to review whole files without one" (#122) | done |
 | S9.5 | Inquisitor: challenges, experiments, reversible choices, decision requests | `agents/inquisitor.md`, `inquisition/engine.ts` | U/inquisition/engine.test.ts | done |
 | S9.6 | Main run protocol, steps 1 to 11 | `controller/steps/*` | A/feature-and-repair.test.ts, F/injection.test.ts (CI repair) | done |
 

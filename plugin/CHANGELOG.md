@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The `orbit:reviewer` agent, used directly outside an Orbit run, reviews the diff file its task names and returns BLOCK when it names none, instead of reviewing whole files in which a deleted or loosened line cannot appear (#122). It has no shell, so it cannot run `git diff` itself; the README says to write the diff to a file and name it in the task.
+
 ## 0.3.2 (2026-10-18)
 
 - Tests: the .NET runner test whose stand-in MSBuild records a denied node now prints its restore line before it writes that record, as MSBuild does. The runner stops a check as soon as it sees the record, so on a loaded CI runner it stopped the check between the two and the log held no check output (once, on main). No change to Orbit itself.
