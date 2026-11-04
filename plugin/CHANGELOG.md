@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `orbit init` sets `repository.base_branch` to the remote's default branch (`refs/remotes/origin/HEAD`, for the configured remote) instead of whatever branch is checked out (#109). With a feature branch checked out, every run opened its pull request against that feature branch. A linked worktree still takes its own branch (#3), and a repository with no remote default still takes the checked-out branch, such as `master` (Nm4). Whenever the branch written differs from the remote's default branch, init warns and names both (`warnings` in `--json`).
+
 ## 0.3.2 (2026-10-18)
 
 - Tests: the .NET runner test whose stand-in MSBuild records a denied node now prints its restore line before it writes that record, as MSBuild does. The runner stops a check as soon as it sees the record, so on a loaded CI runner it stopped the check between the two and the log held no check output (once, on main). No change to Orbit itself.
