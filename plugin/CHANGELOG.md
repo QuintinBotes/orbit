@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The `orbit:reviewer` agent, used directly outside an Orbit run, reviews the diff file its task names and returns BLOCK when it names none, instead of reviewing whole files in which a deleted or loosened line cannot appear (#122). It has no shell, so it cannot run `git diff` itself; the README says to write the diff to a file and name it in the task.
 - `orbit init` sets `repository.base_branch` to the remote's default branch (`refs/remotes/origin/HEAD`, for the configured remote) instead of whatever branch is checked out (#109). With a feature branch checked out, every run opened its pull request against that feature branch. A linked worktree still takes its own branch (#3), and a repository with no remote default still takes the checked-out branch, such as `master` (Nm4). Whenever the branch written differs from the remote's default branch, init warns and names both (`warnings` in `--json`).
 
 ## 0.3.2 (2026-10-18)
