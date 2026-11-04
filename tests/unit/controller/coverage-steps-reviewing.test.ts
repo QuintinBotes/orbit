@@ -80,7 +80,8 @@ const state = () => getRun(lab.db, lab.runId).state;
 const decisions = (kind: string) => listDecisions(lab.db, lab.runId, { kind });
 async function settle(max = 12) {
   let out = await run();
-  for (let i = 0; i < max && out.waiting && /is running$|running in|review running/.test(out.waiting) && state() === 'REVIEWING'; i++) out = await run();
+  // As the controller does, the step runs again while a worker runs, or after it made progress without leaving REVIEWING (a reviewer switch, #116).
+  for (let i = 0; i < max && !out.done && state() === 'REVIEWING' && ((out.progressed && !out.waiting) || (out.waiting !== undefined && /is running$|running in|review running/.test(out.waiting))); i++) out = await run();
   return out;
 }
 
@@ -437,7 +438,7 @@ describe('a review that has to be run', () => {
   });
 
   it('a review of another revision is asked for again, and after the limit the run ends without a review', async () => {
-    await setup({ reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
+    await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
     const out = await settle();
     expect(out).toMatchObject({ done: true });
     expect(['BLOCKED', 'EXHAUSTED']).toContain(state());
@@ -470,7 +471,7 @@ describe('a review that has to be run', () => {
   });
 
   it('a reviewer worker that ends badly is retried and then blocks the run, leaving no checkout', async () => {
-    await setup({ reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
+    await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
     const out = await settle();
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('BLOCKED');

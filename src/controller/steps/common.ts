@@ -419,7 +419,7 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
 export async function handleWorkerFailure(
   ctx: RunContext,
   failed: { provider: string; status: string; error: string | null; reason?: string | null },
-  opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: () => Promise<StepResult> },
+  opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
 ): Promise<FailureHandling> {
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
@@ -440,7 +440,7 @@ export async function handleWorkerFailure(
     note(ctx, 'worker.regenerate', { what: opts.what, status: failed.status, attempts: opts.attemptsUsed, error: failed.error?.slice(0, 300) ?? null });
     return { retry: true };
   }
-  if (opts.exhausted) return { retry: false, result: await opts.exhausted() };
+  if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
 }
 

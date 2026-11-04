@@ -28,7 +28,7 @@ import type { Clock } from '../core/clock.ts';
 import { listEvidenceReports } from '../evidence/store.ts';
 import { listFindings, listReviews } from '../review/store.ts';
 import { readSecurityPolicy } from '../review/resolve.ts';
-import { SAME_PROVIDER_APPROVED_KIND, type ReviewerSelection } from '../review/select.ts';
+import { REVIEWER_FAILED_KIND, SAME_PROVIDER_APPROVED_KIND, type ReviewerFailure, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger, spendBreakdown } from '../scheduling/budget.ts';
@@ -160,6 +160,8 @@ export interface ReportReviewer {
   why_not_independent: string | null;
   /** review.when_unavailable: ask: the person who said yes. */
   approved_by: string | null;
+  /** Reviewers of this candidate that failed at run time before this one reviewed, oldest first (#116). Absent in older reports. */
+  failed_reviewers?: { provider: string; model: string | null; reason: string }[];
 }
 
 export interface WriteReportOptions {
@@ -410,24 +412,34 @@ function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, revi
   const last = reviews.at(-1);
   if (!last) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
-  const recorded = selections.find((d) => candidateId !== null && d.id === `dec-${runId}-review-select-${candidateId}`) ?? selections.at(-1);
+  // A reviewer selected after another failed at run time is recorded under the same id with a ~<n> suffix (#116).
+  const own = `dec-${runId}-review-select-${candidateId}`;
+  const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
+  // The reviewers selection excluded for this review: those that failed since the latest resume, on any candidate.
+  const resumed = db.get<{ id: number | null }>("SELECT MAX(id) AS id FROM events WHERE run_id = ? AND type = 'run.resumed'", runId)?.id ?? null;
+  const failed = listDecisions(db, runId, { kind: REVIEWER_FAILED_KIND })
+    .map((d) => d.data as ReviewerFailure)
+    .filter((f) => f.resumed_event_id === resumed)
+    .map((f) => ({ provider: f.provider, model: f.model, reason: f.reason }));
+  const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
   const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tried };
   }
   // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
   const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
   const independent = last.provider !== implementer;
-  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy };
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy, ...tried };
 }
 
 /** `codex/model (independent)`, or the same-provider disclosure. */
 export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
-  if (r.independent) return `Reviewer: ${who} (independent)`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})`;
+  const tried = (r.failed_reviewers ?? []).map((f) => `\n- Tried first: ${f.provider}/${f.model ?? 'default'}, which failed (${f.reason})`).join('');
+  if (r.independent) return `Reviewer: ${who} (independent)${tried}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tried}`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {

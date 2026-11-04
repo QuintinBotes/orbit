@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A reviewer that fails at run time no longer blocks the run while another listed reviewer could review (#116). Once a reviewer's regenerations are used (a timeout, a non-zero exit, a malformed answer), Orbit records why as a `review.reviewer-failed` decision, stops that reviewer's other sessions of the candidate, and selects again without it: the next entry in `review.providers` reviews under its own name, and with none left `review.when_unavailable` applies. The final report's `Reviewer:` line names each reviewer tried first and why it failed. Each session is charged and counts as a review round. A failed reviewer is not selected again in that run until `orbit resume`. This changes Codex's behaviour too (ADR 0007, amended).
 - `orbit init` sets `repository.base_branch` to the remote's default branch (`refs/remotes/origin/HEAD`, for the configured remote) instead of whatever branch is checked out (#109). With a feature branch checked out, every run opened its pull request against that feature branch. A linked worktree still takes its own branch (#3), and a repository with no remote default still takes the checked-out branch, such as `master` (Nm4). Whenever the branch written differs from the remote's default branch, init warns and names both (`warnings` in `--json`).
 
 ## 0.3.2 (2026-10-18)

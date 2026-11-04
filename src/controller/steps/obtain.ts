@@ -22,7 +22,8 @@ export interface ObtainOptions<T> {
   accept: (result: TaskResult, worker: WorkerRecord) => T;
   /** Runs before a new attempt's worker is planned (budget counters are consumed here). */
   beforeStart?: (attempt: number) => void;
-  exhausted?: () => Promise<StepResult>;
+  /** The last attempt failed and none is left: the step to take instead of blocking the run. */
+  exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult>;
 }
 
 export type Obtained<T> = { ok: true; value: T; worker: WorkerRecord; attempt: number } | { ok: false; step: StepResult };
