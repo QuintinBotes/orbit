@@ -108,7 +108,8 @@ function record(cand: { id: string; treeHash: string }, verdict: 'APPROVE' | 'RE
 }
 async function settle(max = 12) {
   let out = await run();
-  for (let i = 0; i < max && out.waiting && state() === 'REVIEWING'; i++) out = await run();
+  // As the controller does, the step runs again while it waits, or after it made progress without leaving REVIEWING (a reviewer switch, #116).
+  for (let i = 0; i < max && !out.done && state() === 'REVIEWING' && (out.waiting !== undefined || out.progressed); i++) out = await run();
   return out;
 }
 const trigger = () => {
@@ -362,7 +363,7 @@ describe('a checkout that cannot be removed', () => {
   });
 
   it('does not hide why no usable review came back', async () => {
-    await setup({ reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
+    await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
     hooks.cleanup = async () => {
       throw new Error('busy');
     };
@@ -393,11 +394,11 @@ describe('a checkout that cannot be removed', () => {
   });
 
   it('a review that is not about this tree and cannot be regenerated reports the mismatch, and other ingest errors surface unchanged', async () => {
-    await setup({ reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
+    await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
     await settle();
     expect(listReviews(lab.db, lab.runId)).toHaveLength(0);
     cleanLab();
-    await setup({ reviewer: ({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [{ id: 1 }] }) });
+    await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), reviewer: ({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [{ id: 1 }] }) });
     await settle();
     expect(listReviews(lab.db, lab.runId)).toHaveLength(0);
   });
@@ -449,7 +450,7 @@ describe('parallel review units under pressure', () => {
   const workersCount = () => lab.db.all("SELECT 1 FROM workers WHERE run_id = ? AND role = 'reviewer'", lab.runId).length;
 
   it('a unit whose reviewer fails for good ends the run and removes the checkout', async () => {
-    const { cand } = await setup({ ui: true, difficulty: sensitive, reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
+    const { cand } = await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), ui: true, difficulty: sensitive, reviewer: () => okResult(null, { status: 'failed', error: 'crashed' }) });
     uiPaths(cand);
     const out = await settle();
     expect(out).toMatchObject({ done: true });
@@ -457,7 +458,7 @@ describe('parallel review units under pressure', () => {
   });
 
   it('both units are stopped from removing their checkout when it cannot be removed, and a stale answer from either is regenerated', async () => {
-    const { cand } = await setup({ ui: true, difficulty: sensitive, reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
+    const { cand } = await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), ui: true, difficulty: sensitive, reviewer: () => okResult({ verdict: 'APPROVE', candidate_revision: 'f'.repeat(40), findings: [] }) });
     uiPaths(cand);
     hooks.cleanup = async () => {
       throw new Error('busy');
@@ -465,7 +466,7 @@ describe('parallel review units under pressure', () => {
     const out = await settle();
     expect(out).toMatchObject({ done: true });
     cleanLab();
-    const t = await setup({ ui: true, difficulty: sensitive, reviewer: ({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [{ id: 1 }] }) });
+    const t = await setup({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }), ui: true, difficulty: sensitive, reviewer: ({ spec }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [{ id: 1 }] }) });
     uiPaths(t.cand);
     hooks.cleanup = async () => {
       throw new Error('busy');

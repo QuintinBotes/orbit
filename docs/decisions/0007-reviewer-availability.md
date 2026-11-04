@@ -47,3 +47,34 @@ review:
 A fresh setup reviews out of the box. Independence becomes a stated property of
 each run's evidence rather than a precondition; anyone who needs it guaranteed
 sets `block`.
+
+## Amendment: a reviewer that fails at run time (#116)
+
+`providers` was consulted only at selection, so a selected reviewer that then
+failed (a timeout, a non-zero exit, a malformed answer after the bounded
+regenerations) blocked the run even when a later listed reviewer would have
+worked. Now, once a reviewer's regenerations are used, the failure is recorded
+with its reason (`review.reviewer-failed`), its other sessions of the candidate
+are stopped, and the selection runs again with that provider excluded. The next
+listed independent reviewer reviews; with none left, `when_unavailable` applies
+exactly as at selection. This holds for every reviewer family, Codex included.
+
+- A substitute reviews under its own provider id and is recorded as a separate
+  `review.select` decision that names the failure; it is never labelled as the
+  provider it replaced. The final report names each reviewer tried and why it
+  failed.
+- Every session that ran is charged and counts as a review round, so
+  `review_rounds` bounds the whole sequence.
+- The exclusion holds for the rest of the run, every candidate included, so a
+  broken reviewer does not spend the review rounds of each later candidate. It
+  ends at `orbit resume`, since a person may have fixed the cause: a run
+  resumed after it blocked because every listed reviewer failed tries them in
+  order again, and the first continues at its next attempt, which spends one
+  recovery attempt as any resume reset does. A run waiting on a person's answer
+  under `ask` keeps the selection it asked about.
+- One reviewer reviews every unit of a change. When parallel security and UI
+  units run and the reviewer fails on one, its other sessions are stopped and
+  any review it gave is set aside (invalidated); the next reviewer reviews all
+  units, so independence remains one property of the change.
+- A credential failure or a refused session still blocks the run for a person,
+  as before.

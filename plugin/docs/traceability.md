@@ -334,6 +334,7 @@ sometimes shortened.
 | S12.12 | Record why findings were accepted or rejected | `review/store.ts:persistResolution` | U/review/store.test.ts "writes statuses with reasons and blocking flags, then one decision per decided claim" | done |
 | S12.13 | Accepted and waived findings reach the final report as residual risk | `controller/report.ts` | U/controller/report-findings.test.ts "lists unresolved accepted findings as blocking", "lists excepted findings with the exception reason and expiry" | done |
 | S12.14 | Mandatory other provider unavailable: block, no silent substitute | `review/select.ts` | F/model-faults.test.ts "a mandatory independent reviewer that is missing blocks the run" | done |
+| I116 | A reviewer that fails at run time is recorded and excluded; the next listed reviewer reviews under its own name, else `when_unavailable` applies; each session is charged and counted | `steps/reviewing.ts:reviewerFailed`, `review/select.ts` (`failed`), `controller/report.ts` | I/controller/reviewer-fallback.test.ts | done |
 
 ## 13. UI testing
 

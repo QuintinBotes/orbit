@@ -10,6 +10,8 @@ import { cancelObsoleteWork } from '../../../src/controller/steps/reviewing.ts';
 import { step } from '../../../src/controller/steps/index.ts';
 import { listWorkers, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { listReviews } from '../../../src/review/store.ts';
+import { FAKE_CODEX } from './harness.ts';
+import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, implementMul, PLANNER_OUTPUT, runState, startLabRun, stepTo, tracker, waitFor, writeScenario } from '../../fault-injection/helpers.ts';
 
 const t = tracker();
@@ -108,5 +110,49 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     expect(events(l, run.id, 'workers.obsolete-cancelled')).toHaveLength(1);
     // Work on the current tree is left alone.
     expect(await cancelObsoleteWork(ctx, ctx.candidate!.treeHash)).toEqual([]);
+  }, 90_000);
+
+  // #116: the security unit's reviewer fails on every attempt after the UI unit's review is in.
+  const twoReviewers = (more?: (c: OrbitConfig) => void) =>
+    t.lab({
+      tweak: (c) => {
+        more?.(c);
+        c.ui = { ...defaultUi(), ui_paths: ['apps/**'], required_when_ui_changes: false, journey_check_ids: [] };
+        c.providers['codex-b'] = { command: FAKE_CODEX, data_policy_eligible: true, model: 'gpt-6-astra', reasoning_effort: null, extra_args: [] };
+        c.review = { ...c.review, providers: ['codex', 'codex-b'] };
+      },
+    });
+
+  it('a reviewer that fails on one unit is replaced on every unit: the next listed reviewer reviews both, and the review it already gave is set aside', async () => {
+    // Five sessions: two failed, one set aside, two by the next reviewer.
+    const l = twoReviewers((c) => void (c.scheduler.hard_limits.review_rounds = 5));
+    const fail = { outcome: 'no_result', sleepMs: 1_500 };
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [fail, fail, APPROVE], 'reviewer@ui': [APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(reviewers.map((w) => `${w.purpose!.replace(/:cand-[^#~]+/, '')} ${w.provider}`).sort(), sessions(reviewers)).toEqual(['review-security#1 codex', 'review-security#2 codex', 'review-security~codex-b#1 codex-b', 'review-ui#1 codex', 'review-ui~codex-b#1 codex-b']);
+    // One reviewer reviewed every unit of the tree, so its independence is one property of the tree.
+    expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['codex-b', 'codex-b']);
+    expect(listReviews(l.db(), run.id, { includeInvalidated: true }).filter((r) => r.invalidatedAt !== null).map((r) => r.provider)).toEqual(['codex']);
+  }, 90_000);
+
+  it('a reviewer that fails on one unit has its other running unit stopped, and the next listed reviewer reviews both', async () => {
+    // Five sessions, one stopped and charged its worst case: more than the default caps fit.
+    const l = twoReviewers((c) => void Object.assign(c.scheduler.hard_limits, { model_cost_usd: 200, review_rounds: 6 }));
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [{ outcome: 'no_result' }, { outcome: 'no_result' }, APPROVE], 'reviewer@ui': [{ ...APPROVE, sleepMs: 30_000 }, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    const uiOnCodex = reviewers.find((w) => w.purpose!.startsWith('review-ui:') && w.provider === 'codex');
+    expect(uiOnCodex?.state, sessions(reviewers)).toBe('CANCELLED');
+    expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['codex-b', 'codex-b']);
+    expect(events(l, run.id, 'workers.reviewer-failed-cancelled')).toHaveLength(1);
   }, 90_000);
 });

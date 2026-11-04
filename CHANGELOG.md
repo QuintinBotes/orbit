@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A reviewer that fails at run time no longer blocks the run while another listed reviewer could review (#116). Once a reviewer's regenerations are used (a timeout, a non-zero exit, a malformed answer), Orbit records why as a `review.reviewer-failed` decision, stops that reviewer's other sessions of the candidate, and selects again without it: the next entry in `review.providers` reviews under its own name, and with none left `review.when_unavailable` applies. The final report's `Reviewer:` line names each reviewer tried first and why it failed. Each session is charged and counts as a review round. A failed reviewer is not selected again in that run until `orbit resume`. This changes Codex's behaviour too (ADR 0007, amended).
+
 ## 0.3.2 (2026-10-18)
 
 - Tests: the .NET runner test whose stand-in MSBuild records a denied node now prints its restore line before it writes that record, as MSBuild does. The runner stops a check as soon as it sees the record, so on a loaded CI runner it stopped the check between the two and the log held no check output (once, on main). No change to Orbit itself.

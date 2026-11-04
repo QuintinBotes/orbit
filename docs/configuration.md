@@ -457,6 +457,18 @@ second Codex configuration such as `codex-review` defined under `providers`).
 Any other id, such as `gemini`, is a configuration error that names the
 supported ones. Each listed id must be defined under `providers`.
 
+A reviewer that is selected but then fails at run time (a timeout, a non-zero
+exit, or a malformed answer once its regenerations are used) is recorded with
+the reason as a `review.reviewer-failed` decision, and the selection runs again
+without it: the next listed reviewer reviews under its own name, and with none
+left `review.when_unavailable` applies. The final report's `Reviewer:` line
+names each reviewer tried first and why it failed. Each session that ran is
+charged and counts as a review round. A failed reviewer is not selected again
+in that run until `orbit resume`; a run resumed after it blocked because every
+listed reviewer failed tries them in order again. When security and UI review
+run as separate units, the next reviewer reviews every unit, so one reviewer
+reviews the whole change.
+
 `review.when_unavailable` decides what happens when none of them is usable at
 run time ([ADR 0007](decisions/0007-reviewer-availability.md)):
 
