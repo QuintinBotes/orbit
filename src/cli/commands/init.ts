@@ -109,6 +109,58 @@ async function currentBranch(ctx: CliContext, repo: string): Promise<string | nu
   }
 }
 
+/** The remote's default branch, from refs/remotes/<remote>/HEAD (written by clone and `git remote set-head`); null when it does not resolve. */
+async function remoteDefaultBranch(ctx: CliContext, repo: string, remote: string): Promise<string | null> {
+  try {
+    // The full ref, not --short: a short name git finds ambiguous comes back as remotes/<remote>/<b>.
+    const r = await execCapture(['git', 'symbolic-ref', '-q', `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
+    const name = r.stdout.trim();
+    const prefix = `refs/remotes/${remote}/`;
+    return r.exitCode === 0 && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface BaseBranchChoice {
+  /** The branch to write; null keeps the template's main. */
+  branch: string | null;
+  /** The line init prints about it, or null when the template's main stands and nothing disagrees. */
+  note: string | null;
+  /** Set when the branch written differs from the remote's default branch or the checked-out one: pull requests would target it. */
+  warning: string | null;
+}
+
+/**
+ * repository.base_branch for a new config (issue #109). The remote's default branch wins, so a feature branch that
+ * happens to be checked out never becomes every run's base. Two exceptions keep the checked-out branch: a linked
+ * worktree, which is its own repository root and works on its own branch (#3), and a repository with no remote
+ * default (a master repository with no remote, Nm4). Whenever the branch written differs from the remote's default,
+ * init warns and names both.
+ */
+export function chooseBaseBranch(i: { checkedOut: string | null; remoteDefault: string | null; linkedWorktree: boolean; remote: string }): BaseBranchChoice {
+  const head = `refs/remotes/${i.remote}/HEAD`;
+  const pick = i.linkedWorktree && i.checkedOut !== null ? i.checkedOut : (i.remoteDefault ?? i.checkedOut);
+  const branch = pick !== null && pick !== 'main' ? pick : null;
+  const from =
+    pick === null
+      ? null
+      : pick === i.remoteDefault && !(i.linkedWorktree && i.checkedOut !== null)
+        ? `${i.remote}'s default branch (${head})`
+        : i.linkedWorktree
+          ? 'the branch this linked worktree is on'
+          : 'the checked-out branch';
+  const note = branch !== null ? `repository.base_branch set to ${branch} from ${from} (the template says main); review it` : null;
+  const written = pick ?? 'main';
+  let warning: string | null = null;
+  if (i.remoteDefault !== null && written !== i.remoteDefault) {
+    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run opens its pull request against ${written}; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the target you want`;
+  } else if (i.remoteDefault !== null && i.checkedOut !== null && i.checkedOut !== written) {
+    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: a run starts from the commit checked out when it starts and opens its pull request against ${written}, so a run started on ${i.checkedOut} carries its unmerged commits; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the target you want`;
+  }
+  return { branch, note, warning };
+}
+
 /** The advice for a config git does not track (issue #96), or null when it does. A git that cannot answer gets the commit advice. */
 async function configAdvice(ctx: CliContext, repo: string): Promise<string | null> {
   const git = (...a: string[]) => execCapture(['git', ...a, '--', '.orbit/config.yaml'], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15_000 });
@@ -209,6 +261,8 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let protectedAdded: string[] = [];
   let excludedDirs: string[] = [];
   let baseBranch: string | null = null;
+  let baseBranchNote: string | null = null;
+  let baseBranchWarning: string | null = null;
   // Checks proposed from what the repository declares; only for a config init writes, never for an existing one.
   let checkProposal: CheckProposal = { proposed: [], notProposed: [] };
   if (existsSync(configPath)) config = 'exists';
@@ -225,11 +279,14 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
     // The template's own protections (.github/**, infra/**, env files) are not repeated.
     const have = text.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? '';
     protectedAdded = proposal.protectedExtra.filter((g) => !have.includes(JSON.stringify(g)));
-    // The branch the repository is on, not the template's "main": a master repository would otherwise start with a
-    // base branch that does not exist, which only doctor noticed.
-    baseBranch = await currentBranch(ctx, repo);
-    if (baseBranch !== null && baseBranch !== 'main') text = text.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
-    else baseBranch = null;
+    // Not the template's "main" when the repository says otherwise: a master repository would start with a base branch
+    // that does not exist, and a checked-out feature branch must not become every run's base (chooseBaseBranch).
+    const remote = text.match(/^\s*remote: "?([^"\s#]+)"?/m)?.[1] ?? 'origin';
+    const choice = chooseBaseBranch({ checkedOut: await currentBranch(ctx, repo), remoteDefault: await remoteDefaultBranch(ctx, repo, remote), linkedWorktree: await inLinkedWorktree(ctx, repo), remote });
+    baseBranch = choice.branch;
+    baseBranchNote = choice.note;
+    baseBranchWarning = choice.warning;
+    if (baseBranch !== null) text = text.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     if (derivedPaths.length > 0) text = text.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(', ')}]`);
     if (protectedAdded.length > 0) {
       // Appended to the template's own list, so its defaults (.github/**, infra/**, env files) stay.
@@ -282,6 +339,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
 
   if (config === 'created') {
     if (noScopeWarning !== undefined) warnings.push(noScopeWarning);
+    if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
 
@@ -306,7 +364,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (advice !== null) line(ctx.io, advice);
-  if (config === 'created' && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
+  if (config === 'created' && baseBranchNote !== null) line(ctx.io, baseBranchNote);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(', ')} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === 'created' && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(', ')}`);
   if (config === 'created' && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(', ')} (CI pipeline and build-system definitions found in the repository)`);
