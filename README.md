@@ -68,6 +68,11 @@ Only those skills are user-only: the CLI does not check who runs `orbit run`,
 `resume`, `repair` or `verify`, so your agent host's permission prompts are what
 keep an agent from starting a run.
 
+The `orbit:reviewer` agent also works outside a run, as a read-only review of a
+change, but it has no shell and cannot run `git diff` itself. Write the diff to
+a file (`git diff main..HEAD > review.diff`) and name that file and its revision
+in the task; given no diff, the reviewer returns BLOCK and asks for one.
+
 **From a clone** (the CLI, and a way to try the plugin before it is released):
 
 ```bash

@@ -30,7 +30,7 @@ import { mandatoryReviewProvider, selectReviewer, type ReviewerSelection } from 
 import { defaultControllerDeps, environmentGate, orbitInstallDir, stateDbPath } from '../controller/index.ts';
 import { deliveryEnvironmentProblem } from '../controller/delivery-env.ts';
 import { git } from '../evidence/git.ts';
-import { IMPLEMENTER_PROVIDER, dirtyPaths, gitCredentialProblems } from '../controller/steps/preflight.ts';
+import { IMPLEMENTER_PROVIDER, dirtyPathSplit, dirtyStartRefusal, gitCredentialProblems } from '../controller/steps/preflight.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 import type { CliContext } from './context.ts';
 import { reviewFix } from './review-fix.ts';
@@ -100,10 +100,10 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
     cheap.push(`the repository's git configuration carries credentials a worker could read (${credentialProblems.join('; ')})`);
     fixes.push('remove them and authenticate through a credential helper outside the repository');
   }
-  const dirty = hasCommits ? await dirtyPaths(repo) : [];
-  if (dirty.length > 0 && !config.repository.allow_dirty_start) {
-    cheap.push(`the repository has uncommitted changes (${dirty.slice(0, 10).join(', ')}${dirty.length > 10 ? ', ...' : ''})`);
-    fixes.push('commit or stash them, or set repository.allow_dirty_start in .orbit/config.yaml, then run again');
+  const refusal = hasCommits ? dirtyStartRefusal(await dirtyPathSplit(repo)) : null;
+  if (refusal !== null && !config.repository.allow_dirty_start) {
+    cheap.push(refusal.reason);
+    fixes.push(`${refusal.fix.replace(/repository\.allow_dirty_start$/, 'repository.allow_dirty_start in .orbit/config.yaml')}, then run again`);
   }
   if (cheap.length > 0) return { reasons: cheap, code: 'POLICY_DENIED', fix: fixes.join('; ') };
 
