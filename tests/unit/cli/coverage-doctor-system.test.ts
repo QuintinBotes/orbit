@@ -283,11 +283,11 @@ describe('git', () => {
     expect(repo.status).toBe('warn');
     expect(repo.summary).toBe(`repository ${w.repo}: missing base branch trunk, remote upstream, a clean working tree`);
     expect(repo.missing).toBe('base branch trunk; remote upstream; a clean working tree');
-    expect(repo.fix).toBe('create it, or set repository.base_branch to an existing branch; git remote add upstream <url>, or choose a mode that does not deliver; commit or stash the changes, or set repository.allow_dirty_start');
+    expect(repo.fix).toBe('create it, or set repository.base_branch to an existing branch; git remote add upstream <url>, or choose a mode that does not deliver; untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start');
     expect(repo.details).toEqual([
       'repository.base_branch "trunk" does not exist locally',
       'delivery pushes task branches but remote "upstream" is not configured',
-      '2 uncommitted path(s); a run would refuse to start (repository.allow_dirty_start is false)',
+      '0 modified and 2 untracked path(s); a run would refuse to start (repository.allow_dirty_start is false)',
     ]);
     const allowed = await doctor(w, { config: cfg((x) => { x.repository.allow_dirty_start = true; }) });
     expect(allowed['git.repo']?.status).toBe('pass');

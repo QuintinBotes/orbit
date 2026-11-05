@@ -28,7 +28,8 @@ starts from the commit checked out when it starts; Orbit does not coordinate
 changes between runs, so keep their scopes apart.
 
 Before it creates a run, `orbit run` refuses, and says why, when the working
-tree has uncommitted changes (`.orbit/` is exempt) and
+tree has uncommitted changes (`.orbit/` is exempt; untracked files count, and
+the message says how many of each kind there are) and
 `repository.allow_dirty_start` is false, when the repository's git configuration
 holds credentials a worker could read, and, for a run this process will drive,
 when the environment gate fails (isolation, credentials, reviewer). Nothing is
