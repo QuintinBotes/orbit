@@ -487,12 +487,15 @@ legacy `preferred_provider` becomes the preference list.
 
 ### Human policy decisions in auto mode
 
-A person, not an agent, must make any edit to `agents.allowed_plugins` or
-`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+A person, not an agent, must make any edit to `agents.allowed_plugins`,
+`providers.codex.data_policy_eligible` or
+`providers.muse.data_policy_eligible` in `.orbit/config.yaml`.
 `agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
 `providers.codex.data_policy_eligible` confirms that sending sanitized code to
 Codex is permitted. An auto-mode classifier may flag worker launches. Review
 that prompt yourself rather than asking an agent to apply either edit.
+Orbit does not enforce this: only worker sessions are blocked from editing
+`.orbit/config.yaml`, so a person's edit and an interactive agent's edit look the same to it.
 
 ### Plugins in worker sessions
 
