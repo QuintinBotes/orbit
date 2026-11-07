@@ -24493,11 +24493,12 @@ function canTransition(from, to) {
 function isTerminal(state) {
   return TERMINAL_STATES.has(state);
 }
-var WORKING, ALWAYS, EDGES;
+var NON_TERMINAL, WORKING, ALWAYS, EDGES;
 var init_states = __esm({
   "src/controller/states.ts"() {
     "use strict";
     init_run_states();
+    NON_TERMINAL = RUN_STATES.filter((s) => !isTerminal(s));
     WORKING = ["PREFLIGHT", "CONTRACTING", "PLANNING", "IMPLEMENTING", "VERIFYING", "REVIEWING", "DELIVERING", "AWAITING_CI", "DIAGNOSING", "REPAIRING"];
     ALWAYS = ["BLOCKED", "EXHAUSTED", "CANCELLED", "RECOVERING"];
     EDGES = {
@@ -66388,7 +66389,7 @@ function sleep(ms) {
 function messageOf5(err) {
   return redact(err instanceof Error ? err.message : String(err)).slice(0, 500);
 }
-var DAY_MS2, NON_TERMINAL, Controller;
+var DAY_MS2, Controller;
 var init_loop = __esm({
   "src/controller/loop.ts"() {
     "use strict";
@@ -66420,7 +66421,6 @@ var init_loop = __esm({
     init_remote_answers();
     init_resume();
     DAY_MS2 = 24 * 60 * 6e4;
-    NON_TERMINAL = RUN_STATES.filter((s) => !isTerminal(s));
     Controller = class {
       ownerId;
       deps;
@@ -72476,6 +72476,8 @@ async function runCommand(args, ctx) {
   await admitRun(ctx, { repo, config, foreground });
   const db = openState(repo, { create: true });
   try {
+    const existing = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => r.goal === goal);
+    if (existing) throw new OrbitError("POLICY_DENIED", `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
     const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...environment !== void 0 ? { environment } : {} });
     const asJson = args.bool("json");
     if (!foreground) {
@@ -72504,6 +72506,9 @@ var init_run = __esm({
     init_policy();
     init_types();
     init_controller();
+    init_run_store();
+    init_states();
+    init_errors();
     init_context();
     init_exit();
     init_io();

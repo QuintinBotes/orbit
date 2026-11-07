@@ -4,9 +4,10 @@
  * run that ends well: each is refused with the exact fix, before a run row or a model call exists.
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { listRuns } from '../../../src/controller/run-store.ts';
 import { makeLab, type Lab } from './lab.ts';
 
 const labs: Lab[] = [];
@@ -52,6 +53,95 @@ function healthyEnvironment(calls: { n: number }) {
 }
 
 const withoutMandatoryReview = (t: string): string => t.replace('independent_provider_required: true', 'independent_provider_required: false').replace('fallback_same_provider_allowed: false', 'fallback_same_provider_allowed: true');
+
+describe('duplicate goal admission (#139)', () => {
+  it('refuses a second detached run, names the existing run and commands, and creates no run or snapshot', async () => {
+    const l = lab();
+    await initWithCheck(l, withoutMandatoryReview);
+    const calls = { n: 0 };
+    const over = { seams: { controllerDeps: healthyEnvironment(calls) } };
+    const argv = ['run', '--goal', 'Fix the duplicate run', '--detach'];
+    const first = await l.cli(argv, over);
+    expect(first.code, first.err).toBe(0);
+    const [run] = listRuns(l.db());
+    const snapshots = readdirSync(join(l.repo, '.orbit', 'runs'));
+
+    const second = await l.cli(argv, over);
+    expect.soft(second.code, second.err).toBe(4);
+    expect.soft(runCount(l)).toBe(1);
+    expect.soft(second.err).toContain(run!.id);
+    expect.soft(second.err).toContain(run!.state);
+    for (const command of ['status', 'resume', 'cancel']) expect.soft(second.err).toContain(`orbit ${command} ${run!.id}`);
+    expect.soft(second.err).toContain('No run was created');
+    expect.soft(readdirSync(join(l.repo, '.orbit', 'runs'))).toEqual(snapshots);
+    expect(calls.n).toBe(0);
+  });
+
+  it('refuses the same goal while the existing run is paused', async () => {
+    const l = lab();
+    await initWithCheck(l);
+    const run = l.newRun('Fix the duplicate run');
+    l.moveTo(run.id, ['PREFLIGHT', 'CONTRACTING', 'PLANNING']);
+    const paused = await l.cli(['pause', run.id]);
+    expect(paused.code, paused.err).toBe(0);
+
+    const r = await l.cli(['run', '--goal', run.goal, '--detach']);
+    expect(r.code, r.err).toBe(4);
+    expect(r.err).toContain(run.id);
+    expect(r.err).toContain('PLANNING');
+    expect(runCount(l)).toBe(1);
+  });
+
+  it('finds an unfinished match beyond the latest 50 runs', async () => {
+    const l = lab();
+    await initWithCheck(l);
+    const run = l.newRun('Fix the duplicate run');
+    l.db().run('UPDATE runs SET created_at = 0 WHERE id = ?', run.id);
+    for (let i = 0; i < 50; i++) l.newRun(`Other goal ${i}`);
+
+    const r = await l.cli(['run', '--goal', run.goal, '--detach']);
+    expect(r.code, r.err).toBe(4);
+    expect(r.err).toContain(run.id);
+    expect(runCount(l)).toBe(51);
+  });
+
+  it('admits the same goal after cancelling the existing run', async () => {
+    const l = lab();
+    await initWithCheck(l);
+    const argv = ['run', '--goal', 'Fix the duplicate run', '--detach'];
+    const first = await l.cli(argv);
+    expect(first.code, first.err).toBe(0);
+    const [run] = listRuns(l.db());
+    const cancelled = await l.cli(['cancel', run!.id]);
+    expect(cancelled.code, cancelled.err).toBe(0);
+    expect(listRuns(l.db())[0]!.state).toBe('CANCELLED');
+
+    const r = await l.cli(argv);
+    expect(r.code, r.err).toBe(0);
+    expect(runCount(l)).toBe(2);
+  });
+
+  it('admits the same goal after the existing run is BLOCKED', async () => {
+    const l = lab();
+    await initWithCheck(l);
+    const run = l.newRun('Fix the duplicate run');
+    l.moveTo(run.id, ['BLOCKED']);
+
+    const r = await l.cli(['run', '--goal', run.goal, '--detach']);
+    expect(r.code, r.err).toBe(0);
+    expect(runCount(l)).toBe(2);
+  });
+
+  it.each(['Fix Goal', 'Fix  goal', 'Fix goal!'])('admits a byte-distinct goal: %s', async (goal) => {
+    const l = lab();
+    await initWithCheck(l);
+    l.newRun('Fix goal');
+
+    const r = await l.cli(['run', '--goal', goal, '--detach']);
+    expect(r.code, r.err).toBe(0);
+    expect(runCount(l)).toBe(2);
+  });
+});
 
 describe('NM3: a delivery-mode run is refused at admission without delivery credentials', () => {
   it('names GH_TOKEN and the fix, creates no run, and calls no model', async () => {

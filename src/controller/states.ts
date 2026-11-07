@@ -11,6 +11,8 @@ import { RUN_STATES, TERMINAL_STATES, isRunState, type RunState } from '../core/
 
 export { RUN_STATES, TERMINAL_STATES, isRunState, type RunState };
 
+export const NON_TERMINAL: RunState[] = RUN_STATES.filter((s) => !isTerminal(s));
+
 /** BLOCKED is terminal for the controller loop but resumable by an authorized decision. */
 export const RESUMABLE_STATES: ReadonlySet<RunState> = new Set(['BLOCKED']);
 
