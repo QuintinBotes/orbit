@@ -8,7 +8,7 @@
  * enforcement layer).
  */
 import { OrbitError } from '../core/errors.ts';
-import { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE } from '../policy/guard-hook.ts';
+import { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKER_TMPDIR, ENV_WORKTREE } from '../policy/guard-hook.ts';
 
 export type EnvProvider = 'claude' | 'codex' | 'muse';
 
@@ -135,7 +135,7 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
     if (key.startsWith(LOCALE_PREFIX) && typeof v === 'string') env[key] = v;
   }
   for (const [key, v] of Object.entries(input.extra ?? {})) {
-    if (FORBIDDEN_EXTRA.test(key) || key === ENV_POLICY_PATH || key === ENV_POLICY_HASH || key === ENV_WORKTREE || key === 'ORBIT_WORKER') {
+    if (FORBIDDEN_EXTRA.test(key) || key === ENV_POLICY_PATH || key === ENV_POLICY_HASH || key === ENV_WORKTREE || key === ENV_WORKER_TMPDIR || key === 'ORBIT_WORKER') {
       throw new OrbitError('POLICY_DENIED', `worker environment may not set ${key}`, { variable: key });
     }
     env[key] = v;
@@ -151,6 +151,7 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
   }
   if (input.provider === 'muse') Object.assign(env, MUSE_WORKER_ENV);
   env.TMPDIR = input.tmpDir;
+  env[ENV_WORKER_TMPDIR] = input.tmpDir;
   env[ENV_POLICY_PATH] = input.policyPath;
   env[ENV_POLICY_HASH] = input.policyHash;
   env[ENV_WORKTREE] = input.worktree;

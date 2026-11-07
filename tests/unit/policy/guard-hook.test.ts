@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { orbitTmpRoot } from '../../../src/isolation/profiles.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { parseConfig } from '../../../src/policy/config.ts';
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
@@ -134,5 +135,31 @@ describe('runGuardHook', () => {
       const env: Record<string, string | undefined> = { ...full, [key]: undefined };
       expectFailClosed(runGuardHook(input('Read', { file_path: join(wt, 'a') }), env), new RegExp(`${key} is not set`));
     }
+  });
+});
+
+// Review of #140: Claude Code's sandbox read-denies the temp root for Bash only, and the file tools' permissions allow
+// the worker's own directory there, so the hook keeps a worker's Read out of every other worker's directory.
+describe('reads in the workers\' temp root', () => {
+  const root = orbitTmpRoot();
+  const own = join(root, 'aaaaaaaaaaaa');
+  const other = join(root, 'bbbbbbbbbbbb');
+  const uid = process.getuid!();
+
+  it('allows a worker its own temp directory and denies every other one, by any spelling', () => {
+    const mine = { ...opts, workerTmpDir: own };
+    expect(handlePreToolUse(input('Read', { file_path: join(own, 'cargo', 'out.log') }), mine)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    for (const p of [join(other, 'cargo', 'out.log'), join('/tmp', `orbit-${uid}`, 'bbbbbbbbbbbb', 'x'), join(own, '..', 'bbbbbbbbbbbb', 'x'), root]) {
+      expect(denial(handlePreToolUse(input('Read', { file_path: p }), mine)).rule, p).toBe('read.worker-tmp');
+    }
+    expect(denial(handlePreToolUse(input('Bash', { command: `cat ${join(other, 'x')}` }), mine)).rule).toBe('bash.worker-tmp-read');
+    // Without its own directory a worker may read none of the root.
+    expect(denial(handlePreToolUse(input('Read', { file_path: join(own, 'x') }), opts)).rule).toBe('read.worker-tmp');
+  });
+
+  it('learns the worker\'s own directory from ORBIT_WORKER_TMPDIR', () => {
+    const env = { ORBIT_POLICY_PATH: opts.snapshotPath, ORBIT_POLICY_HASH: opts.expectedHash, ORBIT_WORKTREE: wt, ORBIT_WORKER_TMPDIR: own };
+    expect(runGuardHook(input('Read', { file_path: join(own, 'x') }), env)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(denial(runGuardHook(input('Read', { file_path: join(other, 'x') }), env)).rule).toBe('read.worker-tmp');
   });
 });

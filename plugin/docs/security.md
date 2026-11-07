@@ -49,7 +49,7 @@ in `network.allowed_hosts`.
 | Layer | Mechanism | Covers |
 |---|---|---|
 | Operating system | sandbox-runtime (Seatbelt or bubblewrap), or a Docker container; for the Codex reviewer, sandbox-runtime alone, or Codex's own read-only sandbox when it is unavailable | shell writes outside the worktree, network egress by host, credential reads; the container adds CPU, memory and pids limits |
-| Claude Code | `--settings` with permission rules, a permission mode that never prompts, the PreToolUse guard hook | Edit and Write paths, protected paths, dangerous commands |
+| Claude Code | `--settings` with permission rules, a permission mode that never prompts, the PreToolUse guard hook | Edit and Write paths, protected paths, dangerous commands, Read of credentials and of other workers' temp directories |
 | Environment | scrubbed worker environment: no `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` or cloud credentials | delivery credentials never reach a worker |
 | Controller | independent diff inspection of the candidate tree against scope, protected paths and test-weakening rules | anything the layers above missed, including indirect shell writes |
 | Evidence | trusted checks run by the controller; evidence bound to tree hash, check configuration hash and policy hash | success requires fresh passing evidence and an approving review of the same tree |

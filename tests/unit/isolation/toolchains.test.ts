@@ -1,15 +1,18 @@
 // Toolchain sandbox profiles (docs/decisions/0009-toolchain-profiles.md): one table keyed by toolchain, detected from a
 // check's command and the repository; dependency caches per repository, read-only outside the install step; build
 // state private per attempt; nothing shared between repositories and nothing pointing at the user's own caches.
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { isOrbitError } from '../../../src/core/errors.ts';
 import { buildSrtSettings } from '../../../src/isolation/sandbox-runtime.ts';
 import { profileForCheck } from '../../../src/isolation/profiles.ts';
 import {
   detectToolchains,
+  freshWorkerScratch,
   prepareToolchainLayout,
+  prepareWorkerScratch,
   TOOLCHAIN_IDS,
   TOOLCHAIN_PROFILES,
   toolchainCacheRoot,
@@ -296,6 +299,94 @@ describe('the toolchain profile table', () => {
       expect(lstatSync(join(scratch, 'cargo-target')).isDirectory(), plant).toBe(true);
       expect(lstatSync(scratch).isSymbolicLink(), plant).toBe(false);
     }
+  });
+});
+
+// Review of #140: a process a Claude worker started can outlive its session and keep writing, and renaming entries in,
+// its temp directory, while the controller, outside any sandbox, prepares the next session's build state there.
+describe('a Claude worker\'s build state', () => {
+  /** A worker's temp root and directory, and a directory outside both whose mode and contents must never change. */
+  function setup() {
+    const top = temp();
+    const root = join(top, 'root');
+    const tmp = join(root, 'aaaaaaaaaaaa');
+    mkdirSync(tmp, { recursive: true, mode: 0o700 });
+    const outside = join(top, 'outside');
+    mkdirSync(join(outside, 'cargo-target'), { recursive: true });
+    chmodSync(outside, 0o755);
+    chmodSync(join(outside, 'cargo-target'), 0o755);
+    writeFileSync(join(outside, 'cargo-target', 'keep'), 'x');
+    const layoutFor = (scratchRoot: string) => toolchainLayout({ toolchains: ['rust', 'go'], mode: 'worker', cacheRoot: join(top, 'cache'), scratchRoot, tmpDir: tmp, networkHosts: [], hostEnv: {} });
+    const untouched = () => {
+      expect(statSync(outside).mode & 0o777).toBe(0o755);
+      expect(statSync(join(outside, 'cargo-target')).mode & 0o777).toBe(0o755);
+      expect(readdirSync(outside)).toEqual(['cargo-target']);
+      expect(readdirSync(join(outside, 'cargo-target'))).toEqual(['keep']);
+    };
+    return { root, tmp, outside, layoutFor, untouched };
+  }
+
+  it('is built in a fresh private directory no worker can reach, then moved into place, whatever the umask', () => {
+    const { root, tmp, layoutFor } = setup();
+    const previous = process.umask(0);
+    try {
+      const fresh = freshWorkerScratch(tmp);
+      expect(fresh.staging.startsWith(`${root}/toolchains-`)).toBe(true);
+      expect(fresh.root).toBe(join(tmp, basename(fresh.staging)));
+      const l = layoutFor(fresh.root);
+      expect(l.env.CARGO_TARGET_DIR).toBe(join(fresh.root, 'cargo-target'));
+      prepareWorkerScratch(l, fresh, { removeEarlier: true });
+      expect(existsSync(fresh.staging)).toBe(false);
+      for (const d of [fresh.root, join(fresh.root, 'cargo-target'), join(fresh.root, 'gocache'), join(fresh.root, 'gopath')]) {
+        expect(lstatSync(d).isDirectory(), d).toBe(true);
+        expect(statSync(d).mode & 0o777, d).toBe(0o700);
+      }
+      // A second preparation never reuses the first one's directory.
+      const again = freshWorkerScratch(tmp);
+      expect(again.root).not.toBe(fresh.root);
+    } finally {
+      process.umask(previous);
+    }
+  });
+
+  it('removes earlier build state that is a link, or holds one, without following it, and keeps it for a reattach', () => {
+    const { tmp, outside, layoutFor, untouched } = setup();
+    const first = freshWorkerScratch(tmp);
+    prepareWorkerScratch(layoutFor(first.root), first, { removeEarlier: true });
+    // Planted between preparations: a link inside the earlier root, a link as a root, and a root before #140's name.
+    rmSync(join(first.root, 'cargo-target'), { recursive: true });
+    symlinkSync(join(outside, 'cargo-target'), join(first.root, 'cargo-target'));
+    symlinkSync(outside, join(tmp, 'toolchains'));
+    symlinkSync(join(outside, 'cargo-target'), join(tmp, 'toolchains-planted'));
+    const kept = freshWorkerScratch(tmp);
+    prepareWorkerScratch(layoutFor(kept.root), kept, { removeEarlier: false });
+    expect(readdirSync(tmp).sort()).toEqual([basename(first.root), 'toolchains', basename(kept.root), 'toolchains-planted'].sort());
+    const second = freshWorkerScratch(tmp);
+    prepareWorkerScratch(layoutFor(second.root), second, { removeEarlier: true });
+    expect(readdirSync(tmp)).toEqual([basename(second.root)]);
+    untouched();
+  });
+
+  it('fails closed on anything already where it creates a directory, and creates nothing through it', () => {
+    const { tmp, outside, layoutFor, untouched } = setup();
+    for (const plant of ['link', 'file', 'dir'] as const) {
+      const fresh = freshWorkerScratch(tmp);
+      const at = join(fresh.staging, 'cargo-target');
+      if (plant === 'link') symlinkSync(join(outside, 'cargo-target'), at);
+      else if (plant === 'file') writeFileSync(at, 'x');
+      else mkdirSync(at);
+      let caught: unknown;
+      try {
+        prepareWorkerScratch(layoutFor(fresh.root), fresh, { removeEarlier: true });
+      } catch (err) {
+        caught = err;
+      }
+      expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE'), plant).toBe(true);
+      expect((caught as Error).message, plant).toContain(at);
+      expect(existsSync(fresh.root), plant).toBe(false);
+      expect(existsSync(fresh.staging), plant).toBe(false);
+    }
+    untouched();
   });
 });
 

@@ -904,10 +904,17 @@ set per repository, never your own `~/.cargo`, `~/go`, `~/.m2` or
 `~/.nuget/packages`. Only the dependency install writes them; every other
 check and every worker reads them and cannot write them. Build state is
 created for each check attempt and removed with it, so `cargo build` and
-`cargo test` in two checks each compile. A Claude worker has its own in its
-private temp directory under `/tmp/orbit-<uid>`, which it may write in either
-worker tier and no other worker or check may read; `orbit gc` removes it with
-the run. A check's `env` overrides any of these variables, for example
+`cargo test` in two checks each compile. A Claude worker builds in a directory
+of its own in its private temp directory under `/tmp/orbit-<uid>`, which it may
+write in either worker tier. Orbit makes a new one for every session of the
+worker and removes the earlier one, so a restarted worker compiles again. No
+check and no other Claude worker can read it: their sandboxed commands are
+read-denied the whole temp root (but for a worker's own directory), and the
+guard hook denies a worker's Read tool anywhere in the root outside its own
+directory. A Codex or Muse reviewer under `srt` is read-denied it too; in the
+`codex-sandbox` or `muse-sandbox` tier its reads are not confined, so it can.
+`orbit gc` removes it with the run, and skips and reports a run whose temp root
+or worker temp directory is a link or not yours. A check's `env` overrides any of these variables, for example
 `CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
 (`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for
 .NET: whether three generated projects build there) and where its caches live.

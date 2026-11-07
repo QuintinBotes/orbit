@@ -27,7 +27,7 @@ import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
 import { PROVIDER_HOSTS, prepareWorkerTmpDir, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
+import { detectToolchains, freshWorkerScratch, prepareToolchainLayout, prepareWorkerScratch, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopLaunch, stopWorker, WORKER_RESTART_EVENT } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
@@ -216,10 +216,11 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
   // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex or Muse worker, a read-only reviewer,
   // is confined to its provider's hosts by its adapter (codexReviewerProfile, museReviewerProfile).
-  // A Claude worker's build state goes in its private temp directory, which Bash may write in both tiers; the
-  // claude-sandbox tier denies writing the worker directory (issue #140). A Codex or Muse reviewer's srt profile may
-  // write only its worker directory, so its build state stays there.
-  const scratchRoot = provider === 'claude' ? join(prepareWorkerTmpDir(w.workerDir), 'toolchains') : join(w.workerDir, 'toolchains');
+  // A Claude worker's build state goes in a fresh directory in its private temp directory, which Bash may write in both
+  // tiers; the claude-sandbox tier denies writing the worker directory (issue #140). A Codex or Muse reviewer's srt
+  // profile may write only its worker directory, so its build state stays there.
+  const fresh = provider === 'claude' ? freshWorkerScratch(prepareWorkerTmpDir(w.workerDir)) : null;
+  const scratchRoot = fresh?.root ?? join(w.workerDir, 'toolchains');
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
@@ -230,7 +231,9 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     hostEnv: env,
     networkHosts: provider === 'claude' ? workerAllowedHosts(provider, policy.snapshot) : PROVIDER_HOSTS[provider],
   });
-  prepareToolchainLayout(toolchains, scratchRoot);
+  // An earlier launch that may still run (spawn reattaches to it) keeps its build state; orbit gc removes it with the run.
+  if (fresh) prepareWorkerScratch(toolchains, fresh, { removeEarlier: !existsSync(join(w.workerDir, LAUNCH_FILE)) });
+  else prepareToolchainLayout(toolchains, scratchRoot);
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
