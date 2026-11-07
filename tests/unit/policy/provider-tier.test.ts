@@ -83,3 +83,60 @@ describe('the published config documents the tier', () => {
     expect(doc).toMatch(/providers\.claude\.tier/);
   });
 });
+
+describe('providers.muse (issue #108, ADR 0017)', () => {
+  it('is not in the built-in defaults: Muse is opt in per repository', () => {
+    expect(defaultConfig().providers).not.toHaveProperty('muse');
+    expect(ok('').providers).not.toHaveProperty('muse');
+  });
+
+  it('accepts the Muse keys and fills the defaults: muse, not eligible, muse-wonder-full-1.0, high, auto', () => {
+    expect(ok('providers:\n  muse: {}\n').providers.muse).toEqual({ command: 'muse', data_policy_eligible: false, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier: 'auto' });
+    const full = ok('providers:\n  muse: {command: muse, data_policy_eligible: true, model: acme-model, reasoning_effort: low, extra_args: [], tier: muse-sandbox}\n').providers.muse;
+    expect(full).toEqual({ command: 'muse', data_policy_eligible: true, model: 'acme-model', reasoning_effort: 'low', extra_args: [], tier: 'muse-sandbox' });
+  });
+
+  it('gives a Muse alias id the same defaults, with the family command', () => {
+    expect(ok('providers:\n  muse-review: {}\n').providers['muse-review']).toMatchObject({ command: 'muse', model: 'muse-wonder-full-1.0', reasoning_effort: 'high', tier: 'auto', data_policy_eligible: false });
+    expect(ok('providers:\n  muse_alt: {}\n').providers.muse_alt).toMatchObject({ command: 'muse', tier: 'auto' });
+  });
+
+  it('reports an unknown key on a Muse provider by name', () => {
+    expect(problemsOf('providers:\n  muse: {bogus_key: 1}\n')).toEqual(['providers.muse: unknown key "bogus_key"']);
+  });
+
+  it('refuses review_reasoning_effort on Muse by name: it is a Codex setting only', () => {
+    expect(problemsOf('providers:\n  muse: {review_reasoning_effort: high}\n')).toEqual([
+      expect.stringMatching(/^providers\.muse\.review_reasoning_effort: is a setting of the Codex reviewer only/),
+    ]);
+  });
+
+  it.each(['auto', 'os-sandbox', 'muse-sandbox'] as const)('accepts tier %s for Muse', (tier) => {
+    expect(ok(`providers:\n  muse: {tier: ${tier}}\n`).providers.muse?.tier).toBe(tier);
+  });
+
+  it('refuses the cross-family tiers, naming the family each belongs to', () => {
+    expect(problemsOf('providers:\n  muse: {tier: codex-sandbox}\n')).toEqual([expect.stringMatching(/^providers\.muse\.tier: codex-sandbox is a Codex tier/)]);
+    expect(problemsOf('providers:\n  codex: {tier: muse-sandbox}\n')).toEqual([expect.stringMatching(/^providers\.codex\.tier: muse-sandbox is a Muse tier/)]);
+    expect(problemsOf('providers:\n  muse-review: {tier: codex-sandbox}\n').join('\n')).toMatch(/providers\.muse-review\.tier/);
+  });
+
+  it('still refuses tier on a Claude provider', () => {
+    expect(problemsOf('providers:\n  claude: {tier: muse-sandbox}\n')).toEqual([expect.stringMatching(/^providers\.claude\.tier: /)]);
+  });
+
+  it('refuses reasoning_effort none for Muse (the meta provider rejects it) and names the allowed set', () => {
+    const problems = problemsOf('providers:\n  muse: {reasoning_effort: none}\n');
+    expect(problems).toEqual([expect.stringMatching(/^providers\.muse\.reasoning_effort: "none" is not one of minimal, low, medium, high, xhigh, max, ultra$/)]);
+    for (const effort of ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
+      expect(ok(`providers:\n  muse: {reasoning_effort: ${effort}}\n`).providers.muse?.reasoning_effort).toBe(effort);
+    }
+  });
+
+  it('accepts review.providers [codex, muse] and a Muse alias listed there', () => {
+    const c = ok('providers:\n  muse: {}\nreview:\n  providers: [codex, muse]\n');
+    expect(c.review.providers).toEqual(['codex', 'muse']);
+    const alias = ok('providers:\n  muse-review: {}\nreview:\n  providers: [muse-review, codex]\n');
+    expect(alias.review.providers).toEqual(['muse-review', 'codex']);
+  });
+});
