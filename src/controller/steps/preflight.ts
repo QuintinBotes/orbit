@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
-import { isOrbitError } from '../../core/errors.ts';
+import { isOrbitError, OrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
 import { withStagingView } from '../../evidence/candidate.ts';
 import { BASELINE_FILE, installDependencies, planInstall, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
@@ -118,7 +118,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: '' });
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);
-  await preinstallWorktree(ctx, worktree, baseTree);
+  await preinstallWorktree(ctx, repo, worktree, head, baseTree);
   const installed = await safePoint(ctx);
   if (installed) return installed;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -411,7 +411,7 @@ export function dirtyStartRefusal(d: DirtySplit): { reason: string; fix: string 
  * passed. It runs only in a worktree git reports clean, and whatever it leaves that git does not ignore (an unignored
  * dependency folder, a rewritten lockfile or .gitignore) is undone, so it cannot enter a candidate.
  */
-async function preinstallWorktree(ctx: RunContext, worktree: string, tree: string): Promise<void> {
+async function preinstallWorktree(ctx: RunContext, repo: string, worktree: string, head: string, tree: string): Promise<void> {
   if (planInstall(ctx.snapshot, worktree).skip) return;
   const before = await worktreeChanges(worktree);
   if (before.length > 0) {
@@ -429,10 +429,22 @@ async function preinstallWorktree(ctx: RunContext, worktree: string, tree: strin
     if (isOrbitError(err, 'CANCELLED')) throw err;
     decide(ctx, { kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf(err)}` });
   }
-  await undoUnignored(ctx, worktree);
+  const left = await worktreeChanges(worktree);
+  if (left.length === 0) return;
+  // The worktree held no work before the install, so anything staging would take is the install's. Picking it apart
+  // misses shapes (nested ignore files, a cloned repository), so the worktree is made again from the base revision.
+  await git(repo, ['worktree', 'remove', '--force', '--force', worktree]).catch(() => rmSync(worktree, { recursive: true, force: true }));
+  await ensureWorktree(repo, worktree, head);
+  const still = await worktreeChanges(worktree);
+  if (still.length > 0) throw new OrbitError('INTERNAL', `the implementer's worktree was made again after the dependency install but still shows ${listed(still)}`);
+  decide(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: 'preflight.worktree-install',
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(left)}); the worktree was made again without them, so they cannot enter a candidate`,
+    data: { paths: left.slice(0, 200) },
+  });
 }
 
-/** What `git status` reports in `dir`: tracked changes, and untracked paths git does not ignore. */
 /** The worktree as candidate staging sees it (evidence/candidate.ts), with every untracked file listed on its own. */
 async function worktreeStatus(dir: string): Promise<DirtySplit> {
   return withStagingView(async (config) => parseDirtyStatus(await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { config })));
@@ -444,34 +456,6 @@ async function worktreeChanges(dir: string): Promise<string[]> {
 }
 
 const listed = (paths: string[]): string => `${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ', ...' : ''}`;
-
-/** Undo what the install left in a worktree that was clean before it, and record it when there was anything. */
-async function undoUnignored(ctx: RunContext, worktree: string): Promise<void> {
-  const changed = await worktreeChanges(worktree);
-  if (changed.length === 0) return;
-  const literal = { env: { GIT_LITERAL_PATHSPECS: '1' } };
-  // Tracked files first: restoring a .gitignore the install edited exposes the output it hid.
-  await git(worktree, ['reset', '--quiet', '--hard', 'HEAD'], literal);
-  const { untracked } = await worktreeStatus(worktree);
-  // The worktree was clean before the install, so these files are its output. They are removed one by one, under the
-  // same excludes staging uses: an ignored file that was already there is never touched.
-  if (untracked.length > 0) await withStagingView((config) => git(worktree, ['clean', '-fq', '--', ...untracked], { ...literal, config })).catch(() => undefined);
-  for (const path of (await worktreeStatus(worktree)).untracked) {
-    try {
-      rmSync(join(worktree, path), { force: true });
-    } catch {
-      // Recorded below as left.
-    }
-  }
-  const left = await worktreeChanges(worktree);
-  const paths = [...new Set([...changed, ...untracked])].sort();
-  decide(ctx, {
-    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
-    kind: 'preflight.worktree-install',
-    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(paths)}); they were removed so they cannot enter a candidate${left.length > 0 ? `, except ${listed(left)}, which could not be removed` : ''}`,
-    data: left.length > 0 ? { paths: paths.slice(0, 200), left: left.slice(0, 200) } : { paths: paths.slice(0, 200) },
-  });
-}
 
 /**
  * The implementer's worktree, detached at the base revision, outside the

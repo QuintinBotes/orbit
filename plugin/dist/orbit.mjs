@@ -59976,7 +59976,7 @@ async function preflightStep(ctx) {
   if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
   const worktree = await ensureWorktree(repo, join58(wtRoot, "implementer"), head);
-  await preinstallWorktree(ctx, worktree, baseTree);
+  await preinstallWorktree(ctx, repo, worktree, head, baseTree);
   const installed2 = await safePoint(ctx);
   if (installed2) return installed2;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -60148,7 +60148,7 @@ function dirtyStartRefusal(d) {
   const fix = d.changed.length === 0 ? "untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start" : `commit or stash the modified files${d.untracked.length > 0 ? " (git stash -u takes the untracked ones too; plain git stash leaves them)" : ""}, or set repository.allow_dirty_start`;
   return { reason, fix };
 }
-async function preinstallWorktree(ctx, worktree, tree) {
+async function preinstallWorktree(ctx, repo, worktree, head, tree) {
   if (planInstall(ctx.snapshot, worktree).skip) return;
   const before = await worktreeChanges(worktree);
   if (before.length > 0) {
@@ -60166,7 +60166,18 @@ async function preinstallWorktree(ctx, worktree, tree) {
     if (isOrbitError(err, "CANCELLED")) throw err;
     decide2(ctx, { kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf3(err)}` });
   }
-  await undoUnignored(ctx, worktree);
+  const left = await worktreeChanges(worktree);
+  if (left.length === 0) return;
+  await git2(repo, ["worktree", "remove", "--force", "--force", worktree]).catch(() => rmSync16(worktree, { recursive: true, force: true }));
+  await ensureWorktree(repo, worktree, head);
+  const still = await worktreeChanges(worktree);
+  if (still.length > 0) throw new OrbitError("INTERNAL", `the implementer's worktree was made again after the dependency install but still shows ${listed(still)}`);
+  decide2(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: "preflight.worktree-install",
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(left)}); the worktree was made again without them, so they cannot enter a candidate`,
+    data: { paths: left.slice(0, 200) }
+  });
 }
 async function worktreeStatus(dir) {
   return withStagingView(async (config) => parseDirtyStatus(await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { config })));
@@ -60174,28 +60185,6 @@ async function worktreeStatus(dir) {
 async function worktreeChanges(dir) {
   const { changed: changed2, untracked } = await worktreeStatus(dir);
   return [...changed2, ...untracked].sort();
-}
-async function undoUnignored(ctx, worktree) {
-  const changed2 = await worktreeChanges(worktree);
-  if (changed2.length === 0) return;
-  const literal2 = { env: { GIT_LITERAL_PATHSPECS: "1" } };
-  await git2(worktree, ["reset", "--quiet", "--hard", "HEAD"], literal2);
-  const { untracked } = await worktreeStatus(worktree);
-  if (untracked.length > 0) await withStagingView((config) => git2(worktree, ["clean", "-fq", "--", ...untracked], { ...literal2, config })).catch(() => void 0);
-  for (const path of (await worktreeStatus(worktree)).untracked) {
-    try {
-      rmSync16(join58(worktree, path), { force: true });
-    } catch {
-    }
-  }
-  const left = await worktreeChanges(worktree);
-  const paths = [.../* @__PURE__ */ new Set([...changed2, ...untracked])].sort();
-  decide2(ctx, {
-    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
-    kind: "preflight.worktree-install",
-    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(paths)}); they were removed so they cannot enter a candidate${left.length > 0 ? `, except ${listed(left)}, which could not be removed` : ""}`,
-    data: left.length > 0 ? { paths: paths.slice(0, 200), left: left.slice(0, 200) } : { paths: paths.slice(0, 200) }
-  });
 }
 async function ensureWorktree(repo, path, base) {
   if (existsSync41(path)) {
