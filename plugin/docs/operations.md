@@ -755,7 +755,9 @@ run is held by one owner lease with a 60 second lifetime, renewed on every
 tick. `orbit status` shows the heartbeat age and the last-progress time per run.
 
 The watchdog tells a stalled run from a busy one using last-progress time,
-worker log activity, step age and controller heartbeats. Defaults: a run with
+worker log activity, the output of the run's running checks, step age and
+controller heartbeats. A check that hangs is still bounded by its own
+`timeout_seconds`. Defaults: a run with
 no progress for 10 minutes is reported as stalled; a controller heartbeat older
 than 90 seconds is stale; a step that outlives its timeout (for example 60
 minutes for `IMPLEMENTING`, 15 for `RECOVERING`) is abandoned, its workers are

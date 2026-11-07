@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Clock } from '../core/clock.ts';
 import { isAlive } from '../core/proc.ts';
@@ -14,7 +14,8 @@ import { LOG_FILE } from '../adapters/shim.ts';
 import type { Logger } from '../core/log.ts';
 import { releaseEndedRunWorktrees } from './release.ts';
 import { enterRecovery, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
-import { stopWorker } from './reconcile.ts';
+import { findCheckDirs, stopWorker } from './reconcile.ts';
+import { shimPath } from '../evidence/check-shim.ts';
 
 /**
  * The watchdog (spec section 4: "Publish heartbeat and last-progress
@@ -22,7 +23,7 @@ import { stopWorker } from './reconcile.ts';
  *
  * It tells a stalled run from a busy one using what the controller publishes:
  * `runs.last_progress_at` (measurable progress, spec section 7), worker log
- * activity, the age of the current step, and controller heartbeats. It
+ * activity, the output of the run's checks still running, the age of the current step, and controller heartbeats. It
  * acts on one thing only: a run this owner leases whose step has outlived its
  * timeout is abandoned (its workers stopped) and moved to RECOVERING, where
  * the controller reconciles and resumes within the recovery budget. Everything
@@ -181,8 +182,8 @@ async function watchRun(opts: WatchdogOptions, cfg: WatchdogConfig, run: RunReco
   const stepStart = lastTransitionAt(db, run) ?? run.updatedAt;
   const lease = getLease(db, run.id);
   const workers = listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] });
-  const activity = workers.map((w) => workerActivity(opts, w, now)).filter((t): t is number => t !== null);
-  // Activity is the latest evidence of life for this run: progress recorded for it, a worker still writing its log, or the step starting.
+  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now)].filter((t): t is number => t !== null);
+  // Activity is the latest evidence of life for this run: progress recorded for it, a worker or a check still writing its log, or the step starting.
   // The owner controller's own last_progress_at is not used: it moves when any of its runs progresses, so it would hide a stuck one.
   const lastActivity = Math.max(stepStart, run.lastProgressAt ?? 0, ...activity);
   const idle = now - lastActivity;
@@ -231,6 +232,23 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): nu
   }
   // A timestamp from the future (a different clock) says nothing about activity under this one.
   return t !== null && t <= now ? t : null;
+}
+
+/** When each check of the run that is still PLANNED or RUNNING last wrote its output. A hung check is bounded by its own timeout_seconds. */
+function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+  const open = db.all<{ id: string }>("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  if (open.length === 0) return [];
+  const dirs = findCheckDirs(dirname(run.policyPath));
+  return open.map((c) => {
+    const found = dirs.get(c.id);
+    if (!found) return null;
+    try {
+      const t = statSync(shimPath(found.dir, 'output')).mtimeMs;
+      return t <= now ? t : null;
+    } catch {
+      return null;
+    }
+  });
 }
 
 /**
