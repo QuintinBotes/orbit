@@ -109,7 +109,7 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     const r = await run(wrap(['sh', '-c', `cat secrets/key .env 2>/dev/null; ls secrets | wc -l; cat ${readonlyDir}/HEAD; echo x > ${readonlyDir}/HEAD 2>/dev/null; echo "ro=$?"`], profile));
     expect(r.stdout).not.toContain('SECRET-IN-WORKTREE');
     expect(r.stdout).not.toContain('acme-secret');
-    expect(r.stdout).toContain('ref: refs/heads/main');
+    expect(r.stdout, `the read-only file read back wrong; stderr: ${r.stderr.trim() || '(empty)'}`).toContain('ref: refs/heads/main');
     expect(r.stdout).toMatch(/ro=[1-9]/);
     expect(readFileSync(join(worktree, 'secrets', 'key'), 'utf8')).toBe('SECRET-IN-WORKTREE');
   });
