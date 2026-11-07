@@ -225,7 +225,7 @@ describe('orbit models refresh', () => {
     const l = lab();
     hooks.config = () => config((c) => (c.providers = { 'mystery-ai': c.providers.claude! }));
     const r = await l.cli(['models', 'refresh']);
-    expect(r.out).toContain('provider mystery-ai: skipped (providers.mystery-ai: unknown provider; Orbit has adapters for claude and codex)\n');
+    expect(r.out).toContain('provider mystery-ai: skipped (providers.mystery-ai: unknown provider; Orbit has adapters for claude, codex and muse)\n');
     expect(hooks.adapterCalls).toEqual([]);
   });
 

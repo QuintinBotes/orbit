@@ -5,8 +5,9 @@ import type { OrbitDb } from '../storage/db.ts';
 import { appendEvent } from '../storage/events.ts';
 import { transition, getRun, type RunRecord } from '../controller/run-store.ts';
 import { TERMINAL_STATES } from '../core/run-states.ts';
-import { claudeEnvCredential, codexEnvCredential } from '../adapters/env.ts';
+import { claudeEnvCredential, codexEnvCredential, museEnvCredential } from '../adapters/env.ts';
 import type { CredentialState, CredentialStatus, ProviderAdapter } from '../adapters/types.ts';
+import { providerFamily } from '../policy/config.ts';
 
 /**
  * Credential validation for the providers a run needs (spec section 4
@@ -27,12 +28,24 @@ import type { CredentialState, CredentialStatus, ProviderAdapter } from '../adap
 export const LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   claude: 'claude auth login',
   codex: 'codex login',
+  muse: 'muse login',
 };
+
+/** The table key of a provider: a Muse alias shares `muse`'s entries; every other id keeps its own, so Codex's output does not change (issue #108). */
+function credentialKey(provider: string): string {
+  return providerFamily(provider) === 'muse' ? 'muse' : provider;
+}
+
+/** The login command for a provider id; a provider Orbit knows nothing about is told `<id> login`. */
+export function loginCommandFor(provider: string, commands: Readonly<Record<string, string>> = LOGIN_COMMANDS): string {
+  return commands[credentialKey(provider)] ?? `${provider} login`;
+}
 
 /** Providers whose key can be exported instead of a login, for unattended runs (ADR 0003). */
 const KEY_ALTERNATIVES: Readonly<Record<string, string>> = {
   claude: 'set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`)',
   codex: 'set CODEX_API_KEY',
+  muse: 'set META_API_KEY',
 };
 
 export type BlockedCredentialState = Exclude<CredentialState, 'valid' | 'unknown'> | 'auth_failed';
@@ -67,6 +80,7 @@ export interface AuthBlockerInput {
 export function exportedCredential(provider: string, env: Readonly<Record<string, string | undefined>>): string | null {
   if (provider === 'claude') return claudeEnvCredential(env);
   if (provider === 'codex') return codexEnvCredential(env);
+  if (credentialKey(provider) === 'muse') return museEnvCredential(env);
   return null;
 }
 
@@ -86,10 +100,9 @@ const WHAT: Record<BlockedCredentialState, string> = {
  * to fix or unset that variable.
  */
 export function authBlocker(input: AuthBlockerInput): AuthBlocker {
-  const commands = input.loginCommands ?? LOGIN_COMMANDS;
-  const login = commands[input.provider] ?? `${input.provider} login`;
+  const login = loginCommandFor(input.provider, input.loginCommands);
   const exported = exportedCredential(input.provider, input.env ?? process.env);
-  const alt = KEY_ALTERNATIVES[input.provider];
+  const alt = KEY_ALTERNATIVES[credentialKey(input.provider)];
   const detail = input.detail ? redact(input.detail).slice(0, 300) : null;
   const resume = input.runId ? ` then resume the run with \`orbit resume ${input.runId}\`` : ' then resume the run with `orbit resume <run-id>`';
   const command = exported ? `unset ${exported} (or set it to a valid key)` : login;
