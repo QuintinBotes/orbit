@@ -420,6 +420,24 @@ describe('checkSandboxCheck: toolchains (ADR 0009)', () => {
     expect(s.wraps[0]!.profile.writablePaths).not.toContain(cache);
   });
 
+  it('warns when a mandatory check runs a toolchain whose missing dependency cache no install fills (issue #142)', async () => {
+    const w = world(['cargo']);
+    writeFileSync(join(w.repo, 'Cargo.toml'), '[package]\nname = "acme"\n');
+    const orbitHome = temp('orbit-doctor-orbit-');
+    const cache = join(orbitHome, 'toolchains', repoKeyFor(w.repo), 'cargo');
+    const run = (cfg: OrbitConfig) => checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch: async () => ({ exitCode: 0, output: '' }) });
+    const c = await run(config([{ id: 'unit', command: ['cargo', 'test'], mandatory: true }]));
+    expect(c.status).toBe('warn');
+    expect(c.summary).toBe(`no run fills the rust toolchain's dependency cache ${cache}, which check unit runs at its baseline; a check that needs dependencies finds none there`);
+    expect(c.fix).toBe("set dependencies.install_command to the toolchain's fetch, or make the check need no dependencies");
+    // An install fills it, and an optional check does not run at the baseline.
+    const withInstall = config([{ id: 'unit', command: ['cargo', 'test'], mandatory: true }]);
+    withInstall.dependencies = { ...withInstall.dependencies, install_command: ['cargo', 'fetch'] };
+    expect((await run(withInstall)).status).toBe('pass');
+    expect((await run(config([{ id: 'unit', command: ['cargo', 'test'], mandatory: false }]))).status).toBe('pass');
+    expect(existsSync(cache)).toBe(false);
+  });
+
   it('starts a linked tool by its own name, as a multi-call binary needs (rustup\'s cargo is a link to rustup)', async () => {
     const w = world(['rustup']);
     symlinkSync('rustup', join(w.bin, 'cargo'));
@@ -495,11 +513,13 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
     return { exitCode: 1, output: '  Determining projects to restore...\n\nBuild FAILED.\n    0 Warning(s)\n    0 Error(s)' };
   }
 
-  /** A .NET repository with the given checks, and an Orbit home. */
+  /** A .NET repository with the given checks, and an Orbit home whose NuGet cache for it exists (issue #142 warns on a missing one). */
   function dotnetWorld(checks: Partial<CheckDefinition>[]) {
     const w = world(['dotnet', 'make']);
     writeFileSync(join(w.repo, 'acme.sln'), '');
-    return { w, cfg: config(checks), orbitHome: temp('orbit-doctor-orbit-') };
+    const orbitHome = temp('orbit-doctor-orbit-');
+    mkdirSync(join(toolchainCacheRoot(orbitHome, repoKeyFor(w.repo)), 'nuget'), { recursive: true });
+    return { w, cfg: config(checks), orbitHome };
   }
 
   it('builds three generated projects with no packages in the check sandbox, with the check\'s -m:1, where a bare start covered no build', async () => {
@@ -524,9 +544,14 @@ describe('checkSandboxCheck: the .NET build probe (issue #10)', () => {
   // and said it for a repository with no packages.
   it('says on macOS that a repository\'s NuGet packages go into the dependency cache outside the sandbox, and only where it has packages', async () => {
     const { w, cfg, orbitHome } = dotnetWorld([{ id: 'test', command: ['dotnet', 'test', '-m:1'], mandatory: true }]);
+    rmSync(join(toolchainCacheRoot(orbitHome, repoKeyFor(w.repo)), 'nuget'), { recursive: true });
     const { launch } = launches(() => ({ exitCode: 0, output: 'Build succeeded.' }));
     const line = async (platform: NodeJS.Platform, nugetPackages: boolean) =>
       (await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch, platform, nugetPackages })).details.find((d) => d.startsWith('toolchain dotnet:'))!;
+    // checks.dotnet-packages owns that missing cache, so checks.sandbox does not warn about it (issue #142); Linux does.
+    const status = async (platform: NodeJS.Platform) => (await checkSandboxCheck({ config: cfg, repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, orbitHome, launch, platform, nugetPackages: true })).status;
+    expect(await status('darwin')).toBe('pass');
+    expect(await status('linux')).toBe('warn');
     expect(await line('darwin', true)).toContain(
       '(not created yet: on macOS the dependency install cannot download NuGet packages, so this repository\'s are restored into it outside the sandbox, as checks.dotnet-packages says); private per check attempt',
     );

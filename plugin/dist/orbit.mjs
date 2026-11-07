@@ -68947,11 +68947,14 @@ async function checkSandboxCheck(input) {
     judge(def, detectToolchains({ command: def.command, roots: repo ? [repo] : [] }).includes("dotnet"), o.field, { command: o.field, env: null }, true);
   }
   const refusedToolchains = [];
+  const unfilledCaches = [];
   if (repo && input.orbitHome) {
     for (const id2 of [...used].sort()) {
       const base = baseCheck(id2, users.get(id2) ?? []);
       const line3 = await toolchainLine({ ...probeInput, repo }, input.orbitHome, id2, base);
       details.push(line3.detail);
+      const runners = (users.get(id2) ?? []).filter((c) => c.mandatory && runsToolchain(c, id2)).map((check) => ({ check }));
+      if (line3.unfilled.length > 0 && runners.length > 0) unfilledCaches.push({ id: id2, caches: line3.unfilled, runners });
       if (line3.refusal) refusedToolchains.push({ id: id2, failure: line3.refusal.failure, ...line3.refusal.fix ? { fix: line3.refusal.fix } : {}, ...line3.refusal.msbuild ? { msbuild: line3.refusal.msbuild } : {}, mandatory: base !== null && base.mandatory && runsToolchain(base, id2) });
     }
   }
@@ -68974,15 +68977,19 @@ async function checkSandboxCheck(input) {
     return [...ids.length > 0 ? [`${ids.length === 1 ? "check" : "checks"} ${ids.join(", ")}`] : [], ...items.flatMap((i) => i.label ? [i.label] : [])].join(" and ");
   };
   const maybeDenied = uncertain.length > 0 ? `doctor cannot tell for certain whether ${subject(uncertain)} ${uncertain.length === 1 ? "starts" : "start"} a program in a folder the check sandbox denies; one that does cannot start in a check` : null;
-  const alsoMaybe = maybeDenied !== null ? `; ${maybeDenied}` : "";
+  const unfilled = unfilledCaches.map((u) => `no run fills the ${u.id} toolchain's ${u.caches.length === 1 ? "dependency cache" : "dependency caches"} ${u.caches.join(", ")}, which ${subject(u.runners)} ${u.runners.length === 1 ? "runs" : "run"} at ${u.runners.length === 1 ? "its" : "their"} baseline; a check that needs dependencies finds none there`);
+  const alsoMaybe = [...maybeDenied !== null ? [maybeDenied] : [], ...unfilled].map((w) => `; ${w}`).join("");
+  const fillFix = unfilled.length > 0 ? "set dependencies.install_command to the toolchain's fetch, or make the check need no dependencies" : null;
+  const withFill = (fix) => [fix, ...fillFix ? [fillFix] : []].filter((f) => f !== "").join("; ");
   if (refused.length === 0 && refusedToolchains.length === 0) {
-    if (undetermined.length > 0 || maybeDenied !== null) {
+    if (undetermined.length > 0 || maybeDenied !== null || unfilled.length > 0) {
       const warnings = [
         ...undetermined.length > 0 ? [`doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? "runs" : "run"} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`] : [],
-        ...maybeDenied !== null ? [maybeDenied] : []
+        ...maybeDenied !== null ? [maybeDenied] : [],
+        ...unfilled
       ];
-      const missing = [...undetermined.length > 0 ? ["dotnet commands that pin one MSBuild node (-m:1)"] : [], ...uncertain.length > 0 ? ["a check executable that can start in the check sandbox"] : []];
-      return result2("warn", warnings.join("; "), details, missing.join(", and "), fixFor(uncertain));
+      const missing = [...undetermined.length > 0 ? ["dotnet commands that pin one MSBuild node (-m:1)"] : [], ...uncertain.length > 0 ? ["a check executable that can start in the check sandbox"] : [], ...unfilled.length > 0 ? ["a dependency install that fills the toolchain cache"] : []];
+      return result2("warn", warnings.join("; "), details, missing.join(", and "), withFill(fixFor(uncertain)));
     }
     return result2("pass", started === 0 ? "no check executable outside the repository to start" : `${started} check executable(s) start in the sandbox`, details);
   }
@@ -68990,7 +68997,7 @@ async function checkSandboxCheck(input) {
     const names = refusedToolchains.map((r) => r.id);
     const listed2 = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1)} toolchains`;
     const status3 = refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
-    return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline${alsoMaybe}`, details, "a toolchain that can start in the check sandbox", fixFor([...refusedToolchains, ...uncertain]));
+    return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline${alsoMaybe}`, details, "a toolchain that can start in the check sandbox", withFill(fixFor([...refusedToolchains, ...uncertain])));
   }
   const status2 = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
   const nodes = refused.every((r) => r.msbuild && !r.formatReason && !r.outside);
@@ -69006,7 +69013,7 @@ async function checkSandboxCheck(input) {
     (nodes ? `${subject(refused)} would start MSBuild worker nodes, which the sandbox refuses; ${blocks}` : formats ? `${subject(refused)} ${refused.length === 1 ? "runs" : "run"} dotnet format, ${folderForm ? "which loads the project through a build host the sandbox refuses its named pipe" : "which cannot run in a run's check sandbox on macOS"}; ${blocks}` : pipes ? folderForm ? `${subject(refused)} would start MSBuild worker nodes or dotnet format's build host, whose named pipes the sandbox refuses; ${blocks}` : `${subject(refused)} would start MSBuild worker nodes, whose named pipes the sandbox refuses, or run dotnet format, which cannot run in a run's check sandbox on macOS; ${blocks}` : `the sandbox refuses ${refused.length === 1 ? "the executable" : "the executables"} of ${subject(refused)}; ${blocks}`) + alsoMaybe,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : "a check executable that can start in the check sandbox",
-    fixFor([...refused, ...refusedToolchains, ...uncertain])
+    withFill(fixFor([...refused, ...refusedToolchains, ...uncertain]))
   );
 }
 function sandboxedCommands(config) {
@@ -69053,15 +69060,16 @@ async function toolchainLine(input, orbitHome, id, base) {
   const state = exists ? `read-only for checks and workers${outside ? `; ${nuget}` : installs ? ", written by the dependency install" : `; ${noInstall}, so no run writes it`}` : `not created yet${outside ? `: ${nuget}` : installs ? "; the first dependency install creates it" : `; ${noInstall}, so no run creates it`}`;
   const where2 = `${caches.length === 1 ? "dependency cache" : "dependency caches"} ${caches.join(", ")} (${state}); private per check attempt: ${p.scratchVars.join(", ")}`;
   const label = `toolchain ${id}`;
+  const unfilled = outside || installs ? [] : caches.filter((c) => !existsSync56(c));
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
-  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null };
+  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null, unfilled };
   const exe = launchPath(found, input.repo);
-  if (!exe) return { detail: `${label}: not started ("${basename21(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null };
+  if (!exe) return { detail: `${label}: not started ("${basename21(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null, unfilled };
   const args = id === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
   const check = { ...base ?? defaultCheck(`toolchain-${id}`), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? "a generated project" } : null;
   const out = await probeOrRefuse(input, check, exe, args, null, project, msbuildFix(base));
-  return { detail: `${label}: ${out.detail}; ${where2}`, refusal: out.kind === "refused" ? out : null };
+  return { detail: `${label}: ${out.detail}; ${where2}`, refusal: out.kind === "refused" ? out : null, unfilled };
 }
 var STOP_POLL_MS, launchWrapped, PROBE_TIMEOUT_MS, BUILD_PROBE_TIMEOUT_MS, PROBE_ARGS, DEFAULT_PROBE_ARGS, SHELL_BUILTINS, UNCERTAIN_READING, NOT_A_FILE, TEXT_ONLY;
 var init_doctor_sandbox = __esm({
