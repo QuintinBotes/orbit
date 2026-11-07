@@ -26,7 +26,7 @@ export type { ClaudeTaskResult, ClaudeEndReason } from './claude-transcript.ts';
 export { CodexAdapter, buildCodexArgv, decideCodexTier, parseHelpFlags, parseDoctorChecks, CODEX_EFFORTS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, CODEX_REQUIRED_FLAGS } from './codex.ts';
 export type { CodexAdapterOptions, CodexSrtStatus, CodexTaskHandle, CodexTaskSpec, CodexTier, CodexTierDecision, CodexTierInput, CodexTierSetting } from './codex.ts';
 export { classifyCodexTranscript, codexUsage, codexEvents, CODEX_END_REASONS } from './codex-events.ts';
-export { MuseAdapter, buildMuseArgv, assertSafeMuseArgv, decideMuseTier, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION } from './muse.ts';
+export { MuseAdapter, buildMuseArgv, assertSafeMuseArgv, decideMuseTier, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_READS_NOT_CONFINED, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION } from './muse.ts';
 export type { MuseAdapterOptions, MuseSrtStatus, MuseTaskHandle, MuseTier, MuseTierDecision, MuseTierInput, MuseTierSetting } from './muse.ts';
 export { classifyMuseTranscript, museUsage, museEvents, museDepth, MUSE_END_REASONS } from './muse-events.ts';
 export type { MuseTaskResult, MuseEndReason } from './muse-events.ts';

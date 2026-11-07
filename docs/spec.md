@@ -693,12 +693,13 @@ not data-policy eligible until a person attests it) and lists it in
 is not read-only, and the review checkout's read-only state rests on an
 external boundary, never on Muse's own settings alone: either `srt` wraps the whole muse process (tier
 `os-sandbox`, only on `META_API_KEY`, writes to the worker directory only,
-egress to the provider host only, failing closed without `srt` or the key),
+egress to the provider host only; set explicitly without `srt` or the key, Muse
+is unavailable and selection moves on),
 or Muse runs unwrapped under its `:read-only` profile against a checkout
 Orbit has write-protected on disk (tier `muse-sandbox`, with the shell
 disabled, refused when any directory or file of the checkout is writable;
-outside the checkout this tier rests on Muse's own profile, as
-`codex-sandbox` rests on Codex's). The invocation is fixed and bounded (no question tool,
+outside the checkout writes rest on Muse's own profile and reads are not
+confined). The invocation is fixed and bounded (no question tool,
 a 200-step cap, the reviewer's wall-clock cap over the whole process group),
 so a Muse review can never wait on a person; a timeout, a non-zero exit or a
 step cap is a reviewer failure with its reason, never a verdict. The verdict

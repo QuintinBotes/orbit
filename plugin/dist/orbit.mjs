@@ -21787,6 +21787,11 @@ function providerFamily(id) {
   }
   return null;
 }
+function isIndependentReviewer(reviewer, implementer) {
+  const family = providerFamily(reviewer);
+  const implementerFamily = providerFamily(implementer);
+  return family !== null && implementerFamily !== null && family !== implementerFamily;
+}
 function loadConfig(repoRoot, path, opts = {}) {
   const file = path === void 0 ? join4(repoRoot, CONFIG_RELATIVE_PATH) : isAbsolute2(path) ? path : resolve(repoRoot, path);
   let text2;
@@ -30781,20 +30786,21 @@ function classifyMuseTranscript(input) {
     durationMs: Math.max(0, exit.endedAt - exit.startedAt)
   });
   if (exit.error) return end("failed", "spawn_failed", exit.error);
-  const failure = terminal && !completed ? str3(terminal.reason) ?? "run failed" : null;
-  const authText = completed ? void 0 : [failure, input.stderr ?? null].find((m) => m !== null && MUSE_AUTH_PATTERNS.some((p) => p.test(m)));
-  if (authText) return end("auth_failed", "auth", `authentication failed: ${clip3(firstMatchingLine(authText), 300)}; not retried`);
   if (exit.timedOut) return end("timeout", "timeout", `timed out; the shim sent ${exit.escalation.join(", ") || "no signal"}`);
   if (exit.cancelled) return end("cancelled", "interrupted", "cancelled by a signal to the worker");
+  const authFailed = (text2) => end("auth_failed", "auth", `authentication failed: ${clip3(firstMatchingLine(text2), 300)}; not retried`);
   if (!terminal) {
     if (exit.escalation.length > 0) return end("cancelled", "interrupted", `ended after ${exit.escalation.join(", ")} with no terminal event`);
     if (exit.signal !== null) return end("failed", "crashed", `killed by ${exit.signal} with no terminal event`);
     if (input.malformedTail) return end("malformed_output", "malformed_transcript", `output ends in a line that is not JSON (exit ${exit.code})`);
+    if (exit.code === 1 && isAuthText(input.stderr)) return authFailed(input.stderr);
     const said = lastStderrLine(input.stderr);
     return end("failed", "crashed", `exited ${exit.code} without run.terminal.completed or run.terminal.failed${said ? `: ${clip3(said, 300)}` : ""}`);
   }
   if (!completed) {
+    const failure = str3(terminal.reason) ?? "run failed";
     if (STEP_CAP.test(failure)) return end("failed", "step_cap", clip3(failure, 500));
+    if (isAuthText(failure)) return authFailed(failure);
     return end("failed", "run_failed", clip3(failure, 500));
   }
   if (exit.code !== 0) return end("failed", "crashed", `run.terminal.completed but exit ${exit.code}`);
@@ -30865,6 +30871,9 @@ function museEvents(lines, now, model = null) {
 }
 function payloadOf(e) {
   return e && isObject4(e.payload) ? e.payload : null;
+}
+function isAuthText(text2) {
+  return text2 !== void 0 && MUSE_AUTH_PATTERNS.some((p) => p.test(text2));
 }
 function firstMatchingLine(text2) {
   return text2.split("\n").find((l) => MUSE_AUTH_PATTERNS.some((p) => p.test(l))) ?? text2;
@@ -30998,7 +31007,7 @@ function stderrText(workerDir) {
     return "";
   }
 }
-var MUSE_PROMPT_FILE, MUSE_SCHEMA_FILE, MUSE_RESULT_FILE, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_EXTRA_ARGS_ALLOWED, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON2, MuseAdapter;
+var MUSE_PROMPT_FILE, MUSE_SCHEMA_FILE, MUSE_RESULT_FILE, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_EXTRA_ARGS_ALLOWED, MUSE_READS_NOT_CONFINED, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON2, MuseAdapter;
 var init_muse = __esm({
   "src/adapters/muse.ts"() {
     "use strict";
@@ -31041,12 +31050,13 @@ var init_muse = __esm({
     ];
     MUSE_FORBIDDEN_ARGS = ["--yolo", "--disable-sandbox", "--disable-approval", "--trust-workspace"];
     MUSE_EXTRA_ARGS_ALLOWED = [];
+    MUSE_READS_NOT_CONFINED = "Reads are not confined: measured on Muse 1.4.14, read_file under this profile reads files outside the review checkout, so nothing stops it reading other files, including credentials the login user can read, and a prompt in the candidate could steer them into a review or to the Meta API. Use the os-sandbox tier (META_API_KEY plus srt) where that matters.";
     MUSE_LIMITATIONS = [
       "No OS isolation around the muse process itself: Muse's :read-only profile and shell sandbox apply to its tools, and the review checkout is write-protected on disk.",
-      "Reads are unrestricted: any file the user can read may reach the provider."
+      MUSE_READS_NOT_CONFINED
     ];
     MUSE_OS_SANDBOX_LIMITATIONS = [
-      "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout."
+      "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout. Files outside the checkout that srt does not deny stay readable, but only api.meta.ai can receive them. This tier has not been run live."
     ];
     NO_KEY_REASON2 = "no META_API_KEY in the environment, and Muse's login file is denied under srt";
     MuseAdapter = class {
@@ -31073,9 +31083,12 @@ var init_muse = __esm({
         const flags = help.ok ? parseHelpFlags(help.stdout) : /* @__PURE__ */ new Set();
         const missing = MUSE_REQUIRED_FLAGS.filter((f) => !flags.has(f));
         const old = v !== null && compareVersions(v, MUSE_MIN_VERSION) < 0;
+        const cliOk = version.ok && help.ok && missing.length === 0 && !old;
+        const tierProblem = cliOk ? await this.explicitTierProblem() : null;
         return {
           provider: this.id,
-          available: version.ok && help.ok && missing.length === 0 && !old,
+          available: cliOk && tierProblem === null,
+          ...tierProblem === null ? {} : { tierUnavailable: true },
           version: v,
           // Muse has no model catalog command; the configured model is passed through unchanged.
           models: [],
@@ -31083,7 +31096,7 @@ var init_muse = __esm({
           readOnlySandbox: flags.has("--permission-profile"),
           usageReporting: "partial",
           costReporting: false,
-          detail: !version.ok ? `muse --version failed: ${version.detail}` : missing.length > 0 ? `muse exec lacks ${missing.join(", ")}` : old ? `muse ${v} is older than ${MUSE_MIN_VERSION}, the version this adapter was verified against` : `muse ${v ?? "unknown version"}`
+          detail: tierProblem !== null ? tierProblem : !version.ok ? `muse --version failed: ${version.detail}` : missing.length > 0 ? `muse exec lacks ${missing.join(", ")}` : old ? `muse ${v} is older than ${MUSE_MIN_VERSION}, the version this adapter was verified against` : `muse ${v ?? "unknown version"}`
         };
       }
       /**
@@ -31219,6 +31232,17 @@ ${outputBudgetInstruction(outputTokens)}
       }
       baseEnv() {
         return this.opts.baseEnv ?? process.env;
+      }
+      /** Why an explicit os-sandbox cannot run here, so selection moves on instead of startTask blocking the run. `auto` never fails this way. */
+      async explicitTierProblem() {
+        if (this.opts.tier !== "os-sandbox") return null;
+        try {
+          await this.chooseTier(museEnvCredential(this.baseEnv()));
+          return null;
+        } catch (err) {
+          if (isOrbitError(err, "ISOLATION_UNAVAILABLE")) return err.message;
+          throw err;
+        }
       }
       async chooseTier(apiKeyVar) {
         const setting = this.opts.tier ?? "auto";
@@ -41742,7 +41766,7 @@ function selectReviewer(input) {
     }
     return null;
   };
-  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
+  const independentIds = order.filter((p) => isIndependentReviewer(p, impl) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
   const problems = /* @__PURE__ */ new Map();
   const unusable = /* @__PURE__ */ new Map();
   for (const p of independentIds) {
@@ -41890,13 +41914,14 @@ function sameProviderModel(input, alternatives) {
 function mandatoryReviewProvider(review, implementer) {
   if (reviewFallback(review) !== "block") return null;
   const first = preferredReviewProvider(review);
-  return first !== null && first !== implementer ? first : null;
+  return first !== null && isIndependentReviewer(first, implementer) ? first : null;
 }
 var SAME_PROVIDER_APPROVED_KIND, REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE, REVIEWER_FAILED_KIND;
 var init_select = __esm({
   "src/review/select.ts"() {
     "use strict";
     init_errors();
+    init_config();
     init_review();
     init_registry();
     SAME_PROVIDER_APPROVED_KIND = "review.same-provider-approved";
@@ -43648,17 +43673,22 @@ var init_budget2 = __esm({
 });
 
 // src/recovery/credentials.ts
+function credentialKey(provider) {
+  return providerFamily(provider) === "muse" ? "muse" : provider;
+}
+function loginCommandFor(provider, commands = LOGIN_COMMANDS) {
+  return commands[credentialKey(provider)] ?? `${provider} login`;
+}
 function exportedCredential(provider, env) {
   if (provider === "claude") return claudeEnvCredential(env);
   if (provider === "codex") return codexEnvCredential(env);
-  if (provider === "muse") return museEnvCredential(env);
+  if (credentialKey(provider) === "muse") return museEnvCredential(env);
   return null;
 }
 function authBlocker(input) {
-  const commands = input.loginCommands ?? LOGIN_COMMANDS;
-  const login = commands[input.provider] ?? `${input.provider} login`;
+  const login = loginCommandFor(input.provider, input.loginCommands);
   const exported = exportedCredential(input.provider, input.env ?? process.env);
-  const alt = KEY_ALTERNATIVES[input.provider];
+  const alt = KEY_ALTERNATIVES[credentialKey(input.provider)];
   const detail = input.detail ? redact(input.detail).slice(0, 300) : null;
   const resume = input.runId ? ` then resume the run with \`orbit resume ${input.runId}\`` : " then resume the run with `orbit resume <run-id>`";
   const command = exported ? `unset ${exported} (or set it to a valid key)` : login;
@@ -43780,6 +43810,7 @@ var init_credentials = __esm({
     init_run_store();
     init_run_states();
     init_env();
+    init_config();
     LOGIN_COMMANDS = {
       claude: "claude auth login",
       codex: "codex login",
@@ -45021,7 +45052,7 @@ function routeSafetyReview(ctx) {
             continue;
           }
         }
-        candidates.push({ entry: e, basis: "tier", detail: `${e.family} meets the opus-class floor`, independent: provider !== implementer });
+        candidates.push({ entry: e, basis: "tier", detail: `${e.family} meets the opus-class floor`, independent: isIndependentReviewer(provider, implementer) });
         continue;
       }
       const q = qualifyOtherProvider(e, policy);
@@ -45029,7 +45060,7 @@ function routeSafetyReview(ctx) {
         rejected.push(alternative(e, true, costOf2(e), "not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default"));
         continue;
       }
-      candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: provider !== implementer });
+      candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: isIndependentReviewer(provider, implementer) });
     }
   }
   let preferred = null;
@@ -45304,6 +45335,7 @@ var init_router = __esm({
     init_errors();
     init_registry();
     init_pricing();
+    init_config();
     init_review();
     init_types2();
     TIER_NAME = { 1: "haiku", 2: "sonnet", 3: "opus", 4: "fable" };
@@ -54942,11 +54974,28 @@ function reviewerOf(db, runId, candidateId, standing, failed) {
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data;
   const approvedBy = typeof approval?.approved_by === "string" ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy, ...tried };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
   }
   const implementer = listWorkers(db, { runId, role: "implementer" }).at(-1)?.provider ?? "claude";
-  const independent = last.provider !== implementer;
-  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : "no independent reviewer was usable", approved_by: independent ? null : approvedBy, ...tried };
+  const independent = isIndependentReviewer(last.provider, implementer);
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : "no independent reviewer was usable", approved_by: independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
+}
+function tierEvidence(db, runId, review) {
+  if (providerFamily(review.provider) !== "muse") return {};
+  const worker = listWorkers(db, { runId }).find((w) => w.id === review.workerId);
+  if (!worker) return {};
+  let meta;
+  try {
+    meta = readJsonIfExists(join48(worker.workerDir, LAUNCH_FILE))?.meta;
+  } catch {
+    return {};
+  }
+  if (typeof meta?.tier !== "string") return {};
+  return {
+    tier: meta.tier,
+    ...typeof meta.tierReason === "string" ? { tier_reason: meta.tierReason } : {},
+    ...Array.isArray(meta.limitations) ? { limitations: meta.limitations.filter((l) => typeof l === "string") } : {}
+  };
 }
 function triedLines(failed) {
   return failed.map((f) => `
@@ -54954,9 +55003,10 @@ function triedLines(failed) {
 }
 function reviewerLine(r) {
   const who = `${r.provider}/${r.model ?? "default"}`;
+  const tier = r.tier === void 0 ? "" : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ""}${r.limitations?.length ? `. Limitations: ${r.limitations.join(" ")}` : ""}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  if (r.independent) return `Reviewer: ${who} (independent)${tried}`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})${tried}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})${tier}${tried}`;
 }
 function tokens(t) {
   return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
@@ -55319,6 +55369,7 @@ var init_report2 = __esm({
     init_publication();
     init_profiles();
     init_prompt();
+    init_supervise();
     init_run_store();
     init_resume();
     init_run_refs();
@@ -56576,10 +56627,10 @@ function reviewGate(db, input) {
   const fallback = reviewFallback(config.review);
   if (fallback !== "claude" && cleared.length > 0 && input.implementerProvider === void 0) {
     reasons.push(`${fallback === "block" ? "independent review is required" : "a same-provider review needs a person's yes"} but the implementer provider was not supplied, so independence cannot be shown`);
-  } else if (cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    if (fallback === "block") reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+  } else if (cleared.length > 0 && !cleared.some((r) => isIndependentReviewer(r.provider, input.implementerProvider ?? ""))) {
+    if (fallback === "block") reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider, or a provider not independent of it`);
     else if (fallback === "ask" && listDecisions(db, input.runId, { kind: SAME_PROVIDER_APPROVED_KIND }).length === 0) {
-      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, and no person approved a same-provider review (review.when_unavailable: ask)`);
+      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, or a provider not independent of it, and no person approved a same-provider review (review.when_unavailable: ask)`);
     }
   }
   if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push("no review cleared this tree");
@@ -56605,6 +56656,7 @@ var init_stale = __esm({
     init_errors();
     init_hash();
     init_decisions();
+    init_config();
     init_review();
     init_select();
     init_store3();
@@ -56814,7 +56866,7 @@ function independentReviewGate(db, input) {
   const approved = g.cleared.some((r) => r.verdict === "APPROVE");
   const evidence = g.cleared.map((r) => `review ${r.id} by ${r.provider}: ${r.verdict} on tree ${r.treeHash}`);
   const reviews = listReviews(db, input.runId, { treeHash: input.treeHash });
-  const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => r.provider !== input.implementerProvider);
+  const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => isIndependentReviewer(r.provider, input.implementerProvider));
   const why = `same-provider review, not independent: ${input.whyNotIndependent ?? "no independent reviewer was usable"}`;
   const out = result("independent_review", g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
   if (out.status === "pass" && !independent) out.summary = approved ? `independent_review gate: review approved but it was ${why}` : `independent_review gate: same-provider review cleared the tree without an approval, not independent: ${input.whyNotIndependent ?? "no independent reviewer was usable"}`;
@@ -68294,8 +68346,9 @@ function reviewFix(alternatives, options = {}) {
   };
   for (const { provider, reason } of alternatives) {
     if (/^no model of "[^"]+" is qualified for review/.test(reason)) add(`for ${provider}: run "orbit models refresh" (it reads the provider's model catalog), or set providers.${provider}.model in .orbit/config.yaml to a model you accept for review`);
+    else if (/\.tier is os-sandbox but /.test(reason)) add(`for ${provider}: set isolation.provider to sandbox-runtime and export META_API_KEY, or set providers.${provider}.tier to auto or muse-sandbox`);
     else if (/data_policy_eligible is not true/.test(reason)) add(`for ${provider}: set providers.${provider}.data_policy_eligible: true if sending sanitized code to it is permitted`);
-    else if (/^(no credentials for|credentials for) /.test(reason)) add(`for ${provider}: ${LOGIN_COMMANDS[provider] ?? `${provider} login`}`);
+    else if (/^(no credentials for|credentials for) /.test(reason)) add(`for ${provider}: ${loginCommandFor(provider)}`);
     else {
       const unavailable = /^providers\.[^.]+\.model "([^"]+)" is not offered by the adapter$/.exec(reason);
       if (unavailable) add(options.unavailableModelFix?.(provider, unavailable[1]) ?? `for ${provider}: set providers.${provider}.model to a model its CLI offers ("orbit models refresh" lists them)`);
@@ -68336,7 +68389,7 @@ var HUMAN_POLICY_CONFIG_NOTE;
 var init_doctor_policy_note = __esm({
   "src/cli/commands/doctor-policy-note.ts"() {
     "use strict";
-    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins, providers.codex.data_policy_eligible or providers.muse.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches.";
+    HUMAN_POLICY_CONFIG_NOTE = "A person, not an agent, must make any edit to agents.allowed_plugins, providers.codex.data_policy_eligible or providers.muse.data_policy_eligible in .orbit/config.yaml. Do not ask an agent to apply this fix. An auto-mode classifier may flag worker launches. Orbit does not enforce this: only worker sessions are blocked from editing .orbit/config.yaml.";
   }
 });
 
@@ -69549,7 +69602,7 @@ async function checkProviders(p, iso2, registry) {
   const facts = { capabilities: {}, credentials: {}, adapters: {} };
   let adapters;
   try {
-    adapters = createAdapters(config, { isolation: null, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
+    adapters = createAdapters(config, { isolation: iso2.provider, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
   } catch (err) {
     return { checks: [fail2("providers", "providers", errText(err, 240), "valid provider settings", "fix providers in .orbit/config.yaml")], facts };
   }
@@ -69568,7 +69621,7 @@ async function checkProviders(p, iso2, registry) {
     })
   );
   ids.forEach((id, i) => facts.capabilities[id] = caps[i]);
-  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id].available), live: p.live, timeoutMs: 9e4 });
+  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id].available || facts.capabilities[id].tierUnavailable === true), live: p.live, timeoutMs: 9e4 });
   for (const c of creds) facts.credentials[c.provider] = c.status ?? void 0;
   for (const id of ids) {
     const cap = facts.capabilities[id];
@@ -69576,7 +69629,7 @@ async function checkProviders(p, iso2, registry) {
     const level = needed ? fail2 : warn2;
     const kind = providerKind(id);
     const exe = config.providers[id].command;
-    if (!cap.available) {
+    if (!cap.available && cap.tierUnavailable !== true) {
       checks.push(level(`${id}.cli`, "providers", `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === "claude" ? ", >= 2.1.284 for Sonnet 5.5" : ""}`, kind === "claude" ? "install Claude Code (https://code.claude.com)" : kind === "muse" ? `install Muse ${MUSE_MIN_VERSION} or later` : "install the Codex CLI", needed ? [] : ["not required for this configuration"]));
       continue;
     }
@@ -69681,7 +69734,7 @@ function museTierCheck(id, provider, apiKeyVar, srtInUse, level) {
   } catch (err) {
     return level(check, "providers", errText(err, 300), "sandbox-runtime isolation and META_API_KEY, or providers.<id>.tier set to auto or muse-sandbox", "set isolation.provider to sandbox-runtime and export META_API_KEY, or set the tier to auto or muse-sandbox", facts);
   }
-  const summary = `the Muse reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}`;
+  const summary = `the Muse reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}${decision.tier === "muse-sandbox" ? `. ${MUSE_READS_NOT_CONFINED}` : ""}`;
   const details = [...facts, ...(decision.tier === "os-sandbox" ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS).map((l) => `limitation: ${l}`)];
   if (decision.tier === "os-sandbox" || !decision.automatic) return pass(check, "providers", summary, details);
   return warn2(check, "providers", summary, "META_API_KEY plus sandbox-runtime for the os-sandbox tier", "export META_API_KEY and use sandbox-runtime isolation", details);
@@ -70784,6 +70837,7 @@ ambiguity:
 
 scheduler:
   # Hard caps are copied into the policy snapshot and never change during a run.
+  # The one addition: review_rounds also allows the rounds a reviewer spent before it was replaced at run time.
   hard_limits:
     implementation_attempts: 12
     diagnostic_experiments: 16

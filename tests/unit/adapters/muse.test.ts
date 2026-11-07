@@ -221,6 +221,19 @@ describe('classifyMuseTranscript', () => {
     expect(classify([failed('unexpected status 401 Unauthorized')], { code: 1 })).toMatchObject({ status: 'auth_failed', reason: 'auth' });
   });
 
+  it('lets a 401 on stderr classify only a run that structural facts leave unexplained', () => {
+    const stderr = 'tool call failed with 401\n';
+    expect(classify([ev('run.lifecycle.started')], { timedOut: true, code: null, signal: 'SIGKILL', escalation: ['SIGTERM', 'SIGKILL'] }, stderr)).toMatchObject({ status: 'timeout', reason: 'timeout' });
+    expect(classify([failed('model did not reach a terminal state within 200 step(s)')], { timedOut: true, code: null }, stderr)).toMatchObject({ status: 'timeout', reason: 'timeout' });
+    expect(classify([failed('model did not reach a terminal state within 200 step(s)')], { code: 1 }, stderr)).toMatchObject({ status: 'failed', reason: 'step_cap' });
+    expect(classify([failed('the provider exploded')], { code: 1 }, stderr)).toMatchObject({ status: 'failed', reason: 'run_failed' });
+    expect(classify([], { cancelled: true, code: 143 }, stderr)).toMatchObject({ status: 'cancelled', reason: 'interrupted' });
+    expect(classify([], { code: null, signal: 'SIGKILL' }, stderr)).toMatchObject({ status: 'failed', reason: 'crashed' });
+    expect(classify([], { code: 2 }, stderr)).toMatchObject({ status: 'failed', reason: 'crashed' });
+    expect(classify([], { code: 0 }, stderr)).toMatchObject({ status: 'failed', reason: 'crashed' });
+    expect(classify([completed(JSON.stringify(REVIEW))], { code: 0 }, stderr)).toMatchObject({ status: 'succeeded', reason: 'success' });
+  });
+
   it('classifies timeouts, crashes and a completed run with a non-zero exit', () => {
     expect(classify([ev('run.lifecycle.started')], { timedOut: true, code: null, signal: 'SIGKILL', escalation: ['SIGINT', 'SIGTERM', 'SIGKILL'] })).toMatchObject({ status: 'timeout', reason: 'timeout' });
     expect(classify([ev('run.lifecycle.started')], { code: 1 })).toMatchObject({ status: 'failed', reason: 'crashed' });

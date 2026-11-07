@@ -458,9 +458,10 @@ review:
   block_unresolved_high_impact_findings: true
 ```
 
-`review.providers` lists the independent reviewers (a provider other than the
-one that wrote the change) in preference order. The first that is installed,
-logged in, `data_policy_eligible` and has a qualified model reviews. Only
+`review.providers` lists the independent reviewers (a provider family other than
+the one that wrote the change) in preference order. The first that is installed,
+logged in, `data_policy_eligible` and has a qualified model and a tier that can
+run reviews. Only
 providers Orbit has an adapter for can be listed: today that is `codex` and
 `muse` (or a second configuration of either, such as `codex-review`, defined
 under `providers`), in any order, for example `providers: [codex, muse]`.
@@ -512,12 +513,15 @@ legacy `preferred_provider` becomes the preference list.
 
 ### Human policy decisions in auto mode
 
-A person, not an agent, must make any edit to `agents.allowed_plugins` or
-`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+A person, not an agent, must make any edit to `agents.allowed_plugins`,
+`providers.codex.data_policy_eligible` or
+`providers.muse.data_policy_eligible` in `.orbit/config.yaml`.
 `agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
 `providers.codex.data_policy_eligible` confirms that sending sanitized code to
 Codex is permitted. An auto-mode classifier may flag worker launches. Review
 that prompt yourself rather than asking an agent to apply either edit.
+Orbit does not enforce this: only worker sessions are blocked from editing
+`.orbit/config.yaml`, so a person's edit and an interactive agent's edit look the same to it.
 
 ### Plugins in worker sessions
 
@@ -1145,7 +1149,8 @@ from the packet alone is visible; see
 `providers.muse` configures Muse as an independent reviewer
 ([ADR 0017](decisions/0017-muse-reviewer.md); the verified CLI surface is
 [interfaces/muse](interfaces/muse.md)). Muse never implements: the adapter
-runs read-only review tasks only and needs Muse 1.4.11 or later. There is no
+runs read-only review tasks only and needs Muse 1.4.11 or later (last measured
+on 1.4.14). There is no
 `muse` provider in the defaults; adding the block (under `muse`, or an id
 starting with `muse-` or `muse_`) creates it with the defaults shown above.
 The model is passed through unchanged (Muse has no model catalog command, so
@@ -1165,14 +1170,17 @@ Muse reviewer, chosen the way the Codex tier is, by credential:
 | value | what runs | when |
 | --- | --- | --- |
 | `auto` (default) | `os-sandbox` when `META_API_KEY` is set (not blank) in the worker environment and `srt` starts here; otherwise `muse-sandbox` | the usual choice |
-| `os-sandbox` | `muse exec` inside `srt`: writes to the worker directory only, egress to `api.meta.ai` only, the user's Muse login directory denied, a private config directory as `XDG_CONFIG_HOME` | refuses with `ISOLATION_UNAVAILABLE` when `srt` is not in use or does not start, or when `META_API_KEY` is not set (the login file is denied there); it never falls back to an unwrapped Muse |
-| `muse-sandbox` | `muse exec` never wrapped in `srt`, under its own `:read-only` profile with the shell disabled, against the review checkout Orbit has write-protected on disk | the adapter refuses a checkout with any writable directory or file; outside the checkout only Muse's own profile applies, and reads are unrestricted; the worker record says so |
+| `os-sandbox` | `muse exec` inside `srt`: writes to the worker directory only, egress to `api.meta.ai` only, the user's Muse login directory denied, a private config directory as `XDG_CONFIG_HOME` | when `srt` is not in use or does not start, or `META_API_KEY` is not set (the login file is denied there), Muse reports as unavailable with a reason that names this setting, so selection moves on to the next listed reviewer or `review.when_unavailable`; it never falls back to an unwrapped Muse, and a launch that gets this far refuses with `ISOLATION_UNAVAILABLE` |
+| `muse-sandbox` | `muse exec` never wrapped in `srt`, under its own `:read-only` profile with the shell disabled, against the review checkout Orbit has write-protected on disk | the adapter refuses a checkout with any writable directory or file; outside the checkout only Muse's own profile applies for writes. Reads are not confined: measured on Muse 1.4.14, `read_file` reads files outside the checkout, so nothing stops it reading other files, including credentials the login user can read, and a prompt in the candidate could steer them into a review or to the Meta API. The worker record, `orbit doctor` and the final report say so |
 
 Each family accepts only its own tier names: `muse-sandbox` on a Codex
 provider and `codex-sandbox` on a Muse provider are configuration errors, and
-`tier` on a Claude provider stays one. `orbit doctor` reports the tier the
+`tier` on a Claude provider stays one. Use `os-sandbox` (`META_API_KEY` plus
+`srt`) where unconfined reads matter; it has not yet been run live
+([interfaces/muse](interfaces/muse.md)). `orbit doctor` reports the tier the
 Muse reviewer will use and why, the credential source, the model and the
-eligibility (`muse.worker-tier`). As with Codex, a person, not an agent, must
+eligibility (`muse.worker-tier`), and the final report names the tier, why and
+its limitations for a Muse reviewer. As with Codex, a person, not an agent, must
 make any edit to `providers.muse.data_policy_eligible`.
 
 `isolation.limits` is on by default. Set a value to `null` to turn that limit

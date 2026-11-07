@@ -1,8 +1,10 @@
 # Muse as an independent review provider: verified interface reference
 
 Verified 2026-10-20 against **Muse Code 1.4.11** (`muse --version` prints
-`Muse Code 1.4.11 (1.4.11-R6667.1)`), by running the binary. Orbit uses Muse
-as a reviewer only (ADR 0017). Where a fact was not probed, this file says so.
+`Muse Code 1.4.11 (1.4.11-R6667.1)`), by running the binary, and measured again
+2026-11-07 against **Muse Code 1.4.14** (`1.4.14-R7309.1`, section 1a). A fact
+without a version below was probed on 1.4.11. Orbit uses Muse as a reviewer only
+(ADR 0017). Where a fact was not probed, this file says so.
 
 ## 0. The invocation Orbit uses
 
@@ -33,8 +35,8 @@ directory and file of the checkout is write-protected. The shell is disabled so
 that nothing running as the checkout's owner can make it writable again. In the
 `muse-sandbox` tier nothing outside Muse confines writes outside the checkout
 (the user's home, the repository's `.git`): there the boundary is Muse's own
-`:read-only` profile and `--disable-write`, as `codex-sandbox` rests on Codex's
-own sandbox. Use `os-sandbox` where that matters.
+`:read-only` profile and `--disable-write`. Nothing confines reads at all
+(section 1a). Use `os-sandbox` (`META_API_KEY` plus `srt`) where that matters.
 
 ## 1. Flags, as probed
 
@@ -57,6 +59,31 @@ an `:unrestricted` profile. The environment variable
 every `MUSE_*` variable is refused as a worker extra, and the one Orbit sets
 itself is `MUSE_NO_AUTO_UPDATE=1`, so the launcher cannot update itself
 mid-run.
+
+## 1a. Measured on Muse 1.4.14
+
+Real CLI, Orbit's exact flags, explicit `--model muse-wonder-full-1.0`, and the
+workspace made read-only with `chmod -R a-w`:
+
+- Exit 0. Every flag accepted. `run.terminal.completed` has the same shape.
+- The read-only checkout was untouched.
+- A schema-bound review returned valid JSON matching
+  `schemas/review-output.schema.json`.
+- `read_file` under `--permission-profile :read-only --disable-write
+  --disable-shell` read a file **outside** `--workspace` and returned its
+  contents.
+- One earlier sample, with a prompt that also asked for a file write, ran away
+  producing output until an outer timeout, with no terminal event. The
+  wall-clock cap is what ends such a run. How often this happens was not
+  measured.
+
+So in the `muse-sandbox` tier nothing stops the reviewer reading other files,
+including credentials the login user can read, and a prompt in the candidate
+could steer them into a review or to the Meta API. The tier's limitations, the
+`orbit doctor` line and the final report say so. Where that matters, use
+`os-sandbox` (`META_API_KEY` plus `srt`): there `srt` denies the credential
+paths for reading and egress reaches only `api.meta.ai`. That tier has not been
+run live (section 6).
 
 ## 2. Exit codes
 
@@ -121,3 +148,11 @@ the host `api.meta.ai`.
   checkout.
 - Whether Muse itself denies a write under `:read-only` plus
   `--disable-write` (the model declined before attempting one; section 1).
+
+## 7. Limits
+
+- The write protection of a `muse-sandbox` checkout is checked when a session
+  launches, not afterwards. Parallel review units share one checkout, and the
+  unit that ends the step cleans it up (`src/controller/steps/reviewing.ts`):
+  that makes it writable and removes it, even if a sibling session is still
+  running.

@@ -8,7 +8,10 @@ import { MUSE_FORBIDDEN_ARGS, MUSE_REQUIRED_FLAGS, MuseAdapter } from '../../../
 import { readExitRecord } from '../../../src/adapters/shim.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import type { ProviderAdapter, TaskSpec } from '../../../src/adapters/types.ts';
+import type { IsolationProvider } from '../../../src/isolation/types.ts';
+import { defaultConfig } from '../../../src/policy/config.ts';
 import type { ProviderConfig } from '../../../src/policy/types.ts';
+import { selectReviewer } from '../../../src/review/select.ts';
 import { FAKES, REVIEW_OUTPUT, alive, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
 
 const FAKE_MUSE = join(FAKES, 'fake-muse.mjs');
@@ -96,9 +99,49 @@ describe.skipIf(!canStripTypes)('MuseAdapter + shim + fake-muse', () => {
     const launch = JSON.parse(readFileSync(join(f.workerDir, 'launch.json'), 'utf8')) as { provider: string; meta: { tier: string; model: string; limitations: string[] } };
     expect(launch.provider).toBe('muse');
     expect(launch.meta).toMatchObject({ tier: 'muse-sandbox', model: MODEL });
-    expect(launch.meta.limitations.join('\n')).toMatch(/Reads are unrestricted/);
+    expect(launch.meta.limitations.join('\n')).toMatch(/Reads are not confined: measured on Muse 1\.4\.14/);
     expect((await a.streamEvents(handle, 0)).events.at(-1)?.type).toBe('finished');
     expect(await a.reportUsage(handle)).toMatchObject({ inputTokens: 1234 });
+  });
+
+  describe('capabilities report whether the configured tier can run (claim 3)', () => {
+    const srt = (ok = true): IsolationProvider => ({ kind: 'sandbox-runtime', available: async () => ({ ok, detail: 'srt said so' }), wrap: () => ({}) as never });
+    const withTier = (f: Fixture, tier: 'auto' | 'os-sandbox' | 'muse-sandbox', env: Record<string, string>, isolation: IsolationProvider | null) =>
+      createAdapter('muse', { command: FAKE_MUSE, data_policy_eligible: true, model: MODEL, reasoning_effort: 'high', extra_args: [], tier }, { baseEnv: baseEnv(f, env), isolation });
+    const KEY = { META_API_KEY: 'acme-meta-0004' };
+
+    it.each([
+      ['no srt', {}, null, /providers\.muse\.tier is os-sandbox but sandbox-runtime isolation is not in use/],
+      ['an srt that does not start', KEY, false, /providers\.muse\.tier is os-sandbox but sandbox-runtime is unavailable \(srt said so\)/],
+      ['no META_API_KEY', {}, true, /providers\.muse\.tier is os-sandbox but no META_API_KEY/],
+    ] as const)('explicit os-sandbox with %s is unavailable, naming the setting, and selection moves to the next reviewer', async (_name, env, srtOk, why) => {
+      const f = await fixture();
+      const cap = await withTier(f, 'os-sandbox', env, srtOk === null ? null : srt(srtOk)).discoverCapabilities();
+      expect(cap).toMatchObject({ available: false, tierUnavailable: true, version: '1.4.11', detail: expect.stringMatching(why) });
+      const config = defaultConfig('autonomous');
+      config.providers.muse = { command: 'muse', data_policy_eligible: true, model: MODEL, reasoning_effort: 'high', extra_args: [], tier: 'os-sandbox' };
+      config.providers.codex = { ...config.providers.codex!, data_policy_eligible: true, model: 'codex-alpha' };
+      config.review.providers = ['muse', 'codex'];
+      const usable = { state: 'valid' as const, method: 'test', detail: '' };
+      const codex = { ...cap, provider: 'codex', available: true, tierUnavailable: undefined, detail: 'ok' };
+      expect(selectReviewer({ snapshot: { config }, capabilities: { muse: cap, codex }, credentials: { muse: usable, codex: usable }, implementer: { provider: 'claude', model: null } })).toMatchObject({ decision: 'SELECT', provider: 'codex', independent: true });
+    });
+
+    it('explicit os-sandbox with srt and META_API_KEY stays available; auto and muse-sandbox never fail this way', async () => {
+      const f = await fixture();
+      expect(await withTier(f, 'os-sandbox', KEY, srt()).discoverCapabilities()).toMatchObject({ available: true, detail: 'muse 1.4.11' });
+      expect(await withTier(f, 'auto', {}, null).discoverCapabilities()).toMatchObject({ available: true });
+      expect(await withTier(f, 'auto', KEY, srt(false)).discoverCapabilities()).toMatchObject({ available: true });
+      expect(await withTier(f, 'muse-sandbox', {}, null).discoverCapabilities()).toMatchObject({ available: true });
+      expect((await withTier(f, 'auto', {}, null).discoverCapabilities()).tierUnavailable).toBeUndefined();
+    });
+
+    it('reports a broken CLI as such, not as a tier problem', async () => {
+      const f = await fixture();
+      const cap = await createAdapter('muse', { command: FAKE_MUSE, data_policy_eligible: true, model: MODEL, reasoning_effort: 'high', extra_args: [], tier: 'os-sandbox' }, { baseEnv: baseEnv(f, { ORBIT_FAKE_MUSE_VERSION: '1.3.0' }) }).discoverCapabilities();
+      expect(cap).toMatchObject({ available: false, detail: expect.stringMatching(/older than/) });
+      expect(cap.tierUnavailable).toBeUndefined();
+    });
   });
 
   it('classifies output that does not match the review schema as malformed, never as a verdict', async () => {

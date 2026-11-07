@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { systemClock } from '../core/clock.ts';
-import { OrbitError } from '../core/errors.ts';
+import { isOrbitError, OrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
 import { atomicWriteJson, readJsonIfExists } from '../core/fsx.ts';
 import type { IsolationProvider } from '../isolation/types.ts';
@@ -100,15 +100,19 @@ export interface MuseAdapterOptions {
   passEnv?: string[];
 }
 
+/** Measured (docs/interfaces/muse.md section 1a); doctor's muse-sandbox line and every report of that tier state it. */
+export const MUSE_READS_NOT_CONFINED =
+  "Reads are not confined: measured on Muse 1.4.14, read_file under this profile reads files outside the review checkout, so nothing stops it reading other files, including credentials the login user can read, and a prompt in the candidate could steer them into a review or to the Meta API. Use the os-sandbox tier (META_API_KEY plus srt) where that matters.";
+
 /** What the muse-sandbox tier (no srt) does not enforce. */
 export const MUSE_LIMITATIONS: readonly string[] = [
   "No OS isolation around the muse process itself: Muse's :read-only profile and shell sandbox apply to its tools, and the review checkout is write-protected on disk.",
-  'Reads are unrestricted: any file the user can read may reach the provider.',
+  MUSE_READS_NOT_CONFINED,
 ];
 
 /** What the os-sandbox tier adds to srt's own limitations. */
 export const MUSE_OS_SANDBOX_LIMITATIONS: readonly string[] = [
-  "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout.",
+  "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout. Files outside the checkout that srt does not deny stay readable, but only api.meta.ai can receive them. This tier has not been run live.",
 ];
 
 export interface MuseSrtStatus {
@@ -186,9 +190,12 @@ export class MuseAdapter implements ProviderAdapter {
     const flags = help.ok ? parseHelpFlags(help.stdout) : new Set<string>();
     const missing = MUSE_REQUIRED_FLAGS.filter((f) => !flags.has(f));
     const old = v !== null && compareVersions(v, MUSE_MIN_VERSION) < 0;
+    const cliOk = version.ok && help.ok && missing.length === 0 && !old;
+    const tierProblem = cliOk ? await this.explicitTierProblem() : null;
     return {
       provider: this.id,
-      available: version.ok && help.ok && missing.length === 0 && !old,
+      available: cliOk && tierProblem === null,
+      ...(tierProblem === null ? {} : { tierUnavailable: true }),
       version: v,
       // Muse has no model catalog command; the configured model is passed through unchanged.
       models: [],
@@ -196,7 +203,9 @@ export class MuseAdapter implements ProviderAdapter {
       readOnlySandbox: flags.has('--permission-profile'),
       usageReporting: 'partial',
       costReporting: false,
-      detail: !version.ok
+      detail: tierProblem !== null
+        ? tierProblem
+        : !version.ok
         ? `muse --version failed: ${version.detail}`
         : missing.length > 0
           ? `muse exec lacks ${missing.join(', ')}`
@@ -347,6 +356,18 @@ export class MuseAdapter implements ProviderAdapter {
 
   private baseEnv(): Record<string, string | undefined> {
     return this.opts.baseEnv ?? process.env;
+  }
+
+  /** Why an explicit os-sandbox cannot run here, so selection moves on instead of startTask blocking the run. `auto` never fails this way. */
+  private async explicitTierProblem(): Promise<string | null> {
+    if (this.opts.tier !== 'os-sandbox') return null;
+    try {
+      await this.chooseTier(museEnvCredential(this.baseEnv()));
+      return null;
+    } catch (err) {
+      if (isOrbitError(err, 'ISOLATION_UNAVAILABLE')) return err.message;
+      throw err;
+    }
   }
 
   private async chooseTier(apiKeyVar: string | null): Promise<{ srt: IsolationProvider | null; decision: MuseTierDecision }> {

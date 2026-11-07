@@ -410,6 +410,13 @@ export function providerFamily(id: string): 'claude' | 'codex' | 'muse' | null {
   return null;
 }
 
+/** A review is independent only when both ids resolve to a family and the families differ; an unknown id fails closed. */
+export function isIndependentReviewer(reviewer: string, implementer: string): boolean {
+  const family = providerFamily(reviewer);
+  const implementerFamily = providerFamily(implementer);
+  return family !== null && implementerFamily !== null && family !== implementerFamily;
+}
+
 const CONTAINER_DEFAULTS = { memory_mb: 4096, cpus: 2, pids: 512 };
 
 // ---------------------------------------------------------------------------
