@@ -82,6 +82,60 @@ describe('service definitions', () => {
       print: ['launchctl', 'print', 'gui/501/dev.orbit.controller.x'],
     });
   });
+
+  it('keeps the existing service environment when no env is supplied', () => {
+    const s = serviceSpec({ repoRoot: '/work/acme', orbitHome: '/h/.orbit', entry: '/opt/orbit.mjs' });
+    expect(s.env).toEqual({
+      PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+      NODE_OPTIONS: '--disable-warning=ExperimentalWarning',
+      ORBIT_HOME: '/h/.orbit',
+    });
+    expect(renderLaunchdPlist(s)).toContain([
+      '  <key>EnvironmentVariables</key>',
+      '  <dict>',
+      '      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>',
+      '      <key>NODE_OPTIONS</key><string>--disable-warning=ExperimentalWarning</string>',
+      '      <key>ORBIT_HOME</key><string>/h/.orbit</string>',
+      '  </dict>',
+    ].join('\n'));
+    expect(renderSystemdUnit(s).split('\n').filter((line) => line.startsWith('Environment='))).toEqual([
+      'Environment="PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"',
+      'Environment="NODE_OPTIONS=--disable-warning=ExperimentalWarning"',
+      'Environment="ORBIT_HOME=/h/.orbit"',
+    ]);
+  });
+
+  it('carries only provider config locations into both service definitions', () => {
+    const locations = { CLAUDE_CONFIG_DIR: '/h/.claude-alt', CODEX_HOME: '/h/.codex-alt', XDG_CONFIG_HOME: '/h/.config-alt' };
+    const secrets = { ANTHROPIC_API_KEY: 'sk-x', CLAUDE_CODE_OAUTH_TOKEN: 'tok-y', CODEX_API_KEY: 'sk-codex', OPENAI_API_KEY: 'sk-openai', META_API_KEY: 'sk-meta', OTHER: 'not-allowed' };
+    const s = serviceSpec({ repoRoot: '/work/acme', orbitHome: '/h/.orbit', entry: '/opt/orbit.mjs', env: { ...locations, ...secrets, PATH: '/ignored', NODE_OPTIONS: '--inspect', ORBIT_HOME: '/ignored' } });
+    const plist = renderLaunchdPlist(s);
+    const unit = renderSystemdUnit(s);
+    expect(s.env).toEqual({ PATH: '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', NODE_OPTIONS: '--disable-warning=ExperimentalWarning', ORBIT_HOME: '/h/.orbit', ...locations });
+    for (const [key, value] of Object.entries(locations)) {
+      expect(plist).toContain(`<key>${key}</key><string>${value}</string>`);
+      expect(unit).toContain(`Environment="${key}=${value}"`);
+    }
+    for (const output of [plist, unit]) {
+      for (const [key, value] of Object.entries(secrets)) {
+        expect(output).not.toContain(key);
+        expect(output).not.toContain(value);
+      }
+    }
+  });
+
+  it('omits empty or unset config locations', () => {
+    const input = { repoRoot: '/work/acme', orbitHome: '/h/.orbit', entry: '/opt/orbit.mjs' };
+    const s = serviceSpec({ ...input, env: { CLAUDE_CONFIG_DIR: '', CODEX_HOME: undefined, XDG_CONFIG_HOME: '' } });
+    expect(renderLaunchdPlist(s)).toBe(renderLaunchdPlist(serviceSpec(input)));
+    expect(renderSystemdUnit(s)).toBe(renderSystemdUnit(serviceSpec(input)));
+  });
+
+  it('escapes config locations using each service format', () => {
+    const s = serviceSpec({ repoRoot: '/work/acme', orbitHome: '/h/.orbit', entry: '/opt/orbit.mjs', env: { XDG_CONFIG_HOME: '/h/a & <b> "c" \\ %' } });
+    expect(renderLaunchdPlist(s)).toContain('<key>XDG_CONFIG_HOME</key><string>/h/a &amp; &lt;b&gt; &quot;c&quot; \\ %</string>');
+    expect(renderSystemdUnit(s)).toContain('Environment="XDG_CONFIG_HOME=/h/a & <b> \\"c\\" \\\\ %%"');
+  });
 });
 
 describe('install, status and uninstall (no real service manager)', () => {

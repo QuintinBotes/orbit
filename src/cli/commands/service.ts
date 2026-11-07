@@ -2,8 +2,8 @@
  * `orbit service install|uninstall|status|run`. The service is a launchd user
  * agent (macOS) or a systemd user unit (Linux) that runs `orbit service run`
  * for one repository. Orbit writes no credentials into the definition: the
- * service sees the PATH it was installed with and whatever the service
- * manager gives it, and ADR 0003 explains how credentials are supplied.
+ * service sees the PATH and provider config locations it was installed with
+ * and whatever the service manager gives it. ADR 0003 explains credentials.
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -69,15 +69,17 @@ export async function serviceInstallCommand(args: Args, ctx: CliContext): Promis
   if (!entry || !existsSync(entry)) throw new OrbitError('NOT_FOUND', `the orbit entry script ${entry || '(unknown)'} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings: string[] = [];
   if (!entry.endsWith('.mjs')) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
-  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...(ctx.env.PATH ? { path: ctx.env.PATH } : {}) });
+  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, env: ctx.env, ...(ctx.env.PATH ? { path: ctx.env.PATH } : {}) });
+  const locationVariables = Object.keys(spec.env).filter((key) => !['PATH', 'NODE_OPTIONS', 'ORBIT_HOME'].includes(key));
   const status = await installService(spec, managerOptions(ctx));
   if (ctx.platform === 'linux' && (await lingerState(ctx)) === 'no') warnings.push(`lingering is off for ${ctx.user}, so the service stops when you log out; run "loginctl enable-linger ${ctx.user}" to keep it running`);
-  if (args.bool('json')) json(ctx.io, { ...status, warnings });
+  if (args.bool('json')) json(ctx.io, { ...status, warnings, locationVariables });
   else {
     line(ctx.io, `service ${status.label} installed (${status.platform}): ${status.loaded ? 'loaded' : status.detail}`);
     line(ctx.io, `definition: ${status.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
     line(ctx.io, `logs: ${join(ctx.orbitHome, 'logs')}`);
+    line(ctx.io, `location variables: ${locationVariables.join(', ') || 'none'}`);
     line(ctx.io, 'No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.');
     for (const w of warnings) ctx.io.err(`warning: ${w}\n`);
   }
