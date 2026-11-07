@@ -21,7 +21,7 @@ export const REVIEW_FALLBACKS: readonly ReviewFallback[] = Object.freeze(['claud
 export const DEFAULT_REVIEW_FALLBACK: ReviewFallback = 'claude';
 
 /** Provider families Orbit has an independent review adapter for. A provider such as Gemini needs an adapter first. */
-export const SUPPORTED_REVIEW_PROVIDERS: readonly string[] = Object.freeze(['codex']);
+export const SUPPORTED_REVIEW_PROVIDERS: readonly string[] = Object.freeze(['codex', 'muse']);
 
 /** The review settings these helpers read; OrbitConfig['review'], RoutingPolicy['review'] and older snapshots all satisfy it. */
 export interface ReviewAvailabilitySettings {
@@ -33,7 +33,7 @@ export interface ReviewAvailabilitySettings {
 }
 
 /**
- * A provider id Orbit can use as an independent reviewer: a supported family (`codex`), or an id naming one
+ * A provider id Orbit can use as an independent reviewer: a supported family (`codex`, `muse`), or an id naming one
  * (`codex-review`, `codex_ci`), which is how a second Codex configuration is defined under `providers`.
  */
 export function isSupportedReviewProvider(id: string): boolean {

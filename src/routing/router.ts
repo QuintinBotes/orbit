@@ -2,6 +2,7 @@ import { OrbitError } from '../core/errors.ts';
 import type { DifficultyClass } from '../scheduling/types.ts';
 import { FAMILY_TIER, tierOf } from './registry.ts';
 import { roundUsd } from './pricing.ts';
+import { isIndependentReviewer } from '../policy/config.ts';
 import { reviewFallback, reviewProviderOrder } from '../policy/review.ts';
 import {
   WORK_KINDS,
@@ -499,7 +500,7 @@ function routeSafetyReview(ctx: Ctx): RouteDecision {
             continue;
           }
         }
-        candidates.push({ entry: e, basis: 'tier', detail: `${e.family} meets the opus-class floor`, independent: provider !== implementer });
+        candidates.push({ entry: e, basis: 'tier', detail: `${e.family} meets the opus-class floor`, independent: isIndependentReviewer(provider, implementer) });
         continue;
       }
       const q = qualifyOtherProvider(e, policy);
@@ -507,7 +508,7 @@ function routeSafetyReview(ctx: Ctx): RouteDecision {
         rejected.push(alternative(e, true, costOf(e), 'not qualified for safety review: no recorded evaluation, not configured in providers, not the provider default'));
         continue;
       }
-      candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: provider !== implementer });
+      candidates.push({ entry: e, basis: q.basis, detail: q.detail, independent: isIndependentReviewer(provider, implementer) });
     }
   }
 

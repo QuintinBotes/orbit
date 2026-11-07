@@ -88,13 +88,13 @@ describe('why a provider cannot review', () => {
     // codex is preferred and usable but has no qualified model, so another independent provider is chosen.
     const snap = snapshotOf((c) => {
       c.providers.codex!.model = null;
-      c.providers.gemini = { command: 'gemini', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
+      c.providers.muse = { command: 'muse', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
       // Decision 0007: only providers listed in review.providers are asked, in that order.
-      c.review.providers = ['codex', 'gemini'];
+      c.review.providers = ['codex', 'muse'];
     });
     const r = ready();
-    const sel = selectReviewer({ snapshot: snap, capabilities: { ...r.capabilities, gemini: cap('gemini') }, credentials: { ...r.credentials, gemini: cred('valid') }, implementer: { provider: 'claude', model: SONNET } });
-    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'gemini', substitutedForPreferred: true });
+    const sel = selectReviewer({ snapshot: snap, capabilities: { ...r.capabilities, muse: cap('muse') }, credentials: { ...r.credentials, muse: cred('valid') }, implementer: { provider: 'claude', model: SONNET } });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'muse', substitutedForPreferred: true });
     if (sel.decision === 'SELECT') expect(sel.reason).toContain('preferred provider "codex" is unusable (not selected)');
   });
 });

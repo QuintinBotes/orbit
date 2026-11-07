@@ -840,7 +840,7 @@ function newObservedDraft(modelId: string, surface: Surface): Draft {
   const fam = /^claude-(fable|opus|sonnet|haiku|mythos)-/.exec(modelId)?.[1] ?? null;
   return {
     modelId,
-    provider: surface === 'codex-cli' ? 'codex' : 'claude',
+    provider: surface === 'codex-cli' ? 'codex' : surface === 'muse-cli' ? 'muse' : 'claude',
     family: fam,
     surfaces: [],
     capabilities: { tools: null, structured_output: null, vision: null, effort_levels: [], default_effort: null },

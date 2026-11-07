@@ -285,7 +285,9 @@ on exactly the reviewed tree, pushes the task branch and opens a pull request
 
 `orbit report <run-id>` prints `final.md`; `final.json` has the same content.
 Its review table says, for each review session, who reviewed (an independent
-review, or a same-provider one marked NOT independent with the reason), the
+review, or a same-provider one marked NOT independent with the reason; for a
+Muse reviewer also the tier, why that tier and what it does not enforce, as
+`tier`, `tier_reason` and `limitations` of `reviewer` in `final.json`), the
 verdict, the number of findings, and how deep the session went: the tool calls
 it made and the reasoning tokens it used, read from the provider's transcript
 when it ends by the parser of the provider's family (`claude`, `claude-*` and

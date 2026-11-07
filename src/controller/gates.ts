@@ -21,7 +21,7 @@ import { clipAtWord } from '../core/text.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { contractProblems, releaseEnvironmentProblem } from '../contract/validate.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { UNATTENDED_MODES } from '../policy/config.ts';
+import { isIndependentReviewer, UNATTENDED_MODES } from '../policy/config.ts';
 import { RESOURCE_LIMIT_FIX, resourceLimitRefusals } from '../isolation/limits.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { BaselineReport } from '../evidence/baseline.ts';
@@ -390,7 +390,7 @@ export function independentReviewGate(db: OrbitDb, input: ReviewGateArgs): GateR
   // A review by the provider that implemented is a review, not an independent one: the record says so and why, as the report does.
   // Independence is a property of who reviewed the tree, not of who cleared it: a same-provider BLOCK clears nothing and is still not independent.
   const reviews = listReviews(db, input.runId, { treeHash: input.treeHash });
-  const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => r.provider !== input.implementerProvider);
+  const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => isIndependentReviewer(r.provider, input.implementerProvider));
   const why = `same-provider review, not independent: ${input.whyNotIndependent ?? 'no independent reviewer was usable'}`;
   const out = result('independent_review', g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
   // "Approved" only when a review approved; a same-provider review can clear the tree (nothing blocking) without anyone approving it.
