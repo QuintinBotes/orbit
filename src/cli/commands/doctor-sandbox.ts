@@ -398,11 +398,14 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     judge(def, detectToolchains({ command: def.command, roots: repo ? [repo] : [] }).includes('dotnet'), o.field, { command: o.field, env: null }, true);
   }
   const refusedToolchains: { id: ToolchainId; failure: EnvironmentFailure; fix?: string; msbuild?: MsbuildFix; mandatory: boolean }[] = [];
+  const unfilledCaches: { id: ToolchainId; caches: string[]; runners: { check: CheckDefinition }[] }[] = [];
   if (repo && input.orbitHome) {
     for (const id of [...used].sort()) {
       const base = baseCheck(id, users.get(id) ?? []);
       const line = await toolchainLine({ ...probeInput, repo }, input.orbitHome, id, base);
       details.push(line.detail);
+      const runners = (users.get(id) ?? []).filter((c) => c.mandatory && runsToolchain(c, id)).map((check) => ({ check }));
+      if (line.unfilled.length > 0 && runners.length > 0) unfilledCaches.push({ id, caches: line.unfilled, runners });
       // A refused toolchain fails doctor when a mandatory check runs the toolchain's executable itself; a check that
       // only sits in a repository with its marker files may never start it.
       if (line.refusal) refusedToolchains.push({ id, failure: line.refusal.failure, ...(line.refusal.fix ? { fix: line.refusal.fix } : {}), ...(line.refusal.msbuild ? { msbuild: line.refusal.msbuild } : {}), mandatory: base !== null && base.mandatory && runsToolchain(base, id) });
@@ -433,15 +436,20 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
   };
   // The warning for checks that may start a program in a denied folder, which a refusal's summary carries too.
   const maybeDenied = uncertain.length > 0 ? `doctor cannot tell for certain whether ${subject(uncertain)} ${uncertain.length === 1 ? 'starts' : 'start'} a program in a folder the check sandbox denies; one that does cannot start in a check` : null;
-  const alsoMaybe = maybeDenied !== null ? `; ${maybeDenied}` : '';
+  // A warning, never a fail: nothing in the repository's structure shows whether the check needs dependencies (issue #142).
+  const unfilled = unfilledCaches.map((u) => `no run fills the ${u.id} toolchain's ${u.caches.length === 1 ? 'dependency cache' : 'dependency caches'} ${u.caches.join(', ')}, which ${subject(u.runners)} ${u.runners.length === 1 ? 'runs' : 'run'} at ${u.runners.length === 1 ? 'its' : 'their'} baseline; a check that needs dependencies finds none there`);
+  const alsoMaybe = [...(maybeDenied !== null ? [maybeDenied] : []), ...unfilled].map((w) => `; ${w}`).join('');
+  const fillFix = unfilled.length > 0 ? "set dependencies.install_command to the toolchain's fetch, or make the check need no dependencies" : null;
+  const withFill = (fix: string) => [fix, ...(fillFix ? [fillFix] : [])].filter((f) => f !== '').join('; ');
   if (refused.length === 0 && refusedToolchains.length === 0) {
-    if (undetermined.length > 0 || maybeDenied !== null) {
+    if (undetermined.length > 0 || maybeDenied !== null || unfilled.length > 0) {
       const warnings = [
         ...(undetermined.length > 0 ? [`doctor cannot tell whether ${subject(undetermined)} ${undetermined.length === 1 ? 'runs' : 'run'} MSBuild on one node; one that does not is stopped as soon as MSBuild records the refused node`] : []),
         ...(maybeDenied !== null ? [maybeDenied] : []),
+        ...unfilled,
       ];
-      const missing = [...(undetermined.length > 0 ? ['dotnet commands that pin one MSBuild node (-m:1)'] : []), ...(uncertain.length > 0 ? ['a check executable that can start in the check sandbox'] : [])];
-      return result('warn', warnings.join('; '), details, missing.join(', and '), fixFor(uncertain));
+      const missing = [...(undetermined.length > 0 ? ['dotnet commands that pin one MSBuild node (-m:1)'] : []), ...(uncertain.length > 0 ? ['a check executable that can start in the check sandbox'] : []), ...(unfilled.length > 0 ? ['a dependency install that fills the toolchain cache'] : [])];
+      return result('warn', warnings.join('; '), details, missing.join(', and '), withFill(fixFor(uncertain)));
     }
     return result('pass', started === 0 ? 'no check executable outside the repository to start' : `${started} check executable(s) start in the sandbox`, details);
   }
@@ -449,7 +457,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
     const names = refusedToolchains.map((r) => r.id);
     const listed = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(', ')} and ${names.at(-1)} toolchains`;
     const status = refusedToolchains.some((r) => r.mandatory) ? 'fail' : 'warn';
-    return result(status, `the sandbox refuses ${listed}; checks that use ${names.length === 1 ? 'it' : 'them'} would block at their baseline${alsoMaybe}`, details, 'a toolchain that can start in the check sandbox', fixFor([...refusedToolchains, ...uncertain]));
+    return result(status, `the sandbox refuses ${listed}; checks that use ${names.length === 1 ? 'it' : 'them'} would block at their baseline${alsoMaybe}`, details, 'a toolchain that can start in the check sandbox', withFill(fixFor([...refusedToolchains, ...uncertain])));
   }
   const status = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? 'fail' : 'warn';
   // What the sandbox refuses: MSBuild's worker nodes, dotnet format's build host, or both, when that is all it refuses
@@ -483,7 +491,7 @@ export async function checkSandboxCheck(input: CheckSandboxInput): Promise<Docto
           : `the sandbox refuses ${refused.length === 1 ? 'the executable' : 'the executables'} of ${subject(refused)}; ${blocks}`) + alsoMaybe,
     details,
     nodes ? one : formats ? loadsNothing : pipes ? `${one}, and ${loadsNothing}` : 'a check executable that can start in the check sandbox',
-    fixFor([...refused, ...refusedToolchains, ...uncertain]),
+    withFill(fixFor([...refused, ...refusedToolchains, ...uncertain])),
   );
 }
 
@@ -547,7 +555,7 @@ async function probeOrRefuse(input: CheckSandboxInput & { provider: IsolationPro
  * One toolchain's line: whether its executable starts (for .NET: builds a generated project) in the sandbox of the check
  * that uses it, and where its caches and build state live.
  */
-async function toolchainLine(input: CheckSandboxInput & { provider: IsolationProvider; repo: string }, orbitHome: string, id: ToolchainId, base: CheckDefinition | null): Promise<{ detail: string; refusal: Refusal | null }> {
+async function toolchainLine(input: CheckSandboxInput & { provider: IsolationProvider; repo: string }, orbitHome: string, id: ToolchainId, base: CheckDefinition | null): Promise<{ detail: string; refusal: Refusal | null; unfilled: string[] }> {
   const p = TOOLCHAIN_PROFILES[id];
   const root = toolchainCacheRoot(orbitHome, repoKeyFor(input.repo));
   const caches = p.caches.map((c) => join(root, c));
@@ -566,10 +574,11 @@ async function toolchainLine(input: CheckSandboxInput & { provider: IsolationPro
     : `not created yet${outside ? `: ${nuget}` : installs ? '; the first dependency install creates it' : `; ${noInstall}, so no run creates it`}`;
   const where = `${caches.length === 1 ? 'dependency cache' : 'dependency caches'} ${caches.join(', ')} (${state}); private per check attempt: ${p.scratchVars.join(', ')}`;
   const label = `toolchain ${id}`;
+  const unfilled = outside || installs ? [] : caches.filter((c) => !existsSync(c));
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x): x is string => x !== null);
-  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where}`, refusal: null };
+  if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where}`, refusal: null, unfilled };
   const exe = launchPath(found, input.repo);
-  if (!exe) return { detail: `${label}: not started ("${basename(found)}" is the repository's own code, which only a run executes); ${where}`, refusal: null };
+  if (!exe) return { detail: `${label}: not started ("${basename(found)}" is the repository's own code, which only a run executes); ${where}`, refusal: null, unfilled };
   // The sandbox of the check that uses the toolchain (its env, hosts and loopback), starting the probe instead of its
   // command. The .NET probe builds with the node switches MSBuild gets from that check's command, in its env, so doctor
   // and the runner agree: -m:1, or DOTNET_PROCESSOR_COUNT=1 in its env, passes; no switch is refused as the check would
@@ -578,6 +587,6 @@ async function toolchainLine(input: CheckSandboxInput & { provider: IsolationPro
   const check: CheckDefinition = { ...(base ?? defaultCheck(`toolchain-${id}`)), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: '.', mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? 'a generated project' } : null;
   const out = await probeOrRefuse(input, check, exe, args, null, project, msbuildFix(base));
-  return { detail: `${label}: ${out.detail}; ${where}`, refusal: out.kind === 'refused' ? out : null };
+  return { detail: `${label}: ${out.detail}; ${where}`, refusal: out.kind === 'refused' ? out : null, unfilled };
 }
 

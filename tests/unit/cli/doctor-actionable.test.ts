@@ -264,10 +264,11 @@ describe('issue #10: doctor names a test project that deadlocks when a check set
 
   // Review round 4: doctor failed checks.sandbox for this alternative, which its own fix names and the runner passes, so
   // checks.dotnet-tests could hardly be reached.
-  it('passes checks.sandbox for a dotnet test check that relies on DOTNET_PROCESSOR_COUNT=1 in its env, and warns on its xunit', async () => {
+  it('does not refuse a dotnet test check that relies on DOTNET_PROCESSOR_COUNT=1 in its env in checks.sandbox, and warns on its xunit', async () => {
     const w = world({ 'acme.sln': '', 'tests/Acme.Tests/Acme.Tests.csproj': XUNIT_241 });
     const c = byId(await report(w, cfg((x) => (x.checks = { test: { ...defaultCheck('test'), command: ['dotnet', 'test', 'tests/Acme.Tests'], mandatory: true, env: { DOTNET_PROCESSOR_COUNT: '1' } } }))));
-    expect(c['checks.sandbox']!.status).toBe('pass');
+    // Its only warning is the NuGet cache no install fills on Linux (issue #142).
+    expect(c['checks.sandbox']).toMatchObject({ status: 'warn', summary: expect.stringMatching(/^no run fills the dotnet toolchain's dependency cache \S+\/nuget, which check test runs at its baseline; [^;]+$/) });
     // Started, not skipped: the check's executable and the .NET probe build, both with the world's own SDK.
     expect(c['checks.sandbox']!.details).toEqual(['test: "dotnet help" ran in the sandbox', expect.stringMatching(/^toolchain dotnet: "dotnet build Probe\.App\/Probe\.App\.csproj" ran in the sandbox /)]);
     expect(c['checks.dotnet-tests']).toMatchObject({ status: 'warn', details: ['tests/Acme.Tests/Acme.Tests.csproj: xunit 2.4.1'] });
