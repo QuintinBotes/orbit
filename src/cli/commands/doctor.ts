@@ -26,7 +26,7 @@ import { safeBaseEnv } from '../../ui/env.ts';
 import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
 import { ModelRegistry, allowMatch } from '../../routing/registry.ts';
 import { mandatoryReviewProvider, selectReviewer } from '../../review/select.ts';
-import { describeReviewPolicy, reviewFallback } from '../../policy/review.ts';
+import { describeReviewPolicy, reviewFallback, reviewProviderOrder } from '../../policy/review.ts';
 import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
 import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
@@ -495,7 +495,8 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
   const ids = Object.keys(adapters);
   const required = new Set<string>(['claude']);
   const mandatoryReviewer = mandatoryReviewProvider(config.review, 'claude');
-  if (mandatoryReviewer !== null) required.add(mandatoryReviewer);
+  // With more than one listed, a run takes any usable one (preflight), so the `review` check judges them together.
+  if (mandatoryReviewer !== null && reviewProviderOrder(config.review).length === 1) required.add(mandatoryReviewer);
   const caps = await Promise.all(
     ids.map(async (id) => {
       try {
