@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isOrbitError } from '../../../src/core/errors.ts';
@@ -582,6 +582,25 @@ describe('provider directories and the worker tmp dir', () => {
       caught = err;
     }
     expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE')).toBe(true);
+  });
+
+  // Review of #140: only /tmp is resolved, so a link planted at /tmp/orbit-<uid> is seen and refused, never followed to a
+  // private directory of this user's that it points at.
+  it('leaves a link planted at the default temp root unresolved, so preparing a worker refuses it', () => {
+    const l = layout();
+    const target = join(l.r, 'private-target');
+    mkdirSync(target, { mode: 0o700 });
+    chmodSync(target, 0o700);
+    const uid = 900_000_000 + (process.pid % 100_000);
+    const link = join(realpathSync('/tmp'), `orbit-${uid}`);
+    symlinkSync(target, link);
+    try {
+      expect(orbitTmpRoot(uid)).toBe(link);
+      expect(() => prepareWorkerTmpDir(l.workerDir, orbitTmpRoot(uid))).toThrow(/not a private directory/);
+      expect(readdirSync(target)).toEqual([]);
+    } finally {
+      unlinkSync(link);
+    }
   });
 });
 

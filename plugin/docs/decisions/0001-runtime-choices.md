@@ -373,7 +373,9 @@ fails there before any test runs ("failed to initialize build cache"); a
 separate follow-up. The review asked for doctor to say so, as the issue did:
 `workers.toolchains` warns in that tier for a repository that uses Go, Rust or
 the JVM (Go and Cargo measured with the real CLI, Gradle and Maven by their
-variables), with the `os-sandbox` tier as the fix.
+variables), with the `os-sandbox` tier as the fix. Fixed later (#140): a Claude
+worker's toolchain scratch is in its private temp directory, which sandboxed
+Bash may write in both tiers, and the warning is gone.
 
 Found by CI (2026-10-08, GitHub's Ubuntu runner, .NET SDK 10): on Linux a
 worker's own `dotnet build` never reached its listener. `srt` binds an

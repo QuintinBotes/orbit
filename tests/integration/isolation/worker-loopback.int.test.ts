@@ -61,7 +61,7 @@ function workerSandbox(f: Fixture, files: Record<string, string>, timeoutMs: num
     toolchains: detectToolchains({ roots: [f.repo, ...Object.keys(files).filter((p) => p.includes('/')).map((p) => join(f.repo, dirname(p)))] }),
     mode: 'worker',
     cacheRoot,
-    scratchRoot: join(f.workerDir, 'toolchains'),
+    scratchRoot: join(tmpDir, 'toolchains'),
     tmpDir,
     hostHome: homedir(),
     hostEnv: process.env,

@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { createRun } from '../../../src/controller/run-store.ts';
 import { ARTIFACTS_PRUNED_EVENT, pruneExpiredRuns, repoKeyFor } from '../../../src/storage/retention.ts';
+import { prepareWorkerTmpDir, workerTmpDir } from '../../../src/isolation/profiles.ts';
+import { removeScratch } from '../../../src/isolation/toolchains.ts';
 
 const DAY = 86_400_000;
 
@@ -126,5 +128,55 @@ describe('pruneExpiredRuns (retention.keep_runs_days)', () => {
     expect(existsSync(p.runDir)).toBe(true);
     expect(prunedEvents('orb-dry')).toHaveLength(0);
     await expect(pruneExpiredRuns(db, { repoRoot: repo, keepDays: -1, clock, orbitHome: home })).rejects.toThrow(/keepDays/);
+  });
+
+  // Issue #140: a worker's build state lives in its private temp directory under /tmp/orbit-<uid>, outside the run.
+  it('removes the private temp directory of each worker of a pruned run, and not another run\'s', async () => {
+    const old = run('orb-old', 'SUCCEEDED', 31);
+    const recent = run('orb-recent', 'SUCCEEDED', 1);
+    const tmps = [old, recent].map((p, i) => {
+      const workerDir = join(p.runDir, 'workers', `w${i}`);
+      mkdirSync(workerDir, { recursive: true });
+      db.run("INSERT INTO workers (id, run_id, role, provider, state, worker_dir, cwd, created_at) VALUES (?, ?, 'implementer', 'claude', 'SUCCEEDED', ?, ?, ?)", `w${i}`, i === 0 ? 'orb-old' : 'orb-recent', workerDir, p.worktree, clock.now());
+      const tmp = prepareWorkerTmpDir(workerDir);
+      mkdirSync(join(tmp, 'toolchains', 'cargo-target'), { recursive: true });
+      return tmp;
+    });
+    try {
+      const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home });
+      expect(r.pruned[0]!.removed).toEqual([old.runDir, old.worktree, tmps[0]]);
+      expect(existsSync(tmps[0]!)).toBe(false);
+      expect(existsSync(tmps[1]!)).toBe(true);
+    } finally {
+      for (const t of tmps) removeScratch(t);
+    }
+  });
+  // Review of #140: gc runs outside any sandbox, so a link at the temp root or at a worker's directory in it must never
+  // lead it to delete what the link points at.
+  it('deletes nothing through a temp root or a worker temp directory that is a link, and reports the run', async () => {
+    const outside = join(top, 'outside');
+    mkdirSync(outside, { mode: 0o700 });
+    chmodSync(outside, 0o700);
+    for (const [i, plant] of (['root', 'worker'] as const).entries()) {
+      const p = run(`orb-${plant}`, 'SUCCEEDED', 31);
+      const workerDir = join(p.runDir, 'workers', 'w');
+      mkdirSync(workerDir, { recursive: true });
+      db.run("INSERT INTO workers (id, run_id, role, provider, state, worker_dir, cwd, created_at) VALUES (?, ?, 'implementer', 'claude', 'SUCCEEDED', ?, ?, ?)", `w${i}`, `orb-${plant}`, workerDir, p.worktree, clock.now());
+      const tmpRoot = join(top, `tmp-${plant}`);
+      const victim = join(outside, basename(workerTmpDir(workerDir, tmpRoot)));
+      mkdirSync(victim);
+      writeFileSync(join(victim, 'keep.txt'), 'keep');
+      if (plant === 'root') symlinkSync(outside, tmpRoot);
+      else {
+        mkdirSync(tmpRoot, { mode: 0o700 });
+        chmodSync(tmpRoot, 0o700);
+        symlinkSync(victim, workerTmpDir(workerDir, tmpRoot));
+      }
+      const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home, tmpRoot });
+      expect(existsSync(join(victim, 'keep.txt')), plant).toBe(true);
+      expect(r.pruned.map((x) => x.runId), plant).not.toContain(`orb-${plant}`);
+      expect(r.skipped, plant).toContainEqual({ runId: `orb-${plant}`, reason: expect.stringMatching(plant === 'root' ? /is not a private directory owned by this user/ : /is not a directory owned by this user/) });
+      expect(existsSync(p.runDir), plant).toBe(true);
+    }
   });
 });

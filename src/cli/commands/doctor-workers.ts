@@ -11,7 +11,6 @@
  * always use; that rests on srt's source, not a measurement, and the message says so.
  */
 import { basename } from 'node:path';
-import type { ToolchainId } from '../../isolation/toolchains.ts';
 import { checkCategory } from '../../policy/config.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { DoctorCheck } from './doctor.ts';
@@ -63,48 +62,4 @@ export function workerLoopbackCheck(input: WorkerLoopbackInput): DoctorCheck {
     missing: "a worker sandbox that limits a listener to loopback, which macOS's Seatbelt cannot express",
     fix: "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux srt starts every worker sandbox in a network namespace of its own (from srt's source, not measured by Orbit), so workers there can run them too",
   };
-}
-
-export interface WorkerToolchainsInput {
-  /** The tier Claude workers run in, as the adapter chooses it (claudeWorkerTier in doctor.ts). */
-  tier: 'os-sandbox' | 'claude-sandbox';
-  /** The toolchains the repository uses (isolation/toolchains.ts detectToolchains). */
-  toolchains: readonly ToolchainId[];
-}
-
-/**
- * The toolchains whose builds write state outside the worktree, which a worker gets in a private toolchain directory
- * under its worker directory (isolation/toolchains.ts, mode `worker`), and what fails first without it. In the
- * claude-sandbox tier Claude Code's sandbox lets Bash write the worktree and the worker's temp directory only, so a
- * worker's own build cannot start there (review of issue #31; Go and Rust measured with the real CLI). .NET, Python and
- * Node keep nothing a test run must write in that directory.
- */
-const SCRATCH_BOUND: readonly { id: ToolchainId; name: string; detail: string }[] = [
-  { id: 'go', name: 'Go', detail: 'go: GOCACHE and GOPATH are in the worker\'s private toolchain directory; go build and go test fail first ("failed to initialize build cache ... operation not permitted")' },
-  { id: 'rust', name: 'Rust', detail: 'rust: CARGO_TARGET_DIR is in the worker\'s private toolchain directory; cargo build and cargo test fail first ("failed to create directory ... Operation not permitted")' },
-  { id: 'jvm', name: 'JVM', detail: "jvm: GRADLE_USER_HOME and Maven's local repository are in the worker's private toolchain directory, which Gradle writes on every build and Maven whenever it resolves an artifact" },
-];
-
-/**
- * `workers.toolchains`: whether workers can build and test the repository's toolchains in the tier they run in. Only
- * the claude-sandbox tier has the gap; the os-sandbox tier confines the whole worker with srt, which may write the
- * worker directory (profileForWorker). Making that directory writable in the claude-sandbox tier is a follow-up.
- */
-export function workerToolchainsCheck(input: WorkerToolchainsInput): DoctorCheck[] {
-  if (input.tier !== 'claude-sandbox') return [];
-  const hit = SCRATCH_BOUND.filter((t) => input.toolchains.includes(t.id));
-  if (hit.length === 0) return [];
-  const names = hit.map((t) => t.name);
-  const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} or ${names.at(-1)!}`;
-  return [
-    {
-      id: 'workers.toolchains',
-      area: 'isolation',
-      status: 'warn',
-      summary: `workers run in the claude-sandbox tier, where Claude Code's sandbox does not let their commands write their build state, so a worker cannot build or test ${list} code here and submits changes it could not test; the checks still run them`,
-      details: hit.map((t) => t.detail),
-      missing: 'the os-sandbox tier for workers, where the whole worker process is confined by sandbox-runtime and may write its build state',
-      fix: 'export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) and use isolation.provider: sandbox-runtime (see claude.worker-tier)',
-    },
-  ];
 }
