@@ -21,11 +21,13 @@ import { canonicalPath, credentialFilesIn, gitCommonDir, isWithin, readablePaths
  * Claude Code talks to api.anthropic.com and refreshes OAuth through claude.ai
  * and platform.claude.com (claude-headless-and-sandbox.md section 7.5); Codex
  * uses api.openai.com with an API key and chatgpt.com with a ChatGPT login
- * (codex-cli.md section 6).
+ * (codex-cli.md section 6); Muse reaches api.meta.ai only (muse.md, observed
+ * through a logging proxy).
  */
-export const PROVIDER_HOSTS: Readonly<Record<'claude' | 'codex', readonly string[]>> = {
+export const PROVIDER_HOSTS: Readonly<Record<'claude' | 'codex' | 'muse', readonly string[]>> = {
   claude: ['api.anthropic.com', 'claude.ai', 'platform.claude.com'],
   codex: ['api.openai.com', 'chatgpt.com'],
+  muse: ['api.meta.ai'],
 };
 
 /**
@@ -61,6 +63,7 @@ export const HOME_DENY_READ: readonly string[] = [
   '.rd',
   '.config/op',
   '.config/anthropic',
+  '.config/muse',
   '.config/github-copilot',
   '.config/hub',
   '.config/glab-cli',
@@ -137,7 +140,10 @@ export const CODEX_HOME_READ_ONLY: readonly string[] = ['config.toml', 'hooks.js
  */
 export const WORKER_DIR_READ_ONLY: readonly string[] = ['prompt.md', 'system.md', 'settings.json', 'schema.json', 'policy.json', 'launch.json', 'registration.json', 'log.jsonl', 'stderr.log', 'shim.log', 'pid.json', 'exit.json', 'result.json'];
 
-export type WorkerProvider = 'claude' | 'codex';
+export type WorkerProvider = 'claude' | 'codex' | 'muse';
+
+/** The private Muse config directory (its XDG_CONFIG_HOME) inside a Muse reviewer's worker directory. */
+export const MUSE_PRIVATE_CONFIG_DIR = 'muse-config';
 
 /** What profile builders return: a SandboxProfile plus its read-only paths (see util.ts IsolationProfile). */
 export type BuiltProfile = SandboxProfile & { readablePaths: string[] };
@@ -247,6 +253,7 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
   const dirs = providerDirs({ homeDir: home, claudeConfigDir: input.claudeConfigDir, codexHome: input.codexHome, env });
   const claudeDirs = claudeLogins(home, env, dirs.claudeConfigDir);
   const codexDirs = codexHomes(home, env, dirs.codexHome);
+  const museDirs = museConfigDirs(home, env);
 
   let own: string;
   let ownReadOnly: string[];
@@ -256,12 +263,18 @@ export function profileForWorker(input: WorkerProfileInput): BuiltProfile {
     own = dirs.claudeConfigDir;
     ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join(own, rel)), claudeGlobalConfig(home, own)];
     ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join(own, rel));
-    others = [...otherClaudeLogins(home, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs];
+    others = [...otherClaudeLogins(home, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs, ...museDirs];
+  } else if (input.provider === 'muse') {
+    // A Muse reviewer never uses the user's login directory: under srt it runs on META_API_KEY with a private config.
+    own = join(workerDir, MUSE_PRIVATE_CONFIG_DIR);
+    ownReadOnly = [];
+    ownDenied = [];
+    others = [...claudeDirs.flatMap((d) => claudeState(home, d)), ...codexDirs, ...museDirs];
   } else {
     own = dirs.codexHome;
     ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join(own, rel));
     ownDenied = [];
-    others = [...claudeDirs.flatMap((d) => claudeState(home, d)), ...codexDirs.filter((d) => d !== own)];
+    others = [...claudeDirs.flatMap((d) => claudeState(home, d)), ...codexDirs.filter((d) => d !== own), ...museDirs];
   }
   assertProviderDirConfinable(own, home, env);
 
@@ -337,6 +350,37 @@ export function codexReviewerProfile(profile: SandboxProfile, input: CodexReview
   };
 }
 
+export interface MuseReviewerProfileInput {
+  /** The review checkout: readable, never writable. */
+  checkout: string;
+  workerDir: string;
+}
+
+/**
+ * The srt profile of a Muse reviewer in the os-sandbox tier (ADR 0017). It narrows the generic Muse worker profile:
+ *
+ * - writes: the worker directory only, which holds the private config directory Muse gets as XDG_CONFIG_HOME
+ *   (MUSE_PRIVATE_CONFIG_DIR). Never the review checkout, and the build refuses a layout in which the worker directory
+ *   contains or sits inside it. The user's Muse login directory stays denied: this tier runs only on META_API_KEY.
+ * - egress: the Muse provider host only.
+ * - reads: every credential path the generic profile denies stays denied; the checkout is re-allowed for reading,
+ *   since it usually sits under the denied ~/.orbit.
+ */
+export function museReviewerProfile(profile: SandboxProfile, input: MuseReviewerProfileInput): BuiltProfile {
+  const checkout = canonicalPath(input.checkout);
+  const workerDir = canonicalPath(input.workerDir);
+  if (isWithin(checkout, workerDir) || isWithin(workerDir, checkout)) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let the reviewer write ${workerDir}: the worker directory overlaps the review checkout ${checkout}, which must stay read-only`, { path: workerDir });
+  }
+  return {
+    writablePaths: [workerDir],
+    denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
+    allowedHosts: [...PROVIDER_HOSTS.muse],
+    limits: { ...profile.limits },
+  };
+}
+
 /**
  * A check is the repository's own code, so it gets the worktree (and any
  * extra output directory), the hosts its definition names and nothing else.
@@ -350,7 +394,7 @@ export function profileForCheck(input: CheckProfileInput): BuiltProfile {
   const worktree = canonicalPath(input.worktree);
   const env = input.env ?? process.env;
   const dirs = providerDirs({ homeDir: home, claudeConfigDir: input.claudeConfigDir, codexHome: input.codexHome, env });
-  const providerState = [...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)), ...codexHomes(home, env, dirs.codexHome)];
+  const providerState = [...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)), ...codexHomes(home, env, dirs.codexHome), ...museConfigDirs(home, env)];
   return {
     writablePaths: uniq([worktree, ...(input.extraWritable ?? []).map(canonicalPath)]),
     denyReadPaths: denyList({ home, repoRoot: input.snapshot.repo_root, worktree, extra: providerState, snapshot: input.snapshot, ...walkLimit(input) }),
@@ -378,6 +422,7 @@ export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<strin
     orbitTmpRoot(),
     ...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)),
     ...codexHomes(home, env, dirs.codexHome),
+    ...museConfigDirs(home, env),
   ]);
 }
 
@@ -567,6 +612,12 @@ export function otherClaudeLogins(homeDir: string, env: Record<string, string | 
 function claudeLogins(home: string, env: Record<string, string | undefined>, configured: string): string[] {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
   return uniq([configured, ...(fromEnv && isAbsolute(fromEnv) ? [canonicalPath(fromEnv)] : []), join(home, '.claude')]);
+}
+
+/** Where a Muse login can live: $XDG_CONFIG_HOME/muse when that is absolute, and ~/.config/muse. Denied to every worker and check. */
+function museConfigDirs(home: string, env: Record<string, string | undefined>): string[] {
+  const xdg = nonEmpty(env.XDG_CONFIG_HOME);
+  return uniq([...(xdg && isAbsolute(xdg) ? [join(canonicalPath(xdg), 'muse')] : []), join(home, '.config', 'muse')]);
 }
 
 function codexHomes(home: string, env: Record<string, string | undefined>, configured: string): string[] {

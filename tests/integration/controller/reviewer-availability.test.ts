@@ -14,7 +14,7 @@ import { listDecisions } from '../../../src/storage/decisions.ts';
 import { listReviews } from '../../../src/review/store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import type { ReviewFallback } from '../../../src/policy/review.ts';
-import { baseScenario, implementMul, labDeps, makeLab, readText, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { FAKES, baseScenario, implementMul, labDeps, makeLab, readText, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -51,6 +51,51 @@ function resume(l: Lab, runId: string): void {
 const runDir = (l: Lab, runId: string): string => join(l.repo, '.orbit', 'runs', runId);
 const visited = (l: Lab, runId: string, state: string): boolean =>
   l.db().get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = ? LIMIT 1", runId, state) !== undefined;
+
+describe.skipIf(!canStripTypes)('controller: a Muse reviewer (issue #108)', () => {
+  const museLab = (tier: 'muse-sandbox' | 'os-sandbox', providers: string[]): Lab => {
+    const l = makeLab({
+      tweak: (c) => {
+        c.providers.muse = { command: join(FAKES, 'fake-muse.mjs'), data_policy_eligible: true, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier };
+        c.review = { ...c.review, providers, when_unavailable: 'block' };
+      },
+    });
+    labs.push(l);
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    return l;
+  };
+  const finalOf = (l: Lab, runId: string) => ({ md: readText(join(runDir(l, runId), 'final.md')), json: JSON.parse(readText(join(runDir(l, runId), 'final.json'))) as { reviewer: Record<string, unknown> } });
+
+  it('the final report names the tier, why, and that reads are not confined', async () => {
+    const l = museLab('muse-sandbox', ['muse']);
+    const run = startLabRun(l);
+    await drive(l, run.id);
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const { md, json } = finalOf(l, run.id);
+    expect(json.reviewer).toMatchObject({ provider: 'muse', independent: true, tier: 'muse-sandbox', tier_reason: expect.stringContaining('providers.muse.tier is muse-sandbox') });
+    expect(json.reviewer.limitations as string[]).toContainEqual(expect.stringContaining('Reads are not confined'));
+    expect(md).toMatch(/Reviewer: muse\/muse-wonder-full-1\.0 \(independent\)\. Tier: muse-sandbox \(providers\.muse\.tier is muse-sandbox/);
+    expect(md).toContain('including credentials the login user can read');
+    expect(md).toContain('Use the os-sandbox tier (META_API_KEY plus srt) where that matters');
+  }, 120_000);
+
+  it('an explicit os-sandbox that cannot run does not block: the next listed reviewer reviews, and Codex reports no tier', async () => {
+    const l = museLab('os-sandbox', ['muse', 'codex']);
+    const run = startLabRun(l);
+    await drive(l, run.id);
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listReviews(l.db(), run.id).every((r) => r.provider === 'codex')).toBe(true);
+    expect(listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).some((w) => w.provider === 'muse')).toBe(false);
+    const [select] = listDecisions(l.db(), run.id, { kind: 'review.select' });
+    expect(JSON.stringify(select!.data)).toContain('providers.muse.tier is os-sandbox');
+    const { json } = finalOf(l, run.id);
+    expect(json.reviewer).toMatchObject({ provider: 'codex', independent: true });
+    expect(json.reviewer).not.toHaveProperty('tier');
+    expect(json.reviewer).not.toHaveProperty('limitations');
+  }, 120_000);
+});
 
 describe.skipIf(!canStripTypes)('controller: reviewer availability', () => {
   it('claude: Claude reviews in a separate session, the run delivers, and the report says the review was not independent and why', async () => {

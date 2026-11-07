@@ -10,7 +10,7 @@
 import { OrbitError } from '../core/errors.ts';
 import { ENV_POLICY_HASH, ENV_POLICY_PATH, ENV_WORKTREE } from '../policy/guard-hook.ts';
 
-export type EnvProvider = 'claude' | 'codex';
+export type EnvProvider = 'claude' | 'codex' | 'muse';
 
 /** Process basics every CLI needs. Locale and terminal only; no tool configuration. */
 export const BASE_ENV_KEYS: readonly string[] = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'TERM', 'TZ'];
@@ -36,6 +36,8 @@ export const NETWORK_ENV_KEYS: readonly string[] = ['HTTP_PROXY', 'HTTPS_PROXY',
 export const PROVIDER_ENV_KEYS: Readonly<Record<EnvProvider, readonly string[]>> = {
   claude: ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
   codex: ['CODEX_HOME', 'CODEX_API_KEY', 'OPENAI_API_KEY'],
+  // Muse reads its settings and login from XDG_CONFIG_HOME (default ~/.config/muse); META_API_KEY wins over that login.
+  muse: ['XDG_CONFIG_HOME', 'META_API_KEY'],
 };
 
 /** The credentials that let a Claude worker run inside srt, where a keychain login is invisible (ADR 0001, 0003). */
@@ -48,6 +50,16 @@ export const CLAUDE_ENV_CREDENTIALS: readonly string[] = ['ANTHROPIC_API_KEY', '
  * the worker environment" and "present in the allowlisted base" agree.
  */
 export const CODEX_ENV_CREDENTIALS: readonly string[] = ['CODEX_API_KEY', 'OPENAI_API_KEY'];
+
+/** The API key that lets the Muse reviewer run inside srt, where a keychain login is invisible (docs/interfaces/muse.md). */
+export const MUSE_ENV_CREDENTIALS: readonly string[] = ['META_API_KEY'];
+
+/**
+ * Fixed settings for Muse reviewers: the launcher must not update itself mid-run. Every other MUSE_ variable is
+ * refused as an extra (FORBIDDEN_EXTRA), MUSE_PERMISSION_PROFILE_FAIL_OPEN above all, which would let an unknown
+ * permission profile run unrestricted.
+ */
+export const MUSE_WORKER_ENV: Readonly<Record<string, string>> = { MUSE_NO_AUTO_UPDATE: '1' };
 
 /**
  * Fixed settings for Claude workers (claude-headless-and-sandbox.md sections
@@ -90,7 +102,7 @@ export const COMMON_WORKER_ENV: Readonly<Record<string, string>> = { GIT_OPTIONA
  * Names a caller may never set through TaskSpec.env: delivery and cloud
  * credentials, and the variables that would undo the fixed settings above.
  */
-const FORBIDDEN_EXTRA = /^(GH_|GITHUB_|SSH_|AWS_|AZURE_|GOOGLE_|GCLOUD_|NPM_|NODE_OPTIONS$|NODE_AUTH_TOKEN$|LD_|DYLD_|CLAUDE_CODE_RETRY_WATCHDOG$|CLAUDE_CODE_MAX_OUTPUT_TOKENS$|CLAUDE_CODE_EFFORT_LEVEL$|CLAUDE_CODE_SUBPROCESS_ENV_SCRUB$|CLAUDE_CODE_USE_)/;
+const FORBIDDEN_EXTRA = /^(GH_|GITHUB_|SSH_|AWS_|AZURE_|GOOGLE_|GCLOUD_|NPM_|NODE_OPTIONS$|NODE_AUTH_TOKEN$|LD_|DYLD_|CLAUDE_CODE_RETRY_WATCHDOG$|CLAUDE_CODE_MAX_OUTPUT_TOKENS$|CLAUDE_CODE_EFFORT_LEVEL$|CLAUDE_CODE_SUBPROCESS_ENV_SCRUB$|CLAUDE_CODE_USE_|MUSE_)/;
 
 export interface WorkerEnvInput {
   provider: EnvProvider;
@@ -137,6 +149,7 @@ export function buildWorkerEnv(input: WorkerEnvInput): Record<string, string> {
       env[ENV_MAX_OUTPUT_TOKENS] = String(cap);
     }
   }
+  if (input.provider === 'muse') Object.assign(env, MUSE_WORKER_ENV);
   env.TMPDIR = input.tmpDir;
   env[ENV_POLICY_PATH] = input.policyPath;
   env[ENV_POLICY_HASH] = input.policyHash;
@@ -158,6 +171,15 @@ export function claudeEnvCredential(env: Readonly<Record<string, string | undefi
 /** Which Codex API key variable is present (not blank), by name only. */
 export function codexEnvCredential(env: Readonly<Record<string, string | undefined>>): string | null {
   for (const key of CODEX_ENV_CREDENTIALS) {
+    const v = env[key];
+    if (typeof v === 'string' && v.trim() !== '') return key;
+  }
+  return null;
+}
+
+/** Whether META_API_KEY is present (not blank), by name only. */
+export function museEnvCredential(env: Readonly<Record<string, string | undefined>>): string | null {
+  for (const key of MUSE_ENV_CREDENTIALS) {
     const v = env[key];
     if (typeof v === 'string' && v.trim() !== '') return key;
   }

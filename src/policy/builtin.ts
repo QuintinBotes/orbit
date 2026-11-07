@@ -163,6 +163,7 @@ export const HOME_CREDENTIAL_PATHS: readonly string[] = Object.freeze([
   // outside every sandbox. Claude Code looks here whatever CLAUDE_CONFIG_DIR says (isolation/profiles.ts CLAUDE_CONFIG_DENIED).
   '.claude/ide/**',
   '.codex/auth.json',
+  '.config/muse/auth.json',
   '.config/hub',
   '.config/glab-cli/**',
   '.config/op/**',
