@@ -247,6 +247,11 @@ export function baselineSubject(runDir: string, baseTree: string, source: 'basel
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join(runDir, 'baseline'), source };
 }
 
+/** The dependency install in the implementer's worktree (issue #132): its own binding and evidence, never baseline or candidate evidence. */
+export function worktreeInstallSubject(runDir: string, tree: string): CheckSubject {
+  return { candidateId: null, bindingId: `worktree:${tree}`, treeHash: tree, evidenceDir: join(runDir, 'worktree-install'), source: 'install' };
+}
+
 /** The recorded configuration hash for a check, verified against its definition. */
 /**
  * One attempt of `def` on the subject's tree, recorded through `ctx.records` under `configHash`, without the group's
@@ -332,6 +337,7 @@ async function assertCheckoutTree(dir: string, treeHash: string): Promise<void> 
 
 function subjectForRow(ctx: RunnerContext, row: CheckRunRecord): CheckSubject {
   const install = INSTALL_CHECK_IDS.includes(row.checkId);
+  if (Object.values(WORKTREE_INSTALL_IDS).includes(row.checkId)) return worktreeInstallSubject(ctx.runDir, row.treeHash);
   if (row.candidateId === null) return baselineSubject(ctx.runDir, row.treeHash, install ? 'install' : 'baseline');
   const subject = candidateSubject(ctx.runDir, getCandidate(ctx.db, row.candidateId));
   return install ? { ...subject, source: 'install' } : subject;
@@ -342,6 +348,8 @@ export const INSTALL_CHECK_ID = 'orbit-install';
 /** Check id of the allowlisted lifecycle-script step that follows a script-free install. */
 export const INSTALL_SCRIPTS_CHECK_ID = 'orbit-install-scripts';
 const INSTALL_CHECK_IDS: readonly string[] = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
+/** The install steps' ids in the implementer's worktree, so their rows never answer a query for the baseline's. */
+export const WORKTREE_INSTALL_IDS: Readonly<Record<string, string>> = { [INSTALL_CHECK_ID]: 'orbit-worktree-install', [INSTALL_SCRIPTS_CHECK_ID]: 'orbit-worktree-install-scripts' };
 
 const DEFINITION_FILE = 'definition.json';
 

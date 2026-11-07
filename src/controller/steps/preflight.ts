@@ -13,13 +13,13 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
-import { BASELINE_FILE, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
+import { BASELINE_FILE, installDependencies, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
 import type { EnvironmentSignal } from '../../evidence/environment-failure.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
-import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
+import { checkRunnerFor, homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
 import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, deniedLaunches, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
@@ -117,6 +117,9 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: '' });
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);
+  await preinstallWorktree(ctx, worktree, baseTree);
+  const installed = await safePoint(ctx);
+  if (installed) return installed;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
   const noted = [...(preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : []), ...(missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(', ')})`] : [])];
   return move(ctx, 'CONTRACTING', `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(' and ')}` : ''}`, {
@@ -399,6 +402,40 @@ export function dirtyStartRefusal(d: DirtySplit): { reason: string; fix: string 
       ? 'untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start'
       : `commit or stash the modified files${d.untracked.length > 0 ? ' (git stash -u takes the untracked ones too; plain git stash leaves them)' : ''}, or set repository.allow_dirty_start`;
   return { reason, fix };
+}
+
+/**
+ * Issue #132: workers run checks in the implementer's worktree, and their policy does not let them install, so the
+ * baseline's install plan runs there too. It is never evidence and never blocks the run: the baseline's install already
+ * passed. Whatever it leaves that git does not ignore (an unignored dependency folder, a rewritten lockfile) is undone,
+ * so it cannot enter a candidate.
+ */
+async function preinstallWorktree(ctx: RunContext, worktree: string, tree: string): Promise<void> {
+  try {
+    const out = await installDependencies({ ...checkRunnerFor(ctx), checkoutDir: worktree, worktreeTree: tree });
+    if (!out.skipped && !out.ok) {
+      const last = out.results.at(-1);
+      const how = last ? `${last.checkId} ended ${last.status}${last.exitCode === null ? '' : ` (exit ${last.exitCode})`}` : 'the install did not run';
+      decide(ctx, { id: `dec-${ctx.run.id}-worktree-install-failed`, kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree: ${how}; workers may not be able to run checks that need them`, data: { results: out.results.map((r) => ({ check: r.checkId, status: r.status, log: r.logPath })) } });
+    }
+  } catch (err) {
+    if (isOrbitError(err, 'CANCELLED')) throw err;
+    decide(ctx, { kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf(err)}` });
+  }
+  const status = await git(worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', '--no-renames']);
+  const entries = status.split('\0').filter((e) => e.length > 0);
+  if (entries.length === 0) return;
+  const untracked = entries.filter((e) => e.startsWith('?? ')).map((e) => e.slice(3));
+  const literal = { env: { GIT_LITERAL_PATHSPECS: '1' } };
+  if (untracked.length < entries.length) await git(worktree, ['reset', '--quiet', '--hard', 'HEAD'], literal);
+  if (untracked.length > 0) await git(worktree, ['clean', '-ffdxq', '--', ...untracked], literal);
+  const paths = entries.map((e) => e.slice(3)).sort();
+  decide(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: 'preflight.worktree-install',
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ', ...' : ''}); they were removed so they cannot enter a candidate`,
+    data: { paths: paths.slice(0, 200) },
+  });
 }
 
 /**

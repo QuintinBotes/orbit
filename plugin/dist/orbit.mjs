@@ -38674,6 +38674,9 @@ function candidateSubject(runDir2, candidate) {
 function baselineSubject(runDir2, baseTree, source = "baseline") {
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join26(runDir2, "baseline"), source };
 }
+function worktreeInstallSubject(runDir2, tree) {
+  return { candidateId: null, bindingId: `worktree:${tree}`, treeHash: tree, evidenceDir: join26(runDir2, "worktree-install"), source: "install" };
+}
 async function runAttempt(ctx, subject, def, configHash) {
   assertPolicy(ctx);
   await assertCheckoutTree(ctx.checkoutDir, subject.treeHash);
@@ -38733,6 +38736,7 @@ async function assertCheckoutTree(dir, treeHash) {
 }
 function subjectForRow(ctx, row) {
   const install = INSTALL_CHECK_IDS.includes(row.checkId);
+  if (Object.values(WORKTREE_INSTALL_IDS).includes(row.checkId)) return worktreeInstallSubject(ctx.runDir, row.treeHash);
   if (row.candidateId === null) return baselineSubject(ctx.runDir, row.treeHash, install ? "install" : "baseline");
   const subject = candidateSubject(ctx.runDir, getCandidate(ctx.db, row.candidateId));
   return install ? { ...subject, source: "install" } : subject;
@@ -39409,7 +39413,7 @@ function removeLeftovers(subject, checkId, index) {
   rmSync8(shimPath(dirs.checkDir, "output"), { force: true });
   for (const d of [dirs.homeDir, dirs.tmpDir, dirs.toolchainsDir]) removeScratch(d);
 }
-var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, SHIM_SEARCH_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, CHECK_RUN_RECORDS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
+var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, SHIM_SEARCH_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, CHECK_RUN_RECORDS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, WORKTREE_INSTALL_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
 var init_runner = __esm({
   "src/evidence/runner.ts"() {
     "use strict";
@@ -39449,6 +39453,7 @@ var init_runner = __esm({
     INSTALL_CHECK_ID = "orbit-install";
     INSTALL_SCRIPTS_CHECK_ID = "orbit-install-scripts";
     INSTALL_CHECK_IDS = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
+    WORKTREE_INSTALL_IDS = { [INSTALL_CHECK_ID]: "orbit-worktree-install", [INSTALL_SCRIPTS_CHECK_ID]: "orbit-worktree-install-scripts" };
     DEFINITION_FILE = "definition.json";
     DOTNET_CHECK_ENV = {
       DOTNET_CLI_TELEMETRY_OPTOUT: "1",
@@ -39513,19 +39518,21 @@ async function installDependencies(ctx) {
     if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
     return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
   }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  const steps = ctx.worktreeTree && !ctx.candidate ? plan.definitions.map((d) => ({ ...d, id: WORKTREE_INSTALL_IDS[d.id] })) : plan.definitions;
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(steps.map((d) => [d.id, d])) };
   let subject;
   if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  else if (ctx.worktreeTree) subject = worktreeInstallSubject(ctx.runDir, ctx.worktreeTree);
   else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
   else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
   const results = [];
-  for (const def of plan.definitions) {
+  for (const def of steps) {
     const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
     if (!r) break;
     results.push(r);
     if (r.status !== "PASSED") break;
   }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
+  const ok = results.length === steps.length && results.every((r) => r.status === "PASSED");
   if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
   const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
   if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
@@ -58805,6 +58812,7 @@ function policySummary(ctx, opts) {
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(", ") : "none"}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(", ") || "none"}`,
     "- you cannot commit, push, open pull requests, change policy, or decide completion",
+    `- ${opts.readOnly ? "" : "change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused; "}dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages`,
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
     ...c.isolation.provider === "sandbox-runtime" && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes("dotnet") ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []
   ];
@@ -59303,6 +59311,9 @@ async function preflightStep(ctx) {
   if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
   const worktree = await ensureWorktree(repo, join57(wtRoot, "implementer"), head);
+  await preinstallWorktree(ctx, worktree, baseTree);
+  const installed2 = await safePoint(ctx);
+  if (installed2) return installed2;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
   const noted = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
   return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(" and ")}` : ""}`, {
@@ -59471,6 +59482,33 @@ function dirtyStartRefusal(d) {
   const reason = `the repository has uncommitted changes (${sample.join(", ")}${total > sample.length ? ", ..." : ""}): ${counts}`;
   const fix = d.changed.length === 0 ? "untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start" : `commit or stash the modified files${d.untracked.length > 0 ? " (git stash -u takes the untracked ones too; plain git stash leaves them)" : ""}, or set repository.allow_dirty_start`;
   return { reason, fix };
+}
+async function preinstallWorktree(ctx, worktree, tree) {
+  try {
+    const out = await installDependencies({ ...checkRunnerFor(ctx), checkoutDir: worktree, worktreeTree: tree });
+    if (!out.skipped && !out.ok) {
+      const last = out.results.at(-1);
+      const how = last ? `${last.checkId} ended ${last.status}${last.exitCode === null ? "" : ` (exit ${last.exitCode})`}` : "the install did not run";
+      decide2(ctx, { id: `dec-${ctx.run.id}-worktree-install-failed`, kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree: ${how}; workers may not be able to run checks that need them`, data: { results: out.results.map((r) => ({ check: r.checkId, status: r.status, log: r.logPath })) } });
+    }
+  } catch (err) {
+    if (isOrbitError(err, "CANCELLED")) throw err;
+    decide2(ctx, { kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf3(err)}` });
+  }
+  const status2 = await git2(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--no-renames"]);
+  const entries = status2.split("\0").filter((e) => e.length > 0);
+  if (entries.length === 0) return;
+  const untracked = entries.filter((e) => e.startsWith("?? ")).map((e) => e.slice(3));
+  const literal2 = { env: { GIT_LITERAL_PATHSPECS: "1" } };
+  if (untracked.length < entries.length) await git2(worktree, ["reset", "--quiet", "--hard", "HEAD"], literal2);
+  if (untracked.length > 0) await git2(worktree, ["clean", "-ffdxq", "--", ...untracked], literal2);
+  const paths = entries.map((e) => e.slice(3)).sort();
+  decide2(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: "preflight.worktree-install",
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ", ..." : ""}); they were removed so they cannot enter a candidate`,
+    data: { paths: paths.slice(0, 200) }
+  });
 }
 async function ensureWorktree(repo, path, base) {
   if (existsSync39(path)) {
