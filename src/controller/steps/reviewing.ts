@@ -74,17 +74,19 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
 
   // Reviews of an older revision still running are obsolete (spec section 8: cancel work a new revision made worthless).
   await cancelObsoleteWork(ctx, cand.treeHash);
-  // A tree whose review asked for repair only through notes has its one fresh review before anything else is decided.
-  const fresh = freshReviewOf(ctx, cand.treeHash);
-  if (fresh) return freshReview(ctx, cand, fresh);
   const focuses = reviewFocuses(ctx, cand);
+  // A tree whose review asked for repair only through notes has its one fresh review before anything else is decided.
+  // Once a reviewer failure set aside what it was to replace, one general session cannot stand for several units: each
+  // unit runs instead, with the fresh review's brief.
+  const fresh = freshReviewOf(ctx, cand.treeHash);
+  if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
   // Every review unit of this tree already recorded (a restart after recording): resolve and decide.
-  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length >= focuses.length) return resolveAndDecide(ctx, cand);
+  if (uncoveredUnits(ctx, cand).length === 0) return resolveAndDecide(ctx, cand);
 
   const usable = await usableReviewer(ctx, cand);
   if (!usable.ok) return usable.step;
   const sel = usable.sel;
-  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses, fresh);
   const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
   return pending ?? resolveAndDecide(ctx, cand);
 }
@@ -233,12 +235,38 @@ function focusBase(cand: CandidateRecord, focus: ReviewFocus): string {
   return focus === 'general' ? `review:${cand.id}` : `review-${focus}:${cand.id}`;
 }
 
+/** The reviews a reviewer failure set aside: they stay invalidated, and no fresh review stands for them. */
+function setAsideReviews(ctx: RunContext): Set<string> {
+  return new Set(listDecisions(ctx.db, ctx.run.id, { kind: REVIEWER_FAILED_KIND }).flatMap((d) => (d.data as ReviewerFailure).set_aside ?? []));
+}
+
+/**
+ * The units reviewFocuses requires that no standing review of the tree covers. Any standing review covers the one general
+ * unit. A security or UI unit is covered by a review from its own sessions, or by a fresh review that came back and
+ * replaced that unit's review (ADR 0016), unless a reviewer failure had already set the replaced review aside.
+ */
+function uncoveredUnits(ctx: RunContext, cand: CandidateRecord): ReviewFocus[] {
+  const focuses = reviewFocuses(ctx, cand);
+  const standing = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash });
+  if (focuses.length === 1) return standing.length > 0 ? [] : focuses;
+  const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).map((w) => [w.id, w.purpose]));
+  const unitOf = (r: ReviewRecord): string | undefined => (r.workerId === null ? undefined : purposes.get(r.workerId)?.split(':')[0]);
+  const covered = new Set(standing.map(unitOf));
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked && recordedFreshReview(ctx, asked)) {
+    const setAside = setAsideReviews(ctx);
+    const replaced = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, includeInvalidated: true }).filter((r) => asked.superseded.includes(r.id) && !setAside.has(r.id));
+    for (const r of replaced) covered.add(unitOf(r));
+  }
+  return focuses.filter((f) => !covered.has(focusBase(cand, f).split(':')[0]));
+}
+
 /**
  * Start every review unit the scheduler admits in this step (each one read-only, bound to the candidate tree and
  * cancelled when it changes, budgeted from the route and the session spend cap), record each review as it
  * finishes, and resolve once all of them are in.
  */
-async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>, focuses: ReviewFocus[]): Promise<StepResult> {
+async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>, focuses: ReviewFocus[], fresh: FreshReviewRecord | null): Promise<StepResult> {
   const ledger = ctx.ledger!;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   const recorded = new Set(listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).map((r) => r.workerId));
@@ -299,12 +327,12 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
         candidateId: cand.id,
         provider: sel.provider,
         model: sel.model,
-        effort: reviewEffort(ctx, sel),
+        effort: fresh?.reason === 'shallow' ? SHALLOW_REVIEW_EFFORT : reviewEffort(ctx, sel),
         cwd: checkout,
         readOnly: true,
         phase: 'final',
         ...(typeof caps.get(base)?.capUsd === 'number' ? { maxBudgetUsd: caps.get(base)!.capUsd } : {}),
-        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus, null, sel.provider),
+        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus, fresh, sel.provider),
       }),
       accept: (r) => {
         try {
@@ -421,7 +449,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
-  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
+  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
     // An APPROVE that inspected nothing (no tool call recorded) does not clear a tree that changes something (ADR 0016,
@@ -643,7 +671,8 @@ async function decideShallowApproval(ctx: RunContext, cand: CandidateRecord, sha
   }
   const fresh = recordedFreshReview(ctx, asked);
   return finishRun(ctx, 'BLOCKED', `the review inspected nothing: ${what}, and the tree already had its one fresh review${fresh ? ` (${fresh.id})` : ''}, so no other review is asked`, {
-    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? null, reason: asked.reason ?? 'notes' } },
+    // With no fresh review recorded, the units that stood in for it carried its brief: a resume decides the tree the same way.
+    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? ids[0], reason: asked.reason ?? 'notes' } },
   });
 }
 
@@ -673,13 +702,14 @@ async function freshReview(ctx: RunContext, cand: CandidateRecord, rec: FreshRev
 function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution: Resolution, state: ReturnType<typeof loadResolverState>): { text: string; outcome: Record<string, unknown> } {
   const earlier = rec.noted.map((n) => `${n.external_id ?? n.id} (${n.severity})`).join(', ');
   const review = recordedFreshReview(ctx, rec);
-  if (!review) return { text: `; the fresh review of the tree asked after note(s) ${earlier} has not come back`, outcome: { started: true, review_id: null, earlier_noted: rec.noted } };
+  if (!review) return { text: `; the fresh review of the tree asked after review(s) ${rec.superseded.join(', ')} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named = findings.length === 0 ? 'it named no finding' : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== undefined ? 'a note' : d.status})`).join(', ');
   const why = rec.reason === 'shallow' ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
+  const verdict = review.verdict === 'APPROVE' ? 'stands only for the review(s) it replaced' : `did not approve it either: ${named}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec.superseded.join(', ')} ${why}, did not approve it either: ${named}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec.superseded.join(', ')} ${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec.noted },
   };
 }
@@ -1353,17 +1383,24 @@ async function reviewerFailed(ctx: RunContext, cand: CandidateRecord, sel: Selec
   // Before the decision, which moves every unit to the next reviewer's keys: a restart in between replays the failed
   // attempt and comes back here, and may first charge one more session per stopped unit, which is stopped again here.
   const siblings = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => w.role === 'reviewer' && w.candidateId === cand.id && w.provider === sel.provider);
-  await stopReadOnlyWorkers(ctx, siblings, `reviewer ${sel.provider} failed at run time`);
+  // A charge that exhausts the budget still ends the run, once the failure below is on the record for its report.
+  const exhausted = await stopReadOnlyWorkers(ctx, siblings, `reviewer ${sel.provider} failed at run time`).then(
+    () => null,
+    (err: unknown) => {
+      if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
+      return err;
+    },
+  );
   // One reviewer reviews every unit of a tree, so independence is one property of the tree: the next reviewer reviews
-  // again what this one already reviewed.
-  for (const r of listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((x) => x.provider === sel.provider)) {
-    markReviewInvalidated(ctx.db, r.id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
-  }
+  // again what this one already reviewed. The invalidated ones too, so a replay after a crash here names them all.
+  const setAside = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, provider: sel.provider, includeInvalidated: true }).map((r) => r.id);
+  for (const id of setAside) markReviewInvalidated(ctx.db, id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
   // Each purpose was charged one round once. Only what no earlier failure of this reviewer granted, so nothing is granted twice.
   const spent = new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).filter((w) => w.candidateId === cand.id && w.provider === sel.provider).map((w) => w.purpose)).size;
   const granted = reviewerFailures(ctx, cand).filter((f) => f.provider === sel.provider).reduce((n, f) => n + (f.rounds_granted ?? 0), 0);
-  const record: ReviewerFailure = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted };
+  const record: ReviewerFailure = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted, set_aside: setAside };
   decide(ctx, { kind: REVIEWER_FAILED_KIND, summary: `reviewer ${sel.provider}/${sel.model ?? 'default'} failed: ${reason}; selecting again without it`, data: record });
+  if (exhausted) throw exhausted;
   return MOVED;
 }
 

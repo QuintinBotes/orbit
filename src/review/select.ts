@@ -62,6 +62,8 @@ export interface ReviewerFailure {
   resumed_event_id: number | null;
   /** The review rounds this reviewer spent on the candidate since its last grant, added to the effective review_rounds hard cap (scheduling/budget.ts). Absent in older records. */
   rounds_granted?: number;
+  /** The ids of its reviews of the tree that this failure set aside: no fresh review stands for them. Absent in older records. */
+  set_aside?: string[];
 }
 
 export interface RejectedReviewer {

@@ -10,8 +10,11 @@ import { defaultUi } from '../../../src/policy/config.ts';
 import { loadRunContext } from '../../../src/controller/context.ts';
 import { cancelObsoleteWork } from '../../../src/controller/steps/reviewing.ts';
 import { step } from '../../../src/controller/steps/index.ts';
+import { newRunNeeded } from '../../../src/controller/resume.ts';
+import { systemClock } from '../../../src/core/clock.ts';
+import { listDecisions } from '../../../src/storage/decisions.ts';
 import { listWorkers, type WorkerRecord } from '../../../src/storage/workers.ts';
-import { listReviews } from '../../../src/review/store.ts';
+import { listReviews, markReviewInvalidated } from '../../../src/review/store.ts';
 import { FAKE_CODEX, type Lab } from './harness.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, implementMul, PLANNER_OUTPUT, runState, startLabRun, stepTo, tracker, waitFor, writeScenario } from '../../fault-injection/helpers.ts';
@@ -221,5 +224,194 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     expect(standing.map((r) => r.workerId)).toContain(secondSecurity.id);
     // One recovery attempt for each unit that started again on this resume.
     expect(events(l, run.id, 'resume.reset')).toHaveLength(2);
+  }, 120_000);
+
+  // Both units approve, one or both without inspecting anything, so ADR 0016 asks one fresh general review.
+  const SHALLOW = { ...APPROVE, inspect: false };
+  const EXIT = { outcome: 'no_result' };
+  const providerPurposes = (ws: readonly WorkerRecord[]): string[] => ws.map((w) => `${w.purpose!.replace(/:cand-[^#~]+/, '')} ${w.provider}`).sort();
+  const FRESH_FAILED_THEN_SUBSTITUTE_UNITS = ['review-fresh#1 codex', 'review-fresh#2 codex', 'review-security#1 codex', 'review-security~codex-b#1 codex-b', 'review-ui#1 codex', 'review-ui~codex-b#1 codex-b'];
+  const grants = (l: Lab, runId: string) => listDecisions(l.db(), runId, { kind: 'review.reviewer-failed' }).map((d) => d.data as { provider: string; rounds_granted: number; reason: string; set_aside: string[] });
+
+  it('a fresh reviewer that fails after both units approved: the next reviewer runs the security and ui units, and the run does not clear before they stand', async () => {
+    const l = twoReviewers();
+    const slow = { ...APPROVE, sleepMs: 3_000 };
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, slow], 'reviewer@ui': [SHALLOW, slow], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    const driving = drive(l, run.id, ROOMY);
+
+    const substitutes = await waitFor(() => {
+      const ws = listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).filter((w) => w.provider === 'codex-b');
+      return ws.length === 2 && ws.every((w) => w.state === 'RUNNING') ? ws : null;
+    }, 60_000);
+    expect(substitutes.map((w) => w.purpose!.split(':')[0]).sort()).toEqual(['review-security', 'review-ui']);
+    // Both earlier reviews are set aside and neither new one is in: nothing stands, and the run has not moved on.
+    expect(listReviews(l.db(), run.id)).toEqual([]);
+    expect(runState(l, run.id).state).toBe('REVIEWING');
+    await driving;
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listReviews(l.db(), run.id).map((r) => [r.provider, r.verdict])).toEqual([
+      ['codex-b', 'APPROVE'],
+      ['codex-b', 'APPROVE'],
+    ]);
+  }, 120_000);
+
+  it('the substitute units carry the fresh review\'s brief and approve: the run succeeds at the default limits, with every round counted and granted once', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, APPROVE], 'reviewer@ui': [APPROVE, APPROVE], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(providerPurposes(reviewers), sessions(reviewers)).toEqual(FRESH_FAILED_THEN_SUBSTITUTE_UNITS);
+    const units = reviewers.filter((w) => w.provider === 'codex-b');
+    for (const w of units) expect(readFileSync(join(w.workerDir, 'prompt.md'), 'utf8')).toContain('This is a fresh review of a tree that an earlier review');
+    expect(listReviews(l.db(), run.id).map((r) => r.workerId).sort()).toEqual(units.map((w) => w.id).sort());
+    // Two units and two fresh attempts were codex's, all granted; the substitute's two make six of the effective eight.
+    expect(grants(l, run.id).map((g) => [g.provider, g.rounds_granted])).toEqual([['codex', 4]]);
+    expect(counter(l, run.id)).toEqual({ used: 6, hard_cap: 4 });
+    expect(events(l, run.id, 'budget.exhausted')).toEqual([]);
+  }, 120_000);
+
+  it('one substitute unit blocks after the fresh reviewer failed: the run does not succeed', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, BLOCK], 'reviewer@ui': [SHALLOW, APPROVE], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/codex-b review \S+ is BLOCK with no findings to resolve/);
+    expect(done.outcomeReason).toMatch(/the fresh review of the tree asked after review\(s\) [^;]+ did not come back/);
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(providerPurposes(reviewers), sessions(reviewers)).toEqual(FRESH_FAILED_THEN_SUBSTITUTE_UNITS);
+    expect(listReviews(l.db(), run.id).map((r) => r.verdict).sort()).toEqual(['APPROVE', 'BLOCK']);
+  }, 120_000);
+
+  it('a substitute unit that inspected nothing blocks: it stood in for the fresh review, and a resume would decide the tree the same way', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, SHALLOW], 'reviewer@ui': [SHALLOW, APPROVE], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/judged it from the packet alone and inspected nothing/);
+    expect(newRunNeeded(l.db(), done)).toBe('the tree had its one fresh review, and a resume starts no other');
+  }, 120_000);
+
+  it('a resume after the only reviewer failed the fresh review runs every unit again, for one recovery attempt each, and clears once they approve', async () => {
+    const l = oneReviewer();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, APPROVE], 'reviewer@ui': [SHALLOW, APPROVE], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+    expect(runState(l, run.id).state).toBe('BLOCKED');
+    expect(listReviews(l.db(), run.id)).toEqual([]);
+
+    await resume(l, run.id);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(unitPurposes(reviewers), sessions(reviewers)).toEqual(['review-fresh#1', 'review-fresh#2', 'review-security#1', 'review-security#2', 'review-ui#1', 'review-ui#2']);
+    expect(listReviews(l.db(), run.id).map((r) => r.verdict)).toEqual(['APPROVE', 'APPROVE']);
+    expect(events(l, run.id, 'resume.reset')).toHaveLength(2);
+  }, 120_000);
+
+  it('a resume after the fresh review failed does not clear when one unit blocks', async () => {
+    const l = oneReviewer();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, BLOCK], 'reviewer@ui': [SHALLOW, APPROVE], reviewer: [EXIT, EXIT, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+    await resume(l, run.id);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(listReviews(l.db(), run.id).map((r) => r.verdict).sort()).toEqual(['APPROVE', 'BLOCK']);
+  }, 120_000);
+
+  it('a fresh review that came back stands for the units it replaced: no unit runs twice when both were shallow', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW], 'reviewer@ui': [SHALLOW], reviewer: [APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(unitPurposes(reviewers), sessions(reviewers)).toEqual(['review-fresh#1', 'review-security#1', 'review-ui#1']);
+    expect(listReviews(l.db(), run.id).map((r) => r.workerId)).toEqual([reviewers.find((w) => w.purpose!.startsWith('review-fresh:'))!.id]);
+  }, 120_000);
+
+  it('a fresh review that came back stands only for the unit it replaced: the other unit\'s own review still stands', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [APPROVE], 'reviewer@ui': [SHALLOW], reviewer: [APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(unitPurposes(reviewers), sessions(reviewers)).toEqual(['review-fresh#1', 'review-security#1', 'review-ui#1']);
+    expect(listReviews(l.db(), run.id)).toHaveLength(2);
+  }, 120_000);
+
+  it('the decision to clear refuses a tree that lost a unit\'s review on any path: a fresh review of another unit does not stand for it', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [APPROVE], 'reviewer@ui': [SHALLOW], reviewer: [{ ...APPROVE, sleepMs: 3_000 }] }));
+    const run = startLabRun(l);
+    const driving = drive(l, run.id, ROOMY);
+    await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).find((w) => w.purpose!.startsWith('review-fresh:') && w.state === 'RUNNING'), 60_000);
+    const security = listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).find((w) => w.purpose!.startsWith('review-security:'))!;
+    expect(markReviewInvalidated(l.db(), `rev-${security.id}`, 'lost by the test', systemClock)).toBe(true);
+    await driving;
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/no standing review of the required review unit\(s\) security/);
+    expect(events(l, run.id, 'review.approved')).toEqual([]);
+  }, 120_000);
+
+  it('a replay after a crash between setting reviews aside and the decision still names them, so the next reviewer runs every unit', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [SHALLOW, APPROVE], 'reviewer@ui': [SHALLOW, APPROVE], reviewer: [EXIT, { ...EXIT, sleepMs: 3_000 }, APPROVE] }));
+    const run = startLabRun(l);
+    const driving = drive(l, run.id, ROOMY);
+    await waitFor(() => listWorkers(l.db(), { runId: run.id, role: 'reviewer' }).find((w) => /^review-fresh:[^#]+#2$/.test(w.purpose!) && w.state === 'RUNNING'), 60_000);
+    // What the first pass left: the reviews invalidated, and no decision yet.
+    const before = listReviews(l.db(), run.id).map((r) => r.id).sort();
+    expect(before).toHaveLength(2);
+    for (const id of before) expect(markReviewInvalidated(l.db(), id, 'set aside before the crash', systemClock)).toBe(true);
+    await driving;
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(grants(l, run.id).map((g) => [...g.set_aside].sort())).toEqual([before]);
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(providerPurposes(reviewers), sessions(reviewers)).toEqual(FRESH_FAILED_THEN_SUBSTITUTE_UNITS);
+  }, 120_000);
+
+  it('stopping a sibling exhausts model cost at the default cap: the reviewer failure is still recorded and reported, and the run ends EXHAUSTED', async () => {
+    const l = twoReviewers();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [{ outcome: 'no_result' }, { outcome: 'no_result' }, APPROVE], 'reviewer@ui': [{ ...APPROVE, sleepMs: 30_000 }, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.outcomeReason).toMatch(/^cost_usd exhausted at the hard cap \$30/);
+    const reason = `failed: exited 1 without turn.completed or turn.failed after 2 attempt(s)`;
+    expect(grants(l, run.id).map((g) => [g.provider, g.reason])).toEqual([['codex', reason]]);
+    expect(events(l, run.id, 'workers.reviewer-failed-cancelled')).toHaveLength(1);
+    const dir = join(l.repo, '.orbit', 'runs', run.id);
+    expect(readFileSync(join(dir, 'final.md'), 'utf8')).toContain(`- Tried first: codex/gpt-6-astra, which failed (${reason})`);
+    const json = JSON.parse(readFileSync(join(dir, 'final.json'), 'utf8')) as { no_standing_review: { failed_reviewers: { provider: string; reason: string }[] } };
+    expect(json.no_standing_review.failed_reviewers).toEqual([{ provider: 'codex', model: 'gpt-6-astra', reason }]);
   }, 120_000);
 });

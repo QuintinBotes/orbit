@@ -236,6 +236,34 @@ describe.skipIf(!canStripTypes)('controller: a reviewer that fails at run time',
     expect(finalMd(l, run.id)).toMatch(/Reviewer: codex-b\/gpt-6-astra \(independent\)\n- Tried first: codex\/gpt-6-astra, which failed \(failed: /);
   }, 120_000);
 
+  it('a fresh review finished by the next listed reviewer does not clear when that reviewer blocks', async () => {
+    const BLOCK = { structured: { verdict: 'BLOCK', candidate_revision: '$CANDIDATE', findings: [] } };
+    const l = lab('block', [{ ...APPROVE, inspect: false }, ...Array(MAX_REGENERATIONS).fill(EXIT), BLOCK]);
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(purposes(l, run.id)).toEqual(['review:cand#1', 'review-fresh:cand#1', 'review-fresh:cand#2', 'review-fresh:cand~codex-b#1']);
+    expect(listReviews(l.db(), run.id).map((r) => [r.provider, r.verdict])).toEqual([['codex-b', 'BLOCK']]);
+  }, 120_000);
+
+  it('a resume after every listed reviewer failed the fresh review: the one general unit clears only on the fresh review that came back', async () => {
+    const l = lab('block', [{ ...APPROVE, inspect: false }, ...Array(2 * MAX_REGENERATIONS).fill(EXIT), APPROVE]);
+    const run = startLabRun(l);
+    await drive(l, run.id);
+    expect(runState(l, run.id).state).toBe('BLOCKED');
+    expect(listReviews(l.db(), run.id)).toEqual([]);
+
+    await resume(l, run.id);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(purposes(l, run.id)).toEqual(['review:cand#1', 'review-fresh:cand#1', 'review-fresh:cand#2', 'review-fresh:cand~codex-b#1', 'review-fresh:cand~codex-b#2', 'review-fresh:cand#3']);
+    expect(listReviews(l.db(), run.id).map((r) => [r.provider, r.verdict])).toEqual([['codex', 'APPROVE']]);
+  }, 120_000);
+
   for (const [first, next, firstLabel, nextLabel] of [
     ['muse', 'codex', 'muse/muse-wonder-full-1.0', 'codex/gpt-6-astra'],
     ['codex', 'muse', 'codex/gpt-6-astra', 'muse/muse-wonder-full-1.0'],

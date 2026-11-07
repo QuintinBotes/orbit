@@ -56868,7 +56868,8 @@ function independentReviewGate(db, input) {
   const reviews = listReviews(db, input.runId, { treeHash: input.treeHash });
   const independent = reviews.length === 0 ? input.selectionIndependent !== false : reviews.some((r) => isIndependentReviewer(r.provider, input.implementerProvider));
   const why = `same-provider review, not independent: ${input.whyNotIndependent ?? "no independent reviewer was usable"}`;
-  const out = result("independent_review", g.reasons, evidence, independent ? [] : [why], { gate: g, approved, independent });
+  const uncovered = input.uncoveredUnits?.length ? [`no standing review of the required review unit(s) ${input.uncoveredUnits.join(", ")}`] : [];
+  const out = result("independent_review", [...g.reasons, ...uncovered], evidence, independent ? [] : [why], { gate: g, approved, independent });
   if (out.status === "pass" && !independent) out.summary = approved ? `independent_review gate: review approved but it was ${why}` : `independent_review gate: same-provider review cleared the tree without an approval, not independent: ${input.whyNotIndependent ?? "no independent reviewer was usable"}`;
   return out;
 }
@@ -64345,14 +64346,14 @@ async function reviewingStep(ctx) {
     throw new OrbitError("STALE_EVIDENCE", `candidate ${cand.seq} has no fresh PASS evidence; review authorizes nothing without it`);
   }
   await cancelObsoleteWork(ctx, cand.treeHash);
-  const fresh = freshReviewOf(ctx, cand.treeHash);
-  if (fresh) return freshReview(ctx, cand, fresh);
   const focuses = reviewFocuses(ctx, cand);
-  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).length >= focuses.length) return resolveAndDecide(ctx, cand);
+  const fresh = freshReviewOf(ctx, cand.treeHash);
+  if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
+  if (uncoveredUnits(ctx, cand).length === 0) return resolveAndDecide(ctx, cand);
   const usable = await usableReviewer(ctx, cand);
   if (!usable.ok) return usable.step;
   const sel = usable.sel;
-  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses);
+  if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses, fresh);
   const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
   return pending ?? resolveAndDecide(ctx, cand);
 }
@@ -64472,7 +64473,25 @@ function securitySensitive(ctx) {
 function focusBase(cand, focus) {
   return focus === "general" ? `review:${cand.id}` : `review-${focus}:${cand.id}`;
 }
-async function parallelReview(ctx, cand, sel, focuses) {
+function setAsideReviews(ctx) {
+  return new Set(listDecisions(ctx.db, ctx.run.id, { kind: REVIEWER_FAILED_KIND }).flatMap((d) => d.data.set_aside ?? []));
+}
+function uncoveredUnits(ctx, cand) {
+  const focuses = reviewFocuses(ctx, cand);
+  const standing = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash });
+  if (focuses.length === 1) return standing.length > 0 ? [] : focuses;
+  const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: "reviewer" }).map((w) => [w.id, w.purpose]));
+  const unitOf2 = (r) => r.workerId === null ? void 0 : purposes.get(r.workerId)?.split(":")[0];
+  const covered = new Set(standing.map(unitOf2));
+  const asked = freshReviewOf(ctx, cand.treeHash);
+  if (asked && recordedFreshReview(ctx, asked)) {
+    const setAside = setAsideReviews(ctx);
+    const replaced = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, includeInvalidated: true }).filter((r) => asked.superseded.includes(r.id) && !setAside.has(r.id));
+    for (const r of replaced) covered.add(unitOf2(r));
+  }
+  return focuses.filter((f) => !covered.has(focusBase(cand, f).split(":")[0]));
+}
+async function parallelReview(ctx, cand, sel, focuses, fresh) {
   const ledger = ctx.ledger;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   const recorded = new Set(listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).map((r) => r.workerId));
@@ -64530,12 +64549,12 @@ async function parallelReview(ctx, cand, sel, focuses) {
         candidateId: cand.id,
         provider: sel.provider,
         model: sel.model,
-        effort: reviewEffort(ctx, sel),
+        effort: fresh?.reason === "shallow" ? SHALLOW_REVIEW_EFFORT : reviewEffort(ctx, sel),
         cwd: checkout,
         readOnly: true,
         phase: "final",
         ...typeof caps.get(base)?.capUsd === "number" ? { maxBudgetUsd: caps.get(base).capUsd } : {},
-        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus, null, sel.provider)
+        prompt: () => reviewerPrompt(ctx, cand, reviewDir, focus, fresh, sel.provider)
       }),
       accept: (r) => {
         try {
@@ -64637,7 +64656,7 @@ async function resolveAndDecide(ctx, cand) {
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
-  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx) });
+  const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
   recordGate(ctx, gate);
   if (gate.passed && gate.details.approved) {
     if (cand.treeHash !== ctx.run.baseTree) {
@@ -64788,7 +64807,8 @@ async function decideShallowApproval(ctx, cand, shallow, gateReasons) {
   }
   const fresh = recordedFreshReview(ctx, asked);
   return finishRun(ctx, "BLOCKED", `the review inspected nothing: ${what}, and the tree already had its one fresh review${fresh ? ` (${fresh.id})` : ""}, so no other review is asked`, {
-    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? null, reason: asked.reason ?? "notes" } }
+    // With no fresh review recorded, the units that stood in for it carried its brief: a resume decides the tree the same way.
+    outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: true, review_id: fresh?.id ?? ids[0], reason: asked.reason ?? "notes" } }
   });
 }
 async function freshReview(ctx, cand, rec2) {
@@ -64810,13 +64830,14 @@ async function freshReview(ctx, cand, rec2) {
 function describeFreshReview(ctx, rec2, resolution, state) {
   const earlier = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
   const review = recordedFreshReview(ctx, rec2);
-  if (!review) return { text: `; the fresh review of the tree asked after note(s) ${earlier} has not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
+  if (!review) return { text: `; the fresh review of the tree asked after review(s) ${rec2.superseded.join(", ")} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
   const why = rec2.reason === "shallow" ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
+  const verdict = review.verdict === "APPROVE" ? "stands only for the review(s) it replaced" : `did not approve it either: ${named2}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, did not approve it either: ${named2}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
   };
 }
@@ -65260,14 +65281,20 @@ async function reviewerFailed(ctx, cand, sel, failed) {
   const error = failed.error ? clipAtWord(failed.error.replace(/\s+/g, " ").trim(), 300) : "";
   const reason = `${failed.status}${error ? `: ${error}` : ""} after ${MAX_REGENERATIONS} attempt(s)`;
   const siblings = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => w.role === "reviewer" && w.candidateId === cand.id && w.provider === sel.provider);
-  await stopReadOnlyWorkers(ctx, siblings, `reviewer ${sel.provider} failed at run time`);
-  for (const r of listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((x) => x.provider === sel.provider)) {
-    markReviewInvalidated(ctx.db, r.id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
-  }
+  const exhausted2 = await stopReadOnlyWorkers(ctx, siblings, `reviewer ${sel.provider} failed at run time`).then(
+    () => null,
+    (err) => {
+      if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
+      return err;
+    }
+  );
+  const setAside = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, provider: sel.provider, includeInvalidated: true }).map((r) => r.id);
+  for (const id of setAside) markReviewInvalidated(ctx.db, id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
   const spent = new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "reviewer" }).filter((w) => w.candidateId === cand.id && w.provider === sel.provider).map((w) => w.purpose)).size;
   const granted = reviewerFailures(ctx, cand).filter((f) => f.provider === sel.provider).reduce((n2, f) => n2 + (f.rounds_granted ?? 0), 0);
-  const record = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted };
+  const record = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted, set_aside: setAside };
   decide2(ctx, { kind: REVIEWER_FAILED_KIND, summary: `reviewer ${sel.provider}/${sel.model ?? "default"} failed: ${reason}; selecting again without it`, data: record });
+  if (exhausted2) throw exhausted2;
   return MOVED;
 }
 async function reviewerSelection(ctx, cand) {

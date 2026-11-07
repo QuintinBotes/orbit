@@ -86,6 +86,17 @@ exactly as at selection. This holds for every reviewer family, Codex included.
   selects the same reviewer again, a set-aside review does not count: its unit
   starts a new session, for one recovery attempt, and the run cannot clear until
   every unit has a standing review.
+- That rule is checked where a tree clears: the review gate fails while a unit
+  `reviewFocuses` requires has no standing review of the tree. A unit is covered
+  by a review from its own sessions, or by a fresh review (ADR 0016) that came
+  back and replaced that unit's review. A failure of the fresh reviewer sets the
+  reviews it was to replace aside (recorded as `set_aside` on the decision), so
+  a change with several units then runs each unit, with the fresh review's brief
+  and effort, instead of one general review. With one general unit, the fresh
+  review still stands for it. A unit that stood in for the fresh review and
+  inspected nothing blocks, as the fresh review would.
+- Stopping the other sessions can exhaust model cost. The failure is recorded,
+  with its reason, before the run ends EXHAUSTED, so its report names it.
 - A block that follows a run-time reviewer failure is not a frozen-policy block,
   even when another listed reviewer is ineligible by policy, since a resume tries
   the failed reviewer again.
