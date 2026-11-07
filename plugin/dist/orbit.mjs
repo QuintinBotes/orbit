@@ -32624,7 +32624,7 @@ var ORBIT_VERSION;
 var init_version = __esm({
   "src/cli/version.ts"() {
     "use strict";
-    ORBIT_VERSION = "0.3.1";
+    ORBIT_VERSION = "0.3.2";
   }
 });
 
@@ -59839,10 +59839,12 @@ async function preflightStep(ctx) {
   }
   const head = await resolveCommit(repo, "HEAD");
   const baseTree = await treeOf(repo, head);
-  const dirty = await dirtyPaths(repo);
-  if (dirty.length > 0) {
+  const split = await dirtyPathSplit(repo);
+  const dirty = [...split.changed, ...split.untracked].sort();
+  const refusal = dirtyStartRefusal(split);
+  if (refusal !== null) {
     if (!ctx.snapshot.config.repository.allow_dirty_start) {
-      return finishRun(ctx, "BLOCKED", `the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""}); commit or stash them, or set repository.allow_dirty_start`, { outcome: { dirty: dirty.slice(0, 50) } });
+      return finishRun(ctx, "BLOCKED", `${refusal.reason}; ${refusal.fix}`, { outcome: { dirty: dirty.slice(0, 50), dirty_untracked: split.untracked.length, dirty_modified: split.changed.length } });
     }
     decide2(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: "preflight.dirty-start", summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
@@ -60023,9 +60025,28 @@ async function gitCredentialProblems(repo) {
   }
   return problems;
 }
-async function dirtyPaths(repo) {
-  const out = await git2(repo, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"]);
-  return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3));
+async function dirtyPathSplit(repo) {
+  return parseDirtyStatus(await git2(repo, [...DIRTY_STATUS_ARGS]));
+}
+function parseDirtyStatus(out) {
+  const split = { changed: [], untracked: [] };
+  const entries = out.split("\0");
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.length <= 3) continue;
+    (e.startsWith("??") ? split.untracked : split.changed).push(e.slice(3));
+    if ("RC".includes(e[0]) || "RC".includes(e[1])) i++;
+  }
+  return split;
+}
+function dirtyStartRefusal(d) {
+  const total = d.changed.length + d.untracked.length;
+  if (total === 0) return null;
+  const sample = [...d.changed, ...d.untracked].slice(0, 10);
+  const counts = [d.changed.length > 0 ? `${d.changed.length} modified` : null, d.untracked.length > 0 ? `${d.untracked.length} untracked` : null].filter((x) => x !== null).join(" and ");
+  const reason = `the repository has uncommitted changes (${sample.join(", ")}${total > sample.length ? ", ..." : ""}): ${counts}`;
+  const fix = d.changed.length === 0 ? "untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start" : `commit or stash the modified files${d.untracked.length > 0 ? " (git stash -u takes the untracked ones too; plain git stash leaves them)" : ""}, or set repository.allow_dirty_start`;
+  return { reason, fix };
 }
 async function ensureWorktree(repo, path, base) {
   if (existsSync40(path)) {
@@ -60087,7 +60108,7 @@ async function checkEnvironment(ctx) {
   });
   return { gate, credentials: all, capabilities, reviewer };
 }
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER;
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER, DIRTY_STATUS_ARGS;
 var init_preflight = __esm({
   "src/controller/steps/preflight.ts"() {
     "use strict";
@@ -60109,6 +60130,7 @@ var init_preflight = __esm({
     IMPLEMENTER_PROVIDER = "claude";
     URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
     AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
+    DIRTY_STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"];
   }
 });
 
@@ -69218,10 +69240,12 @@ async function checkGit(p) {
       details.push(`delivery pushes task branches but remote "${config.repository.remote}" is not configured`);
     }
   }
-  const dirty = await g(["status", "--porcelain=v1", "--untracked-files=normal", "--", ".", ":(exclude).orbit"]);
-  if (dirty.stdout.trim() !== "" && !config.repository.allow_dirty_start) {
-    problems.push({ missing: "a clean working tree", fix: "commit or stash the changes, or set repository.allow_dirty_start", severity: "warn" });
-    details.push(`${dirty.stdout.trim().split("\n").length} uncommitted path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
+  const porcelain = await g([...DIRTY_STATUS_ARGS]);
+  const split = porcelain.exitCode === 0 ? parseDirtyStatus(porcelain.stdout) : null;
+  const refusal = split ? dirtyStartRefusal(split) : null;
+  if (split && refusal !== null && !config.repository.allow_dirty_start) {
+    problems.push({ missing: "a clean working tree", fix: refusal.fix, severity: "warn" });
+    details.push(`${split.changed.length} modified and ${split.untracked.length} untracked path(s); a run would refuse to start (repository.allow_dirty_start is false)`);
   }
   if (problems.length === 0) {
     out.push(pass("git.repo", "git", `repository ${repo}; worktrees supported`, details));
@@ -70002,6 +70026,7 @@ var init_doctor = __esm({
     init_publication();
     init_config();
     init_shared_catalog();
+    init_preflight();
     init_delivery_env();
     init_db();
     init_schema4();
@@ -71040,6 +71065,31 @@ async function currentBranch(ctx, repo) {
     return null;
   }
 }
+async function remoteDefaultBranch(ctx, repo, remote) {
+  try {
+    const r = await execCapture(["git", "symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
+    const name = r.stdout.trim();
+    const prefix = `refs/remotes/${remote}/`;
+    return r.exitCode === 0 && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null;
+  } catch {
+    return null;
+  }
+}
+function chooseBaseBranch(i) {
+  const head = `refs/remotes/${i.remote}/HEAD`;
+  const pick = i.linkedWorktree && i.checkedOut !== null ? i.checkedOut : i.remoteDefault ?? i.checkedOut;
+  const branch = pick !== null && pick !== "main" ? pick : null;
+  const from = pick === null ? null : pick === i.remoteDefault && !(i.linkedWorktree && i.checkedOut !== null) ? `${i.remote}'s default branch (${head})` : i.linkedWorktree ? "the branch this linked worktree is on" : "the checked-out branch";
+  const note3 = branch !== null ? `repository.base_branch set to ${branch} from ${from} (the template says main); review it` : null;
+  const written = pick ?? "main";
+  let warning = null;
+  if (i.remoteDefault !== null && written !== i.remoteDefault) {
+    warning = `repository.base_branch is ${written}, but ${i.remote}'s default branch is ${i.remoteDefault} (${head}): every run opens its pull request against ${written}; set repository.base_branch to ${i.remoteDefault} in .orbit/config.yaml if that is the target you want`;
+  } else if (i.remoteDefault !== null && i.checkedOut !== null && i.checkedOut !== written) {
+    warning = `repository.base_branch is ${written}, ${i.remote}'s default branch, not the checked-out branch ${i.checkedOut}: a run starts from the commit checked out when it starts and opens its pull request against ${written}, so a run started on ${i.checkedOut} carries its unmerged commits; set repository.base_branch to ${i.checkedOut} in .orbit/config.yaml if that is the target you want`;
+  }
+  return { branch, note: note3, warning };
+}
 async function configAdvice(ctx, repo) {
   const git6 = (...a) => execCapture(["git", ...a, "--", ".orbit/config.yaml"], { cwd: repo, env: gitEnv(ctx.env), timeoutMs: 15e3 });
   try {
@@ -71117,6 +71167,8 @@ async function initCommand(args, ctx) {
   let protectedAdded = [];
   let excludedDirs = [];
   let baseBranch = null;
+  let baseBranchNote = null;
+  let baseBranchWarning = null;
   let checkProposal = { proposed: [], notProposed: [] };
   if (existsSync61(configPath)) config = "exists";
   else {
@@ -71131,9 +71183,12 @@ async function initCommand(args, ctx) {
     excludedDirs = proposal.excluded;
     const have2 = text2.match(/^\s*protected_paths: \[(.*)\]$/m)?.[1] ?? "";
     protectedAdded = proposal.protectedExtra.filter((g) => !have2.includes(JSON.stringify(g)));
-    baseBranch = await currentBranch(ctx, repo);
-    if (baseBranch !== null && baseBranch !== "main") text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
-    else baseBranch = null;
+    const remote = text2.match(/^\s*remote: "?([^"\s#]+)"?/m)?.[1] ?? "origin";
+    const choice = chooseBaseBranch({ checkedOut: await currentBranch(ctx, repo), remoteDefault: await remoteDefaultBranch(ctx, repo, remote), linkedWorktree: await inLinkedWorktree(ctx, repo), remote });
+    baseBranch = choice.branch;
+    baseBranchNote = choice.note;
+    baseBranchWarning = choice.warning;
+    if (baseBranch !== null) text2 = text2.replace(/^(\s*base_branch: ).*$/m, `$1${JSON.stringify(baseBranch)}`);
     if (derivedPaths.length > 0) text2 = text2.replace(/^(\s*allowed_paths: )\[.*\]$/m, `$1[${derivedPaths.map((x) => JSON.stringify(x)).join(", ")}]`);
     if (protectedAdded.length > 0) {
       text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
@@ -71181,6 +71236,7 @@ ${block2}`);
   }
   if (config === "created") {
     if (noScopeWarning !== void 0) warnings.push(noScopeWarning);
+    if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
   const models = await seedModels(ctx, repo);
@@ -71199,7 +71255,7 @@ ${block2}`);
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
   if (advice !== null) line(ctx.io, advice);
-  if (config === "created" && baseBranch !== null) line(ctx.io, `repository.base_branch set to ${baseBranch} from the checked-out branch (the template says main); review it`);
+  if (config === "created" && baseBranchNote !== null) line(ctx.io, baseBranchNote);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, `scope.allowed_paths set to ${derivedPaths.join(", ")} from the repository layout (the template's paths matched nothing here); review it`);
   if (config === "created" && excludedDirs.length > 0) line(ctx.io, `left out of scope.allowed_paths because they hold CI or build definitions: ${excludedDirs.join(", ")}`);
   if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
@@ -72307,10 +72363,10 @@ var init_admission = __esm({
         cheap.push(`the repository's git configuration carries credentials a worker could read (${credentialProblems.join("; ")})`);
         fixes.push("remove them and authenticate through a credential helper outside the repository");
       }
-      const dirty = hasCommits ? await dirtyPaths(repo) : [];
-      if (dirty.length > 0 && !config.repository.allow_dirty_start) {
-        cheap.push(`the repository has uncommitted changes (${dirty.slice(0, 10).join(", ")}${dirty.length > 10 ? ", ..." : ""})`);
-        fixes.push("commit or stash them, or set repository.allow_dirty_start in .orbit/config.yaml, then run again");
+      const refusal = hasCommits ? dirtyStartRefusal(await dirtyPathSplit(repo)) : null;
+      if (refusal !== null && !config.repository.allow_dirty_start) {
+        cheap.push(refusal.reason);
+        fixes.push(`${refusal.fix.replace(/repository\.allow_dirty_start$/, "repository.allow_dirty_start in .orbit/config.yaml")}, then run again`);
       }
       if (cheap.length > 0) return { reasons: cheap, code: "POLICY_DENIED", fix: fixes.join("; ") };
       if (!input.foreground) return null;

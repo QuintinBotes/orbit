@@ -177,7 +177,10 @@ what it always did. The README
 and `orbit models refresh`. See [configuration](configuration.md).
 
 A run starts only from a clean working tree (`.orbit/` is exempt) unless
-`repository.allow_dirty_start` is true, and refuses to start, creating nothing,
+`repository.allow_dirty_start` is true. Untracked files count as uncommitted
+changes, although the run starts from HEAD and never sees them: list scratch
+files in `.git/info/exclude` or `.gitignore`, or use `git stash -u` (plain
+`git stash` leaves them). A run also refuses to start, creating nothing,
 when the repository's git configuration holds credentials or the environment
 check fails (isolation, credentials, reviewer). `orbit doctor` reports the same
 problems earlier.
