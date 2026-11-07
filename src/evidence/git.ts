@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, linkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
@@ -73,6 +74,33 @@ export async function resolveCommit(repoRoot: string, rev: string): Promise<stri
 
 export async function treeOf(repoRoot: string, commit: string): Promise<string> {
   return (await git(repoRoot, ['rev-parse', '--verify', `${commit}^{tree}`])).trim();
+}
+
+const CHECKOUT_ID_FILE = 'orbit-checkout-id';
+
+/**
+ * The identity of the checkout at `dir`: a random id written once into its own git directory, outside the work tree and
+ * never committed. It survives a controller restart, and a checkout made again at the same path gets a new git
+ * directory and so a new id.
+ */
+export async function checkoutId(dir: string): Promise<string> {
+  const file = join((await git(dir, ['rev-parse', '--absolute-git-dir'])).trim(), CHECKOUT_ID_FILE);
+  const existing = existsSync(file) ? readFileSync(file, 'utf8').trim() : '';
+  if (existing !== '') return existing;
+  // Written whole to a temporary file and linked into place, so a crash never leaves an empty id; an empty one (from an
+  // older build) is replaced.
+  const tmp = `${file}.${process.pid}.${randomUUID()}`;
+  writeFileSync(tmp, randomUUID(), { mode: 0o600 });
+  try {
+    linkSync(tmp, file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    // Another process published an id first: use it. Only an empty one is replaced.
+    if (readFileSync(file, 'utf8').trim() === '') renameSync(tmp, file);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  return readFileSync(file, 'utf8').trim();
 }
 
 /**
