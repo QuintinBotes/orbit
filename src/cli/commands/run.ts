@@ -3,6 +3,9 @@ import { releaseEnvironmentProblem } from '../../contract/validate.ts';
 import { failBeforePolicy, raiseFailBefore, RUN_MODES } from '../../policy/index.ts';
 import { FAIL_BEFORE_MODES, type OrbitConfig } from '../../policy/types.ts';
 import { startRun, stateDbPath } from '../../controller/index.ts';
+import { listRuns } from '../../controller/run-store.ts';
+import { NON_TERMINAL } from '../../controller/states.ts';
+import { OrbitError } from '../../core/errors.ts';
 import { existsSync } from 'node:fs';
 import type { Args, OptionSpec } from '../args.ts';
 import { liveServiceController, openState, resolveRepo, type CliContext } from '../context.ts';
@@ -68,6 +71,9 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
 
   const db = openState(repo, { create: true });
   try {
+    // shortcut: simultaneous submissions can race; move this check into run creation if atomic refusal is needed.
+    const existing = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => r.goal === goal);
+    if (existing) throw new OrbitError('POLICY_DENIED', `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
     // The policy is frozen (snapshot, hash, read-only) before the run row that names it exists.
     const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...(environment !== undefined ? { environment } : {}) });
     const asJson = args.bool('json');

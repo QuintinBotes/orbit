@@ -185,6 +185,12 @@ terminal and prints each step; Ctrl-C pauses it (`orbit resume <run-id>
 --foreground` continues it when no service is running). From a plugin session with no service, `/orbit:run`
 starts the run in the background of that session and says so.
 
+Before submitting again, run `orbit status`. An unfinished run in this repository
+with the same goal (byte for byte, after surrounding spaces are trimmed) also refuses a new run, even when paused. The refusal
+names its id and state and the status, resume and cancel commands. No run or
+policy snapshot is created. `BLOCKED` counts as finished for this check. There
+is no override flag. Cancel the unfinished run before starting the same goal again.
+
 When it ends, `orbit report <run-id>` prints the final report, including the
 verdict per criterion and the branch. The change is on the local branch
 `orbit/<run-id>`; your working tree and your branch are untouched. Look at it

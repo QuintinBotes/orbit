@@ -42,6 +42,8 @@ A run only makes progress while a controller drives it. Check for the service fi
 
 ## Submitting
 
+Run `orbit status` before submitting again. An unfinished run with the same goal (byte for byte, after surrounding spaces are trimmed) refuses a new run, even when paused. Use its status, resume or cancel command. `BLOCKED` counts as finished.
+
 Pass the agreed goal on stdin through a here-document whose delimiter is quoted,
 so the shell expands nothing inside it. With the service:
 

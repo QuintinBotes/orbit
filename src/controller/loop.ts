@@ -37,7 +37,7 @@ import { verifySnapshot } from '../policy/snapshot.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { ControllerDeps } from './context.ts';
 import { getLease, getRun, listRuns, releaseLease, renewLease } from './run-store.ts';
-import { isTerminal, RUN_STATES, type RunState } from './states.ts';
+import { isTerminal, NON_TERMINAL, type RunState } from './states.ts';
 import { step } from './steps/index.ts';
 import type { StepResult } from './steps/common.ts';
 import { finalizeRun, writeFinalReport } from './report.ts';
@@ -108,8 +108,6 @@ interface Owned {
   inflight: Promise<void> | null;
   abort: AbortController | null;
 }
-
-const NON_TERMINAL: RunState[] = RUN_STATES.filter((s) => !isTerminal(s));
 
 export class Controller {
   readonly ownerId: string;
