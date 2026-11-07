@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { OrbitError } from '../core/errors.ts';
 import { suppressSqliteExperimentalWarning } from '../core/warnings.ts';
 import { MIGRATIONS } from './schema.ts';
 
@@ -104,6 +105,12 @@ function migrate(db: DatabaseSync, migrations: readonly string[]): void {
   for (let v = current; v < migrations.length; v++) {
     db.exec('BEGIN IMMEDIATE');
     try {
+      if (current >= 1) {
+        const leases = db.prepare('SELECT run_id, owner_id FROM leases WHERE expires_at > ? ORDER BY run_id').all(Date.now()) as { run_id: string; owner_id: string }[];
+        if (leases.length > 0) {
+          throw new OrbitError('CONCURRENT_UPDATE', `Cannot migrate the state database while an older Orbit is driving these runs: ${leases.map((lease) => `${lease.run_id} (owner ${lease.owner_id})`).join(', ')}. Let the runs finish, stop them, or use that same Orbit version until their leases end.`, { leases });
+        }
+      }
       db.exec(migrations[v]!);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');
