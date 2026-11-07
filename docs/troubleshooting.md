@@ -68,7 +68,9 @@ A person, not an agent, must make any edit to `agents.allowed_plugins` or
 `agents.allowed_plugins` permits a plugin's hooks and tools in worker sessions;
 `providers.codex.data_policy_eligible` confirms that sending sanitized code to
 Codex is permitted. An auto-mode classifier may flag worker launches. Review
-that prompt yourself rather than asking an agent to apply either edit. When one
+that prompt yourself rather than asking an agent to apply either edit.
+Orbit does not enforce this: only worker sessions are blocked from editing
+`.orbit/config.yaml`, so a person's edit and an interactive agent's edit look the same to it. When one
 of these settings is the fix, `orbit doctor` prints the same note.
 
 ## Run problems
