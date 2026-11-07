@@ -26,6 +26,8 @@ export interface ProviderCapabilities {
   usageReporting: 'exact' | 'partial' | 'none';
   costReporting: boolean;
   detail: string;
+  /** The CLI is fine but the configured tier cannot run here, so `available` is false for a reason `detail` names. */
+  tierUnavailable?: boolean;
 }
 
 export type CredentialState = 'valid' | 'missing' | 'expired' | 'invalid' | 'unknown';

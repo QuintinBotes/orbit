@@ -220,6 +220,20 @@ State these plainly to yourself before running unattended.
   any file you can read may reach the provider, and the worker record says so.
   Orbit passes `danger-full-access` only together with the `srt` wrapper and
   refuses it in any other combination.
+- **The Muse reviewer's `muse-sandbox` tier does not confine reads.** Measured
+  on Muse 1.4.14 with Orbit's flags, `read_file` under `:read-only`,
+  `--disable-write` and `--disable-shell` read a file outside `--workspace` and
+  returned its contents. So in this tier nothing stops the reviewer reading
+  other files, including credentials the login user can read, and a prompt in
+  the candidate could steer them into a review or to the Meta API. Writes to the
+  checkout are stopped by its on-disk write protection; other writes rest on
+  Muse's own profile. The worker record, `orbit doctor` and the final report
+  say so. Where this matters, use `os-sandbox` (`META_API_KEY` plus `srt`):
+  `srt` then denies the credential paths for reading, allows writes only to the
+  worker directory (the files the controller trusts stay denied) and egress only
+  to `api.meta.ai`. That tier has not been run live
+  ([interfaces/muse](interfaces/muse.md)). The reviewer's wall-clock cap is what
+  ends a session that runs away with no terminal event.
 - **Under `srt` on macOS a UI check's browser has no sandbox of its own.**
   Chromium's sandbox cannot start inside Seatbelt, so Playwright's bundled
   Chromium runs with `--no-sandbox` and `srt` is its only boundary: the write
@@ -360,8 +374,9 @@ State these plainly to yourself before running unattended.
   why the independent reviewer was unavailable. Set `when_unavailable: ask` to
   approve each such run yourself, or `block` when independence must be
   guaranteed.
-- **Data leaves the machine.** Running Orbit sends code and diffs to Claude, and
-  to Codex when `providers.codex.data_policy_eligible` is true. Decide that per repository.
+- **Data leaves the machine.** Running Orbit sends code and diffs to Claude, to
+  Codex when `providers.codex.data_policy_eligible` is true, and to Muse when
+  `providers.muse.data_policy_eligible` is true. Decide that per repository.
 - **Fable models** are excluded by default because headless Claude Code bills
   them without a consent prompt.
 

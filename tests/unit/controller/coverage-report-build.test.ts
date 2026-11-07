@@ -5,7 +5,9 @@ import { insertLedgerEntry, insertQuestion } from '../../../src/inquisition/stor
 import { recordDecision } from '../../../src/storage/decisions.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import type { GoalContract } from '../../../src/contract/types.ts';
-import { buildFinalReport, finalizeRun, renderMarkdown, writeFinalReport, type FinalReport } from '../../../src/controller/report.ts';
+import { buildFinalReport, finalizeRun, renderMarkdown, reviewerLine, writeFinalReport, type FinalReport } from '../../../src/controller/report.ts';
+import { recordReview } from '../../../src/review/store.ts';
+import { planWorker } from '../../../src/storage/workers.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { addCandidate, addEvidence, addReview, initLedger, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
@@ -44,6 +46,51 @@ const build = () => {
   const run = getRun(lab.db, lab.runId);
   return buildFinalReport(lab.db, run, { runDir: join(lab.repo, '.orbit', 'runs', lab.runId), clock: lab.clock, snapshot: verifySnapshot(run.policyPath, run.policyHash) });
 };
+
+describe('the reviewer in the final report (issue #108)', () => {
+  const launched = (id: string, provider: string, meta: Record<string, unknown>) => {
+    const workerDir = join(lab.base, 'workers', id);
+    mkdirSync(workerDir, { recursive: true });
+    writeFileSync(join(workerDir, 'launch.json'), JSON.stringify({ provider, meta }));
+    planWorker(lab.db, { id, runId: lab.runId, role: 'reviewer', purpose: `review:${id}`, provider, model: null, workerDir, cwd: lab.repo }, lab.clock);
+  };
+  const reviewBy = (provider: string, workerId: string | null) => {
+    const cand = addCandidate(lab);
+    recordReview(lab.db, { runId: lab.runId, candidateId: cand.id, treeHash: cand.treeHash, round: 1, provider, model: 'm-1', workerId, verdict: 'APPROVE', packetSha256: null, findings: [] }, lab.clock);
+  };
+
+  it('does not call a review by an alias of the implementer family independent', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    reviewBy('claude-review', null);
+    expect(build().reviewer).toMatchObject({ provider: 'claude-review', independent: false, why_not_independent: 'no independent reviewer was usable' });
+  });
+
+  it('names the tier, why and what it does not enforce for a Muse reviewer, so the two tiers read differently', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    launched('wrk-m', 'muse-review', { tier: 'muse-sandbox', tierReason: 'no META_API_KEY in the environment', limitations: ['Reads are not confined.'] });
+    reviewBy('muse-review', 'wrk-m');
+    const r = build();
+    expect(r.reviewer).toMatchObject({ provider: 'muse-review', independent: true, tier: 'muse-sandbox', tier_reason: 'no META_API_KEY in the environment', limitations: ['Reads are not confined.'] });
+    expect(renderMarkdown(r)).toContain('Reviewer: muse-review/m-1 (independent). Tier: muse-sandbox (no META_API_KEY in the environment). Limitations: Reads are not confined.');
+    expect(reviewerLine({ ...r.reviewer!, tier: 'os-sandbox' })).toContain('Tier: os-sandbox');
+  });
+
+  it('leaves the tier out for Codex, whose launch record has its own, and for an unreadable launch record', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    launched('wrk-c', 'codex', { tier: 'codex-sandbox', tierReason: 'no key', limitations: ['x'] });
+    reviewBy('codex', 'wrk-c');
+    const codex = build();
+    expect(codex.reviewer).toEqual({ provider: 'codex', model: 'm-1', independent: true, why_not_independent: null, approved_by: null });
+    expect(renderMarkdown(codex)).toContain('Reviewer: codex/m-1 (independent)\n');
+
+    lab.cleanup();
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    launched('wrk-bad', 'muse', {});
+    writeFileSync(join(lab.base, 'workers', 'wrk-bad', 'launch.json'), 'not json');
+    reviewBy('muse', 'wrk-bad');
+    expect(build().reviewer).toEqual({ provider: 'muse', model: 'm-1', independent: true, why_not_independent: null, approved_by: null });
+  });
+});
 
 describe('the final report of a run with everything recorded', () => {
   it('collects criteria, checks, evidence, reviews, decisions, assumptions, practices, repairs and the revision', () => {

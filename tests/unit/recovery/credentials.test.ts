@@ -1,3 +1,4 @@
+import { reviewFix } from '../../../src/cli/review-fix.ts';
 import { describe, expect, it } from 'vitest';
 import { getRun, acquireLease } from '../../../src/controller/run-store.ts';
 import { planWorker } from '../../../src/storage/workers.ts';
@@ -69,6 +70,20 @@ describe('authBlocker', () => {
   it('falls back to a generic command for an unknown provider and honours an override', () => {
     expect(authBlocker({ provider: 'acme-ai', state: 'expired' }).command).toBe('acme-ai login');
     expect(authBlocker({ provider: 'acme-ai', state: 'expired', loginCommands: { 'acme-ai': 'acme auth' } }).command).toBe('acme auth');
+  });
+
+  it('gives a Muse alias the Muse fix, never a command that does not exist (issue #108)', () => {
+    const b = authBlocker({ provider: 'muse-review', state: 'expired', env: {} });
+    expect(b.command).toBe('muse login');
+    expect(b.message).toContain('Run `muse login` (or set META_API_KEY)');
+    expect(b.message).toContain('the muse-review credentials');
+    expect(authBlocker({ provider: 'muse_ci', state: 'invalid', env: { META_API_KEY: 'k' } }).command).toBe('unset META_API_KEY (or set it to a valid key)');
+    expect(reviewFix([{ provider: 'muse-review', reason: 'no credentials for "muse-review"' }])).toBe('for muse-review: muse login');
+  });
+
+  it('leaves a Codex alias exactly as it was (issue #108 forbids changing Codex)', () => {
+    expect(authBlocker({ provider: 'codex-review', state: 'expired', env: { CODEX_API_KEY: 'k' } }).message).toBe('Blocked: the codex-review credentials are expired. Run `codex-review login`, then resume the run with `orbit resume <run-id>`. Orbit does not retry authentication failures.');
+    expect(reviewFix([{ provider: 'codex-review', reason: 'no credentials for "codex-review"' }])).toBe('for codex-review: codex-review login');
   });
 
   it('never prints credential material from the provider detail', () => {

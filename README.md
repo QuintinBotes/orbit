@@ -143,8 +143,9 @@ off knowingly. Every other setting has a working default.
 
 ### Human policy decisions in auto mode
 
-A person, not an agent, must make any edit to `agents.allowed_plugins` or
-`providers.codex.data_policy_eligible` in `.orbit/config.yaml`.
+A person, not an agent, must make any edit to `agents.allowed_plugins`,
+`providers.codex.data_policy_eligible` or
+`providers.muse.data_policy_eligible` in `.orbit/config.yaml`.
 `agents.allowed_plugins` admits a plugin's hooks and tools into worker sessions;
 `providers.codex.data_policy_eligible` confirms that sending sanitized code to
 Codex is permitted. An auto-mode classifier may flag worker launches. Review

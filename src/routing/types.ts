@@ -8,7 +8,10 @@ import type { DifficultyClass } from '../scheduling/types.ts';
 import type { ReviewAvailabilitySettings } from '../policy/review.ts';
 
 /** Execution surfaces Orbit drives. API availability does not imply CLI availability. */
-export const SURFACES = ['claude-cli', 'codex-cli'] as const;
+export const SURFACES = ['claude-cli', 'codex-cli', 'muse-cli'] as const;
+
+/** The surface a provider family runs on. */
+export const FAMILY_SURFACE: Readonly<Record<'claude' | 'codex' | 'muse', Surface>> = { claude: 'claude-cli', codex: 'codex-cli', muse: 'muse-cli' };
 export type Surface = (typeof SURFACES)[number];
 
 /** Where each registry value came from (see data/models.json provenance_legend). */

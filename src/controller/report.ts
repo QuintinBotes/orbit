@@ -34,7 +34,7 @@ import { summarizeUsage } from '../routing/usage.ts';
 import { BudgetLedger, spendBreakdown } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import type { SpendBreakdown } from '../scheduling/types.ts';
-import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
+import { DELIVERY_MODES, isIndependentReviewer, outputBudgets, providerFamily } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
@@ -48,6 +48,7 @@ import { promoteToGlobal } from '../knowledge/global.ts';
 import { checkPublication, loadPublicationGuard } from '../guard/publication.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
 import { renderSystemPrompt } from '../adapters/prompt.ts';
+import { LAUNCH_FILE, type LaunchRecord } from '../adapters/supervise.ts';
 import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
 import { getRun, type RunRecord } from './run-store.ts';
 import { newRunNeeded } from './resume.ts';
@@ -160,6 +161,12 @@ export interface ReportReviewer {
   why_not_independent: string | null;
   /** review.when_unavailable: ask: the person who said yes. */
   approved_by: string | null;
+  /** The isolation tier a Muse reviewer ran in, as its adapter recorded at launch; absent for any other provider. */
+  tier?: string;
+  /** Why that tier was chosen. */
+  tier_reason?: string;
+  /** What that tier does not enforce. */
+  limitations?: string[];
 }
 
 export interface WriteReportOptions {
@@ -406,7 +413,7 @@ function strOrNull(v: unknown): string | null {
  * The reviewer selection behind the reviews: the one recorded for the current candidate, else the latest. Its
  * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
  */
-function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, reviews: readonly { provider: string; model: string | null }[]): ReportReviewer | null {
+function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, reviews: readonly { provider: string; model: string | null; workerId: string | null }[]): ReportReviewer | null {
   const last = reviews.at(-1);
   if (!last) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
@@ -415,19 +422,39 @@ function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, revi
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
   const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last) };
   }
   // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
   const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
-  const independent = last.provider !== implementer;
-  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy };
+  const independent = isIndependentReviewer(last.provider, implementer);
+  return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy, ...tierEvidence(db, runId, last) };
+}
+
+/** The tier the Muse adapter recorded in the reviewer's launch record. A report is written whatever that file holds. */
+function tierEvidence(db: OrbitDb, runId: string, review: { provider: string; workerId: string | null }): Pick<ReportReviewer, 'tier' | 'tier_reason' | 'limitations'> {
+  if (providerFamily(review.provider) !== 'muse') return {};
+  const worker = listWorkers(db, { runId }).find((w) => w.id === review.workerId);
+  if (!worker) return {};
+  let meta: { tier?: unknown; tierReason?: unknown; limitations?: unknown } | undefined;
+  try {
+    meta = readJsonIfExists<LaunchRecord>(join(worker.workerDir, LAUNCH_FILE))?.meta;
+  } catch {
+    return {};
+  }
+  if (typeof meta?.tier !== 'string') return {};
+  return {
+    tier: meta.tier,
+    ...(typeof meta.tierReason === 'string' ? { tier_reason: meta.tierReason } : {}),
+    ...(Array.isArray(meta.limitations) ? { limitations: meta.limitations.filter((l): l is string => typeof l === 'string') } : {}),
+  };
 }
 
 /** `codex/model (independent)`, or the same-provider disclosure. */
 export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
-  if (r.independent) return `Reviewer: ${who} (independent)`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})`;
+  const tier = r.tier === undefined ? '' : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ''}${r.limitations?.length ? `. Limitations: ${r.limitations.join(' ')}` : ''}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
