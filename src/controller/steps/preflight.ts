@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
 import { isOrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
+import { withStagingView } from '../../evidence/candidate.ts';
 import { BASELINE_FILE, installDependencies, planInstall, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
 import type { EnvironmentSignal } from '../../evidence/environment-failure.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
@@ -432,8 +433,9 @@ async function preinstallWorktree(ctx: RunContext, worktree: string, tree: strin
 }
 
 /** What `git status` reports in `dir`: tracked changes, and untracked paths git does not ignore. */
+/** The worktree as candidate staging sees it (evidence/candidate.ts), with every untracked file listed on its own. */
 async function worktreeStatus(dir: string): Promise<DirtySplit> {
-  return parseDirtyStatus(await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=normal', '--no-renames']));
+  return withStagingView(async (config) => parseDirtyStatus(await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { config })));
 }
 
 async function worktreeChanges(dir: string): Promise<string[]> {
@@ -451,11 +453,12 @@ async function undoUnignored(ctx: RunContext, worktree: string): Promise<void> {
   // Tracked files first: restoring a .gitignore the install edited exposes the output it hid.
   await git(worktree, ['reset', '--quiet', '--hard', 'HEAD'], literal);
   const { untracked } = await worktreeStatus(worktree);
-  // The worktree was clean before the install, so all of this is its output, ignored contents beneath it included (-x).
-  if (untracked.length > 0) await git(worktree, ['clean', '-ffdxq', '--', ...untracked], literal).catch(() => undefined);
+  // The worktree was clean before the install, so these files are its output. They are removed one by one, under the
+  // same excludes staging uses: an ignored file that was already there is never touched.
+  if (untracked.length > 0) await withStagingView((config) => git(worktree, ['clean', '-fq', '--', ...untracked], { ...literal, config })).catch(() => undefined);
   for (const path of (await worktreeStatus(worktree)).untracked) {
     try {
-      rmSync(join(worktree, path), { recursive: true, force: true });
+      rmSync(join(worktree, path), { force: true });
     } catch {
       // Recorded below as left.
     }

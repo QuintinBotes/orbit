@@ -36412,6 +36412,17 @@ async function pinCheckout(input) {
   await git2(input.repoRoot, ["update-ref", input.ref, commit]);
   return { ref: input.ref, commit, tree };
 }
+async function withStagingView(run) {
+  const scratch = mkdtempSync5(join23(tmpdir10(), "orbit-view-"));
+  try {
+    const excludes = join23(scratch, "exclude");
+    writeFileSync7(excludes, `${BUILTIN_EXCLUDES.join("\n")}
+`);
+    return await run({ "core.excludesFile": excludes });
+  } finally {
+    rmSync9(scratch, { recursive: true, force: true });
+  }
+}
 async function stageTree(o) {
   const scratch = mkdtempSync5(join23(tmpdir10(), "orbit-index-"));
   try {
@@ -60158,7 +60169,7 @@ async function preinstallWorktree(ctx, worktree, tree) {
   await undoUnignored(ctx, worktree);
 }
 async function worktreeStatus(dir) {
-  return parseDirtyStatus(await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--no-renames"]));
+  return withStagingView(async (config) => parseDirtyStatus(await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { config })));
 }
 async function worktreeChanges(dir) {
   const { changed: changed2, untracked } = await worktreeStatus(dir);
@@ -60170,10 +60181,10 @@ async function undoUnignored(ctx, worktree) {
   const literal2 = { env: { GIT_LITERAL_PATHSPECS: "1" } };
   await git2(worktree, ["reset", "--quiet", "--hard", "HEAD"], literal2);
   const { untracked } = await worktreeStatus(worktree);
-  if (untracked.length > 0) await git2(worktree, ["clean", "-ffdxq", "--", ...untracked], literal2).catch(() => void 0);
+  if (untracked.length > 0) await withStagingView((config) => git2(worktree, ["clean", "-fq", "--", ...untracked], { ...literal2, config })).catch(() => void 0);
   for (const path of (await worktreeStatus(worktree)).untracked) {
     try {
-      rmSync16(join58(worktree, path), { recursive: true, force: true });
+      rmSync16(join58(worktree, path), { force: true });
     } catch {
     }
   }
@@ -60253,6 +60264,7 @@ var init_preflight = __esm({
     init_fsx();
     init_errors();
     init_git();
+    init_candidate();
     init_baseline();
     init_baseline_exception();
     init_credentials();

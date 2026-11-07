@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Controller } from '../../../src/controller/loop.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
@@ -201,6 +201,44 @@ describe.skipIf(!canStripTypes)('controller: complete runs with fake providers',
     const [ev] = listEvidenceReports(l.db(), run.id);
     expect(git(l.repo, 'ls-tree', '-r', '--name-only', ev!.treeHash).split('\n')).not.toContain('deps.marker');
     expect(listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' }).map((d) => d.data)).toEqual([{ paths: ['.gitignore', 'deps.marker'] }]);
+  });
+
+  it('removes install output that a repository-local excludes file hides, since candidate staging does not read it', async () => {
+    const hide = "const fs=require('node:fs');fs.writeFileSync('deps.marker','installed')";
+    const l = lab({ tweak: (c) => void (c.dependencies.install_command = [process.execPath, '-e', hide]) });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const excludes = join(l.repo, '..', 'local-excludes');
+    writeFileSync(excludes, 'deps.marker\n');
+    git(l.repo, 'config', 'core.excludesFile', excludes);
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(existsSync(join(done.worktreePath!, 'deps.marker'))).toBe(false);
+    const [ev] = listEvidenceReports(l.db(), run.id);
+    expect(git(l.repo, 'ls-tree', '-r', '--name-only', ev!.treeHash).split('\n')).not.toContain('deps.marker');
+    expect(listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' }).map((d) => d.data)).toEqual([{ paths: ['deps.marker'] }]);
+  });
+
+  it('removes only the files the install created, never an ignored file already in the same directory', async () => {
+    const make = "const fs=require('node:fs');fs.mkdirSync('scratch',{recursive:true});fs.writeFileSync('scratch/new.txt','installed')";
+    const l = lab({ tweak: (c) => void (c.dependencies.install_command = [process.execPath, '-e', make]) });
+    const planner = { ...PLANNER_OUTPUT, unresolved_decisions: [{ question: 'Round or keep precision?', options: ['round', 'keep'], recommendation: null, material: true, affected_criteria: ['mul'] }] };
+    writeScenario(l, baseScenario({ planner: [{ structured: planner }] }));
+    const run = startLabRun(l);
+    const worktree = join(worktreeRootFor(l.orbitHome, run), 'implementer');
+    git(l.repo, 'worktree', 'add', '--detach', worktree, 'HEAD');
+    mkdirSync(join(worktree, 'scratch'), { recursive: true });
+    const info = join(git(worktree, 'rev-parse', '--git-common-dir').trim(), 'info');
+    mkdirSync(info, { recursive: true });
+    writeFileSync(join(info, 'exclude'), '*.local\n');
+    writeFileSync(join(worktree, 'scratch', 'notes.local'), 'mine\n');
+    await drive(l, run.id);
+
+    expect(readFileSync(join(worktree, 'scratch', 'notes.local'), 'utf8')).toBe('mine\n');
+    expect(existsSync(join(worktree, 'scratch', 'new.txt'))).toBe(false);
+    expect(listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' }).map((d) => d.data)).toEqual([{ paths: ['scratch/new.txt'] }]);
   });
 
   it('does not install in, or touch, an implementer worktree that is not clean before the install', async () => {
