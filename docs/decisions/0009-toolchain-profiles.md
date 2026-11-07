@@ -93,7 +93,9 @@ Maven and Gradle were not installed where this was measured.
    home, Maven's local repository, NuGet's HTTP and plugin caches) go to a
    private directory per check attempt (`<check dir>/toolchains/`, writable,
    removed with the attempt's home and temp directory) or per worker
-   (`<worker dir>/toolchains/`). They are never shared between attempts, so a
+   (`toolchains/` in a Claude worker's private temp directory, which Bash may
+   write in both worker tiers, #140; `<worker dir>/toolchains/` for a Codex or
+   Muse reviewer, whose `srt` profile writes only its worker directory). They are never shared between attempts, so a
    compiled object or a cached test result from one candidate cannot reach
    another's evidence. Virtual environments belong in the checkout (the
    install step creates them there; `POETRY_VIRTUALENVS_IN_PROJECT` and

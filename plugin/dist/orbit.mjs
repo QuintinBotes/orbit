@@ -527,9 +527,9 @@ var init_redact = __esm({
         hintRe: KEYWORD_HINT,
         re: new RegExp(String.raw`(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]{0,64}?${KEYWORDS})\1([ \t]*[:=][ \t]*)(${DQ}|${SQ})`, "gi"),
         replace: (m, g) => {
-          const [q, key2, sep17, value] = g;
+          const [q, key2, sep18, value] = g;
           if (isLiteralPlaceholder(value.slice(1, -1))) return m;
-          return `${q}${key2}${q}${sep17}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
+          return `${q}${key2}${q}${sep18}${value[0]}${tag(kindForKey(key2))}${value[0]}`;
         }
       },
       {
@@ -9829,10 +9829,10 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   let offset = bm.offset;
   let commentEnd = null;
   for (const collItem of bm.items) {
-    const { start, key: key2, sep: sep17, value } = collItem;
+    const { start, key: key2, sep: sep18, value } = collItem;
     const keyProps = resolveProps(start, {
       indicator: "explicit-key-ind",
-      next: key2 ?? sep17?.[0],
+      next: key2 ?? sep18?.[0],
       offset,
       onError,
       parentIndent: bm.indent,
@@ -9846,7 +9846,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         else if ("indent" in key2 && key2.indent !== bm.indent)
           onError(offset, "BAD_INDENT", startColMsg);
       }
-      if (!keyProps.anchor && !keyProps.tag && !sep17) {
+      if (!keyProps.anchor && !keyProps.tag && !sep18) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
           if (map2.comment)
@@ -9870,7 +9870,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
     ctx.atKey = false;
     if (mapIncludes(ctx, map2.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    const valueProps = resolveProps(sep17 ?? [], {
+    const valueProps = resolveProps(sep18 ?? [], {
       indicator: "map-value-ind",
       next: value,
       offset: keyNode.range[2],
@@ -9886,7 +9886,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
         if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
           onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep17, null, valueProps, onError);
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep18, null, valueProps, onError);
       if (ctx.schema.compat)
         flowIndentCheck(bm.indent, value, onError);
       offset = valueNode.range[2];
@@ -9981,7 +9981,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
     let hasSpace = false;
-    let sep17 = "";
+    let sep18 = "";
     for (const token of end) {
       const { source, type } = token;
       switch (type) {
@@ -9995,13 +9995,13 @@ function resolveEnd(end, offset, reqSpace, onError) {
           if (!comment)
             comment = cb;
           else
-            comment += sep17 + cb;
-          sep17 = "";
+            comment += sep18 + cb;
+          sep18 = "";
           break;
         }
         case "newline":
           if (comment)
-            sep17 += source;
+            sep18 += source;
           hasSpace = true;
           break;
         default:
@@ -10032,18 +10032,18 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   let offset = fc.offset + fc.start.source.length;
   for (let i = 0; i < fc.items.length; ++i) {
     const collItem = fc.items[i];
-    const { start, key: key2, sep: sep17, value } = collItem;
+    const { start, key: key2, sep: sep18, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
       indicator: "explicit-key-ind",
-      next: key2 ?? sep17?.[0],
+      next: key2 ?? sep18?.[0],
       offset,
       onError,
       parentIndent: fc.indent,
       startOnNewline: false
     });
     if (!props.found) {
-      if (!props.anchor && !props.tag && !sep17 && !value) {
+      if (!props.anchor && !props.tag && !sep18 && !value) {
         if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
         else if (i < fc.items.length - 1)
@@ -10097,8 +10097,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         }
       }
     }
-    if (!isMap2 && !sep17 && !props.found) {
-      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep17, null, props, onError);
+    if (!isMap2 && !sep18 && !props.found) {
+      const valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep18, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
       if (isBlock(value))
@@ -10110,7 +10110,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       if (isBlock(key2))
         onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
       ctx.atKey = false;
-      const valueProps = resolveProps(sep17 ?? [], {
+      const valueProps = resolveProps(sep18 ?? [], {
         flow: fcName,
         indicator: "map-value-ind",
         next: value,
@@ -10121,8 +10121,8 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
       });
       if (valueProps.found) {
         if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep17)
-            for (const st of sep17) {
+          if (sep18)
+            for (const st of sep18) {
               if (st === valueProps.found)
                 break;
               if (st.type === "newline") {
@@ -10139,7 +10139,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
         else
           onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
       }
-      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep17, null, valueProps, onError) : null;
+      const valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep18, null, valueProps, onError) : null;
       if (valueNode) {
         if (isBlock(value))
           onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -10325,7 +10325,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       chompStart = i + 1;
   }
   let value = "";
-  let sep17 = "";
+  let sep18 = "";
   let prevMoreIndented = false;
   for (let i = 0; i < contentStart; ++i)
     value += lines[i][0].slice(trimIndent) + "\n";
@@ -10342,24 +10342,24 @@ function resolveBlockScalar(ctx, scalar, onError) {
       indent = "";
     }
     if (type === Scalar.BLOCK_LITERAL) {
-      value += sep17 + indent.slice(trimIndent) + content;
-      sep17 = "\n";
+      value += sep18 + indent.slice(trimIndent) + content;
+      sep18 = "\n";
     } else if (indent.length > trimIndent || content[0] === "	") {
-      if (sep17 === " ")
-        sep17 = "\n";
-      else if (!prevMoreIndented && sep17 === "\n")
-        sep17 = "\n\n";
-      value += sep17 + indent.slice(trimIndent) + content;
-      sep17 = "\n";
+      if (sep18 === " ")
+        sep18 = "\n";
+      else if (!prevMoreIndented && sep18 === "\n")
+        sep18 = "\n\n";
+      value += sep18 + indent.slice(trimIndent) + content;
+      sep18 = "\n";
       prevMoreIndented = true;
     } else if (content === "") {
-      if (sep17 === "\n")
+      if (sep18 === "\n")
         value += "\n";
       else
-        sep17 = "\n";
+        sep18 = "\n";
     } else {
-      value += sep17 + content;
-      sep17 = " ";
+      value += sep18 + content;
+      sep18 = " ";
       prevMoreIndented = false;
     }
   }
@@ -10539,25 +10539,25 @@ function unfoldLines(source) {
     trimBoth = /^[ \t]+|[ \t]+$/g;
   }
   let res = match[1].replace(trimEnd, "");
-  let sep17 = " ";
+  let sep18 = " ";
   let pos = line3.lastIndex;
   while (match = line3.exec(source)) {
     const lm = match[1].replace(trimBoth, "");
     if (lm === "") {
-      if (sep17 === "\n")
-        res += sep17;
+      if (sep18 === "\n")
+        res += sep18;
       else
-        sep17 = "\n";
+        sep18 = "\n";
     } else {
-      res += sep17 + lm;
-      sep17 = " ";
+      res += sep18 + lm;
+      sep18 = " ";
     }
     pos = line3.lastIndex;
   }
   const last = /[ \t]*(.*)/sy;
   last.lastIndex = pos;
   match = last.exec(source);
-  return res + sep17 + (match?.[1] ?? "");
+  return res + sep18 + (match?.[1] ?? "");
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
@@ -12268,18 +12268,18 @@ var init_parser = __esm({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep17;
+          let sep18;
           if (scalar.end) {
-            sep17 = scalar.end;
-            sep17.push(this.sourceToken);
+            sep18 = scalar.end;
+            sep18.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep17 = [this.sourceToken];
+            sep18 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep17 }]
+            items: [{ start, key: scalar, sep: sep18 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -12432,15 +12432,15 @@ var init_parser = __esm({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key2 = it.key;
-                  const sep17 = it.sep;
-                  sep17.push(this.sourceToken);
+                  const sep18 = it.sep;
+                  sep18.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key: key2, sep: sep17 }]
+                    items: [{ start: start2, key: key2, sep: sep18 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -12634,13 +12634,13 @@ var init_parser = __esm({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep17 = fc.end.splice(1, fc.end.length);
-            sep17.push(this.sourceToken);
+            const sep18 = fc.end.splice(1, fc.end.length);
+            sep18.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep17 }]
+              items: [{ start, key: fc, sep: sep18 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -16676,49 +16676,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize3(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative12, options, skipNormalization) {
+    function resolveComponent(base, relative13, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse6(serialize3(base, options), options);
-        relative12 = parse6(serialize3(relative12, options), options);
+        relative13 = parse6(serialize3(relative13, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative12.scheme) {
-        target.scheme = relative12.scheme;
-        target.userinfo = relative12.userinfo;
-        target.host = relative12.host;
-        target.port = relative12.port;
-        target.path = removeDotSegments(relative12.path || "");
-        target.query = relative12.query;
+      if (!options.tolerant && relative13.scheme) {
+        target.scheme = relative13.scheme;
+        target.userinfo = relative13.userinfo;
+        target.host = relative13.host;
+        target.port = relative13.port;
+        target.path = removeDotSegments(relative13.path || "");
+        target.query = relative13.query;
       } else {
-        if (relative12.userinfo !== void 0 || relative12.host !== void 0 || relative12.port !== void 0) {
-          target.userinfo = relative12.userinfo;
-          target.host = relative12.host;
-          target.port = relative12.port;
-          target.path = removeDotSegments(relative12.path || "");
-          target.query = relative12.query;
+        if (relative13.userinfo !== void 0 || relative13.host !== void 0 || relative13.port !== void 0) {
+          target.userinfo = relative13.userinfo;
+          target.host = relative13.host;
+          target.port = relative13.port;
+          target.path = removeDotSegments(relative13.path || "");
+          target.query = relative13.query;
         } else {
-          if (!relative12.path) {
+          if (!relative13.path) {
             target.path = base.path;
-            if (relative12.query !== void 0) {
-              target.query = relative12.query;
+            if (relative13.query !== void 0) {
+              target.query = relative13.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative12.path[0] === "/") {
-              target.path = removeDotSegments(relative12.path);
+            if (relative13.path[0] === "/") {
+              target.path = removeDotSegments(relative13.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative12.path;
+                target.path = "/" + relative13.path;
               } else if (!base.path) {
-                target.path = relative12.path;
+                target.path = relative13.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative12.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative13.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative12.query;
+            target.query = relative13.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -16726,7 +16726,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative12.fragment;
+      target.fragment = relative13.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -25094,7 +25094,7 @@ var init_strict_schema = __esm({
 
 // src/isolation/toolchains.ts
 import { chmodSync as chmodSync2, existsSync as existsSync5, lstatSync as lstatSync3, mkdirSync as mkdirSync5, readdirSync as readdirSync3, rmSync } from "node:fs";
-import { basename as basename3, isAbsolute as isAbsolute5, join as join7 } from "node:path";
+import { basename as basename3, isAbsolute as isAbsolute5, join as join7, relative as relative2, sep as sep3 } from "node:path";
 import { pathToFileURL } from "node:url";
 function nugetAuditRuns(d) {
   return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
@@ -25205,11 +25205,28 @@ function commandToolchains(input) {
     ...container ? { hostEnv: {} } : { hostEnv: input.hostEnv ?? process.env, ...input.hostHome ? { hostHome: input.hostHome } : {} }
   });
 }
-function prepareToolchainLayout(layout) {
+function prepareToolchainLayout(layout, reused) {
+  if (reused !== void 0 && layout.directories.some((d) => notDirectoryOnPath(reused, d))) removeScratch(reused);
   for (const d of layout.directories) {
     mkdirSync5(d, { recursive: true, mode: 448 });
     chmodSync2(d, 448);
   }
+}
+function notDirectoryOnPath(root, dir) {
+  const rel = relative2(root, dir);
+  if (rel.startsWith("..") || isAbsolute5(rel)) return false;
+  let p = root;
+  for (const part of ["", ...rel.split(sep3).filter(Boolean)]) {
+    p = join7(p, part);
+    let st;
+    try {
+      st = lstatSync3(p);
+    } catch {
+      return false;
+    }
+    if (!st.isDirectory()) return true;
+  }
+  return false;
 }
 function removeScratch(dir) {
   const remove = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -25402,14 +25419,14 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
 // src/isolation/util.ts
 import { spawn as spawn2 } from "node:child_process";
 import { accessSync, constants as constants2, existsSync as existsSync6, lstatSync as lstatSync4, readdirSync as readdirSync4, readFileSync as readFileSync5, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
-import { basename as basename4, delimiter, dirname as dirname6, isAbsolute as isAbsolute6, join as join8, resolve as resolve3, sep as sep3 } from "node:path";
+import { basename as basename4, delimiter, dirname as dirname6, isAbsolute as isAbsolute6, join as join8, resolve as resolve3, sep as sep4 } from "node:path";
 function readablePathsOf(profile) {
   const extra = profile.readablePaths;
   return Array.isArray(extra) ? extra : [];
 }
 function isWithin(child, parent) {
   if (child === parent) return true;
-  const prefix = parent.endsWith(sep3) ? parent : parent + sep3;
+  const prefix = parent.endsWith(sep4) ? parent : parent + sep4;
   return child.startsWith(prefix);
 }
 function canonicalPath(p) {
@@ -27757,10 +27774,10 @@ function shimArgs(opts) {
   return [...out, "--", ...opts.argv];
 }
 function parseShimArgs(args) {
-  const sep17 = args.indexOf("--");
-  if (sep17 === -1 || sep17 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep17);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep17 + 1) };
+  const sep18 = args.indexOf("--");
+  if (sep18 === -1 || sep18 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep18);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep18 + 1) };
   for (let i = 0; i < opts.length; i += 2) {
     const flag = opts[i];
     const value = opts[i + 1];
@@ -36335,7 +36352,7 @@ var init_git = __esm({
 // src/evidence/candidate.ts
 import { chmodSync as chmodSync7, existsSync as existsSync20, lstatSync as lstatSync7, mkdirSync as mkdirSync11, mkdtempSync as mkdtempSync5, readdirSync as readdirSync7, realpathSync as realpathSync9, rmSync as rmSync8, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir10 } from "node:os";
-import { dirname as dirname16, join as join23, parse as parse4, sep as sep4 } from "node:path";
+import { dirname as dirname16, join as join23, parse as parse4, sep as sep5 } from "node:path";
 function candidateRef(runId, seq2) {
   return `refs/orbit/${runId}/candidates/${seq2}`;
 }
@@ -36456,7 +36473,7 @@ function assertDisposableCheckout(repoRoot, dir) {
   const refuse = (why) => {
     throw new OrbitError("GIT_FAILED", `refusing to remove ${dir}: ${why}`, { dir, repoRoot });
   };
-  if (target === root || root.startsWith(target.endsWith(sep4) ? target : target + sep4)) refuse("it is or contains the repository");
+  if (target === root || root.startsWith(target.endsWith(sep5) ? target : target + sep5)) refuse("it is or contains the repository");
   if (target === parse4(target).root) refuse("it is a filesystem root");
   let dotGit;
   try {
@@ -37531,11 +37548,11 @@ function classifyDeniedFolderProgram(input, folders) {
   if (showsCodeFailure(text2)) return null;
   const notFoundExit = exit === 127 || MAKE_RELAYED_127.test(text2);
   const located = (named2) => {
-    const relative12 = !isAbsolute15(named2) && named2.includes("/");
-    const at = isAbsolute15(named2) ? named2 : relative12 ? folders.relative?.(named2) ?? null : folders.onPath(named2);
+    const relative13 = !isAbsolute15(named2) && named2.includes("/");
+    const at = isAbsolute15(named2) ? named2 : relative13 ? folders.relative?.(named2) ?? null : folders.onPath(named2);
     const where2 = at === null ? null : folders.holding(at);
     if (where2 === null) return null;
-    return relative12 ? `links to "${at}" in ${where2}` : `lies in ${where2}`;
+    return relative13 ? `links to "${at}" in ${where2}` : `lies in ${where2}`;
   };
   const failure = (signal, cause, line3, program) => ({
     checkId: input.checkId,
@@ -38616,7 +38633,7 @@ var init_resolve = __esm({
 
 // src/evidence/active-checks.ts
 import { realpathSync as realpathSync10 } from "node:fs";
-import { resolve as resolve8, sep as sep5 } from "node:path";
+import { resolve as resolve8, sep as sep6 } from "node:path";
 function activeChecksIn(db, runId, dir) {
   const open2 = db.all(
     "SELECT id, check_id, status, cwd, 'check run' AS what, started_at FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') UNION ALL SELECT id, check_id, status, cwd, 'fail-before probe attempt' AS what, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING') ORDER BY started_at, id",
@@ -38638,7 +38655,7 @@ function realOrResolved(p) {
 function withinPath(path, dir) {
   const p = realOrResolved(path);
   const d = realOrResolved(dir);
-  return p === d || p.startsWith(d.endsWith(sep5) ? d : d + sep5);
+  return p === d || p.startsWith(d.endsWith(sep6) ? d : d + sep6);
 }
 var init_active_checks = __esm({
   "src/evidence/active-checks.ts"() {
@@ -38987,7 +39004,7 @@ var init_msbuild = __esm({
 
 // src/evidence/dotnet-format.ts
 import { lstatSync as lstatSync9, readFileSync as readFileSync18 } from "node:fs";
-import { basename as basename15, dirname as dirname17, join as join26, posix as posix5, relative as relative2, isAbsolute as isAbsolute16 } from "node:path";
+import { basename as basename15, dirname as dirname17, join as join26, posix as posix5, relative as relative3, isAbsolute as isAbsolute16 } from "node:path";
 function formatOutsideFix(check, where2 = null) {
   if (where2) return `remove dotnet format from ${where2.command} and run it in CI`;
   return `remove checks.${check.id} from .orbit/config.yaml and run dotnet format in CI`;
@@ -39073,7 +39090,7 @@ function formatRestoresUnpinned(check) {
   return null;
 }
 function sdkFormatsInProcess(dir, root) {
-  const rel = relative2(root, dir);
+  const rel = relative3(root, dir);
   if (rel.startsWith("..") || isAbsolute16(rel)) return false;
   for (let at = dir; ; at = dirname17(at)) {
     const text2 = readGlobalJson(join26(at, "global.json"));
@@ -39213,7 +39230,7 @@ var init_dotnet_format = __esm({
 import { createHash as createHash3, randomBytes as randomBytes6 } from "node:crypto";
 import { closeSync as closeSync7, existsSync as existsSync23, lstatSync as lstatSync10, mkdirSync as mkdirSync12, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync8, realpathSync as realpathSync11, rmSync as rmSync9, statSync as statSync10 } from "node:fs";
 import { homedir as homedir9, platform } from "node:os";
-import { join as join27, resolve as resolve9, sep as sep6 } from "node:path";
+import { join as join27, resolve as resolve9, sep as sep7 } from "node:path";
 function recordsOf(ctx) {
   return ctx.records ?? CHECK_RUN_RECORDS;
 }
@@ -39446,7 +39463,7 @@ function settleGroup(ctx, subject, def, binding, group) {
 function safeCwd(checkout, rel) {
   const root = realpathSync11(checkout);
   const abs = resolve9(root, rel);
-  if (abs !== root && !abs.startsWith(root + sep6)) {
+  if (abs !== root && !abs.startsWith(root + sep7)) {
     throw new OrbitError("CONFIG_INVALID", `check cwd ${JSON.stringify(rel)} leaves the checkout`, { cwd: rel });
   }
   let real;
@@ -39455,7 +39472,7 @@ function safeCwd(checkout, rel) {
   } catch (err) {
     throw new OrbitError("NOT_FOUND", `check cwd ${rel} does not exist in the checkout`, { cwd: rel }, { cause: err });
   }
-  if (real !== root && !real.startsWith(root + sep6)) throw new OrbitError("SCOPE_VIOLATION", `check cwd ${rel} resolves outside the checkout`, { cwd: rel, real });
+  if (real !== root && !real.startsWith(root + sep7)) throw new OrbitError("SCOPE_VIOLATION", `check cwd ${rel} resolves outside the checkout`, { cwd: rel, real });
   return real;
 }
 function prepareCheckHome(homeDir) {
@@ -40448,7 +40465,7 @@ var init_baseline = __esm({
 // src/evidence/fail-before.ts
 import { existsSync as existsSync25, mkdtempSync as mkdtempSync6, readdirSync as readdirSync9, readFileSync as readFileSync20, realpathSync as realpathSync12, rmSync as rmSync10 } from "node:fs";
 import { tmpdir as tmpdir11 } from "node:os";
-import { dirname as dirname18, isAbsolute as isAbsolute17, join as join29, relative as relative3, sep as sep7 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute17, join as join29, relative as relative4, sep as sep8 } from "node:path";
 function acceptableCause(cause) {
   return !NEVER_ACCEPTED.has(cause);
 }
@@ -40756,8 +40773,8 @@ function notEstablished(checkIds, cause, reason) {
 }
 function runRelative(runDir2, p) {
   if (p === null) return null;
-  const r = relative3(runDir2, p);
-  return r === "" || r.startsWith("..") || isAbsolute17(r) ? p : r.split(sep7).join("/");
+  const r = relative4(runDir2, p);
+  return r === "" || r.startsWith("..") || isAbsolute17(r) ? p : r.split(sep8).join("/");
 }
 function probeAttemptFromRow(db, runDir2, checkout, checkoutDir, row, def) {
   const base = { attempt: attemptNumber(db, row.id), status: row.status, exitCode: row.exitCode, log: runRelative(runDir2, row.logPath) };
@@ -42582,7 +42599,7 @@ var init_budget = __esm({
 // src/scheduling/scheduler.ts
 import { availableParallelism, freemem } from "node:os";
 import { realpathSync as realpathSync13 } from "node:fs";
-import { resolve as resolve10, sep as sep8 } from "node:path";
+import { resolve as resolve10, sep as sep9 } from "node:path";
 function budgetAdmission(ledger, phase = "work") {
   return (unit, { committed }) => {
     const role = unit.role === "check" ? null : unit.role;
@@ -42614,7 +42631,7 @@ function admission(unit, admit, active) {
   return r.admitted ? null : `not admitted by budget: ${(r.reasons ?? []).join("; ") || "no reason given"}`;
 }
 function within2(child, parent) {
-  return child.startsWith(parent.endsWith(sep8) ? parent : `${parent}${sep8}`);
+  return child.startsWith(parent.endsWith(sep9) ? parent : `${parent}${sep9}`);
 }
 function status(u) {
   return u.status ?? "pending";
@@ -43115,7 +43132,7 @@ var init_text2 = __esm({
 
 // src/controller/worktree-cleanup.ts
 import { existsSync as existsSync27, readdirSync as readdirSync10, realpathSync as realpathSync15, rmSync as rmSync11 } from "node:fs";
-import { join as join32, resolve as resolve11, sep as sep9 } from "node:path";
+import { join as join32, resolve as resolve11, sep as sep10 } from "node:path";
 async function hasUnsavedWork(worktree, repoRoot, baseRevision) {
   const admin = await adminDirFor(repoRoot, worktree);
   const opts = { env: { GIT_DIR: admin.gitDir, GIT_WORK_TREE: admin.worktree, GIT_LITERAL_PATHSPECS: "1" } };
@@ -43241,7 +43258,7 @@ function samePath(a, b) {
 function within3(path, dir) {
   const p = realOrResolved2(path);
   const d = realOrResolved2(dir);
-  return p === d || p.startsWith(d.endsWith(sep9) ? d : d + sep9);
+  return p === d || p.startsWith(d.endsWith(sep10) ? d : d + sep10);
 }
 function messageOf2(err) {
   return (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
@@ -47310,17 +47327,18 @@ function taskSpec(ctx, w, req) {
   const timeoutMs = workerTimeoutMs(ctx, w.role);
   const outputCap = raisedOutputCap(ctx, req.purpose);
   const policy = { path: ctx.run.policyPath, hash: ctx.run.policyHash, snapshot: ctx.snapshot };
+  const scratchRoot = provider === "claude" ? join38(prepareWorkerTmpDir(w.workerDir), "toolchains") : join38(w.workerDir, "toolchains");
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: "worker",
     cacheRoot: toolchainCacheRootFor(ctx),
-    scratchRoot: join38(w.workerDir, "toolchains"),
+    scratchRoot,
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home2,
     hostEnv: env,
     networkHosts: provider === "claude" ? workerAllowedHosts(provider, policy.snapshot) : PROVIDER_HOSTS[provider]
   });
-  prepareToolchainLayout(toolchains);
+  prepareToolchainLayout(toolchains, scratchRoot);
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -48576,7 +48594,7 @@ var init_review_depth = __esm({
 });
 
 // src/knowledge/extract.ts
-import { isAbsolute as isAbsolute18, relative as relative4, sep as sep10 } from "node:path";
+import { isAbsolute as isAbsolute18, relative as relative5, sep as sep11 } from "node:path";
 function member(vocabulary, value) {
   if (!vocabulary.includes(value)) throw new Error(`"${value}" is not in the vocabulary [${vocabulary.join(", ")}]`);
   return value;
@@ -48598,8 +48616,8 @@ function logRef(runId, runDir2, check) {
   const sha = asSha256(check.log_sha256);
   if (check.log_path) {
     if (!isAbsolute18(check.log_path)) return { run_id: runId, artifact: check.log_path, sha256: sha, relation: "supports" };
-    const rel = relative4(runDir2, check.log_path);
-    if (rel && !rel.startsWith("..") && !isAbsolute18(rel)) return { run_id: runId, artifact: rel.split(sep10).join("/"), sha256: sha, relation: "supports" };
+    const rel = relative5(runDir2, check.log_path);
+    if (rel && !rel.startsWith("..") && !isAbsolute18(rel)) return { run_id: runId, artifact: rel.split(sep11).join("/"), sha256: sha, relation: "supports" };
   }
   return { run_id: runId, artifact: `check_run:${check.id}`, sha256: sha, relation: "supports" };
 }
@@ -51723,7 +51741,7 @@ var init_fail_before_statements = __esm({
 });
 
 // src/evidence/report.ts
-import { basename as basename16, isAbsolute as isAbsolute20, join as join42, relative as relative5, sep as sep11 } from "node:path";
+import { basename as basename16, isAbsolute as isAbsolute20, join as join42, relative as relative6, sep as sep12 } from "node:path";
 function contractAssumptionsHash(assumptions) {
   return hashObject(assumptions.map((a) => ({ id: a.id, statement: a.statement })));
 }
@@ -51780,8 +51798,8 @@ function evaluateEvidence(input) {
   const runDir2 = input.runDir;
   const artifactPath = (p, fallback) => {
     if (runDir2 === void 0) return fallback;
-    const r = relative5(runDir2, p);
-    return r === "" || r.startsWith("..") || isAbsolute20(r) ? p : r.split(sep11).join("/");
+    const r = relative6(runDir2, p);
+    return r === "" || r.startsWith("..") || isAbsolute20(r) ? p : r.split(sep12).join("/");
   };
   const logName = (p) => artifactPath(p, basename16(p));
   const evidenceFor = (checkId) => {
@@ -52566,7 +52584,7 @@ var init_heuristics = __esm({
 
 // src/inquisition/baseline-exception.ts
 import { readFileSync as readFileSync25 } from "node:fs";
-import { dirname as dirname23, join as join43, normalize as normalize2, sep as sep12 } from "node:path";
+import { dirname as dirname23, join as join43, normalize as normalize2, sep as sep13 } from "node:path";
 function keyOf(runId, checkId, fingerprint) {
   return hashObject({ run: runId, check: checkId, fingerprint }).slice(7, 19);
 }
@@ -52654,7 +52672,7 @@ function notExceptable(baseline, checkId, snapshot2, recordedCwd = null) {
     if (classifyProgramNotFound(input) !== null || classifyNotExecuted({ checkId, output: input.output }) !== null) return true;
     const cwd = recordedCwd !== null ? normalize2(recordedCwd) : null;
     const rel = def && def.kind === "command" ? normalize2(def.cwd ?? ".") : ".";
-    const checkout = cwd !== null && rel !== "." && cwd.endsWith(`${sep12}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
+    const checkout = cwd !== null && rel !== "." && cwd.endsWith(`${sep13}${rel}`) ? cwd.slice(0, -(rel.length + 1)) : cwd;
     const roots = [...checkout !== null ? [checkout] : [], ...cwd !== null ? [cwd] : [], dirname23(entry.log)];
     const found2 = classifyCouldNotRun({ checkId, output: input.output, insideRoots: roots });
     return found2 !== null && (cwd !== null || !found2.signals.some((sg) => ON_A_PATH.has(sg)));
@@ -55825,7 +55843,7 @@ var init_report3 = __esm({
 // src/ui/runner.ts
 import { closeSync as closeSync9, copyFileSync, existsSync as existsSync36, mkdirSync as mkdirSync18, openSync as openSync9, readFileSync as readFileSync28, realpathSync as realpathSync16, rmSync as rmSync13, statSync as statSync13, writeFileSync as writeFileSync7 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
-import { basename as basename17, dirname as dirname24, isAbsolute as isAbsolute21, join as join49, relative as relative6, resolve as resolve14, sep as sep13 } from "node:path";
+import { basename as basename17, dirname as dirname24, isAbsolute as isAbsolute21, join as join49, relative as relative7, resolve as resolve14, sep as sep14 } from "node:path";
 async function runUiChecks(input) {
   const clock = input.clock ?? systemClock;
   const { snapshot: snapshot2, uiConfig, candidate } = input;
@@ -56066,7 +56084,7 @@ async function runOneCheck(ctx) {
   const reportPath2 = join49(checkDir2, "playwright-report.json");
   const logPath = join49(checkDir2, "run.log");
   const cwd = resolve14(checkoutDir, check.cwd);
-  if (relative6(checkoutDir, cwd).startsWith("..") || isAbsolute21(relative6(checkoutDir, cwd))) {
+  if (relative7(checkoutDir, cwd).startsWith("..") || isAbsolute21(relative7(checkoutDir, cwd))) {
     throw new OrbitError("POLICY_DENIED", `check ${check.id} cwd leaves the checkout`, { rule: "checks.cwd", check: check.id });
   }
   const flags = enforcedFlags(check, outputDir, input.projects);
@@ -56404,7 +56422,7 @@ function safeReal(path) {
 }
 function isInside(child, parent) {
   if (parent === null) return false;
-  return child === parent || child.startsWith(parent.endsWith(sep13) ? parent : parent + sep13);
+  return child === parent || child.startsWith(parent.endsWith(sep14) ? parent : parent + sep14);
 }
 function tally(journeys) {
   const s = { passed: 0, failed: 0, flaky: 0, skipped: 0, other: 0 };
@@ -56488,7 +56506,7 @@ function changedA11yBaselines(journeys, checkoutDir, changed2) {
       if (!scan.baselinePath) continue;
       const real = safeReal(scan.baselinePath) ?? resolve14(scan.baselinePath);
       if (!isInside(real, root) || root === null) continue;
-      const rel = relative6(root, real).split(sep13).join("/");
+      const rel = relative7(root, real).split(sep14).join("/");
       if (changed2.has(rel)) out.add(rel);
     }
   }
@@ -56930,7 +56948,7 @@ var init_gates = __esm({
 
 // src/controller/security.ts
 import { accessSync as accessSync3, constants as constants5, existsSync as existsSync37, mkdirSync as mkdirSync19, readFileSync as readFileSync29, rmSync as rmSync14, statSync as statSync14 } from "node:fs";
-import { delimiter as delimiter3, dirname as dirname25, join as join50, normalize as normalize3, sep as sep14 } from "node:path";
+import { delimiter as delimiter3, dirname as dirname25, join as join50, normalize as normalize3, sep as sep15 } from "node:path";
 import { tmpdir as tmpdir12 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
@@ -57111,7 +57129,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
   let copied = 0;
   for (const rel of files) {
     const target = normalize3(join50(tree, rel));
-    if (!target.startsWith(tree + sep14)) continue;
+    if (!target.startsWith(tree + sep15)) continue;
     const content = await git2(input.repoRoot, ["cat-file", "blob", `${input.commit}:${rel}`]);
     mkdirSync19(dirname25(target), { recursive: true });
     atomicWrite(target, content, 384);
@@ -57132,7 +57150,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo3(root, p) {
-  return p.startsWith(root + sep14) ? p.slice(root.length + 1) : p;
+  return p.startsWith(root + sep15) ? p.slice(root.length + 1) : p;
 }
 async function partitionBySize(input, changed2) {
   const max = input.maxScanBytes ?? MAX_SCAN_BYTES;
@@ -57884,13 +57902,13 @@ var init_exploration = __esm({
 
 // src/controller/fail-before-ui.ts
 import { existsSync as existsSync39, readFileSync as readFileSync31 } from "node:fs";
-import { isAbsolute as isAbsolute22, join as join53, relative as relative7, sep as sep15 } from "node:path";
+import { isAbsolute as isAbsolute22, join as join53, relative as relative8, sep as sep16 } from "node:path";
 function notEstablished2(checkIds, cause, reason) {
   return checkIds.map((id) => ({ checkId: id, outcome: "not-established", cause, reason: reason(id), attempts: [] }));
 }
 function runRelative2(runDir2, p) {
-  const r = relative7(runDir2, p);
-  return r === "" || r.startsWith("..") || isAbsolute22(r) ? p : r.split(sep15).join("/");
+  const r = relative8(runDir2, p);
+  return r === "" || r.startsWith("..") || isAbsolute22(r) ? p : r.split(sep16).join("/");
 }
 function judgeControl(data) {
   if (data.passed) return { passed: true, cause: "base-failed", reason: "the journeys pass on the base revision" };
@@ -58553,7 +58571,7 @@ var init_verification = __esm({
 // src/controller/environment-block.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { readFileSync as readFileSync32, realpathSync as realpathSync19 } from "node:fs";
-import { basename as basename18, delimiter as delimiter4, dirname as dirname27, isAbsolute as isAbsolute23, join as join56, relative as relative8, resolve as resolve16 } from "node:path";
+import { basename as basename18, delimiter as delimiter4, dirname as dirname27, isAbsolute as isAbsolute23, join as join56, relative as relative9, resolve as resolve16 } from "node:path";
 function programDenial(program, repoRoot, homeDir, own = () => false) {
   if (!isAbsolute23(program)) return null;
   const { repository, parent } = repositoryDenials(repoRoot, homeDir);
@@ -58894,7 +58912,7 @@ function relativeTarget(repoRoot, baseRevision, cwd, path, denied) {
   const realRoot = canonicalPath(root);
   let at = realRoot;
   let tree = [];
-  let rest = relative8(root, spelled).split("/");
+  let rest = relative9(root, spelled).split("/");
   let inCheckout2 = true;
   for (let links = 0; rest.length > 0; ) {
     const name = rest.shift();
@@ -59091,7 +59109,7 @@ function isInside2(path, dir) {
   } catch {
   }
   return roots.some((root) => {
-    const rel = relative8(root, path);
+    const rel = relative9(root, path);
     return rel !== "" && !rel.startsWith("..") && !isAbsolute23(rel);
   });
 }
@@ -63566,7 +63584,7 @@ function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
   if (stored && cand) {
     for (const row of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
       if (row.status === "PASSED" || !row.logPath || !row.logSha256) continue;
-      refs.push({ id: row.checkId, path: relative9(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
+      refs.push({ id: row.checkId, path: relative10(ctx.runDir, row.logPath), sha256: row.logSha256, summary: `${row.checkId} ${row.status} on candidate ${cand.seq}`, ...row.excerpt ? { excerpt: row.excerpt } : {} });
     }
   }
   for (const e of auth?.executed ?? []) {
@@ -63622,7 +63640,7 @@ function approvedOutcome(e) {
   if (e.state === "UNKNOWN") return `The controller started it on your behalf, but its outcome is unknown (${e.note ?? "no detail"}); it is not run again.`;
   return `Nothing was run for it: ${e.note ?? "there was no exact command to run"}.`;
 }
-function relative9(root, p) {
+function relative10(root, p) {
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
 }
 var ATTEMPT_EVENT, WORKER_ENDED_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
@@ -66264,7 +66282,7 @@ var init_steps = __esm({
 // src/storage/retention.ts
 import { existsSync as existsSync49, lstatSync as lstatSync11, realpathSync as realpathSync20, rmSync as rmSync18 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
-import { dirname as dirname29, join as join71, resolve as resolve18 } from "node:path";
+import { dirname as dirname29, isAbsolute as isAbsolute25, join as join71, resolve as resolve18 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -66316,7 +66334,8 @@ async function pruneExpiredRuns(db, opts) {
       continue;
     }
     const worktree = join71(worktreesRoot, row.id);
-    const targets = [runDir2, worktree].filter((p) => isRealDirectory(p));
+    const workerTmps = db.all("SELECT worker_dir FROM workers WHERE run_id = ?", row.id).filter((w) => isAbsolute25(w.worker_dir)).map((w) => workerTmpDir(w.worker_dir));
+    const targets = [runDir2, worktree, ...workerTmps].filter((p) => isRealDirectory(p));
     if (!opts.dryRun && targets.includes(worktree)) {
       const kept = await releaseBeforePrune(db, row.id, worktree, home2, opts.clock);
       if (kept !== null) {
@@ -66366,6 +66385,7 @@ var init_retention = __esm({
     init_exec();
     init_hash();
     init_events();
+    init_profiles();
     init_release();
     PRUNABLE_STATES = Object.freeze(["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE", "CANCELLED"]);
     ARTIFACTS_PRUNED_EVENT = "run.artifacts_pruned";
@@ -66972,7 +66992,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync8, existsSync as existsSync51, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync35, readdirSync as readdirSync15, rmSync as rmSync19, rmdirSync, statSync as statSync15 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname31, isAbsolute as isAbsolute25, join as join73 } from "node:path";
+import { dirname as dirname31, isAbsolute as isAbsolute26, join as join73 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -67003,7 +67023,7 @@ function shQuote(s) {
 }
 function renderLauncher(target) {
   for (const v of [target.node, target.entry]) {
-    if (!isAbsolute25(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
+    if (!isAbsolute26(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
   return [
     "#!/bin/sh",
@@ -67071,7 +67091,7 @@ function refreshLauncher(input) {
   }
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
-  if (!input.entry.endsWith(".mjs") || !isAbsolute25(input.entry) || !existsSync51(input.entry) || !isAbsolute25(input.nodePath) || !existsSync51(input.nodePath)) return "skipped";
+  if (!input.entry.endsWith(".mjs") || !isAbsolute26(input.entry) || !existsSync51(input.entry) || !isAbsolute26(input.nodePath) || !existsSync51(input.nodePath)) return "skipped";
   const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
@@ -68756,7 +68776,7 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync56, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync8, realpathSync as realpathSync21, writeFileSync as writeFileSync10 } from "node:fs";
 import { tmpdir as tmpdir14 } from "node:os";
-import { basename as basename21, dirname as dirname35, isAbsolute as isAbsolute26, join as join79, resolve as resolve22 } from "node:path";
+import { basename as basename21, dirname as dirname35, isAbsolute as isAbsolute27, join as join79, resolve as resolve22 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -68765,7 +68785,7 @@ function deniedProgram(check, repo, homeDir) {
   const read2 = checkPrograms(check.command, check.shell === true);
   let first = null;
   for (const program of read2.programs) {
-    if (!isAbsolute26(program)) continue;
+    if (!isAbsolute27(program)) continue;
     const found = programDenial(program, repo, homeDir);
     if (!found) continue;
     if (isExecutableFile(program)) return { denial: found, uncertain: read2.uncertain, file: true };
@@ -68922,7 +68942,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     const cwd = repo ? resolve22(repo, check.cwd) : process.cwd();
-    const found = word.includes("/") ? which(isAbsolute26(word) ? word : resolve22(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    const found = word.includes("/") ? which(isAbsolute27(word) ? word : resolve22(cwd, word), input.env.PATH) : which(word, input.env.PATH);
     if (!found) {
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
@@ -69136,25 +69156,7 @@ function workerLoopbackCheck(input) {
     fix: "nothing to set in Orbit on macOS: keep local_binding (the default) on the checks that run these tests, which test every change a worker submits; on Linux srt starts every worker sandbox in a network namespace of its own (from srt's source, not measured by Orbit), so workers there can run them too"
   };
 }
-function workerToolchainsCheck(input) {
-  if (input.tier !== "claude-sandbox") return [];
-  const hit = SCRATCH_BOUND.filter((t) => input.toolchains.includes(t.id));
-  if (hit.length === 0) return [];
-  const names = hit.map((t) => t.name);
-  const list3 = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
-  return [
-    {
-      id: "workers.toolchains",
-      area: "isolation",
-      status: "warn",
-      summary: `workers run in the claude-sandbox tier, where Claude Code's sandbox does not let their commands write their build state, so a worker cannot build or test ${list3} code here and submits changes it could not test; the checks still run them`,
-      details: hit.map((t) => t.detail),
-      missing: "the os-sandbox tier for workers, where the whole worker process is confined by sandbox-runtime and may write its build state",
-      fix: "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) and use isolation.provider: sandbox-runtime (see claude.worker-tier)"
-    }
-  ];
-}
-var RUNNERS3, DOTNET_FILE, GRADLE_FILES, WHY, SCRATCH_BOUND;
+var RUNNERS3, DOTNET_FILE, GRADLE_FILES, WHY;
 var init_doctor_workers = __esm({
   "src/cli/commands/doctor-workers.ts"() {
     "use strict";
@@ -69163,11 +69165,6 @@ var init_doctor_workers = __esm({
     DOTNET_FILE = /\.(sln|slnx|csproj|fsproj|vbproj)$/;
     GRADLE_FILES = /* @__PURE__ */ new Set(["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradlew"]);
     WHY = `neither worker sandbox on macOS (sandbox-runtime, or Claude Code's own) can limit a listener to loopback: Seatbelt lets a process listen on every address of this machine or on none, so a test server on 0.0.0.0 would be reachable from the network, and a worker runs model-driven commands (ADR 0001, "Workers and loopback")`;
-    SCRATCH_BOUND = [
-      { id: "go", name: "Go", detail: `go: GOCACHE and GOPATH are in the worker's private toolchain directory; go build and go test fail first ("failed to initialize build cache ... operation not permitted")` },
-      { id: "rust", name: "Rust", detail: `rust: CARGO_TARGET_DIR is in the worker's private toolchain directory; cargo build and cargo test fail first ("failed to create directory ... Operation not permitted")` },
-      { id: "jvm", name: "JVM", detail: "jvm: GRADLE_USER_HOME and Maven's local repository are in the worker's private toolchain directory, which Gradle writes on every build and Maven whenever it resolves an artifact" }
-    ];
   }
 });
 
@@ -69197,7 +69194,7 @@ import { accessSync as accessSync4, constants as constants6, existsSync as exist
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir15 } from "node:os";
-import { delimiter as delimiter5, isAbsolute as isAbsolute27, join as join80, resolve as resolve24, sep as sep16 } from "node:path";
+import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join80, resolve as resolve24, sep as sep17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -69207,7 +69204,7 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute27(cmd) ? cmd : resolve24(cwd, cmd);
+    const p = isAbsolute28(cmd) ? cmd : resolve24(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter5)) {
@@ -69381,9 +69378,9 @@ function checkWord2(check) {
   return check.command[0] ?? null;
 }
 function installMayCreate(word, cwd, repo, config) {
-  if (!repo || !config.dependencies.install_command?.length || isAbsolute27(word) || !word.includes("/")) return false;
+  if (!repo || !config.dependencies.install_command?.length || isAbsolute28(word) || !word.includes("/")) return false;
   const target = resolve24(cwd, word);
-  return target.startsWith(repo.endsWith(sep16) ? repo : repo + sep16);
+  return target.startsWith(repo.endsWith(sep17) ? repo : repo + sep17);
 }
 function checkConfiguredChecks(p) {
   const { repo, config, ctx } = p;
@@ -70018,7 +70015,6 @@ async function runDoctor(ctx, opts) {
   );
   await safely("checks.dotnet-tests", "checks", () => repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []);
   await safely("workers.loopback", "isolation", () => repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []);
-  await safely("workers.toolchains", "isolation", () => repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []);
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely("checks.dotnet-packages", "checks", () => nuget ? dotnetPackagesCheck(nuget) : []);
   await safely("checks.dotnet-audit", "checks", () => nuget ? dotnetAuditCheck(nuget) : []);
@@ -70068,7 +70064,6 @@ var init_doctor = __esm({
     init_adapters();
     init_isolation();
     init_sandbox_runtime();
-    init_toolchains();
     init_env2();
     init_single_sandbox();
     init_registry();
@@ -71370,13 +71365,13 @@ var init_init = __esm({
 // src/cli/commands/internal.ts
 import { spawn as spawn6 } from "node:child_process";
 import { mkdirSync as mkdirSync26 } from "node:fs";
-import { isAbsolute as isAbsolute28 } from "node:path";
+import { isAbsolute as isAbsolute29 } from "node:path";
 async function shimCommand(rawArgs) {
   return shimMain(rawArgs);
 }
 async function checkRunnerCommand(rawArgs, ctx) {
   const [runDir2, checkDir2, ...extra] = rawArgs;
-  if (!runDir2 || !checkDir2 || extra.length > 0 || !isAbsolute28(runDir2) || !isAbsolute28(checkDir2)) {
+  if (!runDir2 || !checkDir2 || extra.length > 0 || !isAbsolute29(runDir2) || !isAbsolute29(checkDir2)) {
     ctx.io.err("usage: orbit check-runner <absolute run dir> <absolute check dir>\n");
     return EXIT.USAGE;
   }
@@ -71510,7 +71505,7 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync62, mkdirSync as mkdirSync27, readFileSync as readFileSync41, statSync as statSync17 } from "node:fs";
-import { basename as basename24, isAbsolute as isAbsolute29, join as join83, relative as relative10, resolve as resolve25 } from "node:path";
+import { basename as basename24, isAbsolute as isAbsolute30, join as join83, relative as relative11, resolve as resolve25 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join83(ctx.orbitHome, "knowledge.sqlite") : join83(repo, ".orbit", "knowledge.sqlite");
 }
@@ -71631,8 +71626,8 @@ async function readSource(ctx, repo, ref2, label) {
   const st = statSync17(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
   if (st.size > FETCH_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${path} is larger than ${FETCH_MAX_BYTES} bytes`);
-  const rel = relative10(repo, path);
-  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute29(rel) ? rel : basename24(path), content: readFileSync41(path, "utf8") };
+  const rel = relative11(repo, path);
+  return { kind: "file", ref: !rel.startsWith("..") && !isAbsolute30(rel) ? rel : basename24(path), content: readFileSync41(path, "utf8") };
 }
 async function runIngestCurator(ctx, repo, config, prompt) {
   if (!(config.knowledge.curator_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.curator_budget_usd is 0, so no curator may run; raise it, or supply the curator output with --curator-output");
@@ -73665,7 +73660,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname40, isAbsolute as isAbsolute30, join as join87, relative as relative11 } from "node:path";
+import { dirname as dirname40, isAbsolute as isAbsolute31, join as join87, relative as relative12 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -73741,8 +73736,8 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname40(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute30(given) ? given : join87(runDir2, given);
-    const r = relative11(repo, p);
+    const p = isAbsolute31(given) ? given : join87(runDir2, given);
+    const r = relative12(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
   const code2 = exitCodeForVerdict(o.report.verdict);

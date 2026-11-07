@@ -20,7 +20,6 @@ import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '..
 import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, decideMuseTier, museEnvCredential, providerKind, MUSE_LIMITATIONS, MUSE_MIN_VERSION, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_READS_NOT_CONFINED, type CodexTierDecision, type CodexTierSetting, type MuseTierDecision, type MuseTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
-import { detectToolchains } from '../../isolation/toolchains.ts';
 import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts';
 import { safeBaseEnv } from '../../ui/env.ts';
 import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
@@ -50,7 +49,7 @@ import { workerPluginsCheck } from './doctor-plugins.ts';
 import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
-import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
+import { workerLoopbackCheck } from './doctor-workers.ts';
 import { loadCommandPolicy } from '../policy-file.ts';
 import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../../scheduling/budget.ts';
 
@@ -1106,7 +1105,6 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   );
   await safely('checks.dotnet-tests', 'checks', () => (repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []));
   await safely('workers.loopback', 'isolation', () => (repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []));
-  await safely('workers.toolchains', 'isolation', () => (repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []));
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely('checks.dotnet-packages', 'checks', () => (nuget ? dotnetPackagesCheck(nuget) : []));
   await safely('checks.dotnet-audit', 'checks', () => (nuget ? dotnetAuditCheck(nuget) : []));

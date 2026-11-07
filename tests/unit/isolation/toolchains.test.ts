@@ -1,7 +1,7 @@
 // Toolchain sandbox profiles (docs/decisions/0009-toolchain-profiles.md): one table keyed by toolchain, detected from a
 // check's command and the repository; dependency caches per repository, read-only outside the install step; build
 // state private per attempt; nothing shared between repositories and nothing pointing at the user's own caches.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -273,6 +273,29 @@ describe('the toolchain profile table', () => {
     prepareToolchainLayout(l);
     expect(l.directories).toEqual([join(root, 'cache', 'gomod'), join(root, 'scratch', 'gocache'), join(root, 'scratch', 'gopath'), join(root, 'cache', 'pip'), join(root, 'scratch', 'pycache'), join(root, 'scratch', 'python-user')]);
     for (const d of l.directories) expect(statSync(d).mode & 0o077, d).toBe(0);
+  });
+
+  // Issue #140: a Claude worker may write its build state, and a restart reuses it. Orbit's mkdir and chmod run outside
+  // any sandbox, so a link the worker left there must not lead them anywhere else.
+  it('removes a reused scratch root holding a link or a file on the way to a directory, and follows none', () => {
+    for (const plant of ['scratch', join('scratch', 'cargo-target'), 'file'] as const) {
+      const root = temp();
+      const outside = join(root, 'outside');
+      mkdirSync(outside, { mode: 0o755 });
+      chmodSync(outside, 0o755);
+      const scratch = join(root, 'scratch');
+      const l = toolchainLayout({ toolchains: ['rust'], mode: 'worker', cacheRoot: join(root, 'cache'), scratchRoot: scratch, tmpDir: '/t', networkHosts: [], hostEnv: {} });
+      mkdirSync(scratch, { recursive: true });
+      if (plant === 'file') writeFileSync(join(scratch, 'cargo-target'), 'x');
+      else {
+        rmSync(join(root, plant), { recursive: true, force: true });
+        symlinkSync(outside, join(root, plant));
+      }
+      prepareToolchainLayout(l, scratch);
+      expect(statSync(outside).mode & 0o777, plant).toBe(0o755);
+      expect(lstatSync(join(scratch, 'cargo-target')).isDirectory(), plant).toBe(true);
+      expect(lstatSync(scratch).isSymbolicLink(), plant).toBe(false);
+    }
   });
 });
 

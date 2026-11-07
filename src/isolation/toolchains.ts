@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { hostAllowed } from '../policy/hosts.ts';
 
@@ -465,12 +465,35 @@ export function commandToolchains(input: CommandToolchainsInput): ToolchainLayou
   });
 }
 
-/** Create the layout's directories, owner-only. Orbit (trusted) creates the caches; only the install step fills them. */
-export function prepareToolchainLayout(layout: ToolchainLayout): void {
+/**
+ * Create the layout's directories, owner-only. Orbit (trusted) creates the caches; only the install step fills them.
+ * `reused` names a scratch root a sandboxed process may already have written (a restarted worker's): mkdir and chmod
+ * follow links, so a link or file it left on the way to a directory makes the whole root be removed first.
+ */
+export function prepareToolchainLayout(layout: ToolchainLayout, reused?: string): void {
+  if (reused !== undefined && layout.directories.some((d) => notDirectoryOnPath(reused, d))) removeScratch(reused);
   for (const d of layout.directories) {
     mkdirSync(d, { recursive: true, mode: 0o700 });
     chmodSync(d, 0o700);
   }
+}
+
+/** Whether an entry from `root` down to `dir` exists as something other than a real directory (lstat: a link is not). */
+function notDirectoryOnPath(root: string, dir: string): boolean {
+  const rel = relative(root, dir);
+  if (rel.startsWith('..') || isAbsolute(rel)) return false;
+  let p = root;
+  for (const part of ['', ...rel.split(sep).filter(Boolean)]) {
+    p = join(p, part);
+    let st;
+    try {
+      st = lstatSync(p);
+    } catch {
+      return false;
+    }
+    if (!st.isDirectory()) return true;
+  }
+  return false;
 }
 
 /**

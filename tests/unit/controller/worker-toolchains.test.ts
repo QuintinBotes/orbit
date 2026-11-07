@@ -1,11 +1,14 @@
 // A worker's toolchain profile (docs/decisions/0009-toolchain-profiles.md): the repository's dependency caches
 // read-only, its build state private to the worker, and nothing pointing at the user's own caches.
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderClaudeSettings } from '../../../src/adapters/claude-settings.ts';
 import { repoKey } from '../../../src/controller/context.ts';
 import { implementingStep } from '../../../src/controller/steps/implementing.ts';
-import { toolchainLayout } from '../../../src/isolation/toolchains.ts';
+import { orbitTmpRoot, workerTmpDir } from '../../../src/isolation/profiles.ts';
+import { removeScratch, toolchainLayout } from '../../../src/isolation/toolchains.ts';
+import { readablePathsOf } from '../../../src/isolation/util.ts';
 import { giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type UnitLab } from './coverage-helpers.ts';
 
 // The real layout, watched: a worker's NuGet audit depends on the hosts its sandbox allows (see the last test).
@@ -15,12 +18,18 @@ vi.mock('../../../src/isolation/toolchains.ts', async (importOriginal) => {
 });
 
 let lab: UnitLab;
-afterEach(() => lab?.cleanup());
+const tmps: string[] = [];
+afterEach(() => {
+  lab?.cleanup();
+  for (const t of tmps.splice(0)) removeScratch(t);
+});
 
 const IMPL = { summary: 's', changed_paths: [], tests_added: [], checks_run: [], evidence_refs: [], remaining_issues: [], next_action: { kind: 'request-verification', detail: 'd' } };
 
 describe('worker toolchain profiles', () => {
-  it('gives an implementer in a Rust repository the repository cache read-only and private build state in its worker directory', async () => {
+  // Issue #140: the build state sits in the worker's private temp directory, which Bash may write in both tiers. Under
+  // the worker directory the claude-sandbox tier denied it (its Edit deny becomes a sandbox denyWrite).
+  it('gives an implementer in a Rust repository the repository cache read-only and private build state in its temp directory', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'], deps: { schedulerProbe: { availableParallelism: () => 16, freemem: () => 64_000 * 1024 * 1024 } } });
     const adapter = scriptedAdapter(lab, () => okResult(IMPL));
     lab.deps.adapters = { claude: adapter };
@@ -28,18 +37,55 @@ describe('worker toolchain profiles', () => {
     const repo = await giveRepository(lab, { 'Cargo.toml': '[package]\nname = "acme"\n', 'apps/lib.rs': 'pub fn add() {}\n' });
     setContract(lab, { baseline_revision: repo.base });
     initLedger(lab);
-    await implementingStep(lab.ctx());
+    const ctx = lab.ctx();
+    await implementingStep(ctx);
     const spec = adapter.specs[0]!;
+    const tmp = workerTmpDir(spec.workerDir);
+    tmps.push(tmp);
+    const target = spec.env.CARGO_TARGET_DIR!;
     const cache = join(lab.home, 'toolchains', repoKey(lab.repo), 'cargo');
-    expect(spec.env).toMatchObject({ CARGO_HOME: cache, CARGO_TARGET_DIR: join(spec.workerDir, 'toolchains', 'cargo-target') });
+    expect(spec.env).toMatchObject({ CARGO_HOME: cache, CARGO_TARGET_DIR: join(tmp, 'toolchains', 'cargo-target') });
+    expect(target.startsWith(`${spec.workerDir}/`)).toBe(false);
     expect(spec.env).not.toHaveProperty('GOMODCACHE');
     const sandbox = spec.sandbox as typeof spec.sandbox & { readablePaths: string[] };
     expect(sandbox.readablePaths).toContain(cache);
     expect(sandbox.writablePaths).not.toContain(cache);
-    expect(sandbox.writablePaths.some((p) => join(spec.workerDir, 'toolchains').startsWith(p))).toBe(true);
+    expect(sandbox.writablePaths).toContain(tmp);
     expect(existsSync(cache)).toBe(true);
+    // Created owner-only before the layout was prepared in it.
+    expect(statSync(tmp).mode & 0o777).toBe(0o700);
+    expect(existsSync(target)).toBe(true);
     // Not a .NET repository: no NIS domain name rule.
     expect(spec.sandbox.nisDomainName).toBeFalsy();
+
+    // The claude-sandbox tier's settings let Bash write it, and no Edit deny (a sandbox denyWrite) covers it.
+    const settings = renderClaudeSettings({
+      snapshot: ctx.snapshot,
+      worktree: spec.cwd,
+      workerDir: spec.workerDir,
+      policyPath: spec.policyPath,
+      tier: 'claude-sandbox',
+      readOnly: spec.readOnly,
+      hookCommand: ['orbit', 'hook'],
+      denyReadPaths: spec.sandbox.denyReadPaths,
+      readablePaths: readablePathsOf(spec.sandbox),
+      tmpDir: tmp,
+      claudeConfigDir: join(lab.home, '.claude'),
+      otherClaudeLogins: [],
+    });
+    const fs = settings.sandbox.enabled ? settings.sandbox.filesystem : null;
+    expect(fs!.allowWrite.some((p) => target.startsWith(`${p}/`))).toBe(true);
+    const editDenies = settings.permissions.deny.filter((r) => r.startsWith('Edit(')).map((r) => r.slice('Edit(/'.length, -1).replace(/\/\*\*$/, ''));
+    expect(editDenies.filter((p) => target === p || target.startsWith(`${p}/`))).toEqual([]);
+
+    // Private to this worker: every other worker's temp directory is another path, and the whole temp root stays
+    // read-denied to this one but for its own directory.
+    const other = workerTmpDir(join(dirname(spec.workerDir), 'another-worker'));
+    expect(other).not.toBe(tmp);
+    expect(target.startsWith(`${other}/`)).toBe(false);
+    expect(spec.sandbox.denyReadPaths).toContain(orbitTmpRoot());
+    expect(sandbox.writablePaths).not.toContain(orbitTmpRoot());
+    expect(fs!.allowWrite).not.toContain(orbitTmpRoot());
   });
 
   // .NET's CookieContainer reads the NIS domain name, which srt's Seatbelt profile does not allow, so every .NET HTTP

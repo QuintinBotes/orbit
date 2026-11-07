@@ -1,11 +1,12 @@
 import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { execCapture } from '../core/exec.ts';
 import { sha256 } from '../core/hash.ts';
 import type { OrbitDb } from './db.ts';
 import { appendEvent } from './events.ts';
+import { workerTmpDir } from '../isolation/profiles.ts';
 import { releaseRunCheckouts } from '../recovery/release.ts';
 
 /**
@@ -131,7 +132,9 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
       continue;
     }
     const worktree = join(worktreesRoot, row.id);
-    const targets = [runDir, worktree].filter((p) => isRealDirectory(p));
+    // Each worker's private temp directory holds its build state (issue #140) and lives outside the run directory.
+    const workerTmps = db.all<{ worker_dir: string }>('SELECT worker_dir FROM workers WHERE run_id = ?', row.id).filter((w) => isAbsolute(w.worker_dir)).map((w) => workerTmpDir(w.worker_dir));
+    const targets = [runDir, worktree, ...workerTmps].filter((p) => isRealDirectory(p));
     if (!opts.dryRun && targets.includes(worktree)) {
       const kept = await releaseBeforePrune(db, row.id, worktree, home, opts.clock);
       if (kept !== null) {

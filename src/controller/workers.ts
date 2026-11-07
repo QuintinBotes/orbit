@@ -26,7 +26,7 @@ import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
+import { PROVIDER_HOSTS, prepareWorkerTmpDir, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopLaunch, stopWorker, WORKER_RESTART_EVENT } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
@@ -216,17 +216,21 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
   // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex or Muse worker, a read-only reviewer,
   // is confined to its provider's hosts by its adapter (codexReviewerProfile, museReviewerProfile).
+  // A Claude worker's build state goes in its private temp directory, which Bash may write in both tiers; the
+  // claude-sandbox tier denies writing the worker directory (issue #140). A Codex or Muse reviewer's srt profile may
+  // write only its worker directory, so its build state stays there.
+  const scratchRoot = provider === 'claude' ? join(prepareWorkerTmpDir(w.workerDir), 'toolchains') : join(w.workerDir, 'toolchains');
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
     cacheRoot: toolchainCacheRootFor(ctx),
-    scratchRoot: join(w.workerDir, 'toolchains'),
+    scratchRoot,
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home,
     hostEnv: env,
     networkHosts: provider === 'claude' ? workerAllowedHosts(provider, policy.snapshot) : PROVIDER_HOSTS[provider],
   });
-  prepareToolchainLayout(toolchains);
+  prepareToolchainLayout(toolchains, scratchRoot);
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,

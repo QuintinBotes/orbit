@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { readJsonIfExists } from '../../../src/core/fsx.ts';
-import { profileForWorker, workerAllowedHosts, workerTmpDir } from '../../../src/isolation/profiles.ts';
+import { prepareWorkerTmpDir, profileForWorker, workerAllowedHosts, workerTmpDir } from '../../../src/isolation/profiles.ts';
 import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../../../src/isolation/toolchains.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
@@ -76,7 +76,7 @@ async function session(): Promise<{ outputs: string[]; settings: { sandbox: { ne
     toolchains: detectToolchains({ roots: [wt, ...dirs, ...dirs.map((d) => join(d, 'Acme.Tests'))] }),
     mode: 'worker',
     cacheRoot,
-    scratchRoot: join(f.workerDir, 'toolchains'),
+    scratchRoot: join(prepareWorkerTmpDir(f.workerDir), 'toolchains'),
     tmpDir: workerTmpDir(f.workerDir),
     hostHome: homedir(),
     hostEnv: process.env,

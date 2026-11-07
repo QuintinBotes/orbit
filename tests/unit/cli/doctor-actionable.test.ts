@@ -349,9 +349,9 @@ describe('issue #31: doctor says when workers cannot run tests that need a loopb
 });
 
 // Review of #31: doctor's worker lines describe the repository's config, so they need it read, as every other
-// config-dependent line does; and in the claude-sandbox tier workers cannot write their Go, Rust or JVM build state.
+// config-dependent line does.
 describe('issue #31 review: doctor\'s worker lines', () => {
-  it('says nothing about workers.loopback or workers.toolchains when the config could not be read', async () => {
+  it('says nothing about workers.loopback when the config could not be read', async () => {
     const w = world({ 'acme.sln': '', 'go.mod': 'module acme\n' }, 'darwin');
     hooks.adapters = () => ({ claude: adapter('claude'), codex: adapter('codex') });
     hooks.config = () => {
@@ -360,22 +360,5 @@ describe('issue #31 review: doctor\'s worker lines', () => {
     const c = byId(await runDoctor(w.ctx(), { probe: false }));
     expect(c.config).toMatchObject({ status: 'fail' });
     expect(c['workers.loopback']).toBeUndefined();
-    expect(c['workers.toolchains']).toBeUndefined();
-  });
-
-  it('warns on workers.toolchains for a Go repository when workers run in the claude-sandbox tier, and not in the os-sandbox tier', async () => {
-    const w = world({ 'go.mod': 'module acme\n', 'calc.go': 'package acme\n' }, 'darwin');
-    const c = byId(await report(w, cfg()));
-    // No Claude credential in the world's environment: the claude-sandbox tier.
-    expect(c['claude.worker-tier']).toMatchObject({ status: 'warn' });
-    expect(c['workers.toolchains']).toMatchObject({ status: 'warn', area: 'isolation' });
-    expect(c['workers.toolchains']!.summary).toMatch(/cannot build or test Go code here/);
-
-    const keyed: World = { repo: w.repo, ctx: (io) => ({ ...w.ctx(io), env: { ...w.ctx(io).env, ANTHROPIC_API_KEY: 'sk-ant-fake-000' } }) };
-    const os = byId(await report(keyed, cfg((x) => (x.isolation = { ...x.isolation, provider: 'sandbox-runtime', allow_unisolated: false }))));
-    expect(os['claude.worker-tier']).toMatchObject({ status: 'pass' });
-    expect(os['workers.toolchains']).toBeUndefined();
-    // A repository without such a toolchain gets no line.
-    expect(byId(await report(world(), cfg()))['workers.toolchains']).toBeUndefined();
   });
 });
