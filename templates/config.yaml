@@ -172,7 +172,8 @@ agents:
 review:
   # Independent reviewers (a provider other than the one that wrote the
   # change), in preference order. The first that is installed, logged in,
-  # data_policy_eligible and has a qualified model reviews. Supported: codex.
+  # data_policy_eligible and has a qualified model reviews. Supported: codex,
+  # muse (opt in by adding a providers.muse block below), e.g. [codex, muse].
   providers: [codex]
   # When none of them is usable:
   #   claude  Claude reviews in a separate session at the safety-review
@@ -348,6 +349,22 @@ providers:
     # uses it. orbit doctor reports the tier and why. Codex providers only: a
     # Claude provider rejects this key.
     tier: auto
+  # Muse (Wonder Full) as an independent reviewer: opt in by uncommenting this
+  # block and listing muse in review.providers. Needs Muse 1.4.11 or later.
+  # muse:
+  #   command: muse
+  #   # As for Codex: set to true only if sending sanitized code and diffs to
+  #   # this provider is permitted for this repository.
+  #   data_policy_eligible: false
+  #   model: muse-wonder-full-1.0
+  #   reasoning_effort: high
+  #   extra_args: []
+  #   # auto: os-sandbox (Muse inside srt, writes to its worker directory only,
+  #   # egress to api.meta.ai only) when META_API_KEY is set and srt starts;
+  #   # otherwise muse-sandbox (Muse's own :read-only profile against a
+  #   # write-protected review checkout). os-sandbox fails closed without srt
+  #   # or META_API_KEY.
+  #   tier: auto
 
 routing:
   # Model families (or exact ids) Orbit may route work to. Fable is left out

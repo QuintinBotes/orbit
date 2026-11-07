@@ -8,23 +8,31 @@ and classification without any model spend.
 |---|---|---|
 | `fake-claude.mjs` | the `claude` CLI | `FakeAdapter` (`src/adapters/fake.ts`), or `providers.claude.command` pointing at it |
 | `fake-codex.mjs` | the `codex` CLI | `FakeAdapter`, or `providers.codex.command` pointing at it |
+| `fake-muse.mjs` | the `muse` CLI | `FakeAdapter`, or `providers.muse.command` pointing at it |
 | `fake-anthropic-api.mjs` | the Anthropic Messages API | tests that run the REAL `claude` binary (`ANTHROPIC_BASE_URL`) |
-| `scenario.mjs` | shared scenario loading for the two CLI fakes | |
+| `scenario.mjs` | shared scenario loading for the CLI fakes | |
 | `reference/` | the verified probes the fakes were derived from; do not edit | |
 
 ## CLI fakes
 
-Both fakes accept the argv the real adapters build. They answer `--version`,
+The fakes accept the argv the real adapters build. They answer `--version`,
 `claude auth status`, `codex login status`, `codex doctor --json`,
-`codex exec --help` and `codex debug models` with the verified shapes, and a
-task run (`claude -p ...`, `codex exec ... -`) with a realistic transcript:
+`codex exec --help`, `codex debug models` and `muse exec --help` with the
+verified shapes, and a task run (`claude -p ...`, `codex exec ... -`,
+`muse exec ... --prompt-file ...`) with a realistic transcript:
 stream-json for Claude (`system/init`, assistant tool uses, a `result` line
-with `modelUsage` and `structured_output`) and `--json` events for Codex
+with `modelUsage` and `structured_output`), `--json` events for Codex
 (`thread.started` ... `turn.completed` with usage, the final message also
-written to `-o`). The prompt is read from stdin, as the adapters send it.
+written to `-o`), and `--json` envelopes for Muse (`run.lifecycle.started`
+... `run.terminal.completed` with the final answer in its `text` and usage on
+`run.usage`). The prompt is read from stdin, as the Claude and Codex adapters
+send it; Muse reads its `--prompt-file`. A `muse exec` with no
+`--prompt-file` is the adapter's one-step credential check: fake-muse answers
+`ok` without consuming a scenario step, or the missing-login error when the
+scenario's `auth.loggedIn` is false.
 
 A fake finds its role from the title of the output schema it is given
-(`--json-schema` for Claude, the `--output-schema` file for Codex):
+(`--json-schema` for Claude, the `--output-schema` file for Codex and Muse):
 planner, implementer, verifier (diagnosis), reviewer, inquisitor, curator.
 
 ### Environment
@@ -33,7 +41,7 @@ planner, implementer, verifier (diagnosis), reviewer, inquisitor, curator.
 |---|---|
 | `ORBIT_FAKE_SCENARIO` | path to the scenario JSON file (below) |
 | `ORBIT_FAKE_ARGV_LOG` | optional: each call appends `{tool, role, call, argv, envKeys, cwd, promptBytes}`; env values are never logged |
-| `ORBIT_FAKE_CLAUDE_VERSION`, `ORBIT_FAKE_CODEX_VERSION` | override the reported version |
+| `ORBIT_FAKE_CLAUDE_VERSION`, `ORBIT_FAKE_CODEX_VERSION`, `ORBIT_FAKE_MUSE_VERSION` | override the reported version |
 
 The adapters drop every variable not on their allowlist, so these reach a
 fake only through `FakeAdapter` (which passes them through) or `TaskSpec.env`.
@@ -54,9 +62,11 @@ fake only through `FakeAdapter` (which passes them through) or `TaskSpec.env`.
 Calls are counted per role (from 0) in a counter file next to the scenario
 (`<scenario>.<role>.count`, one byte per call, appended atomically so
 concurrent fakes do not race). Once a role's list is exhausted its last step
-repeats. `auth` drives `claude auth status` (`loggedIn`, `authMethod`) and
+repeats. `auth` drives `claude auth status` (`loggedIn`, `authMethod`),
 `codex login status` / `codex doctor` (`loggedIn`, `method`: `chatgpt` or
-`api_key`, `valid`; doctor also counts `CODEX_API_KEY` as present).
+`api_key`, `valid`; doctor also counts `CODEX_API_KEY` as present) and
+fake-muse (`loggedIn: false` is the missing-login mode, for the credential
+check and a review run alike).
 `plugins` (Claude, optional) lists installed plugins as
 `[{ "id": "name@marketplace", "scope": "managed", "enabled": true }]`:
 `claude plugin list --json` answers with them, and `system/init` lists a
@@ -74,10 +84,14 @@ A step:
 | `sleepMs` | waits before finishing (cancellation and timeout tests) |
 | `inspect` | `false` makes the session answer without a tool call: no `Read` (fake Claude) and no `git diff --stat` (fake Codex), the packet-only review ADR 0016 refuses to let clear a tree |
 | `ignoreSignals` | ignores SIGINT and SIGTERM, so only SIGKILL ends it |
-| `grandchildPidFile` | (Claude) starts `/bin/sleep 600` in the same process group and writes its pid here |
+| `grandchildPidFile` | (Claude, Muse) starts `/bin/sleep 600` in the same process group and writes its pid here |
 | `detachedChild` | (Claude) starts a real detached Node child for a containment test: `{pidFile, markerPath, writePath, waitMs?, intervalMs?}`. It creates its own session, writes `writePath` until stopped, and writes its pid and startup marker first. |
 | `structured` | the structured output of a successful run |
-| `usage` | Claude: `modelUsage` fields (`inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`); Codex: `turn.completed.usage` fields |
+| `text` | (Muse) the raw final answer in `run.terminal.completed`, instead of `structured` (for invalid output) |
+| `failReason` | (Muse) ends with `run.terminal.failed` carrying this reason, at `exitCode` (default 1) |
+| `missingCredentials` | (Muse) prints the verified missing-login error on stderr and exits 1 before any event |
+| `attemptWrite` | (Muse) alias of `forbiddenWrite`, relative to `--workspace` |
+| `usage` | Claude: `modelUsage` fields (`inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`); Codex: `turn.completed.usage` fields; Muse: `run.usage` model fields (`input_tokens`, `cached_tokens`, `output_tokens`, `reasoning_tokens`, `calls`) |
 | `model` | (Claude) the model reported in `system/init` and `modelUsage`; default resolves `--model` aliases |
 | `outcome` | how the run ends (below); default `success` |
 | `exitCode` | override the exit code of `success` or `no_result` |
