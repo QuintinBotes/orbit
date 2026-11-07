@@ -107,9 +107,9 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   // 2-5. Trusted checks, UI checks and exploration, static security and the evidence report, in a clean,
   // writable checkout of exactly this tree: the one evidence function `orbit verify` uses too.
   const checkoutDir = join(runWorktreeRoot(ctx), `check-${cand.seq}`);
-  const freshCheckout = await ensureCheckout(ctx, cand, checkoutDir);
+  await ensureCheckout(ctx, cand, checkoutDir);
   try {
-    const collected = await collectVerificationEvidence<StepResult>(ctx, cand, { checkoutDir, freshCheckout, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
+    const collected = await collectVerificationEvidence<StepResult>(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
     if ('stopped' in collected) return collected.stopped;
     const { report, evaluation, security, scan } = collected.evidence;
     if (security.status === 'fail') {
@@ -309,17 +309,16 @@ function scopeFingerprint(scope: ScopeReport): string {
   return `scope:${sha256(JSON.stringify([[...scope.forbidden_paths_changed].sort(), [...scope.out_of_scope_paths_changed].sort(), scope.within_size_limits, scope.lockfile_changed, [...scope.symlinks_escaping].sort()])).slice(0, 16)}`;
 }
 
-/** Reuse a checkout of this exact tree left by an interrupted step (checks reattach to it); otherwise make a fresh one. True when it made one. */
-async function ensureCheckout(ctx: RunContext, cand: CandidateRecord, dir: string): Promise<boolean> {
+/** Reuse a checkout of this exact tree left by an interrupted step (checks reattach to it); otherwise make a fresh one. */
+async function ensureCheckout(ctx: RunContext, cand: CandidateRecord, dir: string): Promise<void> {
   if (existsSync(dir) && readdirSync(dir).length > 0) {
     try {
       const tree = (await git(dir, ['rev-parse', 'HEAD^{tree}'])).trim();
-      if (tree === cand.treeHash && (await git(dir, ['status', '--porcelain', '--untracked-files=no'])).trim() === '') return false;
+      if (tree === cand.treeHash && (await git(dir, ['status', '--porcelain', '--untracked-files=no'])).trim() === '') return;
     } catch {
       /* not a usable checkout */
     }
     await cleanupCandidateCheckout(ctx.run.repoRoot, dir);
   }
   await materializeCandidate(ctx.run.repoRoot, cand.commitSha, dir, { readOnly: false });
-  return true;
 }

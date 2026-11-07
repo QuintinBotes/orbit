@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { verifyCandidate } from '../../../src/cli/commands/verify.ts';
 import { step } from '../../../src/controller/steps/index.ts';
-import { snapshotCandidate } from '../../../src/evidence/candidate.ts';
+import { runWorktreeRoot } from '../../../src/controller/context.ts';
+import { cleanupCandidateCheckout, materializeCandidate, snapshotCandidate } from '../../../src/evidence/candidate.ts';
 import { INSTALL_CHECK_ID } from '../../../src/evidence/runner.ts';
-import { listCheckRuns } from '../../../src/evidence/store.ts';
+import { getCandidate, listCheckRuns } from '../../../src/evidence/store.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
 import { giveRepository, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
 
@@ -68,5 +69,33 @@ describe('a dependency install in a checkout materialized again (#133)', () => {
     expect(reported.status).toBe('PASSED');
     expect(newest.logPath!.endsWith(reported.log)).toBe(true);
     expect(reported.log).toMatch(/orbit-install~1\.log$/);
+  }, 120_000);
+  it('a restart after the replacement checkout was made, but before its install was recorded, installs there', async () => {
+    const lab = await installLab({ mutate: 'echo "// rewritten" >> apps/calc.mjs', marker: 'test -d apps/deps' });
+    await step(lab.deps, lab.runId, new AbortController().signal);
+    expect(installRoots(lab).map((r) => r.status)).toEqual(['PASSED']);
+    // What the retry did before the controller died: it replaced the rewritten checkout with a clean one.
+    const ctx = lab.ctx();
+    const dir = join(runWorktreeRoot(ctx), `check-${ctx.candidate!.seq}`);
+    await cleanupCandidateCheckout(lab.repo, dir);
+    await materializeCandidate(lab.repo, getCandidate(lab.db, ctx.candidate!.id).commitSha, dir, { readOnly: false });
+
+    await step(lab.deps, lab.runId, new AbortController().signal);
+    expect(rows(lab, 'marker').map((r) => r.status)).toEqual(['PASSED']);
+    expect(installRoots(lab).map((r) => r.status)).toEqual(['PASSED', 'PASSED']);
+  }, 120_000);
+
+  it('orbit verify on a run that SUCCEEDED gives a verdict and installs in its own checkout', async () => {
+    const lab = await installLab({ marker: 'test -d apps/deps' });
+    await step(lab.deps, lab.runId, new AbortController().signal);
+    lab.db.run("UPDATE runs SET state = 'SUCCEEDED' WHERE id = ?", lab.runId);
+
+    const out = await verifyCandidate(lab.ctx());
+    expect(out.report.checks.map((c) => [c.id, c.status])).toEqual([['marker', 'PASSED'], [INSTALL_CHECK_ID, 'PASSED']]);
+    const roots = installRoots(lab);
+    expect(roots.map((r) => r.status)).toEqual(['PASSED', 'PASSED']);
+    expect(roots[1]!.cwd).toContain(`verify-${out.candidateSeq}`);
+    // The marker check's pass is reused as recorded: only the install is bound to its checkout.
+    expect(rows(lab, 'marker')).toHaveLength(1);
   }, 120_000);
 });

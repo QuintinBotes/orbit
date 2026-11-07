@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
@@ -73,6 +74,23 @@ export async function resolveCommit(repoRoot: string, rev: string): Promise<stri
 
 export async function treeOf(repoRoot: string, commit: string): Promise<string> {
   return (await git(repoRoot, ['rev-parse', '--verify', `${commit}^{tree}`])).trim();
+}
+
+const CHECKOUT_ID_FILE = 'orbit-checkout-id';
+
+/**
+ * The identity of the checkout at `dir`: a random id written once into its own git directory, outside the work tree and
+ * never committed. It survives a controller restart, and a checkout made again at the same path gets a new git
+ * directory and so a new id.
+ */
+export async function checkoutId(dir: string): Promise<string> {
+  const file = join((await git(dir, ['rev-parse', '--absolute-git-dir'])).trim(), CHECKOUT_ID_FILE);
+  try {
+    writeFileSync(file, randomUUID(), { flag: 'wx', mode: 0o600 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+  return readFileSync(file, 'utf8').trim();
 }
 
 /**

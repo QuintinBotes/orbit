@@ -17,7 +17,7 @@ import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
-import { git } from './git.ts';
+import { checkoutId, git } from './git.ts';
 import { buildHostDenialNote, buildHostFix, FORMAT_PROBE_LOST_NOTE, formatLoadedNoProject, formatProbeLost, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
@@ -111,6 +111,8 @@ export interface RunnerContext {
    * or the missing program may have been fixed since, which the recorded result cannot show.
    */
   setAside?: ReadonlySet<string>;
+  /** `orbit verify` re-verifies a run that may have ended: a checkout-bound check may still be planned for it. */
+  installAfterEnd?: boolean;
   /**
    * Where attempts are recorded: check_runs (CHECK_RUN_RECORDS) unless given. The fail-before probe records its own
    * attempts elsewhere (evidence/fail-before.ts), because an expected failure on its tree is not the run's.
@@ -189,7 +191,8 @@ export async function reattachCheck(ctx: RunnerContext, checkRunId: string): Pro
   if (row.runId !== ctx.run.id) throw new OrbitError('INTERNAL', `check run ${checkRunId} belongs to run ${row.runId}, not ${ctx.run.id}`);
   const subject = subjectForRow(ctx, row);
   const def = definitionForRow(ctx, subject, row);
-  return executeCheckGroup(ctx, subject, def);
+  // The caller names the row to collect, whose checkout may be gone: its group is the one recorded in that checkout.
+  return executeCheckGroup(ctx, subject, def, row.checkout);
 }
 
 /** Reattach every check of the run that has no final status. Returns their results. */
@@ -342,6 +345,11 @@ export const INSTALL_CHECK_ID = 'orbit-install';
 /** Check id of the allowlisted lifecycle-script step that follows a script-free install. */
 export const INSTALL_SCRIPTS_CHECK_ID = 'orbit-install-scripts';
 const INSTALL_CHECK_IDS: readonly string[] = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
+/**
+ * Checks whose value is the untracked state they leave in their checkout (node_modules): a recorded attempt is reused or
+ * reattached only in the checkout it ran in (evidence/git.ts checkoutId), and runs again in any other.
+ */
+const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set(INSTALL_CHECK_IDS);
 
 const DEFINITION_FILE = 'definition.json';
 
@@ -422,13 +430,15 @@ function dirsFor(subject: CheckSubject, checkId: string, index: number): Attempt
   };
 }
 
-async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition): Promise<CheckResult> {
+async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, recordedCheckout?: string | null): Promise<CheckResult> {
   const configHash = configHashFor(ctx.snapshot, def);
   const binding: EvidenceBinding = { candidateId: subject.bindingId, treeHash: subject.treeHash, checkConfigHash: configHash, policyHash: ctx.run.policyHash };
   const query = { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id };
+  const bound = CHECKOUT_BOUND_CHECK_IDS.has(def.id);
+  const checkout = !bound ? null : recordedCheckout !== undefined ? recordedCheckout : await checkoutId(ctx.checkoutDir);
 
   const loadGroup = (): CheckRunRecord[] => {
-    const rows = recordsOf(ctx).list(ctx.db, query);
+    const rows = recordsOf(ctx).list(ctx.db, query).filter((r) => !bound || r.checkout === checkout);
     const root = [...rows].reverse().find((r) => r.rerunOf === null);
     if (!root || ctx.setAside?.has(root.id)) return [];
     // A group recorded under another configuration or policy says nothing about this one.
@@ -466,7 +476,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
     if (detached(ctx)) throw detachError(ctx);
     touched = true;
     const root = group[0] ?? null;
-    const planned = await launchAttempt(ctx, subject, def, configHash, root?.id ?? null);
+    const planned = await launchAttempt(ctx, subject, def, configHash, root?.id ?? null, checkout);
     group = loadGroup().length > 0 ? loadGroup() : [planned];
   }
 
@@ -605,7 +615,7 @@ export function checkEnv(def: CheckDefinition, dirs: Pick<AttemptDirs, 'homeDir'
   };
 }
 
-async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string, rerunOf: string | null): Promise<CheckRunRecord> {
+async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string, rerunOf: string | null, checkout: string | null = null): Promise<CheckRunRecord> {
   const argv = def.shell ? ['/bin/sh', '-c', def.command[0]!] : [...def.command];
   const cwd = safeCwd(ctx.checkoutDir, def.cwd);
   await assertCheckoutUnmodified(ctx.checkoutDir, def.id);
@@ -652,6 +662,8 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
         // is: the record says so exactly when Orbit's NuGetAudit=false reached the check (its own env left it alone).
         limitations: [...wrapped.limitations, ...(toolchains.env.NuGetAudit === 'false' && env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
         rerunOf,
+        checkout,
+        afterEnd: checkout !== null && ctx.installAfterEnd === true,
       },
       ctx.clock,
     );
