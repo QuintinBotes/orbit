@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
@@ -85,10 +85,19 @@ const CHECKOUT_ID_FILE = 'orbit-checkout-id';
  */
 export async function checkoutId(dir: string): Promise<string> {
   const file = join((await git(dir, ['rev-parse', '--absolute-git-dir'])).trim(), CHECKOUT_ID_FILE);
+  const existing = existsSync(file) ? readFileSync(file, 'utf8').trim() : '';
+  if (existing !== '') return existing;
+  // Written whole to a temporary file and linked into place, so a crash never leaves an empty id; an empty one (from an
+  // older build) is replaced.
+  const tmp = `${file}.${process.pid}.${randomUUID()}`;
+  writeFileSync(tmp, randomUUID(), { mode: 0o600 });
   try {
-    writeFileSync(file, randomUUID(), { flag: 'wx', mode: 0o600 });
+    if (existsSync(file)) renameSync(tmp, file);
+    else linkSync(tmp, file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  } finally {
+    rmSync(tmp, { force: true });
   }
   return readFileSync(file, 'utf8').trim();
 }
