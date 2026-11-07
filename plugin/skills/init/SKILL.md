@@ -33,6 +33,12 @@ it wrote is shared by every worktree of the clone and lives outside this
 worktree; pass that on, since a person may not expect a worktree's init to
 write into the main checkout's git directory. Offer to help edit `.orbit/config.yaml`, then suggest `/orbit:doctor`.
 
+Relay the warning when init says its proposed checks come from manifests only
+and names root agent docs it did not read. Offer to compare the proposals with
+the commands documented in those files, using the instructions already loaded
+in this session. Explain any differences. Edit `.orbit/config.yaml` only with
+the person's agreement.
+
 Relay any warning that no scope or checks were derived, including the reason,
 the example scope paths that must be edited, and the marker files init looked
 for. Whenever git does not track `.orbit/config.yaml`, including a config that

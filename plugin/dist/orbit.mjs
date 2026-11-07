@@ -71223,6 +71223,7 @@ async function initCommand(args, ctx) {
   let baseBranchNote = null;
   let baseBranchWarning = null;
   let checkProposal = { proposed: [], notProposed: [] };
+  let unreadDocs = [];
   if (existsSync61(configPath)) config = "exists";
   else {
     let text2 = templateText();
@@ -71246,7 +71247,8 @@ async function initCommand(args, ctx) {
     if (protectedAdded.length > 0) {
       text2 = text2.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(", ")}]`);
     }
-    checkProposal = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+    const files = await trackedFiles(ctx, repo);
+    checkProposal = await detectChecks({ repo, files, pathEnv: ctx.env.PATH });
     if (checkProposal.proposed.length > 0) {
       const block2 = renderChecksYaml(checkProposal.proposed);
       text2 = text2.replace(/^checks:\n/m, () => `checks:
@@ -71259,6 +71261,7 @@ ${block2}`);
       if (err.code !== "EEXIST") throw err;
       config = "exists";
     }
+    if (config === "created" && checkProposal.proposed.length > 0) unreadDocs = ["CLAUDE.md", "AGENTS.md", "AGENTS.override.md"].filter((f) => files.includes(f));
   }
   const excludePath = await excludeFile(ctx, repo);
   const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
@@ -71290,6 +71293,7 @@ ${block2}`);
   if (config === "created") {
     if (noScopeWarning !== void 0) warnings.push(noScopeWarning);
     if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
+    if (unreadDocs.length > 0) warnings.push(`the proposed checks come from manifests only; init did not read ${unreadDocs.join(", ")}: compare the commands documented there and edit .orbit/config.yaml`);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
   const models = await seedModels(ctx, repo);
@@ -71303,7 +71307,7 @@ ${block2}`);
   } else defined = declaredCheckIds(configPath);
   const reviewPolicy = reviewPolicyProposal(codexEligible);
   if (args.bool("json")) {
-    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...advice !== null ? { commit_advice: advice } : {}, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...advice !== null ? { commit_advice: advice } : {}, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {} }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
