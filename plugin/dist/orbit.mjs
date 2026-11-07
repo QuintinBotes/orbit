@@ -36303,10 +36303,10 @@ async function checkoutId(dir) {
   const tmp = `${file}.${process.pid}.${randomUUID()}`;
   writeFileSync6(tmp, randomUUID(), { mode: 384 });
   try {
-    if (existsSync20(file)) renameSync3(tmp, file);
-    else linkSync(tmp, file);
+    linkSync(tmp, file);
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
+    if (readFileSync15(file, "utf8").trim() === "") renameSync3(tmp, file);
   } finally {
     rmSync8(tmp, { force: true });
   }

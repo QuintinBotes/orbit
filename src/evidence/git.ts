@@ -92,10 +92,11 @@ export async function checkoutId(dir: string): Promise<string> {
   const tmp = `${file}.${process.pid}.${randomUUID()}`;
   writeFileSync(tmp, randomUUID(), { mode: 0o600 });
   try {
-    if (existsSync(file)) renameSync(tmp, file);
-    else linkSync(tmp, file);
+    linkSync(tmp, file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    // Another process published an id first: use it. Only an empty one is replaced.
+    if (readFileSync(file, 'utf8').trim() === '') renameSync(tmp, file);
   } finally {
     rmSync(tmp, { force: true });
   }
