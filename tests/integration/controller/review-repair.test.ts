@@ -108,6 +108,32 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(report.budget.counters.find((c) => c.counter === 'review_rounds')?.used).toBe(2);
   }, 120_000);
 
+  // Issue #130: such a review cleared the gate without approving, nothing took its finding, and the run ended BLOCKED.
+  it('a REPAIR_REQUIRED review whose only finding is advisory is repaired, and the repaired tree is delivered only on an APPROVE', async () => {
+    const low = { structured: { verdict: 'REPAIR_REQUIRED', candidate_revision: '$CANDIDATE', findings: [{ ...FINDING, severity: 'low' }] } };
+    const l = lab();
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), REPAIR], reviewer: [low, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const path = transitions(l, run.id);
+    const firstReview = path.indexOf('REVIEWING');
+    expect(path.slice(firstReview, firstReview + 5)).toEqual(['REVIEWING', 'REPAIRING', 'VERIFYING', 'REVIEWING', 'DELIVERING']);
+    expect(listReviews(l.db(), run.id, { includeInvalidated: true }).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'APPROVE']);
+
+    // A second review that again asks for repair through an advisory finding does not deliver: at the cap the run ends.
+    const capped = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
+    writeScenario(capped, baseScenario({ implementer: [implementMul('*'), REPAIR], reviewer: [low, low] }));
+    const again = startLabRun(capped);
+    await drive(capped, again.id);
+    const end = runState(capped, again.id);
+    expect(end.state, end.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(end.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1 \(low\)/);
+    expect(transitions(capped, again.id)).not.toContain('DELIVERING');
+  }, 240_000);
+
   it('a repair test that passes on the pre-repair tree too leaves the finding open, though the runner names it as passed, and the run ends EXHAUSTED at the review_rounds cap', async () => {
     // The runner prints "ok - tests/mul-input.test.mjs": the 0.3.1 log rules credited that line, ADR 0015 reads no output.
     const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2), files: { 'tests/run.mjs': NAMING_RUNNER } });

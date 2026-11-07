@@ -158,11 +158,12 @@ describe('findings that need the inquisition before any repair', () => {
 });
 
 describe('which findings block', () => {
-  it('with no blocking severities listed, a requested repair of a minor finding does not block or repair', async () => {
+  it('with no blocking severities listed, a requested repair of a minor finding does not block, and goes to repair since nothing approved the tree (#130)', async () => {
     const { cand } = await setup({ tweak: (c) => void (c.review.security = { block_severities: [], exceptions: [] } as never) });
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1', { severity: 'low', category: 'style', claim: 'a naming nit in calc', evidence: 'naming' })]);
     await run();
-    expect(state()).toBe('BLOCKED');
+    expect(listDecisions(lab.db, lab.runId, { kind: 'gate.independent_review' })[0]!.data).toMatchObject({ status: 'pass' });
+    expect(state()).toBe('REPAIRING');
   });
 
   it('with no security block in the policy the default is critical and high', async () => {

@@ -63988,6 +63988,11 @@ async function resolveAndDecide(ctx, cand) {
   const toRepair = open2.filter(
     (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
+  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
+  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && !freshReviewOf(ctx, cand.treeHash)) {
+    const askedIds = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === "REPAIR_REQUIRED")).map((f) => f.id));
+    toRepair.push(...resolution.dispositions.filter((d) => d.status === "advisory" && d.recordedClassification === void 0 && d.memberIds.some((id) => askedIds.has(id))));
+  }
   if (toRepair.length > 0) {
     const texts = findingTexts(state);
     const waiting = blockingQuestions(ctx.db, ctx.run.id);
@@ -64048,7 +64053,6 @@ async function resolveAndDecide(ctx, cand) {
       return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
     }
   }
-  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
   const notes = noted.length === 0 ? "" : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(", ")} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification))].join(" and ")}, which no repair can change, so they are reported as notes and not repaired`;
   let fresh = null;
   const asked = freshReviewOf(ctx, cand.treeHash);
