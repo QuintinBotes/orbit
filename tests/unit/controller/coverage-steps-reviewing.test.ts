@@ -185,7 +185,7 @@ describe('a review that is already recorded', () => {
     const repairs = lab.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = ?", lab.runId, REVIEW_REPAIR_EVENT);
     expect(repairs).toHaveLength(1);
     expect(JSON.parse(repairs[0]!.data_json)).toMatchObject({ attempt: 2, tree_hash: cand.treeHash, findings: [{ external_id: 'COR-1' }] });
-    expect(decisions('repair.brief')[0]?.summary).toContain('COR-1 (high)');
+    expect(decisions('repair.brief')[0]?.summary).toContain('COR-1 (review 1) (high)');
   });
 
   it('one-line finding text in the gate and the repair brief is cut at a word boundary with an ellipsis, never mid-word', async () => {
@@ -239,7 +239,7 @@ describe('a review that is already recorded', () => {
     lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
     await run();
     expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): COR-1 \(high\)/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): COR-1 \(review 1\) \(high\)/);
   });
 
   it('ends EXHAUSTED when no implementation attempt is left under the hard cap', async () => {
@@ -285,7 +285,7 @@ describe('a review that is already recorded', () => {
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     expect(await run()).toMatchObject({ done: true });
     expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(high\)/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(review \d+\) \(high\)/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
 
@@ -295,7 +295,7 @@ describe('a review that is already recorded', () => {
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     await run();
     expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1 \(review \d+\) \(/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
 

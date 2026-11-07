@@ -107,6 +107,25 @@ describe('fingerprintFailure', () => {
   });
 });
 
+describe('passing-result lines (issue #144)', () => {
+  const passing = (n: number) => Array.from({ length: n }, (_, i) => `ok ${i + 1} - rejects when all workers fail`).join('\n');
+  const failing = 'not ok 99 - real failure\n  error: expected 6, got 5';
+
+  it('keeps a failure that follows 30 passing lines naming a failure word in the excerpt', () => {
+    const fp = fingerprintFailure(`${passing(30)}\n# Subtest: retries on timeout\n  ✔ falls back when the request fails\nPASS src/retry.test.ts (fails over)\n${failing}\n`, check);
+    expect(fp.excerpt).toBe('not ok 99 - real failure\n  error: expected 6, got 5');
+    expect(fp.signature).toEqual(['error: expected 6, got 5', 'not ok 99 - real failure']);
+  });
+
+  it('gives the same fingerprint when one more passing line is added', () => {
+    expect(fingerprintFailure(`${passing(31)}\n${failing}\n`, check).fingerprint).toBe(fingerprintFailure(`${passing(30)}\n${failing}\n`, check).fingerprint);
+  });
+
+  it('never drops a "not ok" line, indented or not', () => {
+    expect(fingerprintFailure('    not ok 3 - ok 4 - fails\n', check).excerpt).toBe('    not ok 3 - ok 4 - fails');
+  });
+});
+
 describe('normalizeLine', () => {
   it.each([
     ['file.ts:12:34 failed', 'file.ts:<n> failed'],

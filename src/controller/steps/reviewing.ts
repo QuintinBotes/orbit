@@ -42,7 +42,7 @@ import { failBeforePolicy, providerFamily } from '../../policy/config.ts';
 import { preferredReviewProvider } from '../../policy/review.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
-import { listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
+import { findingLabel, listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
 import { EVIDENCE_CLASSIFICATION_CATEGORY, type IngestedReview, type ReviewRecord } from '../../review/types.ts';
 import { listAmendments, listLedger, listQuestions } from '../../inquisition/store.ts';
 import type { Trigger } from '../../inquisition/types.ts';
@@ -454,7 +454,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       const blocked = await blockOnOpenQuestions(ctx, 'another review repair', { detail: `non-progress: ${stalled.reason}.`, outcome });
       if (blocked) return blocked;
       decide(ctx, { id: `dec-${ctx.run.id}-non-progress-review-${currentAttempt(ctx)}`, kind: 'repair.non-progress', summary: stalled.reason, data: stalled });
-      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`non-progress: ${stalled.reason}; open findings: ${describeFindings(toRepair)}`, 2000), { outcome });
+      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`non-progress: ${stalled.reason}; open findings: ${describeFindings(ctx, toRepair)}`, 2000), { outcome });
     }
     // Only a disagreement, or a finding about material semantics nobody may guess, needs the Inquisition first;
     // a claim it has already inquired into on this tree goes to its discriminating test instead of back to it.
@@ -473,7 +473,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
         key: `review:${cand.treeHash}:${inquire.map((x) => x.d.fingerprint).sort().join(',')}`.slice(0, 500),
       };
       if (!handledTriggerKeys(ctx).has(trigger.key)) {
-        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(repairable)}`, { open_findings: openFindings(repairable) });
+        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(ctx, repairable)}`, { open_findings: openFindings(repairable) });
         if (spent) return spent;
         return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
       }
@@ -495,7 +495,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       // so only without one does the spent round cap end the run here.
       if (!gate.details.approved) {
         const claims = resolution.dispositions.filter((d) => resolution.claimsToTest.some((c) => c.findingId === d.findingId));
-        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(claims)}`, { open_findings: openFindings(claims) });
+        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(ctx, claims)}`, { open_findings: openFindings(claims) });
         if (spent) return spent;
       }
       return move(ctx, 'INQUISITION', trigger.summary, { data: { trigger } });
@@ -1158,8 +1158,8 @@ async function reviewRoundsSpent(ctx: RunContext, open: string, outcome: Record<
   return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
 
-function describeFindings(list: readonly Disposition[]): string {
-  return list.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join('; ');
+function describeFindings(ctx: RunContext, list: readonly Disposition[]): string {
+  return list.map((d) => `${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join('; ');
 }
 
 /** REVIEWING -> REPAIRING with one brief per finding, within the review round and attempt budgets. */
@@ -1177,12 +1177,12 @@ async function routeToRepair(
   // Every repair needs another review of the repaired tree: without a round left, the findings stay open.
   const rounds = ledger.state('review_rounds');
   if (rounds.used >= rounds.allowance) {
-    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(ctx, toRepair)}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
   }
   const next = currentAttempt(ctx) + 1;
   const att = ledger.state('implementation_attempts');
   if (att.used >= att.hard_cap) {
-    return finishRun(ctx, 'EXHAUSTED', `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}) with ${toRepair.length} open review finding(s): ${describeFindings(toRepair)}`.slice(0, 2000), { data: { counter: 'implementation_attempts' }, outcome });
+    return finishRun(ctx, 'EXHAUSTED', `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}) with ${toRepair.length} open review finding(s): ${describeFindings(ctx, toRepair)}`.slice(0, 2000), { data: { counter: 'implementation_attempts' }, outcome });
   }
   const earlier = new Set(reviewRepairs(ctx).flatMap((r) => r.findings.map((f) => f.fingerprint)));
   if (att.used >= att.allowance && !ctx.db.get('SELECT 1 AS x FROM decisions WHERE id = ?', `dec-${ctx.run.id}-extension-${next}`)) {
@@ -1202,7 +1202,7 @@ async function routeToRepair(
     const rec = extensionDecisionRecord(decision);
     decide(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec.kind, summary: rec.summary, data: rec.data });
     if (decision.decision === 'deny_extension') {
-      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join('; ')}; open findings: ${describeFindings(toRepair)}`, 2000), { outcome: { ...outcome, extension: decision } });
+      return finishRun(ctx, 'EXHAUSTED', clipAtWord(`implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join('; ')}; open findings: ${describeFindings(ctx, toRepair)}`, 2000), { outcome: { ...outcome, extension: decision } });
     }
   }
 
@@ -1224,7 +1224,7 @@ async function routeToRepair(
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
     appendEvent(ctx.db, ctx.run.id, REVIEW_REPAIR_EVENT, ctx.ownerId, record, ctx.clock.now());
   });
-  decide(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: 'repair.brief', summary: `repair brief (review) for attempt ${next}: ${describeFindings(toRepair)}`, data: { attempt: next, source: 'review', findings: record.findings, path: `briefs/attempt-${next}.json` } });
+  decide(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: 'repair.brief', summary: `repair brief (review) for attempt ${next}: ${describeFindings(ctx, toRepair)}`, data: { attempt: next, source: 'review', findings: record.findings, path: `briefs/attempt-${next}.json` } });
   return move(ctx, 'REPAIRING', `review requires repair of ${toRepair.length} finding(s); brief for attempt ${next}`, { data: { attempt: next, findings: record.findings.map((f) => f.finding_id) } });
 }
 

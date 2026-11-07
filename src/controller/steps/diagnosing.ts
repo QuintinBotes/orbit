@@ -311,6 +311,7 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     `Trusted check ids: ${Object.keys(ctx.snapshot.config.checks).join(', ') || 'none'}.`,
     priors.length > 0 ? `Hypotheses already recorded (a reworded one is not new): ${priors.map((h) => `[${h.status}] ${h.statement}`).join(' | ')}` : 'No earlier hypotheses.',
     ...(timeouts ? timeoutPromptLines(timeouts) : []),
+    ...sessionEndPromptLines(ctx),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'verifier',
@@ -322,6 +323,18 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt! })),
     advisoryBlock: advisoryBlockFor(ctx, { role: 'verifier', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] }),
   });
+}
+
+/** The latest attempt's session stopped at its turn cap or timeout (IMPLEMENTING's worker-ended event), so its candidate may be unfinished work. */
+export function sessionEndPromptLines(ctx: RunContext): string[] {
+  const attempt = currentAttempt(ctx);
+  const row = ctx.db.get<{ status: string | null }>("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
+  if (row?.status !== 'max_turns' && row?.status !== 'timeout') return [];
+  const cap = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  return [
+    `Session end: the implementer session of attempt ${attempt} ended at ${row.status === 'max_turns' ? `its turn cap (${cap} model requests)` : 'its timeout'} before it finished, so the candidate may be unfinished.`,
+    'One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done.',
+  ];
 }
 
 // ---------------------------------------------------------------------------

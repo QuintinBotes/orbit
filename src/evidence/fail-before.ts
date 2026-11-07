@@ -31,6 +31,7 @@ import { isTestPath } from '../policy/test-files.ts';
 import type { CheckDefinition, FailBeforeMode, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { listDecisions } from '../storage/decisions.ts';
+import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate, ORBIT_GIT_IDENTITY } from './candidate.ts';
 import { classifyProgramNotFound } from './check-misconfigured.ts';
 import { readJsonFile, shimPath, type ShimIntent } from './check-shim.ts';
@@ -504,6 +505,11 @@ function probeRow(db: OrbitDb, id: string): ProbeRow {
   return row;
 }
 
+function probeEvent(db: OrbitDb, type: string, r: ProbeRow, at: number): void {
+  const finished = type === 'check.fail-before-probe-finished' ? { status: r.status, exit_code: r.exit_code } : {};
+  appendEvent(db, r.run_id, type, 'controller', { probe_attempt_id: r.id, probe_id: r.probe_id, check_id: r.check_id, tree_hash: r.probe_tree, attempt: r.attempt, candidate_id: r.candidate_id || null, ...finished }, at);
+}
+
 /** The runner's attempt records for one probe: rows of fail_before_probes, numbered per check within the probe. */
 export function probeRecords(probeId: string): AttemptRecords {
   return {
@@ -538,14 +544,17 @@ export function probeRecords(probeId: string): AttemptRecords {
         return toCheckRun(probeRow(db, id));
       });
     },
-    running: (db, id, pid, clock) => {
-      db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, clock.now(), id);
-      return toCheckRun(probeRow(db, id));
-    },
-    finish: (db, id, f: FinishedCheck) => {
-      db.run('UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN (\'PLANNED\', \'RUNNING\')', f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id);
-      return toCheckRun(probeRow(db, id));
-    },
+    running: (db, id, pid, clock) =>
+      db.tx(() => {
+        const now = clock.now();
+        if (db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, now, id).changes === 1) probeEvent(db, 'check.fail-before-probe-started', probeRow(db, id), now);
+        return toCheckRun(probeRow(db, id));
+      }),
+    finish: (db, id, f: FinishedCheck) =>
+      db.tx(() => {
+        if (db.run('UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN (\'PLANNED\', \'RUNNING\')', f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id).changes === 1) probeEvent(db, 'check.fail-before-probe-finished', probeRow(db, id), f.endedAt);
+        return toCheckRun(probeRow(db, id));
+      }),
   };
 }
 
@@ -576,7 +585,7 @@ export function listProbeAttempts(db: OrbitDb, runId: string, opts: { probeId?: 
 }
 
 /** Probe attempt directories by row id, from each attempt's intent.json (evidence/<seq>/<flavour>/<check>[~n]). */
-function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimIntent }> {
+export function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimIntent }> {
   const found = new Map<string, { dir: string; intent: ShimIntent }>();
   const subdirs = (d: string): string[] => {
     try {
