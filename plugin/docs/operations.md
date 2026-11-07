@@ -800,6 +800,13 @@ The state database is `<repo>/.orbit/state.sqlite` (WAL mode), with
 when Orbit opens the database, and the applied count is stored in
 `PRAGMA user_version`. `orbit doctor` shows it as `schema version N/M`.
 
+Before upgrading an existing schema, Orbit checks for unexpired run leases
+inside the same `BEGIN IMMEDIATE` transaction. Orbit refuses migration if any
+lease is unexpired and leaves `PRAGMA user_version` unchanged. The error names
+every run and owner. Let those runs finish, stop them, or use the same Orbit
+version that is driving them until their leases end. Expired leases from
+crashed controllers do not block migration. A fresh database migrates as before.
+
 To upgrade:
 
 1. `orbit service uninstall` (or stop foreground runs). Runs and workers keep their state.
