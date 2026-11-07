@@ -428,6 +428,14 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   const toRepair = open.filter(
     (d) => d.status === 'accepted' || undecided.has(d.findingId) || ((repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)),
   );
+  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
+  // Issue #130: a tree the gate cleared, that no review approves, whose REPAIR_REQUIRED review asked only through advisory
+  // findings, has nothing else that can move it. Those findings go to a repair; the repaired tree still needs an APPROVE.
+  // A review that raised a note, and a fresh review, keep their own route below.
+  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && !freshReviewOf(ctx, cand.treeHash)) {
+    const askedIds = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === 'REPAIR_REQUIRED')).map((f) => f.id));
+    toRepair.push(...resolution.dispositions.filter((d) => d.status === 'advisory' && d.recordedClassification === undefined && d.memberIds.some((id) => askedIds.has(id))));
+  }
   if (toRepair.length > 0) {
     const texts = findingTexts(state);
     // Spec section 10 and scenario 4: a finding about a criterion an open material question blocks is not repaired
@@ -506,7 +514,6 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   // one fresh review of the same tree, told so (ADR 0014, 0.3.1 addendum, item 3), rather than an attempt spent on the
   // same tree; only that reviewer's APPROVE lets the run go on. Without a review round left, or once the fresh review has
   // not approved either, the run stops here and says why.
-  const noted = resolution.dispositions.filter((d) => d.recordedClassification !== undefined);
   const notes = noted.length === 0 ? '' : `; review finding(s) ${noted.map((d) => `${d.externalId ?? d.findingId} (${d.severity})`).join(', ')} are filed under the category ${EVIDENCE_CLASSIFICATION_CATEGORY} and confirmed by no check: they dispute ${[...new Set(noted.map((d) => d.recordedClassification!))].join(' and ')}, which no repair can change, so they are reported as notes and not repaired`;
   let fresh: { text: string; outcome: Record<string, unknown> } | null = null;
   const asked = freshReviewOf(ctx, cand.treeHash);

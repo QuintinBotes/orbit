@@ -131,20 +131,38 @@ describe('a review that is already recorded', () => {
     expect(moved.data_json).not.toMatch(/independent review cleared/);
   });
 
-  it('a same-provider review that cleared the tree without approving it is not recorded as an approval', async () => {
+  it('a same-provider review that cleared the tree without approving it is not recorded as an approval, and its advisory finding goes to repair (#130)', async () => {
     const { cand } = await setup();
     // REPAIR_REQUIRED whose only finding is advisory: the gate clears the tree, but nobody approved it.
     record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'claude');
-    await run();
+    expect(await run()).toEqual({ progressed: true });
     const gate = decisions('gate.independent_review')[0]!;
     expect(gate.data).toMatchObject({ status: 'pass', independent: false, approved: false });
     expect(gate.summary).not.toMatch(/approved/);
     expect(gate.summary).toMatch(/without an approval/);
     expect(gate.summary).toMatch(/not independent/);
-    expect(state()).toBe('BLOCKED');
-    // The outcome does not call the same-provider review an independent one either.
-    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('repair.brief')[0]?.summary).toContain('STY-1 (low)');
+  });
+
+  it('an independent REPAIR_REQUIRED review whose only open finding is advisory sends it to repair instead of blocking (#130)', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' }), finding('STY-2', { severity: 'info', claim: 'a different nit in the parser' })], 'codex');
+    expect(await run()).toEqual({ progressed: true });
+    // The gate clears the tree without an approval: delivery stays out of reach until a review of the repaired tree approves.
+    expect(decisions('gate.independent_review')[0]!.data).toMatchObject({ status: 'pass' });
+    expect(state()).toBe('REPAIRING');
+    const repairs = lab.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT);
+    expect(JSON.parse(repairs[0]!.data_json).findings.map((f: { external_id: string }) => f.external_id).sort()).toEqual(['STY-1', 'STY-2']);
+  });
+
+  it('an advisory finding of a REPAIR_REQUIRED review ends EXHAUSTED when no review round is left for the repaired tree', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'codex');
+    lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
+    await run();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): STY-1 \(low\)/);
   });
 
   it('a same-provider BLOCK review with an advisory finding does not call the block an independent review', async () => {

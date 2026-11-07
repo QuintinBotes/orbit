@@ -485,6 +485,16 @@ The keys this replaced still work and map onto `when_unavailable`:
 is a configuration error, and so is the legacy pair that contradicts itself. A
 legacy `preferred_provider` becomes the preference list.
 
+Delivery needs a review that returns `APPROVE`. A `REPAIR_REQUIRED` review
+whose open findings are all advisory (below the blocking severities, which
+can include a medium finding under the default policy) clears the gate without approving, so its advisory findings go to
+the repair loop like any other repair. The repaired tree is reviewed again and
+is delivered only when that review approves. A review that also raised a note
+under `evidence-classification` gets its one fresh review instead, as
+`verification.fail_before` describes. The `review_rounds` cap and the
+non-progress check apply as usual. A `BLOCK` review with only advisory
+findings still ends the run `BLOCKED`.
+
 ### Human policy decisions in auto mode
 
 A person, not an agent, must make any edit to `agents.allowed_plugins`,
