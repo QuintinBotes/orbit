@@ -577,6 +577,15 @@ describe('muse reviewer (issue #108 claim 11)', () => {
       expect(c.review).toMatchObject({ status: 'pass', summary: expect.stringContaining('muse/muse-wonder-full-1.0 (independent)') });
     });
 
+    it('warns, not fails, about a listed reviewer that cannot run when the next listed one can', async () => {
+      const c = await real(world(), {}, srt(), (x) => {
+        x.providers.codex = { ...x.providers.codex!, command: join(fakes, 'fake-codex.mjs'), model: 'gpt-6-astra', data_policy_eligible: true };
+        x.review = { ...x.review, providers: ['muse', 'codex'], when_unavailable: 'block' };
+      });
+      expect(c['muse.worker-tier']).toMatchObject({ status: 'warn' });
+      expect(c.review).toMatchObject({ status: 'pass', summary: expect.stringContaining('codex/') });
+    });
+
     it('blames the tier, not the install, when explicit os-sandbox has no META_API_KEY', async () => {
       const c = await real(world(), {}, srt(), blocking);
       expect(c['muse.cli']).toMatchObject({ status: 'pass' });

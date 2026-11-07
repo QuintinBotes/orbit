@@ -69526,7 +69526,7 @@ async function checkProviders(p, iso2, registry) {
   const ids = Object.keys(adapters);
   const required = /* @__PURE__ */ new Set(["claude"]);
   const mandatoryReviewer = mandatoryReviewProvider(config.review, "claude");
-  if (mandatoryReviewer !== null) required.add(mandatoryReviewer);
+  if (mandatoryReviewer !== null && reviewProviderOrder(config.review).length === 1) required.add(mandatoryReviewer);
   const caps = await Promise.all(
     ids.map(async (id) => {
       try {
