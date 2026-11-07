@@ -225,7 +225,7 @@ sometimes shortened.
 | S7.4 | Record why an allowance was selected | `BudgetLedger` bind | U/scheduling/budget.test.ts "records the difficulty assessment..." | done |
 | S7.5 | Extend only with a remaining failure, new hypothesis, authorized scope, budget | `BudgetLedger.requestExtension` | U/scheduling/budget.test.ts "requires a new hypothesis, authorized scope and a remaining failure" | done |
 | S7.6 | Progress definition; tokens and diff size are not progress | `inquisition/repair.ts:progressSince` | U/inquisition/repair.test.ts "more tokens and a bigger diff never count" | done |
-| S7.7 | Allowances rise within caps; caps never change | `BudgetLedger` | U/scheduling/budget.test.ts "is idempotent on restart and refuses changed hard caps" | done |
+| S7.7 | Allowances rise within caps; caps never change, except the effective `review_rounds` cap, which adds rounds spent by a reviewer replaced at run time (#116) | `BudgetLedger` | U/scheduling/budget.test.ts "is idempotent on restart and refuses changed hard caps", "review_rounds grants for replaced reviewers" | done |
 | S7.8 | Reserve for final verification, review, reporting | `BudgetLedger` reserve | U/scheduling/budget.test.ts "protects the closing reserve..." | done |
 | S7.9 | Unmeasured cost: report it, conservative admission | `BudgetLedger` role ceilings | U/scheduling/budget.test.ts "charges a conservative role ceiling when cost is unavailable" | done |
 | S7.10 | Inquisition after repeated equivalent failures | `triggers.ts` repeated_failure | U/inquisition/triggers.test.ts "fires once the fingerprint has hit the threshold" | done |

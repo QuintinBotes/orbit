@@ -85,12 +85,13 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean } = {}): Promise<StepResult> {
   let advice = '';
   if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
     // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
-    const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
+    // `resumable`: the step knows from its records that a resume can clear this, whatever the reason's text names.
+    const setting = opts.resumable === true ? null : frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
       advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
       reason = withSentence(reason, advice);

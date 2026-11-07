@@ -121,6 +121,7 @@ ambiguity:
 
 scheduler:
   # Hard caps are copied into the policy snapshot and never change during a run.
+  # The one addition: review_rounds also allows the rounds a reviewer spent before it was replaced at run time.
   hard_limits:
     implementation_attempts: 12
     diagnostic_experiments: 16

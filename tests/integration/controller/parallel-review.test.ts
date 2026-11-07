@@ -4,13 +4,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { main } from '../../../src/cli/cli.ts';
+import { memoryIo } from '../../../src/cli/io.ts';
 import { defaultUi } from '../../../src/policy/config.ts';
 import { loadRunContext } from '../../../src/controller/context.ts';
 import { cancelObsoleteWork } from '../../../src/controller/steps/reviewing.ts';
 import { step } from '../../../src/controller/steps/index.ts';
 import { listWorkers, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { listReviews } from '../../../src/review/store.ts';
-import { FAKE_CODEX } from './harness.ts';
+import { FAKE_CODEX, type Lab } from './harness.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
 import { APPROVE, baseScenario, canStripTypes, drive, events, FIXED_PROBE, implementMul, PLANNER_OUTPUT, runState, startLabRun, stepTo, tracker, waitFor, writeScenario } from '../../fault-injection/helpers.ts';
 
@@ -23,6 +25,7 @@ const PLANNER = { structured: { ...PLANNER_OUTPUT, objective: 'Add a mul functio
 const ROOMY = { schedulerProbe: FIXED_PROBE };
 const lab = () => t.lab({ tweak: (c) => void (c.ui = { ...defaultUi(), ui_paths: ['apps/**'], required_when_ui_changes: false, journey_check_ids: [] }) });
 /** Each reviewer session as purpose, state and error, for a failure message that says why a unit ran twice. */
+const counter = (l: Lab, runId: string) => l.db().get<{ used: number; hard_cap: number }>("SELECT used, hard_cap FROM budget_counters WHERE run_id = ? AND counter = 'review_rounds'", runId);
 const sessions = (ws: readonly WorkerRecord[]): string => ws.map((w) => `${w.purpose} ${w.state}${w.error ? ` (${w.error})` : ''}`).join('; ');
 
 describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
@@ -124,8 +127,8 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     });
 
   it('a reviewer that fails on one unit is replaced on every unit: the next listed reviewer reviews both, and the review it already gave is set aside', async () => {
-    // Five sessions: two failed, one set aside, two by the next reviewer.
-    const l = twoReviewers((c) => void (c.scheduler.hard_limits.review_rounds = 5));
+    // Five sessions at the default review_rounds of 4: two failed, one set aside, two by the next reviewer.
+    const l = twoReviewers();
     const fail = { outcome: 'no_result', sleepMs: 1_500 };
     writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [fail, fail, APPROVE], 'reviewer@ui': [APPROVE] }));
     const run = startLabRun(l);
@@ -138,11 +141,14 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     // One reviewer reviewed every unit of the tree, so its independence is one property of the tree.
     expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['codex-b', 'codex-b']);
     expect(listReviews(l.db(), run.id, { includeInvalidated: true }).filter((r) => r.invalidatedAt !== null).map((r) => r.provider)).toEqual(['codex']);
+    // Every round is counted, and the three the replaced reviewer spent were granted back.
+    expect(counter(l, run.id)).toEqual({ used: 5, hard_cap: 4 });
+    expect(events(l, run.id, 'budget.exhausted')).toEqual([]);
   }, 90_000);
 
   it('a reviewer that fails on one unit has its other running unit stopped, and the next listed reviewer reviews both', async () => {
-    // Five sessions, one stopped and charged its worst case: more than the default caps fit.
-    const l = twoReviewers((c) => void Object.assign(c.scheduler.hard_limits, { model_cost_usd: 200, review_rounds: 6 }));
+    // Five sessions, one stopped and charged its worst case: more than the default cost cap fits.
+    const l = twoReviewers((c) => void (c.scheduler.hard_limits.model_cost_usd = 200));
     writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [{ outcome: 'no_result' }, { outcome: 'no_result' }, APPROVE], 'reviewer@ui': [{ ...APPROVE, sleepMs: 30_000 }, APPROVE] }));
     const run = startLabRun(l);
     await drive(l, run.id, ROOMY);
@@ -154,5 +160,66 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     expect(uiOnCodex?.state, sessions(reviewers)).toBe('CANCELLED');
     expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['codex-b', 'codex-b']);
     expect(events(l, run.id, 'workers.reviewer-failed-cancelled')).toHaveLength(1);
+    expect(counter(l, run.id)).toEqual({ used: 5, hard_cap: 4 });
   }, 90_000);
+
+  // One listed reviewer, when_unavailable block: the security unit answers first, then the UI unit fails on every
+  // attempt, which sets the security review aside and blocks the run. A resume selects the same reviewer again.
+  const oneReviewer = () =>
+    t.lab({
+      tweak: (c) => {
+        c.ui = { ...defaultUi(), ui_paths: ['apps/**'], required_when_ui_changes: false, journey_check_ids: [] };
+        c.review = { ...c.review, providers: ['codex'], when_unavailable: 'block' };
+      },
+    });
+  const BLOCK = { structured: { verdict: 'BLOCK', candidate_revision: '$CANDIDATE', findings: [] } };
+  const fail = { outcome: 'no_result', sleepMs: 1_500 };
+  const unitPurposes = (ws: readonly WorkerRecord[]): string[] => ws.map((w) => w.purpose!.replace(/:cand-[^#~]+/, '')).sort();
+  async function resume(l: Lab, runId: string): Promise<void> {
+    const io = memoryIo('');
+    expect(await main(['resume', runId, '--detach'], { io, cwd: l.repo, homeDir: l.base, orbitHome: l.orbitHome, env: { ...process.env, ORBIT_HOME: l.orbitHome }, user: 'acme' }), io.stderr).toBe(0);
+  }
+
+  it('a review set aside by a reviewer failure does not count after a resume: its unit runs a new session, and the run does not succeed on the other unit alone', async () => {
+    const l = oneReviewer();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [BLOCK, BLOCK], 'reviewer@ui': [fail, fail, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+    expect(runState(l, run.id).state).toBe('BLOCKED');
+
+    // No review of the tree stands, so the report names no standing reviewer.
+    const blockedReport = readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.md'), 'utf8');
+    expect(blockedReport).toContain('Reviewer: none, no review of this tree stands\n- Tried first: codex/gpt-6-astra, which failed (');
+    expect(blockedReport).not.toMatch(/Reviewer: codex/);
+
+    await resume(l, run.id);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(unitPurposes(reviewers), sessions(reviewers)).toEqual(['review-security#1', 'review-security#2', 'review-ui#1', 'review-ui#2', 'review-ui#3']);
+    expect(listReviews(l.db(), run.id).map((r) => r.verdict).sort()).toEqual(['APPROVE', 'BLOCK']);
+  }, 120_000);
+
+  it('a review set aside by a reviewer failure: the run succeeds once the unit\'s new session approves too', async () => {
+    const l = oneReviewer();
+    writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [BLOCK, APPROVE], 'reviewer@ui': [fail, fail, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id, ROOMY);
+    expect(runState(l, run.id).state).toBe('BLOCKED');
+    await resume(l, run.id);
+    await drive(l, run.id, ROOMY);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const reviewers = listWorkers(l.db(), { runId: run.id, role: 'reviewer' });
+    expect(unitPurposes(reviewers), sessions(reviewers)).toEqual(['review-security#1', 'review-security#2', 'review-ui#1', 'review-ui#2', 'review-ui#3']);
+    const secondSecurity = reviewers.find((w) => /^review-security:[^#]+#2$/.test(w.purpose!))!;
+    const standing = listReviews(l.db(), run.id);
+    expect(standing.map((r) => r.verdict)).toEqual(['APPROVE', 'APPROVE']);
+    expect(standing.map((r) => r.workerId)).toContain(secondSecurity.id);
+    // One recovery attempt for each unit that started again on this resume.
+    expect(events(l, run.id, 'resume.reset')).toHaveLength(2);
+  }, 120_000);
 });

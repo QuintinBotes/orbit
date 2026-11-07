@@ -288,7 +288,16 @@ scheduler:
   final_reserve_fraction: 0.2
 ```
 
-Hard limits are copied into the policy snapshot and never change during a run.
+Hard limits are copied into the policy snapshot and never change during a run,
+with one addition for `review_rounds`. The rounds a reviewer spent on a candidate
+before it was replaced at run time do not eat the next reviewer's allowance: each
+`review.reviewer-failed` decision records them as `rounds_granted`, and the
+effective `review_rounds` cap is the configured value plus every grant. Every
+attempt still counts as used, and reports and cap messages print the effective cap
+and say what it includes (`hard cap 8, including 4 for replaced reviewers`). This
+is bounded: a listed reviewer fails at most once until a resume, and resumes that
+start reviewers again spend `recovery_attempts`. The cost, wall-clock and every
+other hard limit stay as they are.
 `worker_turns_per_session` is passed to every Claude worker session as
 `--max-turns`; the curator also keeps its smaller six-turn cap. Every attempt
 is a new session, never a resumed one, so the cap applies to each session
@@ -466,12 +475,17 @@ exit, or a malformed answer once its regenerations are used) is recorded with
 the reason as a `review.reviewer-failed` decision, and the selection runs again
 without it: the next listed reviewer reviews under its own name, and with none
 left `review.when_unavailable` applies. The final report's `Reviewer:` line
-names each reviewer tried first and why it failed. Each session that ran is
-charged and counts as a review round. A failed reviewer is not selected again
+names every reviewer that failed in the run and why, those from before a resume
+included; when no review of the tree stands it says so instead of naming a
+reviewer. Each session that ran is charged and counts as a review round, and
+the replaced reviewer's rounds raise the effective `hard_limits.review_rounds`
+(see [scheduler](#scheduler)). A failed reviewer is not selected again
 in that run until `orbit resume`; a run resumed after it blocked because every
 listed reviewer failed tries them in order again. When security and UI review
 run as separate units, the next reviewer reviews every unit, so one reviewer
-reviews the whole change.
+reviews the whole change. A review set aside this way never counts again: after
+a resume its unit runs a new session, and the run cannot clear until every unit
+has a standing review.
 
 `review.when_unavailable` decides what happens when none of them is usable at
 run time ([ADR 0007](decisions/0007-reviewer-availability.md)):

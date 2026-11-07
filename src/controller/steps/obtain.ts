@@ -57,8 +57,8 @@ export type AttemptStart = { ok: true; n: number; first: number } | { ok: false;
 /**
  * Where a unit's attempts continue. Normally at the newest attempt, so a restart collects the worker it already has.
  * A run resumed from BLOCKED after a person fixed the cause (a login, a broken provider wrapper) must not replay the
- * stored failure it blocked on: when the newest attempt failed before the most recent `orbit resume`, a fresh series
- * starts at the next attempt number. That reset is recorded once per resume and spends one recovery attempt, so a
+ * stored failure it blocked on: when the newest attempt failed, or its review was set aside, before the most recent
+ * `orbit resume`, a fresh series starts at the next attempt number. That reset is recorded once per resume and spends one recovery attempt, so a
  * resume loop stays bounded by scheduler.hard_limits.recovery_attempts; with none left the run ends EXHAUSTED.
  */
 export async function attemptStart(ctx: RunContext, base: string, what: string): Promise<AttemptStart> {
@@ -71,17 +71,20 @@ export async function attemptStart(ctx: RunContext, base: string, what: string):
   if (latest > 0 && latest >= first && resumed !== null && !resets.some((r) => r.resumed_event_id === resumed)) {
     const failed = ctx.db.get<{ id: string; state: string }>("SELECT id, state FROM workers WHERE run_id = ? AND purpose = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, `${base}#${latest}`);
     const planned = failed ? ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'worker.planned' AND json_extract(data_json, '$.worker_id') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, failed.id) : undefined;
-    const finishedUnusable = failed !== undefined && failed.state !== 'SUCCEEDED' && failed.state !== 'PLANNED' && failed.state !== 'RUNNING';
+    // A session that succeeded but whose review was set aside (reviewing.ts reviewerFailed) has no result to collect either.
+    const setAside = failed?.state === 'SUCCEEDED' && ctx.db.get('SELECT 1 AS x FROM reviews WHERE run_id = ? AND worker_id = ? AND invalidated_at IS NOT NULL', ctx.run.id, failed.id) !== undefined;
+    const finishedUnusable = setAside || (failed !== undefined && failed.state !== 'SUCCEEDED' && failed.state !== 'PLANNED' && failed.state !== 'RUNNING');
+    const gone = setAside ? 'had its review set aside' : 'failed';
     if (finishedUnusable && planned !== undefined && planned.id < resumed) {
       const reset: ResumeReset = { base, what, resumed_event_id: resumed, after_attempt: latest, next_attempt: latest + 1 };
       try {
         ctx.db.tx(() => {
-          spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `resume after a block: fresh ${what} (attempt ${latest} failed before the resume)` });
+          spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `resume after a block: fresh ${what} (attempt ${latest} ${gone} before the resume)` });
           appendEvent(ctx.db, ctx.run.id, RESUME_RESET_EVENT, ctx.ownerId, reset, ctx.clock.now());
         });
       } catch (err) {
         if (!isOrbitError(err, 'BUDGET_EXHAUSTED')) throw err;
-        return { ok: false, step: await finishRun(ctx, 'EXHAUSTED', `recovery_attempts exhausted: the run was resumed after ${what} failed (attempt ${latest}), and no recovery attempt is left to start it again (${err.message})`, { data: { counter: 'recovery_attempts' } }) };
+        return { ok: false, step: await finishRun(ctx, 'EXHAUSTED', `recovery_attempts exhausted: the run was resumed after ${what} ${gone} (attempt ${latest}), and no recovery attempt is left to start it again (${err.message})`, { data: { counter: 'recovery_attempts' } }) };
       }
       first = reset.next_attempt;
     }

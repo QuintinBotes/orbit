@@ -34,7 +34,7 @@ import { probeChanges, runRepairProbe, type ProbeChanges } from '../fail-before.
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
 import { mentionsIrreversible, riskCategoriesInText } from '../../inquisition/heuristics.ts';
 import { progressSince, type NonProgressDecision } from '../../inquisition/repair.ts';
-import { extensionDecisionRecord } from '../../scheduling/budget.ts';
+import { extensionDecisionRecord, grantNote } from '../../scheduling/budget.ts';
 import { marksCharges } from '../../scheduling/accounting.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { REVIEWER_FAILED_KIND, selectReviewer, selectionDecisionRecord, type ReviewerFailure, type ReviewerSelection } from '../../review/select.ts';
@@ -99,7 +99,8 @@ async function usableReviewer(ctx: RunContext, cand: CandidateRecord): Promise<{
       const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
       return { ok: false, step: await blockOnAuth(ctx, provider, sel.code === 'AUTH_MISSING' ? 'missing' : 'expired', sel.reason) };
     }
-    return { ok: false, step: await finishRun(ctx, 'BLOCKED', `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } }) };
+    // A resume tries a reviewer that failed at run time again, so such a block is never the frozen policy's alone.
+    return { ok: false, step: await finishRun(ctx, 'BLOCKED', `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel }, resumable: activeReviewerFailures(ctx).length > 0 }) };
   }
   // review.when_unavailable: ask (decision 0007): the same-provider review runs only on a person's yes.
   if (sel.needsApproval === true) {
@@ -539,7 +540,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     const rounds = ctx.ledger!.state('review_rounds');
     if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
     fresh = {
-      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`,
+      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
       outcome: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } },
     };
   }
@@ -582,7 +583,7 @@ function freshReviewOf(ctx: RunContext, treeHash: string): FreshReviewRecord | n
 
 /** The recorded review of the fresh reviewer's sessions, or null while none has come back. */
 function recordedFreshReview(ctx: RunContext, rec: FreshReviewRecord): ReviewRecord | null {
-  // A substitute reviewer's sessions run under the same base with a ~<n> suffix (#116).
+  // A substitute reviewer's sessions run under the same base with a ~<provider> suffix (#116).
   const prefixes = [`${rec.base}#`, `${rec.base}~`];
   const workers = new Set(ctx.db.all<{ id: string; purpose: string | null }>("SELECT id, purpose FROM workers WHERE run_id = ? AND role = 'reviewer'", ctx.run.id).filter((w) => prefixes.some((p) => w.purpose?.startsWith(p))).map((w) => w.id));
   return listReviews(ctx.db, ctx.run.id, { treeHash: rec.tree_hash }).find((r) => r.workerId !== null && workers.has(r.workerId)) ?? null;
@@ -636,7 +637,7 @@ async function decideShallowApproval(ctx: RunContext, cand: CandidateRecord, sha
       decide(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: ${what}`, data: rec });
       return freshReview(ctx, cand, rec);
     }
-    return finishRun(ctx, 'BLOCKED', `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`, {
+    return finishRun(ctx, 'BLOCKED', `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`, {
       outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } } },
     });
   }
@@ -1177,7 +1178,7 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord): NonProgres
 async function reviewRoundsSpent(ctx: RunContext, open: string, outcome: Record<string, unknown>): Promise<StepResult | null> {
   const rounds = ctx.ledger!.state('review_rounds');
   if (rounds.used < rounds.allowance) return null;
-  return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+  return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}) with ${open}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
 
 function describeFindings(list: readonly Disposition[]): string {
@@ -1199,7 +1200,7 @@ async function routeToRepair(
   // Every repair needs another review of the repaired tree: without a round left, the findings stay open.
   const rounds = ledger.state('review_rounds');
   if (rounds.used >= rounds.allowance) {
-    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2000), { data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
   }
   const next = currentAttempt(ctx) + 1;
   const att = ledger.state('implementation_attempts');
@@ -1350,7 +1351,7 @@ async function reviewerFailed(ctx: RunContext, cand: CandidateRecord, sel: Selec
   const error = failed.error ? clipAtWord(failed.error.replace(/\s+/g, ' ').trim(), 300) : '';
   const reason = `${failed.status}${error ? `: ${error}` : ''} after ${MAX_REGENERATIONS} attempt(s)`;
   // Before the decision, which moves every unit to the next reviewer's keys: a restart in between replays the failed
-  // attempt and comes back here, so no session of this reviewer is left running unattended. Both steps repeat safely.
+  // attempt and comes back here, and may first charge one more session per stopped unit, which is stopped again here.
   const siblings = listActiveWorkers(ctx.db, ctx.run.id).filter((w) => w.role === 'reviewer' && w.candidateId === cand.id && w.provider === sel.provider);
   await stopReadOnlyWorkers(ctx, siblings, `reviewer ${sel.provider} failed at run time`);
   // One reviewer reviews every unit of a tree, so independence is one property of the tree: the next reviewer reviews
@@ -1358,7 +1359,10 @@ async function reviewerFailed(ctx: RunContext, cand: CandidateRecord, sel: Selec
   for (const r of listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((x) => x.provider === sel.provider)) {
     markReviewInvalidated(ctx.db, r.id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
   }
-  const record: ReviewerFailure = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx) };
+  // Each purpose was charged one round once. Only what no earlier failure of this reviewer granted, so nothing is granted twice.
+  const spent = new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).filter((w) => w.candidateId === cand.id && w.provider === sel.provider).map((w) => w.purpose)).size;
+  const granted = reviewerFailures(ctx, cand).filter((f) => f.provider === sel.provider).reduce((n, f) => n + (f.rounds_granted ?? 0), 0);
+  const record: ReviewerFailure = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted };
   decide(ctx, { kind: REVIEWER_FAILED_KIND, summary: `reviewer ${sel.provider}/${sel.model ?? 'default'} failed: ${reason}; selecting again without it`, data: record });
   return MOVED;
 }

@@ -59,6 +59,8 @@ export interface ReviewerFailure {
   reason: string;
   /** The latest `run.resumed` event when it failed: a later resume lets the provider be tried again. */
   resumed_event_id: number | null;
+  /** The review rounds this reviewer spent on the candidate since its last grant, added to the effective review_rounds hard cap (scheduling/budget.ts). Absent in older records. */
+  rounds_granted?: number;
 }
 
 export interface RejectedReviewer {

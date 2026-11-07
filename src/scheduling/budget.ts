@@ -3,6 +3,7 @@ import type { Clock } from '../core/clock.ts';
 import { OrbitError } from '../core/errors.ts';
 import { TERMINAL_STATES, isRunState } from '../core/run-states.ts';
 import type { OrbitConfig } from '../policy/types.ts';
+import { REVIEWER_FAILED_KIND } from '../review/select.ts';
 import type { ModelPricing } from '../routing/types.ts';
 import { marksCharges } from './accounting.ts';
 import {
@@ -34,7 +35,10 @@ import {
  *
  * Hard caps are copied from the frozen policy snapshot when the run starts
  * and never change; a restarted controller that presents different caps is
- * refused. Allowances start from the difficulty class and grow by one
+ * refused. The one addition is review_rounds, whose effective cap adds the
+ * rounds_granted recorded on review.reviewer-failed decisions: the stored row
+ * keeps the snapshot's value, and the grant has no row of its own to apply
+ * twice. Allowances start from the difficulty class and grow by one
  * extension at a time, only with measurable progress, a new hypothesis,
  * authorized scope, room under the hard cap and the closing reserve intact.
  *
@@ -129,6 +133,12 @@ interface CounterRow {
   used: number;
   allowance: number;
   hard_cap: number;
+  granted?: number;
+}
+
+/** What a cap message adds when the cap includes rounds granted for replaced reviewers. */
+export function grantNote(c: { granted?: number }): string {
+  return c.granted ? `, including ${c.granted} for replaced reviewers` : '';
 }
 
 export interface ConsumeOptions {
@@ -405,7 +415,7 @@ export class BudgetLedger {
 
   snapshot(): BudgetSnapshot {
     const { runId } = this.bound();
-    const rows = this.db.all<CounterRow>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter', runId);
+    const rows = this.db.all<CounterRow>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter', runId).map((r) => this.withGrants(runId, r));
     const order = new Map<string, number>(BUDGET_COUNTERS.map((c, i) => [c, i]));
     const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
     return {
@@ -740,7 +750,13 @@ export class BudgetLedger {
   private row(runId: string, counter: string): CounterRow {
     const row = this.db.get<CounterRow>('SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? AND counter = ?', runId, counter);
     if (!row) throw new OrbitError('NOT_FOUND', `run ${runId} has no budget counter ${counter}`);
-    return row;
+    return this.withGrants(runId, row);
+  }
+
+  private withGrants(runId: string, row: CounterRow): CounterRow {
+    if (row.counter !== 'review_rounds') return row;
+    const granted = this.db.get<{ n: number | null }>("SELECT SUM(json_extract(data_json, '$.rounds_granted')) AS n FROM decisions WHERE run_id = ? AND kind = ?", runId, REVIEWER_FAILED_KIND)?.n ?? 0;
+    return granted > 0 ? { ...row, allowance: row.allowance + granted, hard_cap: row.hard_cap + granted, granted } : row;
   }
 
   /** Budget changes are recorded as events (spec section 16); this module may not import the controller. */
@@ -1057,7 +1073,7 @@ function progressKey(kind: string, item: string): string {
 function exhausted(counter: string, row: CounterRow, amount: number, limit: 'allowance' | 'hard_cap' | 'reserve', phase: BudgetPhase): OrbitError {
   // Dollars are summed floats; the message shows cents (the data keeps the exact values).
   const v = (n: number): string => (counter === 'cost_usd' ? `$${usd(n)}` : String(n));
-  const what = limit === 'allowance' ? `allowance ${v(row.allowance)} (hard cap ${v(row.hard_cap)})` : limit === 'reserve' ? `hard cap ${v(row.hard_cap)} less the closing reserve` : `hard cap ${v(row.hard_cap)}`;
+  const what = limit === 'allowance' ? `allowance ${v(row.allowance)} (hard cap ${v(row.hard_cap)})` : limit === 'reserve' ? `hard cap ${v(row.hard_cap)} less the closing reserve` : `hard cap ${v(row.hard_cap)}${grantNote(row)}`;
   return new OrbitError('BUDGET_EXHAUSTED', `${counter} exhausted at the ${what}: used ${v(row.used)}, requested ${v(amount)}`, {
     counter,
     used: row.used,
@@ -1072,7 +1088,7 @@ function exhausted(counter: string, row: CounterRow, amount: number, limit: 'all
 }
 
 function toState(r: CounterRow): CounterState {
-  return { counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: r.allowance - r.used };
+  return { counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: r.allowance - r.used, ...(r.granted ? { granted: r.granted } : {}) };
 }
 
 function assertCounter(counter: string): void {

@@ -41703,6 +41703,209 @@ var init_validate = __esm({
   }
 });
 
+// src/review/select.ts
+function selectionDecisionRecord(sel) {
+  return {
+    kind: "review.select",
+    summary: (sel.decision === "SELECT" ? `reviewer ${reviewerLabel(sel)}` : `review blocked: ${sel.reason}`).slice(0, 300),
+    data: sel
+  };
+}
+function reviewerLabel(sel) {
+  const who = `${sel.provider}/${sel.model ?? "default"}`;
+  if (sel.independent) return `${who} (independent)`;
+  return `${who} (same provider, not independent: ${sel.independentUnavailable ?? "no independent reviewer was usable"})`;
+}
+function selectReviewer(input) {
+  const { config } = input.snapshot;
+  const review = config.review;
+  const impl = input.implementer.provider;
+  const alternatives = [];
+  const fallback = reviewFallback(review);
+  const order = reviewProviderOrder(review);
+  const preferred = order[0] ?? null;
+  const providerProblem = (p, unverifiedOk = false) => {
+    const failed = input.failed?.[p];
+    if (failed !== void 0) return { reason: `"${p}" failed at run time: ${failed}`, code: "PROVIDER_UNAVAILABLE" };
+    const cap = input.capabilities[p];
+    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
+    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
+    const cred = input.credentials[p];
+    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
+    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
+    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
+    if (cred.state !== "valid" && !(unverifiedOk && cred.state === "unknown")) return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
+    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
+      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
+    }
+    return null;
+  };
+  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
+  const problems = /* @__PURE__ */ new Map();
+  const unusable = /* @__PURE__ */ new Map();
+  for (const p of independentIds) {
+    const prob = providerProblem(p);
+    if (prob) {
+      problems.set(p, prob);
+      unusable.set(p, prob.reason);
+      alternatives.push({ provider: p, model: null, reason: prob.reason });
+      continue;
+    }
+    const m = qualifiedModel(p, input, alternatives);
+    if (!m) {
+      unusable.set(p, `"${p}" has no model qualified for review`);
+      continue;
+    }
+    const substituted = p !== preferred;
+    return finish(
+      input,
+      m,
+      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
+      alternatives,
+      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`
+    );
+  }
+  const detail = independentIds.length === 0 ? order.length === 0 ? "no independent review provider is listed in review.providers" : `no provider other than "${impl}" is configured` : independentIds.map((p) => unusable.get(p) ?? `"${p}" has no model qualified for review`).join("; ");
+  if (fallback === "block") {
+    const preferredProblem = preferred !== null ? problems.get(preferred) : void 0;
+    const code2 = preferred !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
+    return {
+      decision: "BLOCK",
+      code: code2,
+      reason: `independent review is required (review.when_unavailable: block) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
+      alternatives
+    };
+  }
+  const implProblem = providerProblem(impl, true);
+  if (implProblem) {
+    alternatives.push({ provider: impl, model: null, reason: implProblem.reason });
+    return {
+      decision: "BLOCK",
+      code: implProblem.code,
+      reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but "${impl}" cannot review: ${implProblem.reason}`,
+      alternatives
+    };
+  }
+  const same2 = sameProviderModel(input, alternatives);
+  if (!same2.ok) {
+    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same2.reason}`, alternatives };
+  }
+  const why = `no independent reviewer was usable: ${detail}`;
+  return finish(
+    input,
+    same2.usable,
+    { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
+    alternatives,
+    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same2.usable.model} in a separate reviewer session (${same2.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
+  );
+}
+function finish(input, u, how, alternatives, reason) {
+  const cap = input.capabilities[u.provider];
+  return {
+    decision: "SELECT",
+    provider: u.provider,
+    model: u.model,
+    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
+    independent: how.independent,
+    independentUnavailable: how.independentUnavailable,
+    needsApproval: how.needsApproval,
+    basis: u.basis,
+    substitutedForPreferred: how.substitutedForPreferred,
+    readOnlySandbox: cap?.readOnlySandbox === true,
+    reason,
+    alternatives
+  };
+}
+function qualifiedModel(provider, input, alternatives) {
+  const cfg = input.snapshot.config;
+  const cap = input.capabilities[provider];
+  const configured = cfg.providers[provider]?.model ?? null;
+  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
+  if (configured !== null) {
+    if (!offered(configured)) {
+      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
+      return null;
+    }
+    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
+  }
+  const reg = input.registry;
+  const surface = PROVIDER_SURFACE[provider];
+  if (reg && surface) {
+    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
+    const ranked = a.eligible.filter((e) => offered(e.modelId));
+    if (provider === "claude") {
+      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
+      const pick = tiered[0];
+      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
+    } else {
+      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
+      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
+      const recommended = ranked.find((e) => e.eligibility.providerDefault);
+      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
+    }
+  }
+  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
+  return null;
+}
+function sameProviderModel(input, alternatives) {
+  const impl = input.implementer;
+  const cfg = input.snapshot.config;
+  const reg = input.registry;
+  if (!reg) return { ok: false, reason: "no model registry was supplied, so a reviewer model at the quality floor cannot be chosen" };
+  const implEntry = impl.model ? reg.get(impl.model) : null;
+  const implTier = implEntry ? tierOf(implEntry) : null;
+  const surface = PROVIDER_SURFACE[impl.provider];
+  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a same-provider review at the quality floor is not defined` };
+  const cap = input.capabilities[impl.provider];
+  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
+  const unvalidated = (ex) => ex.reasons.length > 0 && ex.reasons.every((r) => /not yet validated/.test(r));
+  const pending = [];
+  for (const ex of a.excluded) {
+    if (ex.model.provider !== impl.provider) continue;
+    if (unvalidated(ex)) pending.push(ex.model);
+    else alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
+  }
+  const atFloor = [...a.eligible, ...pending].filter((e) => {
+    const t = tierOf(e);
+    if (t === null) return false;
+    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
+    if (t < REVIEW_QUALITY_FLOOR_TIER) {
+      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
+      return false;
+    }
+    return true;
+  });
+  const otherTier = implTier === null ? void 0 : atFloor.find((e) => tierOf(e) !== implTier);
+  if (otherTier) {
+    for (const e of atFloor) if (tierOf(e) === implTier) alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model; a different tier is preferred` });
+    return { ok: true, usable: { provider: impl.provider, model: otherTier.modelId, basis: "tier", detail: `${otherTier.family} is at or above the opus-class floor and a different tier than the implementer's ${implEntry?.family}` } };
+  }
+  const pick = atFloor[0];
+  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor` };
+  const detail = implTier === null ? `${pick.family} meets the opus-class floor; the implementer's model is not known yet` : `${pick.family} is at the opus-class floor, the same tier as the implementer's model; it reviews in a separate session`;
+  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail } };
+}
+function mandatoryReviewProvider(review, implementer) {
+  if (reviewFallback(review) !== "block") return null;
+  const first = preferredReviewProvider(review);
+  return first !== null && first !== implementer ? first : null;
+}
+var SAME_PROVIDER_APPROVED_KIND, REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE, REVIEWER_FAILED_KIND;
+var init_select = __esm({
+  "src/review/select.ts"() {
+    "use strict";
+    init_errors();
+    init_review();
+    init_registry();
+    SAME_PROVIDER_APPROVED_KIND = "review.same-provider-approved";
+    REVIEW_QUALITY_FLOOR_TIER = 3;
+    PROVIDER_SURFACE = { claude: "claude-cli", codex: "codex-cli", muse: "muse-cli" };
+    REVIEWER_FAILED_KIND = "review.reviewer-failed";
+  }
+});
+
 // src/scheduling/types.ts
 var DISCRETE_COUNTERS, MEASURED_COUNTERS, SESSION_COUNTER, BUDGET_COUNTERS;
 var init_types5 = __esm({
@@ -41735,6 +41938,9 @@ function implementationAttemptWallTimeProblem(config) {
   if (minimum.configuredMinutes >= minimum.minimumMinutes) return null;
   const reservePercent = minimum.reserveFraction * 100;
   return `scheduler.hard_limits.wall_minutes is ${minimum.configuredMinutes} min, below the ${minimum.minimumMinutes} min minimum for one implementation attempt: the ${minimum.implementerCeilingMinutes} min implementer ceiling must fit after the ${reservePercent}% closing reserve`;
+}
+function grantNote(c) {
+  return c.granted ? `, including ${c.granted} for replaced reviewers` : "";
 }
 function dearestPricing(all) {
   const priced = all.filter((p) => p !== null);
@@ -41981,7 +42187,7 @@ function progressKey(kind, item) {
 }
 function exhausted(counter, row, amount, limit, phase) {
   const v = (n2) => counter === "cost_usd" ? `$${usd(n2)}` : String(n2);
-  const what = limit === "allowance" ? `allowance ${v(row.allowance)} (hard cap ${v(row.hard_cap)})` : limit === "reserve" ? `hard cap ${v(row.hard_cap)} less the closing reserve` : `hard cap ${v(row.hard_cap)}`;
+  const what = limit === "allowance" ? `allowance ${v(row.allowance)} (hard cap ${v(row.hard_cap)})` : limit === "reserve" ? `hard cap ${v(row.hard_cap)} less the closing reserve` : `hard cap ${v(row.hard_cap)}${grantNote(row)}`;
   return new OrbitError("BUDGET_EXHAUSTED", `${counter} exhausted at the ${what}: used ${v(row.used)}, requested ${v(amount)}`, {
     counter,
     used: row.used,
@@ -41995,7 +42201,7 @@ function exhausted(counter, row, amount, limit, phase) {
   });
 }
 function toState(r) {
-  return { counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: r.allowance - r.used };
+  return { counter: r.counter, used: r.used, allowance: r.allowance, hard_cap: r.hard_cap, remaining: r.allowance - r.used, ...r.granted ? { granted: r.granted } : {} };
 }
 function assertCounter(counter) {
   if (!BUDGET_COUNTERS.includes(counter)) throw new OrbitError("SCHEMA_INVALID", `unknown budget counter ${counter}`);
@@ -42018,6 +42224,7 @@ var init_budget = __esm({
     "use strict";
     init_errors();
     init_run_states();
+    init_select();
     init_accounting();
     init_types5();
     ROLE_COST_CEILING_USD = {
@@ -42235,7 +42442,7 @@ var init_budget = __esm({
       }
       snapshot() {
         const { runId } = this.bound();
-        const rows = this.db.all("SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter", runId);
+        const rows = this.db.all("SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? ORDER BY counter", runId).map((r) => this.withGrants(runId, r));
         const order = new Map(BUDGET_COUNTERS.map((c, i) => [c, i]));
         const numTurns = rows.filter((r) => r.counter.startsWith(`${NUM_TURNS_COUNTER}:`)).map(toState);
         return {
@@ -42541,7 +42748,12 @@ var init_budget = __esm({
       row(runId, counter) {
         const row = this.db.get("SELECT counter, used, allowance, hard_cap FROM budget_counters WHERE run_id = ? AND counter = ?", runId, counter);
         if (!row) throw new OrbitError("NOT_FOUND", `run ${runId} has no budget counter ${counter}`);
-        return row;
+        return this.withGrants(runId, row);
+      }
+      withGrants(runId, row) {
+        if (row.counter !== "review_rounds") return row;
+        const granted = this.db.get("SELECT SUM(json_extract(data_json, '$.rounds_granted')) AS n FROM decisions WHERE run_id = ? AND kind = ?", runId, REVIEWER_FAILED_KIND)?.n ?? 0;
+        return granted > 0 ? { ...row, allowance: row.allowance + granted, hard_cap: row.hard_cap + granted, granted } : row;
       }
       /** Budget changes are recorded as events (spec section 16); this module may not import the controller. */
       event(runId, type, data, ts) {
@@ -43951,7 +44163,7 @@ async function reconcileWorker(ctx, run, w, stop) {
           note(ctx, w.runId, "recovery.stop-unconfirmed", { worker_id: w.id, reason: why, detail: unconfirmed });
           break;
         }
-        finish(ctx, w.id, { state: "CANCELLED", resultStatus: "cancelled", error: shim === "stopped" ? `its starting shim was stopped: ${why}` : `never started: ${why}` });
+        finish2(ctx, w.id, { state: "CANCELLED", resultStatus: "cancelled", error: shim === "stopped" ? `its starting shim was stopped: ${why}` : `never started: ${why}` });
         rep.observation = "orphan-terminated";
         rep.state = "CANCELLED";
         break;
@@ -43974,7 +44186,7 @@ async function reconcileWorker(ctx, run, w, stop) {
         break;
       }
       const result2 = await collect(ctx, cur, obs.handle);
-      finish(ctx, w.id, { state: "CANCELLED", resultStatus: "cancelled", exitCode: result2?.exitCode ?? null, result: result2, error: `process group terminated: ${why}` });
+      finish2(ctx, w.id, { state: "CANCELLED", resultStatus: "cancelled", exitCode: result2?.exitCode ?? null, result: result2, error: `process group terminated: ${why}` });
       rep.observation = "orphan-terminated";
       rep.state = "CANCELLED";
       break;
@@ -43995,7 +44207,7 @@ async function reconcileWorker(ctx, run, w, stop) {
         rep.detail = "the adapter could not collect the result";
         break;
       }
-      const row = finish(ctx, w.id, outcomeOf(result2));
+      const row = finish2(ctx, w.id, outcomeOf(result2));
       rep.observation = "finished";
       rep.state = row.state;
       break;
@@ -44012,7 +44224,7 @@ function outcomeOf(result2) {
   const state = result2.status === "succeeded" ? "SUCCEEDED" : result2.status === "cancelled" ? "CANCELLED" : result2.status === "lost" ? "LOST" : "FAILED";
   return { state, exitCode: result2.exitCode, resultStatus: result2.status, result: result2, error: result2.error === null ? null : redact(result2.error).slice(0, 2e3) };
 }
-function finish(ctx, workerId, outcome) {
+function finish2(ctx, workerId, outcome) {
   return finishWorker(ctx.db, workerId, outcome, ctx.clock, ctx.ownerId);
 }
 function schemaFor(ctx, w) {
@@ -44070,7 +44282,7 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
     rep.detail = "the shim was gone but its provider process was still running; its group was stopped";
   }
   const giveUp = (reason, state) => {
-    const row = finish(ctx, w.id, { state, resultStatus: state === "LOST" ? "lost" : "cancelled", exitCode: partial?.exitCode ?? null, result: partial, error: state === "LOST" ? lostDetail : `cancelled: ${why}` });
+    const row = finish2(ctx, w.id, { state, resultStatus: state === "LOST" ? "lost" : "cancelled", exitCode: partial?.exitCode ?? null, result: partial, error: state === "LOST" ? lostDetail : `cancelled: ${why}` });
     rep.state = row.state;
     rep.restartRefused = reason;
     note(ctx, w.runId, "recovery.restart-refused", { worker_id: w.id, reason, restart_count: w.restartCount });
@@ -44078,7 +44290,7 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   if (stop) return giveUp("cancelled", "CANCELLED");
   if (w.role === "inquisitor") {
     const row = db.tx(() => {
-      const done = finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      const done = finish2(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
       if (!partial && marksCharges(db, run.id)) recordLostUsage(ctx, run, w, null);
       return done;
     });
@@ -44110,7 +44322,7 @@ async function restartOrGiveUp(ctx, run, w, obs, rep, stop, why) {
   }
   try {
     db.tx(() => {
-      finish(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
+      finish2(ctx, w.id, { state: "LOST", resultStatus: "lost", exitCode: partial?.exitCode ?? null, result: partial, error: lostDetail });
       const usageId = marksCharges(db, run.id) ? recordLostUsage(ctx, run, w, partial) : null;
       spendRecoveryAttempt(db, run.id, clock, { ledgerFor: ctx.opts.ledgerFor, fallbackMax: ctx.opts.fallbackRecoveries, actor: ctx.ownerId, why: `restart of lost worker ${w.id}` });
       const row = planWorkerRestart(db, w.id, clock, ctx.ownerId);
@@ -44661,7 +44873,7 @@ function routeLadder(ctx) {
       if (up) {
         justification.signals.push({ signal: "measured-accuracy", detail: `measured accuracy ${pct(stat.successRate)} over ${judged} outcomes is below ${pct(ACCURACY_FLOOR)}`, evidence: [] });
         notes.push(`measured screenshot accuracy of ${chosen.modelId} is below the floor`);
-        return finish2(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, ref(chosen), downRoutedFrom);
+        return finish3(ctx, startTier, up, chosen, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, ref(chosen), downRoutedFrom);
       }
     }
   }
@@ -44686,7 +44898,7 @@ function routeLadder(ctx) {
     }
   }
   const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf2) : void 0;
-  return finish2(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
+  return finish3(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
 }
 function observedDifficulty(ctx, startTier) {
   const s = ctx.signals;
@@ -44786,7 +44998,7 @@ function routeSafetyReview(ctx) {
   let fableGateResult = null;
   const configuredReviewers = Object.entries(policy.providers).filter(([p, cfg]) => p !== "claude" && cfg.data_policy_eligible === true && typeof cfg.model === "string" && cfg.model.length > 0).map(([, cfg]) => cfg.model);
   const allowedModels = [...policy.routing.allowed_models, ...configuredReviewers];
-  for (const [provider, surface] of Object.entries(PROVIDER_SURFACE)) {
+  for (const [provider, surface] of Object.entries(PROVIDER_SURFACE2)) {
     const a = ctx.registry.assess({ surface, provider, allowedModels, structuredOutput: true });
     for (const ex of a.excluded) {
       if (ex.model.provider === provider) rejected.push(alternative(ex.model, false, null, `ineligible: ${ex.reasons.join("; ")}`));
@@ -44884,7 +45096,7 @@ function routeSafetyReview(ctx) {
     work_kind: "safety-review",
     provider: chosen.entry.provider,
     model: chosen.entry.modelId,
-    surface: PROVIDER_SURFACE[chosen.entry.provider] ?? "claude-cli",
+    surface: PROVIDER_SURFACE2[chosen.entry.provider] ?? "claude-cli",
     family: chosen.entry.family,
     effort,
     reason: `safety-review: quality floor is opus-class or a qualified other-provider model; ${notes.join("; ")}; ${costText(cost)}`,
@@ -44937,7 +45149,7 @@ function priceProfile(t, p) {
 function statFor(ctx, m) {
   return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider);
 }
-function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom) {
+function finish3(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom) {
   const s = ctx.signals;
   let steps = effortBump;
   if (s.difficulty === "complex" && ctx.profile.output !== "interpretation") {
@@ -44977,7 +45189,7 @@ function finish2(ctx, startTier, chosen, displaced, baseEffort, effortBump, note
     work_kind: ctx.workKind,
     provider: chosen.provider,
     model: chosen.modelId,
-    surface: PROVIDER_SURFACE[chosen.provider] ?? "claude-cli",
+    surface: PROVIDER_SURFACE2[chosen.provider] ?? "claude-cli",
     family: chosen.family,
     effort,
     reason,
@@ -45085,7 +45297,7 @@ function round3(n2) {
 function uniq4(xs) {
   return [...new Set(xs)];
 }
-var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE, EFFORT_ORDER, EFFORT_CEILING, PREDICTED_EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, BASIS_RANK;
+var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE2, EFFORT_ORDER, EFFORT_CEILING, PREDICTED_EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, BASIS_RANK;
 var init_router = __esm({
   "src/routing/router.ts"() {
     "use strict";
@@ -45097,7 +45309,7 @@ var init_router = __esm({
     TIER_NAME = { 1: "haiku", 2: "sonnet", 3: "opus", 4: "fable" };
     FABLE_TIER = 4;
     SAFETY_FLOOR_TIER = 3;
-    PROVIDER_SURFACE = { claude: "claude-cli", codex: "codex-cli" };
+    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli" };
     EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"];
     EFFORT_CEILING = "xhigh";
     PREDICTED_EFFORT_CEILING = "high";
@@ -47937,209 +48149,6 @@ var init_workers2 = __esm({
     OUTPUT_CAP_CEILING = 32e3;
     OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
     ZERO_COST_STATUSES = /* @__PURE__ */ new Set(["auth_failed", "failed", "transient_error"]);
-  }
-});
-
-// src/review/select.ts
-function selectionDecisionRecord(sel) {
-  return {
-    kind: "review.select",
-    summary: (sel.decision === "SELECT" ? `reviewer ${reviewerLabel(sel)}` : `review blocked: ${sel.reason}`).slice(0, 300),
-    data: sel
-  };
-}
-function reviewerLabel(sel) {
-  const who = `${sel.provider}/${sel.model ?? "default"}`;
-  if (sel.independent) return `${who} (independent)`;
-  return `${who} (same provider, not independent: ${sel.independentUnavailable ?? "no independent reviewer was usable"})`;
-}
-function selectReviewer(input) {
-  const { config } = input.snapshot;
-  const review = config.review;
-  const impl = input.implementer.provider;
-  const alternatives = [];
-  const fallback = reviewFallback(review);
-  const order = reviewProviderOrder(review);
-  const preferred = order[0] ?? null;
-  const providerProblem = (p, unverifiedOk = false) => {
-    const failed = input.failed?.[p];
-    if (failed !== void 0) return { reason: `"${p}" failed at run time: ${failed}`, code: "PROVIDER_UNAVAILABLE" };
-    const cap = input.capabilities[p];
-    if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || "adapter reported unavailable"}`, code: "PROVIDER_UNAVAILABLE" };
-    if (!cap.structuredOutput) return { reason: `provider "${p}" cannot return schema-constrained output, which review findings require`, code: "PROVIDER_UNAVAILABLE" };
-    const cred = input.credentials[p];
-    if (!cred) return { reason: `credentials for "${p}" were not validated`, code: "PROVIDER_UNAVAILABLE" };
-    if (cred.state === "expired") return { reason: `credentials for "${p}" are expired${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "invalid") return { reason: `credentials for "${p}" are invalid${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_EXPIRED" };
-    if (cred.state === "missing") return { reason: `no credentials for "${p}"${cred.detail ? ` (${cred.detail})` : ""}`, code: "AUTH_MISSING" };
-    if (cred.state !== "valid" && !(unverifiedOk && cred.state === "unknown")) return { reason: `credentials for "${p}" could not be validated (${cred.state})${cred.detail ? `: ${cred.detail}` : ""}`, code: "PROVIDER_UNAVAILABLE" };
-    if (p !== impl && config.providers[p]?.data_policy_eligible !== true) {
-      return { reason: `providers.${p}.data_policy_eligible is not true, so the review packet may not be sent to it`, code: "POLICY_DENIED" };
-    }
-    return null;
-  };
-  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
-  const problems = /* @__PURE__ */ new Map();
-  const unusable = /* @__PURE__ */ new Map();
-  for (const p of independentIds) {
-    const prob = providerProblem(p);
-    if (prob) {
-      problems.set(p, prob);
-      unusable.set(p, prob.reason);
-      alternatives.push({ provider: p, model: null, reason: prob.reason });
-      continue;
-    }
-    const m = qualifiedModel(p, input, alternatives);
-    if (!m) {
-      unusable.set(p, `"${p}" has no model qualified for review`);
-      continue;
-    }
-    const substituted = p !== preferred;
-    return finish3(
-      input,
-      m,
-      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
-      alternatives,
-      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`
-    );
-  }
-  const detail = independentIds.length === 0 ? order.length === 0 ? "no independent review provider is listed in review.providers" : `no provider other than "${impl}" is configured` : independentIds.map((p) => unusable.get(p) ?? `"${p}" has no model qualified for review`).join("; ");
-  if (fallback === "block") {
-    const preferredProblem = preferred !== null ? problems.get(preferred) : void 0;
-    const code2 = preferred !== impl && preferredProblem ? preferredProblem.code : "PROVIDER_UNAVAILABLE";
-    return {
-      decision: "BLOCK",
-      code: code2,
-      reason: `independent review is required (review.when_unavailable: block) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
-      alternatives
-    };
-  }
-  const implProblem = providerProblem(impl, true);
-  if (implProblem) {
-    alternatives.push({ provider: impl, model: null, reason: implProblem.reason });
-    return {
-      decision: "BLOCK",
-      code: implProblem.code,
-      reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but "${impl}" cannot review: ${implProblem.reason}`,
-      alternatives
-    };
-  }
-  const same2 = sameProviderModel(input, alternatives);
-  if (!same2.ok) {
-    return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same2.reason}`, alternatives };
-  }
-  const why = `no independent reviewer was usable: ${detail}`;
-  return finish3(
-    input,
-    same2.usable,
-    { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
-    alternatives,
-    `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same2.usable.model} in a separate reviewer session (${same2.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
-  );
-}
-function finish3(input, u, how, alternatives, reason) {
-  const cap = input.capabilities[u.provider];
-  return {
-    decision: "SELECT",
-    provider: u.provider,
-    model: u.model,
-    effort: input.snapshot.config.providers[u.provider]?.reasoning_effort ?? null,
-    independent: how.independent,
-    independentUnavailable: how.independentUnavailable,
-    needsApproval: how.needsApproval,
-    basis: u.basis,
-    substitutedForPreferred: how.substitutedForPreferred,
-    readOnlySandbox: cap?.readOnlySandbox === true,
-    reason,
-    alternatives
-  };
-}
-function qualifiedModel(provider, input, alternatives) {
-  const cfg = input.snapshot.config;
-  const cap = input.capabilities[provider];
-  const configured = cfg.providers[provider]?.model ?? null;
-  const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
-  if (configured !== null) {
-    if (!offered(configured)) {
-      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
-      return null;
-    }
-    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
-  }
-  const reg = input.registry;
-  const surface = PROVIDER_SURFACE2[provider];
-  if (reg && surface) {
-    const a = reg.assess({ surface, provider, allowedModels: [...cfg.routing.allowed_models, `${provider}:*`], structuredOutput: true });
-    const ranked = a.eligible.filter((e) => offered(e.modelId));
-    if (provider === "claude") {
-      const tiered = ranked.filter((e) => (tierOf(e) ?? 0) >= REVIEW_QUALITY_FLOOR_TIER && allowMatch(e, cfg.routing.allowed_models) !== null);
-      const pick = tiered[0];
-      if (pick) return { provider, model: pick.modelId, basis: "tier", detail: `${pick.family} meets the opus-class floor` };
-    } else {
-      const evaluated = ranked.find((e) => e.evaluation.qualifiedFor.includes("safety-review"));
-      if (evaluated) return { provider, model: evaluated.modelId, basis: "evaluation", detail: "a recorded safety-review evaluation" };
-      const recommended = ranked.find((e) => e.eligibility.providerDefault);
-      if (recommended) return { provider, model: recommended.modelId, basis: "provider-default", detail: `it is ${provider}'s recommended model` };
-    }
-  }
-  alternatives.push({ provider, model: null, reason: `no model of "${provider}" is qualified for review: none is named in providers.${provider}.model, evaluated for safety review, or recommended by the provider${provider === "claude" ? ", and none is opus-class or above" : ""}` });
-  return null;
-}
-function sameProviderModel(input, alternatives) {
-  const impl = input.implementer;
-  const cfg = input.snapshot.config;
-  const reg = input.registry;
-  if (!reg) return { ok: false, reason: "no model registry was supplied, so a reviewer model at the quality floor cannot be chosen" };
-  const implEntry = impl.model ? reg.get(impl.model) : null;
-  const implTier = implEntry ? tierOf(implEntry) : null;
-  const surface = PROVIDER_SURFACE2[impl.provider];
-  if (!surface) return { ok: false, reason: `"${impl.provider}" has no tiered models, so a same-provider review at the quality floor is not defined` };
-  const cap = input.capabilities[impl.provider];
-  const a = reg.assess({ surface, provider: impl.provider, allowedModels: cfg.routing.allowed_models, structuredOutput: true });
-  const unvalidated = (ex) => ex.reasons.length > 0 && ex.reasons.every((r) => /not yet validated/.test(r));
-  const pending = [];
-  for (const ex of a.excluded) {
-    if (ex.model.provider !== impl.provider) continue;
-    if (unvalidated(ex)) pending.push(ex.model);
-    else alternatives.push({ provider: impl.provider, model: ex.model.modelId, reason: `ineligible: ${ex.reasons.join("; ")}` });
-  }
-  const atFloor = [...a.eligible, ...pending].filter((e) => {
-    const t = tierOf(e);
-    if (t === null) return false;
-    if (cap && cap.models.length > 0 && !cap.models.includes(e.modelId)) return false;
-    if (t < REVIEW_QUALITY_FLOOR_TIER) {
-      alternatives.push({ provider: impl.provider, model: e.modelId, reason: `${e.family} is below the review quality floor (opus-class)` });
-      return false;
-    }
-    return true;
-  });
-  const otherTier = implTier === null ? void 0 : atFloor.find((e) => tierOf(e) !== implTier);
-  if (otherTier) {
-    for (const e of atFloor) if (tierOf(e) === implTier) alternatives.push({ provider: impl.provider, model: e.modelId, reason: `same tier (${e.family}) as the implementer's model; a different tier is preferred` });
-    return { ok: true, usable: { provider: impl.provider, model: otherTier.modelId, basis: "tier", detail: `${otherTier.family} is at or above the opus-class floor and a different tier than the implementer's ${implEntry?.family}` } };
-  }
-  const pick = atFloor[0];
-  if (!pick) return { ok: false, reason: `no allowed ${impl.provider} model is at or above the opus-class floor` };
-  const detail = implTier === null ? `${pick.family} meets the opus-class floor; the implementer's model is not known yet` : `${pick.family} is at the opus-class floor, the same tier as the implementer's model; it reviews in a separate session`;
-  return { ok: true, usable: { provider: impl.provider, model: pick.modelId, basis: "tier", detail } };
-}
-function mandatoryReviewProvider(review, implementer) {
-  if (reviewFallback(review) !== "block") return null;
-  const first = preferredReviewProvider(review);
-  return first !== null && first !== implementer ? first : null;
-}
-var SAME_PROVIDER_APPROVED_KIND, REVIEW_QUALITY_FLOOR_TIER, PROVIDER_SURFACE2, REVIEWER_FAILED_KIND;
-var init_select = __esm({
-  "src/review/select.ts"() {
-    "use strict";
-    init_errors();
-    init_review();
-    init_registry();
-    SAME_PROVIDER_APPROVED_KIND = "review.same-provider-approved";
-    REVIEW_QUALITY_FLOOR_TIER = 3;
-    PROVIDER_SURFACE2 = { claude: "claude-cli", codex: "codex-cli", muse: "muse-cli" };
-    REVIEWER_FAILED_KIND = "review.reviewer-failed";
   }
 });
 
@@ -54807,7 +54816,9 @@ function assembleFinalReport(db, run, opts) {
     const d = depths.get(r.id);
     if (d?.tool_calls === 0) risks.push(`review depth: ${r.provider}/${r.model ?? "default"} review ${r.id} made no tool calls (${d.reasoning_tokens === null ? "reasoning tokens unavailable" : `${d.reasoning_tokens} reasoning tokens`}), so it judged from the packet alone and read none of the code`);
   }
-  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
+  const failedReviewers = listDecisions(db, run.id, { kind: REVIEWER_FAILED_KIND }).map((d) => d.data).map((f) => ({ provider: f.provider, model: f.model, reason: f.reason }));
+  const standing = reviews.filter((r) => r.invalidatedAt === null && (!cand || r.treeHash === cand.treeHash));
+  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, standing, failedReviewers);
   if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith("same-provider review:"))) {
     risks.push(`same-provider review: ${reviewer.why_not_independent ?? "no independent reviewer was usable"}; ${reviewer.provider}/${reviewer.model ?? "default"} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ""}`);
   }
@@ -54833,6 +54844,7 @@ function assembleFinalReport(db, run, opts) {
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
+    ...!reviewer && (reviews.length > 0 || failedReviewers.length > 0) ? { no_standing_review: { failed_reviewers: failedReviewers } } : {},
     decisions,
     review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
     assumptions: [
@@ -54919,14 +54931,12 @@ function workerPluginsOf(workers) {
 function strOrNull(v) {
   return typeof v === "string" ? v : null;
 }
-function reviewerOf(db, runId, candidateId, reviews) {
-  const last = reviews.at(-1);
+function reviewerOf(db, runId, candidateId, standing, failed) {
+  const last = standing.at(-1);
   if (!last) return null;
   const selections = listDecisions(db, runId, { kind: "review.select" }).filter((d) => d.data?.decision === "SELECT");
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
-  const resumed = db.get("SELECT MAX(id) AS id FROM events WHERE run_id = ? AND type = 'run.resumed'", runId)?.id ?? null;
-  const failed = listDecisions(db, runId, { kind: REVIEWER_FAILED_KIND }).map((d) => d.data).filter((f) => f.resumed_event_id === resumed).map((f) => ({ provider: f.provider, model: f.model, reason: f.reason }));
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data;
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data;
@@ -54938,10 +54948,13 @@ function reviewerOf(db, runId, candidateId, reviews) {
   const independent = last.provider !== implementer;
   return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : "no independent reviewer was usable", approved_by: independent ? null : approvedBy, ...tried };
 }
+function triedLines(failed) {
+  return failed.map((f) => `
+- Tried first: ${f.provider}/${f.model ?? "default"}, which failed (${f.reason})`).join("");
+}
 function reviewerLine(r) {
   const who = `${r.provider}/${r.model ?? "default"}`;
-  const tried = (r.failed_reviewers ?? []).map((f) => `
-- Tried first: ${f.provider}/${f.model ?? "default"}, which failed (${f.reason})`).join("");
+  const tried = triedLines(r.failed_reviewers ?? []);
   if (r.independent) return `Reviewer: ${who} (independent)${tried}`;
   return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})${tried}`;
 }
@@ -55020,6 +55033,7 @@ function renderMarkdown(r) {
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, "");
   out.push("## Reviews", "");
   if (r.reviewer) out.push(reviewerLine(r.reviewer), "");
+  else if (r.no_standing_review) out.push(`Reviewer: none, no review of this tree stands${triedLines(r.no_standing_review.failed_reviewers)}`, "");
   out.push(list3(r.reviews.map((v) => `${v.provider}/${v.model ?? "default"}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), "");
   if (r.review_findings && r.review_findings.length > 0) out.push("## Review findings", "", list3(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), "");
   out.push("## Decisions", "", list3(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), "");
@@ -55034,7 +55048,7 @@ function renderMarkdown(r) {
   out.push("## Revision, branch and pull request", "", list3([`base: ${rv.base ?? "none"}`, `candidate: ${rv.candidate ?? "none"} (tree ${rv.tree ?? "none"})`, `branch: ${rv.branch ?? "none"}`, ...rv.candidate_ref ? [`candidate ref: ${rv.candidate_ref}`] : [], rv.delivered_commit === null && rv.candidate !== null ? `candidate commit (local, not delivered): ${rv.candidate}` : `delivered commit: ${rv.delivered_commit ?? "none"}`, `pull request: ${rv.pull_request ? `#${rv.pull_request.number}${rv.pull_request.url ? ` ${rv.pull_request.url}` : ""}` : "none"}`]), "");
   if (r.budget) {
     const b = r.budget;
-    const counters = b.counters.map((c) => c.counter === "worker_turns_per_session" ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round2(c.used)} model requests at most in one session` : "usage unavailable"}; cap ${round2(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)` : `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)})`);
+    const counters = b.counters.map((c) => c.counter === "worker_turns_per_session" ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round2(c.used)} model requests at most in one session` : "usage unavailable"}; cap ${round2(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)` : `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)}${grantNote(c)})`);
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`;
     const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
     out.push("## Budget consumption", "", list3([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
@@ -59250,7 +59264,7 @@ function decide2(ctx, input) {
 async function finishRun(ctx, to, reason, opts = {}) {
   let advice = "";
   if (to === "BLOCKED") {
-    const setting = frozenPolicyCause(reason, typeof opts.data?.code === "string" ? opts.data.code : void 0);
+    const setting = opts.resumable === true ? null : frozenPolicyCause(reason, typeof opts.data?.code === "string" ? opts.data.code : void 0);
     if (setting !== null) {
       advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
       reason = withSentence(reason, advice);
@@ -62123,17 +62137,19 @@ async function attemptStart(ctx, base, what) {
   if (latest > 0 && latest >= first && resumed !== null && !resets.some((r) => r.resumed_event_id === resumed)) {
     const failed = ctx.db.get("SELECT id, state FROM workers WHERE run_id = ? AND purpose = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, `${base}#${latest}`);
     const planned = failed ? ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = 'worker.planned' AND json_extract(data_json, '$.worker_id') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, failed.id) : void 0;
-    const finishedUnusable = failed !== void 0 && failed.state !== "SUCCEEDED" && failed.state !== "PLANNED" && failed.state !== "RUNNING";
+    const setAside = failed?.state === "SUCCEEDED" && ctx.db.get("SELECT 1 AS x FROM reviews WHERE run_id = ? AND worker_id = ? AND invalidated_at IS NOT NULL", ctx.run.id, failed.id) !== void 0;
+    const finishedUnusable = setAside || failed !== void 0 && failed.state !== "SUCCEEDED" && failed.state !== "PLANNED" && failed.state !== "RUNNING";
+    const gone = setAside ? "had its review set aside" : "failed";
     if (finishedUnusable && planned !== void 0 && planned.id < resumed) {
       const reset = { base, what, resumed_event_id: resumed, after_attempt: latest, next_attempt: latest + 1 };
       try {
         ctx.db.tx(() => {
-          spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `resume after a block: fresh ${what} (attempt ${latest} failed before the resume)` });
+          spendRecoveryAttempt(ctx.db, ctx.run.id, ctx.clock, { ledgerFor: () => ctx.ledger, actor: ctx.ownerId, why: `resume after a block: fresh ${what} (attempt ${latest} ${gone} before the resume)` });
           appendEvent(ctx.db, ctx.run.id, RESUME_RESET_EVENT, ctx.ownerId, reset, ctx.clock.now());
         });
       } catch (err) {
         if (!isOrbitError(err, "BUDGET_EXHAUSTED")) throw err;
-        return { ok: false, step: await finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: the run was resumed after ${what} failed (attempt ${latest}), and no recovery attempt is left to start it again (${err.message})`, { data: { counter: "recovery_attempts" } }) };
+        return { ok: false, step: await finishRun(ctx, "EXHAUSTED", `recovery_attempts exhausted: the run was resumed after ${what} ${gone} (attempt ${latest}), and no recovery attempt is left to start it again (${err.message})`, { data: { counter: "recovery_attempts" } }) };
       }
       first = reset.next_attempt;
     }
@@ -64295,7 +64311,7 @@ async function usableReviewer(ctx, cand) {
       const provider = sel.alternatives.find((a) => /credentials/.test(a.reason))?.provider ?? preferredReviewProvider(ctx.snapshot.config.review) ?? IMPLEMENTER_PROVIDER;
       return { ok: false, step: await blockOnAuth(ctx, provider, sel.code === "AUTH_MISSING" ? "missing" : "expired", sel.reason) };
     }
-    return { ok: false, step: await finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel } }) };
+    return { ok: false, step: await finishRun(ctx, "BLOCKED", `independent review unavailable: ${sel.reason}`, { outcome: { reviewer: sel }, resumable: activeReviewerFailures(ctx).length > 0 }) };
   }
   if (sel.needsApproval === true) {
     const approval = sameProviderApproval(ctx, sel);
@@ -64660,7 +64676,7 @@ async function resolveAndDecide(ctx, cand) {
     const rounds = ctx.ledger.state("review_rounds");
     if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
     fresh = {
-      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`,
+      text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
       outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
     };
   }
@@ -64714,7 +64730,7 @@ async function decideShallowApproval(ctx, cand, shallow, gateReasons) {
       decide2(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: ${what}`, data: rec2 });
       return freshReview(ctx, cand, rec2);
     }
-    return finishRun(ctx, "BLOCKED", `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap})`, {
+    return finishRun(ctx, "BLOCKED", `the review inspected nothing: ${what}, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`, {
       outcome: { review_gate: [...gateReasons], shallow_reviews: ids, fresh_review: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } } }
     });
   }
@@ -65075,7 +65091,7 @@ function stalledReviewRepair(ctx, cand) {
 async function reviewRoundsSpent(ctx, open2, outcome) {
   const rounds = ctx.ledger.state("review_rounds");
   if (rounds.used < rounds.allowance) return null;
-  return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open2}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+  return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}) with ${open2}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
 function describeFindings(list3) {
   return list3.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join("; ");
@@ -65086,7 +65102,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
   const outcome = { open_findings: openFindings(toRepair) };
   const rounds = ledger.state("review_rounds");
   if (rounds.used >= rounds.allowance) {
-    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
   }
   const next = currentAttempt(ctx) + 1;
   const att = ledger.state("implementation_attempts");
@@ -65196,7 +65212,9 @@ async function reviewerFailed(ctx, cand, sel, failed) {
   for (const r of listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((x) => x.provider === sel.provider)) {
     markReviewInvalidated(ctx.db, r.id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
   }
-  const record = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx) };
+  const spent = new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "reviewer" }).filter((w) => w.candidateId === cand.id && w.provider === sel.provider).map((w) => w.purpose)).size;
+  const granted = reviewerFailures(ctx, cand).filter((f) => f.provider === sel.provider).reduce((n2, f) => n2 + (f.rounds_granted ?? 0), 0);
+  const record = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted };
   decide2(ctx, { kind: REVIEWER_FAILED_KIND, summary: `reviewer ${sel.provider}/${sel.model ?? "default"} failed: ${reason}; selecting again without it`, data: record });
   return MOVED;
 }
@@ -65808,7 +65826,7 @@ async function inquisitionStep(ctx) {
   const rounds = resume === "REVIEWING" ? ctx.ledger?.state("review_rounds") : void 0;
   const approved = ctx.candidate !== null && listReviews(ctx.db, ctx.run.id, { treeHash: ctx.candidate.treeHash }).some((r) => r.verdict === "APPROVE");
   if (rounds && rounds.used >= rounds.allowance && !approved) {
-    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2e3), {
+    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2e3), {
       data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }
     });
   }
@@ -65909,6 +65927,7 @@ var init_inquisition = __esm({
     init_workers2();
     init_workers();
     init_store3();
+    init_budget();
     init_undecided_ledger();
     init_common();
     init_implementing();
@@ -73063,7 +73082,7 @@ function fmtCounter(c) {
   const cost = c.counter === "cost_usd";
   const wall = c.counter === "wall_ms";
   const f = (n2) => cost ? `$${n2.toFixed(2)}` : wall ? `${(n2 / 6e4).toFixed(1)}m` : String(n2);
-  return `${c.counter.padEnd(26)} ${f(c.used)} used / ${f(c.allowance)} allowed (hard cap ${f(c.hard_cap)})`;
+  return `${c.counter.padEnd(26)} ${f(c.used)} used / ${f(c.allowance)} allowed (hard cap ${f(c.hard_cap)}${grantNote(c)})`;
 }
 function renderRunStatus(s, now) {
   const out = [];

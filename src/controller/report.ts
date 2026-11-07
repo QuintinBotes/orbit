@@ -31,7 +31,7 @@ import { readSecurityPolicy } from '../review/resolve.ts';
 import { REVIEWER_FAILED_KIND, SAME_PROVIDER_APPROVED_KIND, type ReviewerFailure, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage } from '../routing/usage.ts';
-import { BudgetLedger, spendBreakdown } from '../scheduling/budget.ts';
+import { BudgetLedger, grantNote, spendBreakdown } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import type { SpendBreakdown } from '../scheduling/types.ts';
 import { DELIVERY_MODES, outputBudgets } from '../policy/config.ts';
@@ -86,9 +86,11 @@ export interface FinalReport {
   /**
    * Who reviewed (docs/decisions/0007-reviewer-availability.md). A same-provider review is never presented as
    * independent: it carries why the independent reviewer was unavailable, and who approved it when a person was
-   * asked. Null when nothing was reviewed; absent in reports written before decision 0007.
+   * asked. Null when no review of the tree stands; absent in reports written before decision 0007.
    */
   reviewer?: ReportReviewer | null;
+  /** A reviewer ran or was tried, yet no review of the tree stands. Absent otherwise. */
+  no_standing_review?: { failed_reviewers: FailedReviewer[] };
   decisions: { kind: string; summary: string; at: number }[];
   assumptions: { id: string; statement: string; status: string; reason?: string }[];
   /** The engineering practices (spec section 5) the plan selected or omitted, with the reason for each; empty for a contract that predates the selection. */
@@ -160,8 +162,14 @@ export interface ReportReviewer {
   why_not_independent: string | null;
   /** review.when_unavailable: ask: the person who said yes. */
   approved_by: string | null;
-  /** Reviewers of this candidate that failed at run time before this one reviewed, oldest first (#116). Absent in older reports. */
-  failed_reviewers?: { provider: string; model: string | null; reason: string }[];
+  /** Every reviewer of this run that failed at run time, oldest first (#116). Absent when none, and in older reports. */
+  failed_reviewers?: FailedReviewer[];
+}
+
+export interface FailedReviewer {
+  provider: string;
+  model: string | null;
+  reason: string;
 }
 
 export interface WriteReportOptions {
@@ -265,7 +273,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     const d = depths.get(r.id);
     if (d?.tool_calls === 0) risks.push(`review depth: ${r.provider}/${r.model ?? 'default'} review ${r.id} made no tool calls (${d.reasoning_tokens === null ? 'reasoning tokens unavailable' : `${d.reasoning_tokens} reasoning tokens`}), so it judged from the packet alone and read none of the code`);
   }
-  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, reviews);
+  const failedReviewers = listDecisions(db, run.id, { kind: REVIEWER_FAILED_KIND }).map((d) => d.data as ReviewerFailure).map((f) => ({ provider: f.provider, model: f.model, reason: f.reason }));
+  const standing = reviews.filter((r) => r.invalidatedAt === null && (!cand || r.treeHash === cand.treeHash));
+  const reviewer = reviewerOf(db, run.id, cand?.id ?? null, standing, failedReviewers);
   if (reviewer && !reviewer.independent && !risks.some((r) => r.startsWith('same-provider review:'))) {
     risks.push(`same-provider review: ${reviewer.why_not_independent ?? 'no independent reviewer was usable'}; ${reviewer.provider}/${reviewer.model ?? 'default'} reviewed in a separate session, so the review is not independent${reviewer.approved_by ? ` (approved by ${reviewer.approved_by})` : ''}`);
   }
@@ -295,6 +305,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
+    ...(!reviewer && (reviews.length > 0 || failedReviewers.length > 0) ? { no_standing_review: { failed_reviewers: failedReviewers } } : {}),
     decisions,
     review_findings: findings.map((f) => ({ id: f.externalId ?? f.id, review_id: f.reviewId, severity: f.severity, status: f.status, claim: f.claim })),
     assumptions: [
@@ -408,19 +419,13 @@ function strOrNull(v: unknown): string | null {
  * The reviewer selection behind the reviews: the one recorded for the current candidate, else the latest. Its
  * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
  */
-function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, reviews: readonly { provider: string; model: string | null }[]): ReportReviewer | null {
-  const last = reviews.at(-1);
+function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, standing: readonly { provider: string; model: string | null }[], failed: FailedReviewer[]): ReportReviewer | null {
+  const last = standing.at(-1);
   if (!last) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
   // A reviewer selected after another failed at run time is recorded under the same id with a ~<n> suffix (#116).
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
-  // The reviewers selection excluded for this review: those that failed since the latest resume, on any candidate.
-  const resumed = db.get<{ id: number | null }>("SELECT MAX(id) AS id FROM events WHERE run_id = ? AND type = 'run.resumed'", runId)?.id ?? null;
-  const failed = listDecisions(db, runId, { kind: REVIEWER_FAILED_KIND })
-    .map((d) => d.data as ReviewerFailure)
-    .filter((f) => f.resumed_event_id === resumed)
-    .map((f) => ({ provider: f.provider, model: f.model, reason: f.reason }));
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
@@ -434,10 +439,14 @@ function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, revi
   return { provider: last.provider, model: last.model, independent, why_not_independent: independent ? null : 'no independent reviewer was usable', approved_by: independent ? null : approvedBy, ...tried };
 }
 
+function triedLines(failed: readonly FailedReviewer[]): string {
+  return failed.map((f) => `\n- Tried first: ${f.provider}/${f.model ?? 'default'}, which failed (${f.reason})`).join('');
+}
+
 /** `codex/model (independent)`, or the same-provider disclosure. */
 export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
-  const tried = (r.failed_reviewers ?? []).map((f) => `\n- Tried first: ${f.provider}/${f.model ?? 'default'}, which failed (${f.reason})`).join('');
+  const tried = triedLines(r.failed_reviewers ?? []);
   if (r.independent) return `Reviewer: ${who} (independent)${tried}`;
   return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tried}`;
 }
@@ -546,6 +555,7 @@ export function renderMarkdown(r: FinalReport): string {
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
   if (r.reviewer) out.push(reviewerLine(r.reviewer), '');
+  else if (r.no_standing_review) out.push(`Reviewer: none, no review of this tree stands${triedLines(r.no_standing_review.failed_reviewers)}`, '');
   out.push(list(r.reviews.map((v) => `${v.provider}/${v.model ?? 'default'}: ${v.verdict} on tree ${v.tree_hash} (${v.findings} finding(s))${depthText(v)}`)), '');
   if (r.review_findings && r.review_findings.length > 0) out.push('## Review findings', '', list(r.review_findings.map((f) => `${f.id} (${f.severity}, ${f.status}): ${f.claim}`)), '');
   out.push('## Decisions', '', list(r.decisions.map((d) => `${d.kind}: ${d.summary}`)), '');
@@ -563,7 +573,7 @@ export function renderMarkdown(r: FinalReport): string {
     // A session's turns are its model requests, which is what the CLI's --max-turns counts and stops at.
     const counters = b.counters.map((c) => c.counter === 'worker_turns_per_session'
       ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round(c.used)} model requests at most in one session` : 'usage unavailable'}; cap ${round(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)`
-      : `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)})`);
+      : `${c.counter}: ${round(c.used)} used of ${round(c.allowance)} allowed (hard cap ${round(c.hard_cap)}${grantNote(c)})`);
     // One spend explanation (the figure the cap is checked against, and what it adds to the reported spend); a report
     // written before it existed still shows its model cost.
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`;
