@@ -1,4 +1,9 @@
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { shimPath } from '../../../src/evidence/check-shim.ts';
+import { markCheckRunning, planCheckRun } from '../../../src/evidence/store.ts';
 import { acquireLease, getRun, markProgress, setPaused } from '../../../src/controller/run-store.ts';
 import { getWorker, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { heartbeatController, registerController, getController } from '../../../src/storage/controllers.ts';
@@ -64,6 +69,29 @@ describe('watchdog', () => {
     // A log timestamp from another clock (the future) is not evidence of life.
     const rep2 = await watchdogTick({ db, clock, ownerId: 'ctl-1', adapters: {}, workerActivityAt: () => clock.now() + 10 * MIN, config: { graceMs: 20 } });
     expect(rep2.findings[0]?.kind).toBe('stuck-step');
+  });
+
+  it('a check still writing its output counts as activity, so a long baseline is neither stalled nor abandoned (issue #141)', async () => {
+    const { db, clock } = setup();
+    makeRun(db, clock, 'r1', 'ctl-1', ['PREFLIGHT']);
+    const runDir = mkdtempSync(join(tmpdir(), 'orbit-watchdog-'));
+    db.run('UPDATE runs SET policy_path = ? WHERE id = ?', join(runDir, 'policy.json'), 'r1');
+    const row = planCheckRun(db, { runId: 'r1', candidateId: null, checkId: 'rust-build', kind: 'command', treeHash: 't', checkConfigHash: 'c', policyHash: 'sha256:x', command: ['cargo', 'build'], cwd: '/repo', isolation: 'none', limitations: [] }, clock);
+    markCheckRunning(db, row.id, 4242, clock);
+    const dir = join(runDir, 'baseline', 'rust-build');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(shimPath(dir, 'intent'), JSON.stringify({ token: 'tok', checkRunId: row.id }));
+    writeFileSync(shimPath(dir, 'output'), 'Compiling...\n');
+    const touch = (): void => utimesSync(shimPath(dir, 'output'), (clock.now() - MIN) / 1000, (clock.now() - MIN) / 1000);
+    clock.advance(DEFAULT_WATCHDOG.stallMs + MIN);
+    touch();
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toEqual([]);
+    clock.advance(5 * MIN);
+    touch();
+    acquireLease(db, 'r1', 'ctl-1', 60_000, clock);
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toEqual([]);
+    expect(getRun(db, 'r1').state).toBe('PREFLIGHT');
+    expect(eventTypes(db, 'r1')).not.toContain('watchdog.stall');
   });
 
   it('exhausts the run when the recovery budget is spent, instead of abandoning forever', async () => {

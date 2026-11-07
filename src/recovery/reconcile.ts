@@ -876,7 +876,7 @@ interface CheckDir {
 }
 
 /** Check directories by check_runs id, found from each directory's intent.json (the layout is evidence/<seq>/<check>[~n] and baseline/<check>[~n]). */
-function findCheckDirs(root: string): Map<string, CheckDir> {
+export function findCheckDirs(root: string): Map<string, CheckDir> {
   const found = new Map<string, CheckDir>();
   const visit = (parent: string): void => {
     for (const name of safeDirs(parent)) {
