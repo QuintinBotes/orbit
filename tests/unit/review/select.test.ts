@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isOrbitError } from '../../../src/core/errors.ts';
-import { assertReviewerSelected, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../../src/review/select.ts';
+import { assertReviewerSelected, mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../../src/review/select.ts';
+import { reviewFix } from '../../../src/cli/review-fix.ts';
 import { FABLE, HAIKU, OPUS, SONNET, setup } from '../routing/fixtures.ts';
 import { cap, cred, snapshotOf } from './fixtures.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
@@ -147,29 +148,29 @@ describe('selectReviewer: a mandatory independent reviewer is unusable (spec sce
 });
 
 describe('selectReviewer: other independent providers', () => {
-  function withGemini() {
+  function withSecondReviewer() {
     const r = ready();
     return {
       snapshot: snapshotOf((c) => {
-        c.providers.gemini = { command: 'gemini', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
+        c.providers.muse = { command: 'muse', data_policy_eligible: true, model: 'gem-1', reasoning_effort: null, extra_args: [] };
         // Decision 0007: only providers listed in review.providers are asked, in that order.
-        c.review.providers = ['codex', 'gemini'];
+        c.review.providers = ['codex', 'muse'];
       }),
-      capabilities: { ...r.capabilities, gemini: cap('gemini') },
-      credentials: { ...r.credentials, gemini: cred('valid') },
+      capabilities: { ...r.capabilities, muse: cap('muse') },
+      credentials: { ...r.credentials, muse: cred('valid') },
     };
   }
 
   it('uses another independent provider when the preferred one is unusable, and says so', () => {
-    const f = withGemini();
+    const f = withSecondReviewer();
     f.credentials.codex = cred('expired');
     const sel = selectReviewer({ ...f, implementer: IMPL });
-    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'gemini', model: 'gem-1', independent: true, substitutedForPreferred: true });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'muse', model: 'gem-1', independent: true, substitutedForPreferred: true });
     if (sel.decision === 'SELECT') expect(sel.reason).toContain('preferred provider "codex" is unusable');
   });
 
   it('prefers preferred_provider when several are usable', () => {
-    expect(selectReviewer({ ...withGemini(), implementer: IMPL })).toMatchObject({ provider: 'codex', substitutedForPreferred: false });
+    expect(selectReviewer({ ...withSecondReviewer(), implementer: IMPL })).toMatchObject({ provider: 'codex', substitutedForPreferred: false });
   });
 });
 
@@ -261,6 +262,65 @@ describe('selectReviewer: same-provider review', () => {
     r.credentials.claude = cred('expired', 'login expired');
     const sel = blocked(selectReviewer({ snapshot: snap, ...r, implementer: IMPL, registry }));
     expect(sel.reason).toContain('"claude" cannot review');
+  });
+});
+
+describe('selectReviewer: independence goes by provider family (issue #108)', () => {
+  it('never takes an alias of the implementer family as an independent reviewer, nor an id of no family', () => {
+    for (const id of ['claude-review', 'gemini']) {
+      const snapshot = snapshotOf((c) => {
+        c.providers[id] = { command: id, data_policy_eligible: true, model: 'x-1', reasoning_effort: null, extra_args: [] };
+        c.review.providers = [id, 'codex'];
+      });
+      const r = ready();
+      const sel = selectReviewer({ snapshot, capabilities: { ...r.capabilities, [id]: cap(id) }, credentials: { ...r.credentials, [id]: cred('valid') }, implementer: IMPL });
+      expect(sel, id).toMatchObject({ decision: 'SELECT', provider: 'codex', independent: true });
+    }
+  });
+
+  it('keeps a Codex or Muse alias independent of a claude implementer', () => {
+    for (const id of ['codex-review', 'muse_ci']) {
+      const snapshot = snapshotOf((c) => {
+        c.providers[id] = { command: id, data_policy_eligible: true, model: 'x-1', reasoning_effort: null, extra_args: [] };
+        c.review.providers = [id];
+      });
+      expect(selectReviewer({ snapshot, capabilities: { [id]: cap(id) }, credentials: { [id]: cred('valid') }, implementer: IMPL }), id).toMatchObject({ decision: 'SELECT', provider: id, independent: true });
+    }
+  });
+
+  it('does not make an alias of the implementer family the mandatory reviewer', () => {
+    expect(mandatoryReviewProvider({ providers: ['claude-review'], when_unavailable: 'block' }, 'claude')).toBeNull();
+    expect(mandatoryReviewProvider({ providers: ['muse-review'], when_unavailable: 'block' }, 'claude')).toBe('muse-review');
+  });
+});
+
+describe('selectReviewer: a Muse tier that cannot run (issue #108 claim 3)', () => {
+  const tierDetail = 'providers.muse.tier is os-sandbox but sandbox-runtime isolation is not in use; refusing to run Muse without srt';
+  const fixtures = (fallback: 'block' | 'claude') => {
+    const r = ready();
+    return {
+      snapshot: snapshotOf((c) => {
+        c.providers.muse = { command: 'muse', data_policy_eligible: true, model: 'muse-wonder-full-1.0', reasoning_effort: 'high', extra_args: [], tier: 'os-sandbox' };
+        c.review.providers = ['muse', 'codex'];
+        c.review.when_unavailable = fallback;
+      }),
+      capabilities: { ...r.capabilities, muse: { ...cap('muse'), available: false, tierUnavailable: true, detail: tierDetail } },
+      credentials: { ...r.credentials, muse: cred('valid') },
+    };
+  };
+
+  it('moves on to the next listed reviewer, recording the reason that names the setting', () => {
+    const sel = selectReviewer({ ...fixtures('block'), implementer: IMPL });
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'codex', independent: true, substitutedForPreferred: true });
+    if (sel.decision === 'SELECT') expect(sel.alternatives).toContainEqual({ provider: 'muse', model: null, reason: expect.stringContaining('providers.muse.tier is os-sandbox') });
+  });
+
+  it('applies review.when_unavailable when no other reviewer is listed, and the fix names the setting', () => {
+    const f = fixtures('block');
+    f.snapshot.config.review.providers = ['muse'];
+    const sel = blocked(selectReviewer({ ...f, implementer: IMPL }));
+    expect(sel.reason).toContain('providers.muse.tier is os-sandbox');
+    expect(reviewFix(sel.alternatives)).toBe('for muse: set isolation.provider to sandbox-runtime and export META_API_KEY, or set providers.muse.tier to auto or muse-sandbox');
   });
 });
 

@@ -64,22 +64,24 @@ export function classifyMuseTranscript(input: MuseClassifyInput): MuseTaskResult
   });
 
   if (exit.error) return end('failed', 'spawn_failed', exit.error);
-  const failure = terminal && !completed ? (str(terminal.reason) ?? 'run failed') : null;
-  const authText = completed ? undefined : [failure, input.stderr ?? null].find((m) => m !== null && MUSE_AUTH_PATTERNS.some((p) => p.test(m)));
-  if (authText) return end('auth_failed', 'auth', `authentication failed: ${clip(firstMatchingLine(authText), 300)}; not retried`);
   if (exit.timedOut) return end('timeout', 'timeout', `timed out; the shim sent ${exit.escalation.join(', ') || 'no signal'}`);
   if (exit.cancelled) return end('cancelled', 'interrupted', 'cancelled by a signal to the worker');
+  const authFailed = (text: string): MuseTaskResult => end('auth_failed', 'auth', `authentication failed: ${clip(firstMatchingLine(text), 300)}; not retried`);
 
   if (!terminal) {
     if (exit.escalation.length > 0) return end('cancelled', 'interrupted', `ended after ${exit.escalation.join(', ')} with no terminal event`);
     if (exit.signal !== null) return end('failed', 'crashed', `killed by ${exit.signal} with no terminal event`);
     if (input.malformedTail) return end('malformed_output', 'malformed_transcript', `output ends in a line that is not JSON (exit ${exit.code})`);
+    // Muse exits 1 and names a missing login on stderr, before any event (docs/interfaces/muse.md section 2).
+    if (exit.code === 1 && isAuthText(input.stderr)) return authFailed(input.stderr!);
     const said = lastStderrLine(input.stderr);
     return end('failed', 'crashed', `exited ${exit.code} without run.terminal.completed or run.terminal.failed${said ? `: ${clip(said, 300)}` : ''}`);
   }
   if (!completed) {
-    if (STEP_CAP.test(failure!)) return end('failed', 'step_cap', clip(failure!, 500));
-    return end('failed', 'run_failed', clip(failure!, 500));
+    const failure = str(terminal.reason) ?? 'run failed';
+    if (STEP_CAP.test(failure)) return end('failed', 'step_cap', clip(failure, 500));
+    if (isAuthText(failure)) return authFailed(failure);
+    return end('failed', 'run_failed', clip(failure, 500));
   }
   if (exit.code !== 0) return end('failed', 'crashed', `run.terminal.completed but exit ${exit.code}`);
 
@@ -158,6 +160,10 @@ export function museEvents(lines: Record<string, unknown>[], now: number, model:
 
 function payloadOf(e: Record<string, unknown> | undefined): Record<string, unknown> | null {
   return e && isObject(e.payload) ? (e.payload as Record<string, unknown>) : null;
+}
+
+function isAuthText(text: string | undefined): boolean {
+  return text !== undefined && MUSE_AUTH_PATTERNS.some((p) => p.test(text));
 }
 
 function firstMatchingLine(text: string): string {

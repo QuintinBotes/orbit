@@ -17,7 +17,7 @@ import { redact } from '../../core/redact.ts';
 import { defaultConfig } from '../../policy/index.ts';
 import type { OrbitConfig, ProviderConfig } from '../../policy/types.ts';
 import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '../../adapters/types.ts';
-import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, decideMuseTier, museEnvCredential, providerKind, MUSE_LIMITATIONS, MUSE_MIN_VERSION, MUSE_OS_SANDBOX_LIMITATIONS, type CodexTierDecision, type CodexTierSetting, type MuseTierDecision, type MuseTierSetting } from '../../adapters/index.ts';
+import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, decideMuseTier, museEnvCredential, providerKind, MUSE_LIMITATIONS, MUSE_MIN_VERSION, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_READS_NOT_CONFINED, type CodexTierDecision, type CodexTierSetting, type MuseTierDecision, type MuseTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
@@ -487,7 +487,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
   const facts: ProviderFacts = { capabilities: {}, credentials: {}, adapters: {} };
   let adapters: Record<string, ProviderAdapter>;
   try {
-    adapters = createAdapters(config, { isolation: null, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
+    adapters = createAdapters(config, { isolation: iso.provider, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
   } catch (err) {
     return { checks: [fail('providers', 'providers', errText(err, 240), 'valid provider settings', 'fix providers in .orbit/config.yaml')], facts };
   }
@@ -506,7 +506,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     }),
   );
   ids.forEach((id, i) => (facts.capabilities[id] = caps[i]!));
-  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id]!.available), live: p.live, timeoutMs: 90_000 });
+  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id]!.available || facts.capabilities[id]!.tierUnavailable === true), live: p.live, timeoutMs: 90_000 });
   for (const c of creds) facts.credentials[c.provider] = c.status ?? undefined;
 
   for (const id of ids) {
@@ -515,7 +515,7 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
     const level = needed ? fail : warn;
     const kind = providerKind(id);
     const exe = config.providers[id]!.command;
-    if (!cap.available) {
+    if (!cap.available && cap.tierUnavailable !== true) {
       checks.push(level(`${id}.cli`, 'providers', `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === 'claude' ? ', >= 2.1.284 for Sonnet 5.5' : ''}`, kind === 'claude' ? 'install Claude Code (https://code.claude.com)' : kind === 'muse' ? `install Muse ${MUSE_MIN_VERSION} or later` : 'install the Codex CLI', needed ? [] : ['not required for this configuration']));
       continue;
     }
@@ -652,7 +652,7 @@ function museTierCheck(id: string, provider: ProviderConfig, apiKeyVar: string |
   } catch (err) {
     return level(check, 'providers', errText(err, 300), 'sandbox-runtime isolation and META_API_KEY, or providers.<id>.tier set to auto or muse-sandbox', 'set isolation.provider to sandbox-runtime and export META_API_KEY, or set the tier to auto or muse-sandbox', facts);
   }
-  const summary = `the Muse reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}`;
+  const summary = `the Muse reviewer runs in the ${decision.tier} tier: ${flat(decision.reason)}${decision.tier === 'muse-sandbox' ? `. ${MUSE_READS_NOT_CONFINED}` : ''}`;
   const details = [...facts, ...(decision.tier === 'os-sandbox' ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS).map((l) => `limitation: ${l}`)];
   if (decision.tier === 'os-sandbox' || !decision.automatic) return pass(check, 'providers', summary, details);
   return warn(check, 'providers', summary, 'META_API_KEY plus sandbox-runtime for the os-sandbox tier', 'export META_API_KEY and use sandbox-runtime isolation', details);

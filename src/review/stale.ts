@@ -4,6 +4,7 @@ import { OrbitError } from '../core/errors.ts';
 import { canonicalJson, sha256 } from '../core/hash.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { listDecisions, recordDecision } from '../storage/decisions.ts';
+import { isIndependentReviewer } from '../policy/config.ts';
 import { reviewFallback } from '../policy/review.ts';
 import { SAME_PROVIDER_APPROVED_KIND } from './select.ts';
 import { listFindings, listReviews, markReviewInvalidated } from './store.ts';
@@ -107,7 +108,7 @@ const CLEARS_BLOCK: readonly FindingStatus[] = ['rejected', 'excepted', 'resolve
  * resolutions (BLOCK is not cleared by advisory findings, and never by having
  * none). No second reviewer's approval outvotes a first reviewer's open claim.
  * With review.when_unavailable block, at least one cleared review must come from
- * a provider other than the implementer's; with ask, a same-provider one counts
+ * a provider family other than the implementer's; with ask, a same-provider one counts
  * only after a person's recorded yes. Unresolved blocking findings from
  * any round also stop it.
  */
@@ -154,10 +155,10 @@ export function reviewGate(db: OrbitDb, input: ReviewGateInput): ReviewGateResul
   if (fallback !== 'claude' && cleared.length > 0 && input.implementerProvider === undefined) {
     // Independence cannot be shown without knowing who implemented; passing would fail open.
     reasons.push(`${fallback === 'block' ? 'independent review is required' : 'a same-provider review needs a person\'s yes'} but the implementer provider was not supplied, so independence cannot be shown`);
-  } else if (cleared.length > 0 && !cleared.some((r) => r.provider !== input.implementerProvider)) {
-    if (fallback === 'block') reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider`);
+  } else if (cleared.length > 0 && !cleared.some((r) => isIndependentReviewer(r.provider, input.implementerProvider ?? ''))) {
+    if (fallback === 'block') reasons.push(`independent review is required but every clearing review is from "${input.implementerProvider}", the implementer's provider, or a provider not independent of it`);
     else if (fallback === 'ask' && listDecisions(db, input.runId, { kind: SAME_PROVIDER_APPROVED_KIND }).length === 0) {
-      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, and no person approved a same-provider review (review.when_unavailable: ask)`);
+      reasons.push(`every clearing review is from "${input.implementerProvider}", the implementer's provider, or a provider not independent of it, and no person approved a same-provider review (review.when_unavailable: ask)`);
     }
   }
   if (current.length > 0 && cleared.length === 0 && reasons.length === 0) reasons.push('no review cleared this tree');

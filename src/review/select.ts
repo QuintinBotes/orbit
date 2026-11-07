@@ -1,5 +1,6 @@
 import type { CredentialStatus, ProviderCapabilities } from '../adapters/types.ts';
 import { OrbitError, type OrbitErrorCode } from '../core/errors.ts';
+import { isIndependentReviewer } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { preferredReviewProvider, reviewFallback, reviewProviderOrder, type ReviewAvailabilitySettings } from '../policy/review.ts';
 import { allowMatch, tierOf } from '../routing/registry.ts';
@@ -60,7 +61,7 @@ export interface ReviewerSelected {
   /** null: the provider's own configured default (nothing resolvable to name). */
   model: string | null;
   effort: string | null;
-  /** The reviewer is not the implementer's provider. */
+  /** The reviewer's provider family is known and is not the implementer's. */
   independent: boolean;
   /** For a same-provider review: why no independent reviewer could be used. Null for an independent review; absent in selections recorded before decision 0007. */
   independentUnavailable?: string | null;
@@ -139,7 +140,7 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
   };
 
   // The listed independent providers that are configured, in their order. Only listed providers are asked.
-  const independentIds = order.filter((p) => p !== impl && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== undefined));
+  const independentIds = order.filter((p) => isIndependentReviewer(p, impl) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== undefined));
   const problems = new Map<string, { reason: string; code: OrbitErrorCode }>();
   const unusable = new Map<string, string>();
   for (const p of independentIds) {
@@ -329,7 +330,7 @@ function sameProviderModel(input: SelectReviewerInput, alternatives: RejectedRev
 export function mandatoryReviewProvider(review: ReviewAvailabilitySettings, implementer: string): string | null {
   if (reviewFallback(review) !== 'block') return null;
   const first = preferredReviewProvider(review);
-  return first !== null && first !== implementer ? first : null;
+  return first !== null && isIndependentReviewer(first, implementer) ? first : null;
 }
 
 /** Throw the BLOCK as an OrbitError, for callers that propagate rather than record. */

@@ -2,7 +2,7 @@
  * What to do about a reviewer that cannot be used, from the reasons review/select.ts gives for each provider it rejected.
  * Shared by `orbit doctor` and the refusal `orbit run` gives before it creates a run, so both name the same fix.
  */
-import { LOGIN_COMMANDS } from '../recovery/index.ts';
+import { loginCommandFor } from '../recovery/index.ts';
 
 const REVIEW_FIX_GENERIC = 'log in to the reviewer provider and set providers.<id>.data_policy_eligible: true if sending sanitized code to it is permitted';
 
@@ -22,8 +22,9 @@ export function reviewFix(alternatives: readonly { provider: string; reason: str
   };
   for (const { provider, reason } of alternatives) {
     if (/^no model of "[^"]+" is qualified for review/.test(reason)) add(`for ${provider}: run "orbit models refresh" (it reads the provider's model catalog), or set providers.${provider}.model in .orbit/config.yaml to a model you accept for review`);
+    else if (/\.tier is os-sandbox but /.test(reason)) add(`for ${provider}: set isolation.provider to sandbox-runtime and export META_API_KEY, or set providers.${provider}.tier to auto or muse-sandbox`);
     else if (/data_policy_eligible is not true/.test(reason)) add(`for ${provider}: set providers.${provider}.data_policy_eligible: true if sending sanitized code to it is permitted`);
-    else if (/^(no credentials for|credentials for) /.test(reason)) add(`for ${provider}: ${LOGIN_COMMANDS[provider] ?? `${provider} login`}`);
+    else if (/^(no credentials for|credentials for) /.test(reason)) add(`for ${provider}: ${loginCommandFor(provider)}`);
     else {
       const unavailable = /^providers\.[^.]+\.model "([^"]+)" is not offered by the adapter$/.exec(reason);
       if (unavailable) add(options.unavailableModelFix?.(provider, unavailable[1]!) ?? `for ${provider}: set providers.${provider}.model to a model its CLI offers ("orbit models refresh" lists them)`);

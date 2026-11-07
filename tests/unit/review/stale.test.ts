@@ -215,6 +215,22 @@ describe('reviewGate', () => {
     expect(reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: snapshotOf((c) => { c.review.independent_provider_required = false; }), implementerProvider: 'claude', now: 0 }).ok).toBe(true);
   });
 
+  it('counts a review as independent only when the provider families differ (issue #108)', () => {
+    const blocking = snapshotOf((c) => void (c.review.when_unavailable = 'block'));
+    const outcome = (reviewer: string, implementer: string) => {
+      const { db, clock } = dbFixture();
+      recordReview(db, mk({ provider: reviewer }), clock);
+      return reviewGate(db, { runId: 'run-1', treeHash: TREE_A, snapshot: blocking, implementerProvider: implementer, now: 0 }).ok;
+    };
+    expect(outcome('claude-review', 'claude')).toBe(false);
+    expect(outcome('claude', 'claude_alt')).toBe(false);
+    expect(outcome('gemini', 'claude')).toBe(false);
+    expect(outcome('codex', 'acme')).toBe(false);
+    expect(outcome('codex-review', 'claude')).toBe(true);
+    expect(outcome('muse_ci', 'claude')).toBe(true);
+    expect(outcome('muse', 'codex')).toBe(true);
+  });
+
   it('assertReviewGate throws STALE_EVIDENCE with the reasons', () => {
     const { db } = dbFixture();
     try {

@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runDoctor, type DoctorCheck } from '../../../src/cli/commands/doctor.ts';
 import { createContext, type CliContext } from '../../../src/cli/context.ts';
@@ -528,7 +529,9 @@ describe('muse reviewer (issue #108 claim 11)', () => {
     const w = world();
     const c = await doctor(w, adapters(), museCfg({}, srtInUse), { env: KEYS_OFF });
     expect(c['muse.cli']).toMatchObject({ status: 'pass', summary: expect.stringMatching(/^muse 1\.4\.11 at /) });
-    expect(c['muse.worker-tier']).toMatchObject({ status: 'warn', summary: "the Muse reviewer runs in the muse-sandbox tier: no META_API_KEY in the environment, and Muse's login file is denied under srt" });
+    expect(c['muse.worker-tier']).toMatchObject({ status: 'warn', summary: expect.stringContaining("the Muse reviewer runs in the muse-sandbox tier: no META_API_KEY in the environment, and Muse's login file is denied under srt. Reads are not confined") });
+    expect(c['muse.worker-tier']!.summary).toContain('including credentials the login user can read');
+    expect(c['muse.worker-tier']!.summary).toContain('Use the os-sandbox tier (META_API_KEY plus srt) where that matters');
     const details = c['muse.worker-tier']!.details.join('\n');
     expect(details).toMatch(/credential source: login file \(muse login\)/);
     expect(details).toMatch(/model: muse-wonder-full-1\.0/);
@@ -550,6 +553,47 @@ describe('muse reviewer (issue #108 claim 11)', () => {
     hooks.isolation = () => ({ kind: 'none', available: async () => ({ ok: true, detail: 'not isolated' }), wrap: () => ({}) as never });
     const c = await doctor(w, adapters(), museCfg({ tier: 'os-sandbox' }, blocking), { env: { ...KEYS_OFF, META_API_KEY: 'acme-meta-0002' } });
     expect(c['muse.worker-tier']).toMatchObject({ status: 'fail', summary: expect.stringMatching(/providers\.muse\.tier is os-sandbox but sandbox-runtime isolation is not in use; refusing to run Muse without srt/) });
+  });
+
+  describe('with the real adapter, judging the tier as a run does (claim 3)', () => {
+    const fakes = fileURLToPath(new URL('../../fakes/', import.meta.url));
+    const real = async (w: World, env: Record<string, string | undefined>, isolation: IsolationProvider, over: (x: OrbitConfig) => void = () => {}) => {
+      hooks.isolation = () => isolation;
+      hooks.adapters = null;
+      hooks.config = () =>
+        museCfg({ tier: 'os-sandbox', command: join(fakes, 'fake-muse.mjs') }, (x) => {
+          x.isolation = { ...x.isolation, provider: isolation.kind as never };
+          x.providers.claude = { ...x.providers.claude!, command: join(fakes, 'fake-claude.mjs') };
+          over(x);
+        });
+      const report = await runDoctor(w.ctx({ env: { ...w.env, ...KEYS_OFF, ...env } }), { probe: false });
+      return Object.fromEntries(report.checks.map((c) => [c.id, c]));
+    };
+
+    it('keeps Muse usable when srt and META_API_KEY are there, though doctor starts no task', async () => {
+      const c = await real(world(), { META_API_KEY: 'acme-meta-0003' }, srt());
+      expect(c['muse.cli']).toMatchObject({ status: 'pass' });
+      expect(c['muse.worker-tier']).toMatchObject({ status: 'pass', summary: expect.stringContaining('os-sandbox tier') });
+      expect(c.review).toMatchObject({ status: 'pass', summary: expect.stringContaining('muse/muse-wonder-full-1.0 (independent)') });
+    });
+
+    it('blames the tier, not the install, when explicit os-sandbox has no META_API_KEY', async () => {
+      const c = await real(world(), {}, srt(), blocking);
+      expect(c['muse.cli']).toMatchObject({ status: 'pass' });
+      expect(c['muse.auth']).toBeDefined();
+      expect(c['muse.worker-tier']).toMatchObject({ status: 'fail', summary: expect.stringContaining('providers.muse.tier is os-sandbox but') });
+      expect(c.review).toMatchObject({ status: 'fail', summary: expect.stringContaining('providers.muse.tier is os-sandbox but') });
+      expect(c.review!.fix).toContain('set providers.muse.tier to auto or muse-sandbox');
+      expect(c.review!.fix).not.toMatch(/log in/);
+    });
+
+    it('still says install Muse when the CLI itself is the problem', async () => {
+      const c = await real(world(), {}, srt(), (x) => {
+        blocking(x);
+        x.providers.muse = { ...x.providers.muse!, command: '/nonexistent/muse' };
+      });
+      expect(c['muse.cli']).toMatchObject({ status: 'fail', fix: expect.stringContaining('install Muse') });
+    });
   });
 
   it('says a person sets providers.muse.data_policy_eligible, and does not review with Muse until then', async () => {
