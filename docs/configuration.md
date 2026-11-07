@@ -684,6 +684,15 @@ proposed it and that the person should review it before the first run. It
 prints what it proposed and why, and `--json` carries the same in
 `checks.proposed` (id, ecosystem, command, category, timeout_seconds, reason)
 and `checks.not_proposed` (a declared tool that was not found, for example).
+Proposed commands come from manifests. Init does not read agent docs or parse
+prose into commands. When it proposes checks and git tracks `CLAUDE.md`,
+`AGENTS.md` or `AGENTS.override.md` at the repository root, it names those files
+in a warning and in `checks.unread_docs` in `--json`. The field is absent when
+there are no such tracked root files or no checks were proposed. Compare the
+commands documented there with the proposals and edit `.orbit/config.yaml`
+before the first run. `/orbit:init` relays the warning and offers to compare
+them. It edits the config only with your agreement.
+
 An existing config is never touched: init proposes only for a config it
 writes, so checks you wrote or edited stay exactly as they are, and when it
 already defines checks init says so (`checks_defined` in `--json`) instead of

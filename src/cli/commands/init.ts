@@ -265,6 +265,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let baseBranchWarning: string | null = null;
   // Checks proposed from what the repository declares; only for a config init writes, never for an existing one.
   let checkProposal: CheckProposal = { proposed: [], notProposed: [] };
+  let unreadDocs: string[] = [];
   if (existsSync(configPath)) config = 'exists';
   else {
     let text = templateText();
@@ -292,7 +293,8 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
       // Appended to the template's own list, so its defaults (.github/**, infra/**, env files) stay.
       text = text.replace(/^(\s*protected_paths: \[.*?)\]$/m, (_m, head: string) => `${head}, ${protectedAdded.map((x) => JSON.stringify(x)).join(', ')}]`);
     }
-    checkProposal = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+    const files = await trackedFiles(ctx, repo);
+    checkProposal = await detectChecks({ repo, files, pathEnv: ctx.env.PATH });
     if (checkProposal.proposed.length > 0) {
       const block = renderChecksYaml(checkProposal.proposed);
       text = text.replace(/^checks:\n/m, () => `checks:\n${block}`);
@@ -305,6 +307,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       config = 'exists';
     }
+    if (config === 'created' && checkProposal.proposed.length > 0) unreadDocs = ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md'].filter((f) => files.includes(f));
   }
 
   const excludePath = await excludeFile(ctx, repo);
@@ -340,6 +343,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   if (config === 'created') {
     if (noScopeWarning !== undefined) warnings.push(noScopeWarning);
     if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
+    if (unreadDocs.length > 0) warnings.push(`the proposed checks come from manifests only; init did not read ${unreadDocs.join(', ')}: compare the commands documented there and edit .orbit/config.yaml`);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
 
@@ -359,7 +363,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const reviewPolicy = reviewPolicyProposal(codexEligible);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(advice !== null ? { commit_advice: advice } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(advice !== null ? { commit_advice: advice } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...(unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {}) }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
