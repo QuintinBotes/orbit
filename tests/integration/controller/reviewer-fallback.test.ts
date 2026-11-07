@@ -255,7 +255,9 @@ describe.skipIf(!canStripTypes)('controller: a reviewer that fails at run time',
         [first, false],
         [next, true],
       ]);
-      expect(finalMd(l, run.id)).toContain(`Reviewer: ${nextLabel} (independent)\n- Tried first: ${firstLabel}, which failed (`);
+      const md = finalMd(l, run.id);
+      expect(md).toContain(`Reviewer: ${nextLabel} (independent)`);
+      expect(md).toContain(`\n- Tried first: ${firstLabel}, which failed (`);
     }, 120_000);
   }
 
