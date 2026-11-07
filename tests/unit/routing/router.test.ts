@@ -466,6 +466,12 @@ describe('safety review routing', () => {
     expect(d.model).toBe(OPUS);
   });
 
+  it('does not take a Codex model as independent of an implementer that is an alias of the Codex family (issue #108)', () => {
+    const { registry } = setup();
+    const d = route({ workKind: 'safety-review', signals: signals({ implementerProvider: 'codex-review' }), registry, policy: policy() });
+    expect(d.provider).toBe('claude');
+  });
+
   it('still prefers the preferred provider when independence is not required', () => {
     const { registry } = setup();
     const p = policy({ review: { independent_provider_required: false, preferred_provider: 'codex', fallback_same_provider_allowed: false } });

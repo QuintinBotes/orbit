@@ -11,6 +11,8 @@ import {
   PROVIDER_HOSTS,
   WORKER_DIR_READ_ONLY,
   codexReviewerProfile,
+  MUSE_PRIVATE_CONFIG_DIR,
+  museReviewerProfile,
   orbitTmpRoot,
   prepareWorkerTmpDir,
   profileForCheck,
@@ -684,5 +686,67 @@ describe('codexReviewerProfile: the os-sandbox tier, where srt is the only sandb
     expect(profile.limits).toEqual(worker.limits);
     expect(profile.denyReadPaths).toEqual(expect.arrayContaining(worker.denyReadPaths));
     expect(profile.readablePaths).toEqual(expect.arrayContaining(worker.readablePaths));
+  });
+});
+
+describe('museReviewerProfile and the Muse login directory (issue #108)', () => {
+  function museWorker(l: ReturnType<typeof layout>, env: Record<string, string> = {}) {
+    return profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'muse', claudeConfigDir: l.claudeDir, homeDir: l.home, env });
+  }
+
+  it('writes only the worker directory, reaches only api.meta.ai, and re-allows the checkout for reading', () => {
+    const l = layout();
+    const worker = museWorker(l);
+    const profile = museReviewerProfile(worker, { checkout: l.worktree, workerDir: l.workerDir });
+    expect(profile.writablePaths).toEqual([l.workerDir]);
+    expect(profile.writablePaths).not.toContain(l.worktree);
+    expect(profile.allowedHosts).toEqual(['api.meta.ai']);
+    expect(profile.allowedHosts).toEqual([...PROVIDER_HOSTS.muse]);
+    expect(profile.readablePaths).toContain(l.worktree);
+    expect(profile.limits).toEqual(worker.limits);
+    // The private config directory lives inside the one writable directory.
+    expect(join(l.workerDir, MUSE_PRIVATE_CONFIG_DIR).startsWith(l.workerDir)).toBe(true);
+    expect(() => buildSrtSettings(profile)).not.toThrow();
+  });
+
+  it('refuses a worker directory that overlaps the review checkout, either way round', () => {
+    const l = layout();
+    const worker = museWorker(l);
+    for (const input of [
+      { checkout: l.worktree, workerDir: l.worktree },
+      { checkout: l.worktree, workerDir: join(l.worktree, 'worker') },
+      { checkout: join(l.workerDir, 'checkout'), workerDir: l.workerDir },
+    ]) {
+      let caught: unknown;
+      try {
+        museReviewerProfile(worker, input);
+      } catch (err) {
+        caught = err;
+      }
+      expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE'), JSON.stringify(input)).toBe(true);
+    }
+    expect(() => museReviewerProfile(worker, { checkout: l.worktree, workerDir: l.workerDir })).not.toThrow();
+  });
+
+  it('denies the Muse login directory to a Claude worker: ~/.config/muse and $XDG_CONFIG_HOME/muse', () => {
+    const l = layout();
+    const xdg = join(l.r, 'xdg');
+    const p = profileForWorker({ worktree: l.worktree, workerDir: l.workerDir, snapshot: snapshotFor({ repoRoot: l.repo }), provider: 'claude', claudeConfigDir: l.claudeDir, homeDir: l.home, env: { XDG_CONFIG_HOME: xdg } });
+    expect(p.denyReadPaths).toContain(join(l.home, '.config', 'muse'));
+    expect(p.denyReadPaths).toContain(join(xdg, 'muse'));
+    expect(HOME_DENY_READ).toContain('.config/muse');
+    // A check gets neither either.
+    const check = profileForCheck({ worktree: l.worktree, check: checkFor(), snapshot: snapshotFor({ repoRoot: l.repo }), homeDir: l.home, claudeConfigDir: l.claudeDir, env: { XDG_CONFIG_HOME: xdg } });
+    expect(check.denyReadPaths).toContain(join(l.home, '.config', 'muse'));
+    expect(check.denyReadPaths).toContain(join(xdg, 'muse'));
+  });
+
+  it('denies the user Muse login to a Muse worker too: the os-sandbox tier runs on META_API_KEY alone', () => {
+    const l = layout();
+    const xdg = join(l.r, 'xdg');
+    const p = museWorker(l, { XDG_CONFIG_HOME: xdg });
+    expect(p.denyReadPaths).toContain(join(l.home, '.config', 'muse'));
+    expect(p.denyReadPaths).toContain(join(xdg, 'muse'));
+    expect(p.denyReadPaths).not.toContain(join(l.workerDir, MUSE_PRIVATE_CONFIG_DIR));
   });
 });

@@ -393,6 +393,17 @@ describe('deliveryGate and completionGate with real records', () => {
     expect(ok.evidence).toEqual([`review ${review.id} by codex: APPROVE on tree ${cand.treeHash}`]);
   });
 
+  it('independentReviewGate does not call a review by an alias of the implementer family independent (issue #108)', () => {
+    lab = makeUnitLab();
+    const ctx = lab.ctx();
+    const cand = addCandidate(lab);
+    addReview(lab, cand, { provider: 'claude-review' });
+    const g = independentReviewGate(lab.db, { runId: lab.runId, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: 'claude', now: lab.clock.now() });
+    expect(g.details.independent).toBe(false);
+    addReview(lab, cand, { provider: 'muse-review', round: 2 });
+    expect(independentReviewGate(lab.db, { runId: lab.runId, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: 'claude', now: lab.clock.now() }).details.independent).toBe(true);
+  });
+
   it('independentReviewGate decides independence from the reviews of the tree, not from the cleared set alone', () => {
     lab = makeUnitLab();
     const ctx = lab.ctx();
