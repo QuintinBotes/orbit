@@ -353,11 +353,13 @@ export const INSTALL_SCRIPTS_CHECK_ID = 'orbit-install-scripts';
 const INSTALL_CHECK_IDS: readonly string[] = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
 /** The install steps' ids in the implementer's worktree, so their rows never answer a query for the baseline's. */
 export const WORKTREE_INSTALL_IDS: Readonly<Record<string, string>> = { [INSTALL_CHECK_ID]: 'orbit-worktree-install', [INSTALL_SCRIPTS_CHECK_ID]: 'orbit-worktree-install-scripts' };
+/** Every id Orbit's own install steps run under, wherever they install. */
+const ALL_INSTALL_IDS: readonly string[] = [...INSTALL_CHECK_IDS, ...Object.values(WORKTREE_INSTALL_IDS)];
 /**
  * Checks whose value is the untracked state they leave in their checkout (node_modules): a recorded attempt is reused or
  * reattached only in the checkout it ran in (evidence/git.ts checkoutId), and runs again in any other.
  */
-const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set([...INSTALL_CHECK_IDS, ...Object.values(WORKTREE_INSTALL_IDS)]);
+const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set(ALL_INSTALL_IDS);
 
 const DEFINITION_FILE = 'definition.json';
 
@@ -765,7 +767,7 @@ function stillRunsMessage(row: CheckRunRecord, why: string): string {
  * host's by default; a container's is Linux) decide whether NuGet's vulnerability audit can run in it.
  */
 export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
-  const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
+  const install = ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return commandToolchains({
     command: def.command,
     shell: def.shell,
@@ -787,7 +789,7 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
  * `dependencies.install_command` (it has no env a person sets), any other check is `checks.<id>`.
  */
 function msbuildFixWhere(ctx: Pick<RunnerContext, 'snapshot'>, def: CheckDefinition): MsbuildFixWhere | null {
-  return INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
+  return ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
 }
 
 /**

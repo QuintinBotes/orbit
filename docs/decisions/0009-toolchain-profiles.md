@@ -75,7 +75,9 @@ Maven and Gradle were not installed where this was measured.
    points at the user's own caches (`~/.cargo`, `~/go`, `~/.m2`,
    `~/.nuget/packages`, `~/Library/Caches/pip`).
    - They are written only by Orbit's dependency-install step
-     (`orbit-install`, and `orbit-install-scripts` after it): the install
+     (`orbit-install`, and `orbit-install-scripts` after it; in the
+     implementer's worktree at PREFLIGHT, `orbit-worktree-install` and
+     `orbit-worktree-install-scripts`): the install
      from the repository's lockfile (`npm ci`) or the configured
      `dependencies.install_command` (for example `cargo fetch --locked`).
      That step's sandbox has the detected toolchains' caches writable, and

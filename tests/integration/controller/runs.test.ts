@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Controller } from '../../../src/controller/loop.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
@@ -7,6 +7,7 @@ import { listWorkers } from '../../../src/storage/workers.ts';
 import { listCheckRuns, listEvidenceReports } from '../../../src/evidence/store.ts';
 import { pinCheckout } from '../../../src/evidence/candidate.ts';
 import { systemClock } from '../../../src/core/clock.ts';
+import { worktreeRootFor } from '../../../src/controller/context.ts';
 import { listReviews } from '../../../src/review/store.ts';
 import { baseScenario, DIAGNOSIS, git, implementMul, makeLab, PLANNER_OUTPUT, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
@@ -184,5 +185,42 @@ describe.skipIf(!canStripTypes)('controller: complete runs with fake providers',
     const notes = listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' });
     expect(notes.map((d) => d.data)).toEqual([{ paths: ['deps.marker'] }]);
     expect(notes[0]!.summary).toMatch(/could not be preinstalled.*not ignore.*deps\.marker/);
+  });
+
+  it('undoes an install that edits a tracked .gitignore to hide its output, so the output never enters a candidate', async () => {
+    // Only the worktree's install hides its output, so the baseline's checkouts stay as they were.
+    const hide = "const fs=require('node:fs');fs.writeFileSync('deps.marker','installed');if(process.env.ORBIT_CHECK_ID==='orbit-worktree-install')fs.appendFileSync('.gitignore','deps.marker\\n')";
+    const l = lab({ tweak: (c) => void (c.dependencies.install_command = [process.execPath, '-e', hide]) });
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(existsSync(join(done.worktreePath!, 'deps.marker'))).toBe(false);
+    const [ev] = listEvidenceReports(l.db(), run.id);
+    expect(git(l.repo, 'ls-tree', '-r', '--name-only', ev!.treeHash).split('\n')).not.toContain('deps.marker');
+    expect(listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' }).map((d) => d.data)).toEqual([{ paths: ['.gitignore', 'deps.marker'] }]);
+  });
+
+  it('does not install in, or touch, an implementer worktree that is not clean before the install', async () => {
+    const l = lab({ tweak: (c) => void (c.dependencies.install_command = MARKER_INSTALL) });
+    const planner = { ...PLANNER_OUTPUT, unresolved_decisions: [{ question: 'Round or keep precision?', options: ['round', 'keep'], recommendation: null, material: true, affected_criteria: ['mul'] }] };
+    writeScenario(l, baseScenario({ planner: [{ structured: planner }] }));
+    const run = startLabRun(l);
+    // A worktree already registered at the implementer's path (a restart) is reused as it is.
+    const worktree = join(worktreeRootFor(l.orbitHome, run), 'implementer');
+    git(l.repo, 'worktree', 'add', '--detach', worktree, 'HEAD');
+    writeFileSync(join(worktree, 'notes.txt'), 'not the install\n');
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.resumeState, done.outcomeReason ?? '').toBe('CONTRACTING');
+    expect(readFileSync(join(worktree, 'notes.txt'), 'utf8')).toBe('not the install\n');
+    expect(existsSync(join(worktree, 'deps.marker'))).toBe(false);
+    expect(listCheckRuns(l.db(), { runId: run.id }).filter((r) => r.checkId.startsWith('orbit-worktree-'))).toEqual([]);
+    const notes = listDecisions(l.db(), run.id, { kind: 'preflight.worktree-install' });
+    expect(notes.map((d) => d.data)).toEqual([{ paths: ['notes.txt'] }]);
+    expect(notes[0]!.summary).toMatch(/not preinstalled.*already had changes.*notes\.txt.*left as it was/);
   });
 });
