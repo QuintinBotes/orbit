@@ -481,8 +481,8 @@ is a configuration error, and so is the legacy pair that contradicts itself. A
 legacy `preferred_provider` becomes the preference list.
 
 Delivery needs a review that returns `APPROVE`. A `REPAIR_REQUIRED` review
-whose open findings are all advisory (low or info, below the blocking
-severities) clears the gate without approving, so its advisory findings go to
+whose open findings are all advisory (below the blocking severities, which
+can include a medium finding under the default policy) clears the gate without approving, so its advisory findings go to
 the repair loop like any other repair. The repaired tree is reviewed again and
 is delivered only when that review approves. A review that also raised a note
 under `evidence-classification` gets its one fresh review instead, as
