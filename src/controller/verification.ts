@@ -21,9 +21,9 @@ import { readJsonIfExists } from '../core/fsx.ts';
 import { gitTreeReader, isTestPath, loadTestLayout, testedByContent } from '../policy/test-files.ts';
 import { git } from '../evidence/git.ts';
 import { BASELINE_FILE, installDependencies, type BaselineReport } from '../evidence/baseline.ts';
-import { candidateEvidenceDir, runChecks, type RunnerContext } from '../evidence/runner.ts';
+import { candidateEvidenceDir, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runChecks, type RunnerContext } from '../evidence/runner.ts';
 import { evaluateEvidence, type BaseComparison, type Evaluation, type UiResultInput } from '../evidence/report.ts';
-import type { CandidateRecord } from '../evidence/store.ts';
+import { isFinalCheckStatus, listCheckRuns, type CandidateRecord } from '../evidence/store.ts';
 import type { CheckResult, EvidenceReport, ScopeReport } from '../evidence/types.ts';
 import { runUiChecks, toEvidenceUi } from '../ui/runner.ts';
 import type { UiRunResult } from '../ui/types.ts';
@@ -37,6 +37,12 @@ import { collectFailBefore } from './fail-before.ts';
 export interface CollectOptions<S> {
   /** A clean, writable checkout of exactly the candidate tree (the caller materializes and removes it). */
   checkoutDir: string;
+  /**
+   * The caller materialized `checkoutDir` for this call. A recorded dependency install left its state in an earlier
+   * checkout, so it is set aside and the install runs again. False when the caller reused a checkout an interrupted
+   * step left, where a recorded or running install is still in place.
+   */
+  freshCheckout: boolean;
   /** The implementation-scope report of the candidate, as the caller inspected (and, in supervised mode, authorized) it. */
   scope: ScopeReport;
   /** Disclosures the caller adds to the report's unverified list (one-shot authorizations). */
@@ -73,6 +79,12 @@ export function uiEvidenceDir(runDir: string, seq: number): string {
 
 export type CollectOutcome<S> = { stopped: S } | { evidence: CollectedEvidence };
 
+/** The finished install groups of the candidate, added to `setAside`. A running one is left to be reattached, as PREFLIGHT does (baseline.ts). */
+function installSetAside(ctx: RunContext, cand: CandidateRecord, setAside: ReadonlySet<string> | undefined): ReadonlySet<string> {
+  const roots = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID].flatMap((checkId) => listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId, rootsOnly: true }));
+  return new Set([...(setAside ?? []), ...roots.filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id)]);
+}
+
 /** The note `orbit verify` adds when the controller would have explored the UI and it did not. */
 export const EXPLORATION_NOT_RUN = 'UI exploration (ui.exploration) runs only in the controller\'s VERIFYING step; this verification did not explore the UI';
 
@@ -88,7 +100,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
 
   // Trusted checks in a clean, writable checkout of exactly this tree.
   const runner: RunnerContext = { ...checkRunnerFor(ctx), checkoutDir };
-  const install = await installDependencies({ ...runner, candidate: cand });
+  const install = await installDependencies({ ...runner, candidate: cand, setAside: opts.freshCheckout ? installSetAside(ctx, cand, runner.setAside) : runner.setAside });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');
   const results: CheckResult[] = [...install.results];
   if (install.skipped || install.ok) results.push(...(await runChecks({ ...runner, candidate: cand, checkIds: commandChecks })));

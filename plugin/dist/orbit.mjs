@@ -57782,6 +57782,10 @@ import { join as join54 } from "node:path";
 function uiEvidenceDir(runDir2, seq2) {
   return join54(candidateEvidenceDir(runDir2, seq2), "ui");
 }
+function installSetAside(ctx, cand, setAside) {
+  const roots = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID].flatMap((checkId) => listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId, rootsOnly: true }));
+  return /* @__PURE__ */ new Set([...setAside ?? [], ...roots.filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id)]);
+}
 async function collectVerificationEvidence(ctx, cand, opts) {
   const contract = ctx.contract;
   if (!contract) throw new OrbitError("TRANSITION_INVALID", `run ${ctx.run.id} has no contract yet; there is nothing to verify`);
@@ -57792,7 +57796,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const gate = (g) => opts.onGate?.(g);
   const checkpoint = async () => opts.checkpoint ? opts.checkpoint() : null;
   const runner = { ...checkRunnerFor(ctx), checkoutDir };
-  const install = await installDependencies({ ...runner, candidate: cand });
+  const install = await installDependencies({ ...runner, candidate: cand, setAside: opts.freshCheckout ? installSetAside(ctx, cand, runner.setAside) : runner.setAside });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
   const results = [...install.results];
   if (install.skipped || install.ok) results.push(...await runChecks({ ...runner, candidate: cand, checkIds: commandChecks }));
@@ -57910,6 +57914,7 @@ var init_verification = __esm({
     init_baseline();
     init_runner();
     init_report();
+    init_store();
     init_runner2();
     init_context2();
     init_gates();
@@ -63082,9 +63087,9 @@ async function verifyingStep(ctx) {
     return act(ctx, cand, report2);
   }
   const checkoutDir = join64(runWorktreeRoot(ctx), `check-${cand.seq}`);
-  await ensureCheckout(ctx, cand, checkoutDir);
+  const freshCheckout = await ensureCheckout(ctx, cand, checkoutDir);
   try {
-    const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
+    const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, freshCheckout, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
     if ("stopped" in collected) return collected.stopped;
     const { report: report2, evaluation, security, scan } = collected.evidence;
     if (security.status === "fail") {
@@ -63246,12 +63251,13 @@ async function ensureCheckout(ctx, cand, dir) {
   if (existsSync44(dir) && readdirSync12(dir).length > 0) {
     try {
       const tree = (await git2(dir, ["rev-parse", "HEAD^{tree}"])).trim();
-      if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return;
+      if (tree === cand.treeHash && (await git2(dir, ["status", "--porcelain", "--untracked-files=no"])).trim() === "") return false;
     } catch {
     }
     await cleanupCandidateCheckout(ctx.run.repoRoot, dir);
   }
   await materializeCandidate(ctx.run.repoRoot, cand.commitSha, dir, { readOnly: false });
+  return true;
 }
 var init_verifying = __esm({
   "src/controller/steps/verifying.ts"() {
@@ -73053,7 +73059,7 @@ async function verifyCandidate(rc) {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
   try {
-    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, scope, exploration: false });
+    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, freshCheckout: true, scope, exploration: false });
     if ("stopped" in collected) throw new OrbitError("INTERNAL", "verification stopped without a checkpoint");
     const { report: report2, failReasons, incompleteReasons } = collected.evidence;
     return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report: report2, failReasons, incompleteReasons };

@@ -104,7 +104,7 @@ export async function verifyCandidate(rc: RunContext): Promise<VerifyOutcome> {
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
   try {
     // The same evidence function as VERIFYING, so findings are judged under the same frozen policy.
-    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, scope, exploration: false });
+    const collected = await collectVerificationEvidence(rc, cand, { checkoutDir, freshCheckout: true, scope, exploration: false });
     if ('stopped' in collected) throw new OrbitError('INTERNAL', 'verification stopped without a checkpoint');
     const { report, failReasons, incompleteReasons } = collected.evidence;
     return { run: rc.run, candidateSeq: cand.seq, candidateId: cand.id, treeHash: cand.treeHash, report, failReasons, incompleteReasons };
