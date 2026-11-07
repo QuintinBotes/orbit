@@ -29177,8 +29177,8 @@ ${outputBudgetInstruction(outputTokens)}
           };
         } else {
           const init = log.events.find((e) => e.type === "system" && e.subtype === "init");
-          const listed2 = needsPluginList(init?.plugins) ? await this.listPlugins() : null;
-          const plugins = { policy: launchPluginPolicy(handle.workerDir), installed: listed2?.ok ? listed2.plugins : null };
+          const listed3 = needsPluginList(init?.plugins) ? await this.listPlugins() : null;
+          const plugins = { policy: launchPluginPolicy(handle.workerDir), installed: listed3?.ok ? listed3.plugins : null };
           result2 = classifyClaudeTranscript({ events: log.events, malformedTail: log.malformedTail, exit: st.exit, outputSchema: spec.outputSchema, expectedSessionId: st.pid?.sessionId ?? null, plugins });
           const stderr = result2.reason === "crashed" ? stderrTail(handle.workerDir) : null;
           if (stderr) result2 = { ...result2, error: `${result2.error ?? "crashed"}; stderr: ${stderr}` };
@@ -30034,7 +30034,7 @@ var init_registry = __esm({
         const now = this.clock.now();
         const absent = [];
         const conflicting = [];
-        let listed2 = [];
+        let listed3 = [];
         let hidden = [];
         let providerDefault = null;
         this.db.tx(() => {
@@ -30046,11 +30046,11 @@ var init_registry = __esm({
           );
           conflicting.push(...uniq3(models.filter((m) => foreign.has(m.slug)).map((m) => m.slug)));
           const own = models.filter((m) => !foreign.has(m.slug));
-          listed2 = own.filter((m) => m.visibility === "list");
+          listed3 = own.filter((m) => m.visibility === "list");
           hidden = own.filter((m) => m.visibility !== "list");
-          const ranked = listed2.filter((m) => m.priority !== null).sort((a, b) => a.priority - b.priority);
+          const ranked = listed3.filter((m) => m.priority !== null).sort((a, b) => a.priority - b.priority);
           providerDefault = ranked[0]?.slug ?? null;
-          for (const m of listed2) {
+          for (const m of listed3) {
             const existing = this.readDraft(m.slug);
             const surfaces = mergeSurfaces(existing?.surfaces ?? [], [spec.surface]);
             if (opts.source === "live") setSurface(surfaces, spec.surface, true, "listed by codex debug models", now);
@@ -30083,7 +30083,7 @@ var init_registry = __esm({
               refreshedAt: now
             });
           }
-          const listedIds = new Set(listed2.map((m) => m.slug));
+          const listedIds = new Set(listed3.map((m) => m.slug));
           for (const m of hidden) {
             const draft = this.readDraft(m.slug);
             if (!draft) continue;
@@ -30102,7 +30102,7 @@ var init_registry = __esm({
             }
           }
         });
-        return { listed: listed2.map((m) => m.slug), hidden: hidden.map((m) => m.slug), absent, conflicting, providerDefault };
+        return { listed: listed3.map((m) => m.slug), hidden: hidden.map((m) => m.slug), absent, conflicting, providerDefault };
       }
       /** Record an evaluation outcome (replay suite, review calibration) that routing may rely on. */
       recordEvaluation(model, result2) {
@@ -36412,6 +36412,17 @@ async function pinCheckout(input) {
   await git2(input.repoRoot, ["update-ref", input.ref, commit]);
   return { ref: input.ref, commit, tree };
 }
+async function withStagingView(run) {
+  const scratch = mkdtempSync5(join23(tmpdir10(), "orbit-view-"));
+  try {
+    const excludes = join23(scratch, "exclude");
+    writeFileSync7(excludes, `${BUILTIN_EXCLUDES.join("\n")}
+`);
+    return await run({ "core.excludesFile": excludes });
+  } finally {
+    rmSync9(scratch, { recursive: true, force: true });
+  }
+}
 async function stageTree(o) {
   const scratch = mkdtempSync5(join23(tmpdir10(), "orbit-index-"));
   try {
@@ -39288,6 +39299,9 @@ function candidateSubject(runDir2, candidate) {
 function baselineSubject(runDir2, baseTree, source = "baseline") {
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join27(runDir2, "baseline"), source };
 }
+function worktreeInstallSubject(runDir2, tree) {
+  return { candidateId: null, bindingId: `worktree:${tree}`, treeHash: tree, evidenceDir: join27(runDir2, "worktree-install"), source: "install" };
+}
 async function runAttempt(ctx, subject, def, configHash) {
   assertPolicy(ctx);
   await assertCheckoutTree(ctx.checkoutDir, subject.treeHash);
@@ -39347,6 +39361,7 @@ async function assertCheckoutTree(dir, treeHash) {
 }
 function subjectForRow(ctx, row) {
   const install = INSTALL_CHECK_IDS.includes(row.checkId);
+  if (Object.values(WORKTREE_INSTALL_IDS).includes(row.checkId)) return worktreeInstallSubject(ctx.runDir, row.treeHash);
   if (row.candidateId === null) return baselineSubject(ctx.runDir, row.treeHash, install ? "install" : "baseline");
   const subject = candidateSubject(ctx.runDir, getCandidate(ctx.db, row.candidateId));
   return install ? { ...subject, source: "install" } : subject;
@@ -39623,7 +39638,7 @@ function stillRunsMessage(row, why) {
   return `its check could not be confirmed stopped: ${why}; check run ${row.id} stays open, and its checkout is kept, until a later controller start confirms it ended`;
 }
 function checkToolchains(ctx, def, cwd, dirs, tmpDir, platform3 = process.platform) {
-  const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
+  const install = ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return commandToolchains({
     command: def.command,
     shell: def.shell,
@@ -39640,7 +39655,7 @@ function checkToolchains(ctx, def, cwd, dirs, tmpDir, platform3 = process.platfo
   });
 }
 function msbuildFixWhere(ctx, def) {
-  return INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: "dependencies.install_command", env: null } : null;
+  return ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: "dependencies.install_command", env: null } : null;
 }
 async function assertCheckoutUnmodified(dir, nextCheck) {
   const out = await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--ignore-submodules=none"]);
@@ -40027,7 +40042,7 @@ function removeLeftovers(subject, checkId, index) {
   rmSync10(shimPath(dirs.checkDir, "output"), { force: true });
   for (const d of [dirs.homeDir, dirs.tmpDir, dirs.toolchainsDir]) removeScratch(d);
 }
-var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, SHIM_SEARCH_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, CHECK_RUN_RECORDS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, CHECKOUT_BOUND_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
+var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, SHIM_SEARCH_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, CHECK_RUN_RECORDS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, WORKTREE_INSTALL_IDS, ALL_INSTALL_IDS, CHECKOUT_BOUND_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
 var init_runner = __esm({
   "src/evidence/runner.ts"() {
     "use strict";
@@ -40067,7 +40082,9 @@ var init_runner = __esm({
     INSTALL_CHECK_ID = "orbit-install";
     INSTALL_SCRIPTS_CHECK_ID = "orbit-install-scripts";
     INSTALL_CHECK_IDS = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
-    CHECKOUT_BOUND_CHECK_IDS = new Set(INSTALL_CHECK_IDS);
+    WORKTREE_INSTALL_IDS = { [INSTALL_CHECK_ID]: "orbit-worktree-install", [INSTALL_SCRIPTS_CHECK_ID]: "orbit-worktree-install-scripts" };
+    ALL_INSTALL_IDS = [...INSTALL_CHECK_IDS, ...Object.values(WORKTREE_INSTALL_IDS)];
+    CHECKOUT_BOUND_CHECK_IDS = new Set(ALL_INSTALL_IDS);
     DEFINITION_FILE = "definition.json";
     DOTNET_CHECK_ENV = {
       DOTNET_CLI_TELEMETRY_OPTOUT: "1",
@@ -40132,19 +40149,21 @@ async function installDependencies(ctx) {
     if (audit2 && audit2.blocking.length > 0) return { skipped: false, reason: audit2.summary, ok: false, results: [], audit: audit2 };
     return { skipped: true, reason: plan.reason, ok: false, results: [], audit: audit2 };
   }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  const steps = ctx.worktreeTree && !ctx.candidate ? plan.definitions.map((d) => ({ ...d, id: WORKTREE_INSTALL_IDS[d.id] })) : plan.definitions;
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(steps.map((d) => [d.id, d])) };
   let subject;
   if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: "install" };
+  else if (ctx.worktreeTree) subject = worktreeInstallSubject(ctx.runDir, ctx.worktreeTree);
   else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, "install");
   else throw new OrbitError("INTERNAL", "installDependencies needs a candidate or a base tree to bind to");
   const results = [];
-  for (const def of plan.definitions) {
+  for (const def of steps) {
     const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
     if (!r) break;
     results.push(r);
     if (r.status !== "PASSED") break;
   }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === "PASSED");
+  const ok = results.length === steps.length && results.every((r) => r.status === "PASSED");
   if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
   const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
   if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };
@@ -40289,9 +40308,9 @@ function describeFinding(f) {
 }
 function baselineAuditNotes(audit, policy) {
   if (!policy.enabled || !audit?.ran) return [];
-  const listed2 = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
-  const notes = listed2.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
-  if (listed2.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed2.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
+  const listed3 = [...audit.vulnerabilities.filter((f) => SEVERITY_RANK[f.severity ?? "low"] >= SEVERITY_RANK[policy.fail_on]), ...audit.licenses];
+  const notes = listed3.slice(0, MAX_BASELINE_AUDIT_NOTES).map((f) => `pre-existing ${f.kind === "license" ? "license problem" : "vulnerability"} on the base revision: ${describeFinding(f)}`);
+  if (listed3.length > MAX_BASELINE_AUDIT_NOTES) notes.push(`and ${listed3.length - MAX_BASELINE_AUDIT_NOTES} more pre-existing dependency audit finding(s) on the base revision`);
   return notes;
 }
 async function auditCandidate(ctx) {
@@ -44304,6 +44323,7 @@ function findCheckDirs(root) {
     }
   };
   visit3(join33(root, "baseline"));
+  visit3(join33(root, "worktree-install"));
   for (const seq2 of safeDirs(join33(root, "evidence"))) visit3(join33(root, "evidence", seq2));
   return found;
 }
@@ -47129,7 +47149,7 @@ import { join as join37 } from "node:path";
 function denialsFromTranscript(events) {
   const uses = /* @__PURE__ */ new Map();
   const results = /* @__PURE__ */ new Map();
-  let listed2 = [];
+  let listed3 = [];
   for (const e of events) {
     const message = isObject5(e.message) ? e.message : null;
     const content = message && Array.isArray(message.content) ? message.content : [];
@@ -47144,7 +47164,7 @@ function denialsFromTranscript(events) {
         results.set(b.tool_use_id, { text: textOf(b.content), isError: b.is_error === true });
       }
     } else if (e.type === "result" && Array.isArray(e.permission_denials)) {
-      listed2 = e.permission_denials.filter(isObject5).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
+      listed3 = e.permission_denials.filter(isObject5).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
     }
   }
   const out = /* @__PURE__ */ new Map();
@@ -47155,7 +47175,7 @@ function denialsFromTranscript(events) {
     const use = uses.get(id);
     out.set(id, { toolUseId: id, tool: use?.name ?? "unknown", rule: m[1].trim(), target: targetOf(use?.input), reason: clip4(m[2].trim()), source: "guard-hook" });
   }
-  for (const d of listed2) {
+  for (const d of listed3) {
     if (!d.tool_use_id || out.has(d.tool_use_id)) continue;
     const use = uses.get(d.tool_use_id);
     const r = results.get(d.tool_use_id);
@@ -59435,9 +59455,9 @@ async function outcomeForError(ctx, err) {
 async function blockOnOpenQuestions(ctx, stage, opts = {}) {
   const { criteria, questions } = blockingQuestions(ctx.db, ctx.run.id);
   if (criteria.length === 0) return null;
-  const listed2 = questions.slice(0, 5).map((q) => `${q.id}: ${q.question}`).join(" | ");
+  const listed3 = questions.slice(0, 5).map((q) => `${q.id}: ${q.question}`).join(" | ");
   const detail = opts.detail ? ` ${opts.detail}` : "";
-  return finishRun(ctx, "BLOCKED", `${criteria.join(", ")} ${criteria.length === 1 ? "waits" : "wait"} for a decision before ${stage}; open questions: ${listed2}.${detail} Answer with orbit decide ${ctx.run.id} <question-id> <answer>, then orbit resume ${ctx.run.id}`, {
+  return finishRun(ctx, "BLOCKED", `${criteria.join(", ")} ${criteria.length === 1 ? "waits" : "wait"} for a decision before ${stage}; open questions: ${listed3}.${detail} Answer with orbit decide ${ctx.run.id} <question-id> <answer>, then orbit resume ${ctx.run.id}`, {
     outcome: { ...opts.outcome ?? {}, blocked_criteria: criteria, questions: questions.map((q) => q.id) }
   });
 }
@@ -59457,6 +59477,7 @@ function policySummary(ctx, opts) {
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(", ") : "none"}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(", ") || "none"}`,
     "- you cannot commit, push, open pull requests, change policy, or decide completion",
+    `- ${opts.readOnly ? "" : "change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused; "}dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages`,
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
     ...c.isolation.provider === "sandbox-runtime" && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes("dotnet") ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []
   ];
@@ -59759,8 +59780,8 @@ function deliversThroughGithub(config) {
 }
 function withoutDelivery(config) {
   const on = [...DELIVERY_ACTIONS, ...RELEASE_ACTIONS].filter((a) => config.actions[a] === true).map((a) => `actions.${a}`);
-  const listed2 = on.length <= 1 ? on.join("") : `${on.slice(0, -1).join(", ")} and ${on.at(-1)}`;
-  return `or, to run without delivery, set mode: autonomous${on.length > 0 ? ` and ${listed2} to false` : ""} in .orbit/config.yaml`;
+  const listed3 = on.length <= 1 ? on.join("") : `${on.slice(0, -1).join(", ")} and ${on.at(-1)}`;
+  return `or, to run without delivery, set mode: autonomous${on.length > 0 ? ` and ${listed3} to false` : ""} in .orbit/config.yaml`;
 }
 function deliveryEnvironmentProblem(config, env) {
   if (!deliversThroughGithub(config)) return null;
@@ -59789,11 +59810,11 @@ var init_delivery_env = __esm({
 async function judgeWorkerPlugins(adapter, config) {
   const list3 = adapter?.listPlugins;
   if (typeof list3 !== "function") return null;
-  const listed2 = await list3.call(adapter);
-  if (!listed2.ok) {
+  const listed3 = await list3.call(adapter);
+  if (!listed3.ok) {
     return {
       status: "warn",
-      summary: `could not list the installed plugins (${listed2.detail.replace(/\s+/g, " ").trim()})`,
+      summary: `could not list the installed plugins (${listed3.detail.replace(/\s+/g, " ").trim()})`,
       details: [],
       missing: "the output of claude plugin list --json",
       fix: 'run "claude plugin list --json" to see why; a worker session that loads a plugin the policy does not allow is refused',
@@ -59804,7 +59825,7 @@ async function judgeWorkerPlugins(adapter, config) {
   const loads = [];
   const maybe = [];
   const skipped = [];
-  for (const p of listed2.plugins) {
+  for (const p of listed3.plugins) {
     if (!p.enabled) skipped.push(`not loaded by workers: ${p.id} (disabled)`);
     else if (p.scope !== null && WORKER_EXCLUDED_SCOPES.includes(p.scope)) skipped.push(`not loaded by workers: ${p.id} (scope ${p.scope}; workers load no user, project or local settings)`);
     else if (p.scope === SYNCED_SCOPE) skipped.push(`not loaded by workers: ${p.id} (scope ${SYNCED_SCOPE}; workers start with no user, project or local settings, which leaves synced plugins out)`);
@@ -59955,6 +59976,9 @@ async function preflightStep(ctx) {
   if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
   const worktree = await ensureWorktree(repo, join58(wtRoot, "implementer"), head);
+  await preinstallWorktree(ctx, repo, worktree, head, baseTree);
+  const installed2 = await safePoint(ctx);
+  if (installed2) return installed2;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
   const noted = [...preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : [], ...missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(", ")})`] : []];
   return move2(ctx, "CONTRACTING", `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(" and ")}` : ""}`, {
@@ -60124,6 +60148,44 @@ function dirtyStartRefusal(d) {
   const fix = d.changed.length === 0 ? "untracked files count as uncommitted changes, although a run starts from HEAD and never sees them: list them in .git/info/exclude or .gitignore, move them out, or run git stash -u (plain git stash leaves them); or set repository.allow_dirty_start" : `commit or stash the modified files${d.untracked.length > 0 ? " (git stash -u takes the untracked ones too; plain git stash leaves them)" : ""}, or set repository.allow_dirty_start`;
   return { reason, fix };
 }
+async function preinstallWorktree(ctx, repo, worktree, head, tree) {
+  if (planInstall(ctx.snapshot, worktree).skip) return;
+  const before = await worktreeChanges(worktree);
+  if (before.length > 0) {
+    decide2(ctx, { id: `dec-${ctx.run.id}-worktree-install-dirty`, kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree because it already had changes git does not ignore (${listed(before)}); it was left as it was`, data: { paths: before.slice(0, 200) } });
+    return;
+  }
+  try {
+    const out = await installDependencies({ ...checkRunnerFor(ctx), checkoutDir: worktree, worktreeTree: tree });
+    if (!out.skipped && !out.ok) {
+      const last = out.results.at(-1);
+      const how = last ? `${last.checkId} ended ${last.status}${last.exitCode === null ? "" : ` (exit ${last.exitCode})`}` : "the install did not run";
+      decide2(ctx, { id: `dec-${ctx.run.id}-worktree-install-failed`, kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree: ${how}; workers may not be able to run checks that need them`, data: { results: out.results.map((r) => ({ check: r.checkId, status: r.status, log: r.logPath })) } });
+    }
+  } catch (err) {
+    if (isOrbitError(err, "CANCELLED")) throw err;
+    decide2(ctx, { kind: "preflight.worktree-install", summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf3(err)}` });
+  }
+  const left = await worktreeChanges(worktree);
+  if (left.length === 0) return;
+  await git2(repo, ["worktree", "remove", "--force", "--force", worktree]).catch(() => rmSync16(worktree, { recursive: true, force: true }));
+  await ensureWorktree(repo, worktree, head);
+  const still = await worktreeChanges(worktree);
+  if (still.length > 0) throw new OrbitError("INTERNAL", `the implementer's worktree was made again after the dependency install but still shows ${listed(still)}`);
+  decide2(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: "preflight.worktree-install",
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(left)}); the worktree was made again without them, so they cannot enter a candidate`,
+    data: { paths: left.slice(0, 200) }
+  });
+}
+async function worktreeStatus(dir) {
+  return withStagingView(async (config) => parseDirtyStatus(await git2(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], { config })));
+}
+async function worktreeChanges(dir) {
+  const { changed: changed2, untracked } = await worktreeStatus(dir);
+  return [...changed2, ...untracked].sort();
+}
 async function ensureWorktree(repo, path, base) {
   if (existsSync41(path)) {
     try {
@@ -60184,13 +60246,14 @@ async function checkEnvironment(ctx) {
   });
   return { gate, credentials: all, capabilities, reviewer };
 }
-var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER, DIRTY_STATUS_ARGS;
+var IMPLEMENTER_PROVIDER, URL_USERINFO, AUTH_HEADER, DIRTY_STATUS_ARGS, listed;
 var init_preflight = __esm({
   "src/controller/steps/preflight.ts"() {
     "use strict";
     init_fsx();
     init_errors();
     init_git();
+    init_candidate();
     init_baseline();
     init_baseline_exception();
     init_credentials();
@@ -60207,6 +60270,7 @@ var init_preflight = __esm({
     URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
     AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
     DIRTY_STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).orbit"];
+    listed = (paths) => `${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ", ..." : ""}`;
   }
 });
 
@@ -64806,8 +64870,8 @@ function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
 }
 function blockSeverityRank(ctx) {
-  const listed2 = ctx.snapshot.config.review?.security?.block_severities ?? ["critical", "high"];
-  return listed2.length === 0 ? -1 : Math.max(...listed2.map((s) => severityRank(s)));
+  const listed3 = ctx.snapshot.config.review?.security?.block_severities ?? ["critical", "high"];
+  return listed3.length === 0 ? -1 : Math.max(...listed3.map((s) => severityRank(s)));
 }
 function findingTexts(state) {
   const out = /* @__PURE__ */ new Map();
@@ -68713,7 +68777,7 @@ function dotnetAuditCheck(input) {
   const fails = [...certain.length > 0 ? [`fails ${restorerNames(certain)}`] : [], ...may.length > 0 ? [`may fail ${restorerNames(may)}`] : []].join(" and ");
   const filesOn = [...new Set(on.flatMap((s) => s.change && "file" in s.change ? [s.change.file] : []))];
   const changes = [
-    ...filesOn.length > 0 ? [`in ${listed(filesOn)}, set NuGetAudit only where nothing has set it yet: ${CONDITIONAL_AUDIT}`] : [],
+    ...filesOn.length > 0 ? [`in ${listed2(filesOn)}, set NuGetAudit only where nothing has set it yet: ${CONDITIONAL_AUDIT}`] : [],
     ...[...new Set(on.flatMap((s) => s.change && "env" in s.change ? [`remove NuGetAudit from ${s.change.env}`] : []))],
     ...[...new Set(on.flatMap((s) => s.change && "command" in s.change ? [`remove ${s.change.word} from ${s.change.command}`] : []))]
   ];
@@ -68722,14 +68786,14 @@ function dotnetAuditCheck(input) {
       id: "checks.dotnet-audit",
       area: "checks",
       status: failures.some((f) => f.certain && f.restorer.mandatory) ? "fail" : "warn",
-      summary: `NuGet's vulnerability audit cannot reach nuget.org from the sandbox on macOS, and ${listed(where2)} ${where2.length === 1 ? "turns" : "turn"} it on where Orbit turns it off: with warnings as errors, its warning NU1900 ${fails}`,
+      summary: `NuGet's vulnerability audit cannot reach nuget.org from the sandbox on macOS, and ${listed2(where2)} ${where2.length === 1 ? "turns" : "turn"} it on where Orbit turns it off: with warnings as errors, its warning NU1900 ${fails}`,
       details: [...settingDetails(on), ...settingDetails(errors)],
       missing: "a restore in the sandbox without the vulnerability audit, or NU1900 kept a warning",
       fix: `${changes.join("; ")}, so Orbit's NuGetAudit=false reaches the restore in the sandbox${filesOn.length > 0 ? " and the audit stays on everywhere else" : ""} (${NUGET_DOCS})`
     }
   ];
 }
-var PROJECT_FILE, CENTRAL_FILE, RUNNER_JSON, XUNIT_IDS, FIXED_MINOR, MAX_FILES, MAX_FILE_BYTES2, ITEM, attribute, element, PACKAGE_FILES, TOOL_MANIFEST, ROOT_MANIFESTS, MSBUILD_IMPORTS, SOLUTION_FILE, PACKAGE_REFERENCE, MAX_SHOWN, MAX_TARGETS, RESTORING_VERBS, NUGET_DOCS, TRUST_REASON, MSBUILD_FILE, SDK_ATTRIBUTE, SDK_ELEMENT, checkUsesDotnet, AUDIT_PROPERTY, CONDITION, DEFERS, WARN_AS_ERROR, PROPERTY_SWITCH, NEXT_PROPERTY, AUDIT_FILE, CONDITIONAL_AUDIT, namesNu1900, isTrue, changed, settingDetails, listed;
+var PROJECT_FILE, CENTRAL_FILE, RUNNER_JSON, XUNIT_IDS, FIXED_MINOR, MAX_FILES, MAX_FILE_BYTES2, ITEM, attribute, element, PACKAGE_FILES, TOOL_MANIFEST, ROOT_MANIFESTS, MSBUILD_IMPORTS, SOLUTION_FILE, PACKAGE_REFERENCE, MAX_SHOWN, MAX_TARGETS, RESTORING_VERBS, NUGET_DOCS, TRUST_REASON, MSBUILD_FILE, SDK_ATTRIBUTE, SDK_ELEMENT, checkUsesDotnet, AUDIT_PROPERTY, CONDITION, DEFERS, WARN_AS_ERROR, PROPERTY_SWITCH, NEXT_PROPERTY, AUDIT_FILE, CONDITIONAL_AUDIT, namesNu1900, isTrue, changed, settingDetails, listed2;
 var init_doctor_dotnet = __esm({
   "src/cli/commands/doctor-dotnet.ts"() {
     "use strict";
@@ -68773,7 +68837,7 @@ var init_doctor_dotnet = __esm({
     isTrue = (value) => value.trim().toLowerCase() === "true";
     changed = (s) => !s.change ? "" : "file" in s.change ? s.change.file : "env" in s.change ? s.change.env : s.change.command;
     settingDetails = (settings) => [...settings.slice(0, MAX_SHOWN).map((s) => s.detail), ...settings.length > MAX_SHOWN ? [`and ${settings.length - MAX_SHOWN} more`] : []];
-    listed = (items) => items.length <= 1 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+    listed2 = (items) => items.length <= 1 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
   }
 });
 
@@ -69012,9 +69076,9 @@ async function checkSandboxCheck(input) {
   }
   if (refused.length === 0) {
     const names = refusedToolchains.map((r) => r.id);
-    const listed2 = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1)} toolchains`;
+    const listed3 = names.length === 1 ? `the ${names[0]} toolchain` : `the ${names.slice(0, -1).join(", ")} and ${names.at(-1)} toolchains`;
     const status3 = refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
-    return result2(status3, `the sandbox refuses ${listed2}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline${alsoMaybe}`, details, "a toolchain that can start in the check sandbox", fixFor([...refusedToolchains, ...uncertain]));
+    return result2(status3, `the sandbox refuses ${listed3}; checks that use ${names.length === 1 ? "it" : "them"} would block at their baseline${alsoMaybe}`, details, "a toolchain that can start in the check sandbox", fixFor([...refusedToolchains, ...uncertain]));
   }
   const status2 = refused.some((r) => r.check.mandatory) || refusedToolchains.some((r) => r.mandatory) ? "fail" : "warn";
   const nodes = refused.every((r) => r.msbuild && !r.formatReason && !r.outside);
@@ -70492,17 +70556,17 @@ function pythonDrafts(input, out) {
   const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join81(repo, f)) ?? "");
   const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
   if (!markers.some((m) => existsSync61(join81(repo, m)))) return [];
-  const listed2 = (name) => {
+  const listed3 = (name) => {
     const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
     return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
   };
   const section = (text2, re) => text2 !== null && re.test(text2);
   const exists = (f) => existsSync61(join81(repo, f));
   const declared = {
-    pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed2("pytest") ? "the declared dependencies" : null,
-    ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed2("ruff") ? "the declared dependencies" : null,
-    flake8: exists(".flake8") ? ".flake8" : section(setupCfg, /^\[flake8\]/m) ? "setup.cfg" : section(toxIni, /^\[flake8\]/m) ? "tox.ini" : listed2("flake8") ? "the declared dependencies" : null,
-    mypy: exists("mypy.ini") ? "mypy.ini" : exists(".mypy.ini") ? ".mypy.ini" : section(pyproject, /^\[tool\.mypy/m) ? "pyproject.toml" : section(setupCfg, /^\[mypy/m) ? "setup.cfg" : listed2("mypy") ? "the declared dependencies" : null
+    pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed3("pytest") ? "the declared dependencies" : null,
+    ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed3("ruff") ? "the declared dependencies" : null,
+    flake8: exists(".flake8") ? ".flake8" : section(setupCfg, /^\[flake8\]/m) ? "setup.cfg" : section(toxIni, /^\[flake8\]/m) ? "tox.ini" : listed3("flake8") ? "the declared dependencies" : null,
+    mypy: exists("mypy.ini") ? "mypy.ini" : exists(".mypy.ini") ? ".mypy.ini" : section(pyproject, /^\[tool\.mypy/m) ? "pyproject.toml" : section(setupCfg, /^\[mypy/m) ? "setup.cfg" : listed3("mypy") ? "the declared dependencies" : null
   };
   const present = (tool) => which(tool, pathEnv) !== null;
   const drafts = [];

@@ -1,14 +1,15 @@
 // Issue #133: a recorded dependency install is reused only in the checkout it ran in. Its value is the untracked state
 // it leaves there, so a checkout materialized again (a VERIFYING retry, `orbit verify`) installs again. Real checks run
 // under isolation none in a real repository; the install leaves an ignored marker directory a check looks for.
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { verifyCandidate } from '../../../src/cli/commands/verify.ts';
 import { step } from '../../../src/controller/steps/index.ts';
-import { runWorktreeRoot } from '../../../src/controller/context.ts';
+import { checkRunnerFor, runWorktreeRoot } from '../../../src/controller/context.ts';
+import { installDependencies } from '../../../src/evidence/baseline.ts';
 import { cleanupCandidateCheckout, materializeCandidate, snapshotCandidate } from '../../../src/evidence/candidate.ts';
-import { INSTALL_CHECK_ID } from '../../../src/evidence/runner.ts';
+import { INSTALL_CHECK_ID, WORKTREE_INSTALL_IDS } from '../../../src/evidence/runner.ts';
 import { getCandidate, listCheckRuns } from '../../../src/evidence/store.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
 import { giveRepository, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
@@ -97,5 +98,25 @@ describe('a dependency install in a checkout materialized again (#133)', () => {
     expect(roots[1]!.cwd).toContain(`verify-${out.candidateSeq}`);
     // The marker check's pass is reused as recorded: only the install is bound to its checkout.
     expect(rows(lab, 'marker')).toHaveLength(1);
+  }, 120_000);
+
+  // Issue #132: the install PREFLIGHT runs in the implementer's worktree is bound to that worktree the same way.
+  it('an implementer worktree made again at the same path installs again instead of reusing the old pass', async () => {
+    const lab = await installLab({ marker: 'test -d apps/deps' });
+    const { worktreePath, baseRevision, baseTree } = lab.ctx().run;
+    const install = () => installDependencies({ ...checkRunnerFor(lab.ctx()), checkoutDir: worktreePath!, worktreeTree: baseTree! });
+    const roots = () => listCheckRuns(lab.db, { runId: lab.runId, checkId: WORKTREE_INSTALL_IDS[INSTALL_CHECK_ID]! }).filter((r) => r.rerunOf === null);
+    // installLab left the candidate's edit in the worktree; at PREFLIGHT it holds the base tree.
+    writeFileSync(join(worktreePath!, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\n');
+    expect((await install()).ok).toBe(true);
+    expect((await install()).ok).toBe(true);
+    expect(roots()).toHaveLength(1);
+
+    await cleanupCandidateCheckout(lab.repo, worktreePath!);
+    await materializeCandidate(lab.repo, baseRevision!, worktreePath!, { readOnly: false });
+    expect(existsSync(join(worktreePath!, 'apps/deps'))).toBe(false);
+    expect((await install()).ok).toBe(true);
+    expect(roots().map((r) => r.status)).toEqual(['PASSED', 'PASSED']);
+    expect(existsSync(join(worktreePath!, 'apps/deps'))).toBe(true);
   }, 120_000);
 });

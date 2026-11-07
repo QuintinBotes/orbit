@@ -121,6 +121,22 @@ export async function pinCheckout(input: { repoRoot: string; worktree: string; r
   return { ref: input.ref, commit, tree };
 }
 
+/**
+ * Paths of `worktree` as candidate staging sees them: its excludes file in place of any configured one, untracked files
+ * listed one by one. Returns the result of `run` with git options carrying that view, so a cleanup sees and removes
+ * exactly what `git add -A` would take.
+ */
+export async function withStagingView<T>(run: (config: Record<string, string>) => Promise<T>): Promise<T> {
+  const scratch = mkdtempSync(join(tmpdir(), 'orbit-view-'));
+  try {
+    const excludes = join(scratch, 'exclude');
+    writeFileSync(excludes, `${BUILTIN_EXCLUDES.join('\n')}\n`);
+    return await run({ 'core.excludesFile': excludes });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 async function stageTree(o: { gitDir: string; worktree: string; base: string; extraExcludes: readonly string[] }): Promise<string> {
   const scratch = mkdtempSync(join(tmpdir(), 'orbit-index-'));
   try {

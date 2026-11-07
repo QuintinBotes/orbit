@@ -301,6 +301,7 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(', ') : 'none'}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(', ') || 'none'}`,
     '- you cannot commit, push, open pull requests, change policy, or decide completion',
+    `- ${opts.readOnly ? '' : 'change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused; '}dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages`,
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
     ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []),
   ];
