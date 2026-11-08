@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The background service carries `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` from the installing shell so provider logins in custom config directories are found (#131). API keys and tokens are never written to the service definition. Rerun `orbit service install` after changing these locations.
 - Tests: the container test that reads a read-only mount back puts `cat`'s stderr in its failure message (#61). `docker run` can exit 0 with that read empty, and the message then named nothing. No change to Orbit itself.
 - Tests: the app fixture test's child writes `env.json` to a temporary file and renames it into place, so the test never parses it half written (#160). No change to Orbit itself.
 - Tests: both linear-time blocks of the redaction tests use the same 6 s bound (#148). The second still allowed only 1.5 s and failed on a loaded CI runner; the bound only has to catch catastrophic backtracking, which takes hours. No change to Orbit itself.

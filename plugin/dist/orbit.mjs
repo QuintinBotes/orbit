@@ -67088,6 +67088,15 @@ function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
 function serviceSpec(input) {
+  const env = {
+    PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
+    ORBIT_HOME: input.orbitHome
+  };
+  for (const key2 of ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"]) {
+    const value = input.env?.[key2];
+    if (value) env[key2] = value;
+  }
   return {
     label: serviceLabel(input.repoRoot),
     launcher: launcherPath(input.orbitHome),
@@ -67097,11 +67106,7 @@ function serviceSpec(input) {
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
     logDir: join73(input.orbitHome, "logs"),
-    env: {
-      PATH: input.path ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-      NODE_OPTIONS: "--disable-warning=ExperimentalWarning",
-      ORBIT_HOME: input.orbitHome
-    },
+    env,
     throttleSeconds: 10,
     stopTimeoutSeconds: 30
   };
@@ -68140,15 +68145,17 @@ async function serviceInstallCommand(args, ctx) {
   if (!entry || !existsSync54(entry)) throw new OrbitError("NOT_FOUND", `the orbit entry script ${entry || "(unknown)"} does not exist; pass --entry <path to plugin/dist/orbit.mjs>`);
   const warnings = [];
   if (!entry.endsWith(".mjs")) warnings.push(`the service will run ${entry}, not a built plugin/dist/orbit.mjs; build the bundle for a durable installation`);
-  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
+  const spec = serviceSpec({ repoRoot: repo, orbitHome: ctx.orbitHome, entry, version: ORBIT_VERSION, env: ctx.env, ...ctx.env.PATH ? { path: ctx.env.PATH } : {} });
+  const locationVariables = Object.keys(spec.env).filter((key2) => !["PATH", "NODE_OPTIONS", "ORBIT_HOME"].includes(key2));
   const status2 = await installService(spec, managerOptions(ctx));
   if (ctx.platform === "linux" && await lingerState(ctx) === "no") warnings.push(`lingering is off for ${ctx.user}, so the service stops when you log out; run "loginctl enable-linger ${ctx.user}" to keep it running`);
-  if (args.bool("json")) json(ctx.io, { ...status2, warnings });
+  if (args.bool("json")) json(ctx.io, { ...status2, warnings, locationVariables });
   else {
     line(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line(ctx.io, `definition: ${status2.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
     line(ctx.io, `logs: ${join76(ctx.orbitHome, "logs")}`);
+    line(ctx.io, `location variables: ${locationVariables.join(", ") || "none"}`);
     line(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
 `);
