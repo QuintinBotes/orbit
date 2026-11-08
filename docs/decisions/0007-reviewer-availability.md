@@ -47,3 +47,58 @@ review:
 A fresh setup reviews out of the box. Independence becomes a stated property of
 each run's evidence rather than a precondition; anyone who needs it guaranteed
 sets `block`.
+
+## Amendment: a reviewer that fails at run time (#116)
+
+`providers` was consulted only at selection, so a selected reviewer that then
+failed (a timeout, a non-zero exit, a malformed answer after the bounded
+regenerations) blocked the run even when a later listed reviewer would have
+worked. Now, once a reviewer's regenerations are used, the failure is recorded
+with its reason (`review.reviewer-failed`), its other sessions of the candidate
+are stopped, and the selection runs again with that provider excluded. The next
+listed independent reviewer reviews; with none left, `when_unavailable` applies
+exactly as at selection. This holds for every reviewer family, Codex included.
+
+- A substitute reviews under its own provider id and is recorded as a separate
+  `review.select` decision that names the failure; it is never labelled as the
+  provider it replaced. The final report names every reviewer that failed in
+  the run and why, and says so when no review of the tree stands.
+- Every session that ran is charged and counts as a review round. The rounds a
+  reviewer spent on the candidate before it was replaced raise the effective
+  `review_rounds` hard cap by the same number, recorded as `rounds_granted` on
+  its `review.reviewer-failed` decision and summed from those decisions, so a
+  replay or a restart cannot grant twice. At the default cap of 4, a reviewer
+  that fails after two rounds would otherwise leave the fallback no room. The
+  stored cap keeps the snapshot's value. The grant is bounded: a listed reviewer
+  fails at most once until a resume, and resumes that start reviewers again
+  spend `recovery_attempts`. Cost, wall-clock and the other limits do not move.
+- The exclusion holds for the rest of the run, every candidate included, so a
+  broken reviewer does not spend the review rounds of each later candidate. It
+  ends at `orbit resume`, since a person may have fixed the cause: a run
+  resumed after it blocked because every listed reviewer failed tries them in
+  order again, and the first continues at its next attempt, which spends one
+  recovery attempt as any resume reset does. A run waiting on a person's answer
+  under `ask` keeps the selection it asked about.
+- One reviewer reviews every unit of a change. When parallel security and UI
+  units run and the reviewer fails on one, its other sessions are stopped and
+  any review it gave is set aside (invalidated); the next reviewer reviews all
+  units, so independence remains one property of the change. When a resume
+  selects the same reviewer again, a set-aside review does not count: its unit
+  starts a new session, for one recovery attempt, and the run cannot clear until
+  every unit has a standing review.
+- That rule is checked where a tree clears: the review gate fails while a unit
+  `reviewFocuses` requires has no standing review of the tree. A unit is covered
+  by a review from its own sessions, or by a fresh review (ADR 0016) that came
+  back and replaced that unit's review. A failure of the fresh reviewer sets the
+  reviews it was to replace aside (recorded as `set_aside` on the decision), so
+  a change with several units then runs each unit, with the fresh review's brief
+  and effort, instead of one general review. With one general unit, the fresh
+  review still stands for it. A unit that stood in for the fresh review and
+  inspected nothing blocks, as the fresh review would.
+- Stopping the other sessions can exhaust model cost. The failure is recorded,
+  with its reason, before the run ends EXHAUSTED, so its report names it.
+- A block that follows a run-time reviewer failure is not a frozen-policy block,
+  even when another listed reviewer is ineligible by policy, since a resume tries
+  the failed reviewer again.
+- A credential failure or a refused session still blocks the run for a person,
+  as before.

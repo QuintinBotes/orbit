@@ -21,7 +21,13 @@ const costUsed = (l: Lab, runId: string): number => l.db().get<{ used: number }>
 
 describe.skipIf(!canStripTypes)('fault: cost accounting stays honest', () => {
   it('NB2: on a $10 cap, two reviewer sessions that die before any model output cost nothing, and resume reaches review attempt 3', async () => {
-    const l = t.lab({ tweak: (c) => void (c.scheduler.hard_limits.model_cost_usd = 10) });
+    // review.when_unavailable: block, so the reviewer outage blocks the run instead of handing the review to Claude (#116).
+    const l = t.lab({
+      tweak: (c) => {
+        c.scheduler.hard_limits.model_cost_usd = 10;
+        c.review = { ...c.review, when_unavailable: 'block' };
+      },
+    });
     writeScenario(l, baseScenario({ implementer: [implementMul('*')], reviewer: [{ exitBeforeOutput: true }, { exitBeforeOutput: true }, APPROVE] }));
     const run = startLabRun(l);
     await drive(l, run.id);
