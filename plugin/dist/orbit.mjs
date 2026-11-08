@@ -33384,11 +33384,11 @@ async function inspectScope(input) {
     else if (!policyAllowed(path) || contractAllowed !== null && !contractAllowed(path)) outOfScope.push(path);
     if (isBaseline(path)) visual.push(path);
   }
-  let changedLines = 0;
+  const linesByPath = /* @__PURE__ */ new Map();
   const binary2 = /* @__PURE__ */ new Set();
   for (const entry of numstat) {
     if (entry.binary) binary2.add(entry.path);
-    else changedLines += entry.added + entry.deleted;
+    else linesByPath.set(entry.path, (linesByPath.get(entry.path) ?? 0) + entry.added + entry.deleted);
   }
   const forcedText = await textLooking(repoRoot, base, cand, changes, binary2);
   for (const p of forcedText) binary2.delete(p);
@@ -33397,18 +33397,22 @@ async function inspectScope(input) {
   const symlinks = await escapingSymlinks(repoRoot, cand, changes, isProtected);
   const textChanges = changes.filter((c) => !binary2.has(c.path));
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
-  for (const p of forcedText) changedLines += countPatchLines(diffs.get(p) ?? "");
+  for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ""));
+  let changedLines = 0;
+  for (const n2 of linesByPath.values()) changedLines += n2;
   const weakeningInputs = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? "" }));
   const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString("utf8")), base, cand, changes.map((c) => c.path));
   const weakening = detectWeakening(weakeningInputs, testLayout);
   const limits = config.scheduler.hard_limits;
+  const withinSize = changes.length <= limits.changed_files && changedLines <= limits.changed_lines;
   return {
     allowed_paths_pass: forbidden.length === 0 && outOfScope.length === 0,
     forbidden_paths_changed: forbidden,
     out_of_scope_paths_changed: outOfScope,
     changed_files: changes.length,
     changed_lines: changedLines,
-    within_size_limits: changes.length <= limits.changed_files && changedLines <= limits.changed_lines,
+    within_size_limits: withinSize,
+    ...withinSize ? {} : { largest_changes: [...linesByPath].map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) },
     lockfile_changed: lockfileChanged,
     dependency_manifest_changed: manifests,
     symlinks_escaping: symlinks,
@@ -56797,6 +56801,9 @@ function baselineGate(report2) {
   if (!report2.complete) notes.push("the baseline is incomplete: some checks could not produce a decisive result on the base revision");
   return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
 }
+function describeLargestChanges(scope) {
+  return (scope.largest_changes ?? []).map((c) => `${c.path} (${c.lines} lines)`).join(", ");
+}
 function implementationScopeGate(scope, snapshot2) {
   const reasons = [];
   const repairable = [];
@@ -56809,7 +56816,7 @@ function implementationScopeGate(scope, snapshot2) {
     repairable.push(why);
   };
   if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(", ")}`);
-  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
+  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)${scope.largest_changes?.length ? `; the largest changes: ${describeLargestChanges(scope)}` : ""}`);
   if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
   if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
   const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
@@ -63950,6 +63957,8 @@ async function diagnosingStep(ctx) {
   if (!cand || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is DIAGNOSING without a candidate or budget`);
   const next = currentAttempt(ctx) + 1;
   const config = ctx.snapshot.config;
+  const stalled = stalledRepair(ctx, cand);
+  if (stalled && cand.scope && !cand.scope.within_size_limits) return blockOnSize(ctx, cand, cand.scope, stalled);
   const history = attemptHistory(ctx);
   const np = nonProgress(history, nonProgressThreshold(config.scheduler.repeated_failure_threshold));
   if (np.terminate) {
@@ -63958,7 +63967,6 @@ async function diagnosingStep(ctx) {
     if (asked) return asked;
     return finishRun(ctx, "EXHAUSTED", `non-progress: ${np.reason}`, { outcome: { non_progress: np } });
   }
-  const stalled = stalledRepair(ctx, cand);
   if (stalled) {
     const outcome = { non_progress: stalled.decision };
     const blocked = await blockOnOpenQuestions(ctx, "another repair", { detail: `non-progress: ${stalled.decision.reason}.`, outcome });
@@ -64103,6 +64111,18 @@ function stalledRepair(ctx, cand) {
     failingChecks
   };
 }
+function blockOnSize(ctx, cand, scope, stalled) {
+  const limits = ctx.snapshot.config.scheduler.hard_limits;
+  const over = [
+    ...scope.changed_lines > limits.changed_lines ? [{ setting: "scheduler.hard_limits.changed_lines", text: `${scope.changed_lines} lines against a limit of ${limits.changed_lines}` }] : [],
+    ...scope.changed_files > limits.changed_files ? [{ setting: "scheduler.hard_limits.changed_files", text: `${scope.changed_files} files against a limit of ${limits.changed_files}` }] : []
+  ];
+  const setting = over.map((o) => o.setting).join(", ") || "scheduler.hard_limits.changed_lines";
+  const heavy = describeLargestChanges(scope);
+  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join("; ")}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ""}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.`;
+  decide2(ctx, { id: `dec-${ctx.run.id}-size-block-${stalled.attempt}`, kind: "repair.non-progress", summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, settings: over.map((o) => o.setting), largest_changes: scope.largest_changes ?? [] } });
+  return finishRun(ctx, "BLOCKED", reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
+}
 function repeatedCount(ctx, fingerprint) {
   return new Set(listFailures(ctx.db, ctx.run.id, fingerprint).map((f) => f.candidateId ?? `row-${f.id}`)).size;
 }
@@ -64141,13 +64161,22 @@ function attemptHistory(ctx) {
 }
 function scopeBrief(ctx, fingerprint, why) {
   const contract = assertContract(ctx);
+  const scope = ctx.candidate?.scope ?? null;
+  const overSize = scope !== null && !scope.within_size_limits;
+  const sizeOnly = overSize && implementationScopeGate(scope, ctx.snapshot).reasons.length === 1;
+  const limits = ctx.snapshot.config.scheduler.hard_limits;
+  const heavy = scope ? describeLargestChanges(scope) || "the changed files" : "";
+  const sizeHypothesis = { statement: `The change is over the size limits (${limits.changed_files} files, ${limits.changed_lines} lines); its largest changes are ${heavy}`, supporting: why };
+  const sizeFix = `Bring the change within ${limits.changed_files} files and ${limits.changed_lines} changed lines by shrinking the changes to ${heavy}; a generated file the task requires cannot be shrunk this way, so say so in your summary instead of rewriting it`;
+  const outOfScope = { statement: "The change edits files outside the authorized scope or beyond the size limits", supporting: why };
+  const revert = `Revert the out-of-scope changes and keep the change inside ${contract.allowed_paths.join(", ")}`;
   return {
     fingerprint,
     evidence: [`scope inspection of the candidate: ${why}`],
-    hypotheses: [{ statement: "The change edits files outside the authorized scope or beyond the size limits", supporting: why }],
-    experiment: "Compare the candidate diff with the contract allowed paths and list each path outside them",
-    expected_observation: "Every changed path outside the allowed paths is identified and none remain after the repair",
-    scoped_fix: `Revert the out-of-scope changes and keep the change inside ${contract.allowed_paths.join(", ")}`,
+    hypotheses: sizeOnly ? [sizeHypothesis] : overSize ? [outOfScope, sizeHypothesis] : [outOfScope],
+    experiment: sizeOnly ? "Count the added and deleted lines of each changed file against the base revision and confirm which files carry the excess" : "Compare the candidate diff with the contract allowed paths and list each path outside them",
+    expected_observation: sizeOnly ? `The listed files carry most of the changed lines, and after the repair the change is within ${limits.changed_files} files and ${limits.changed_lines} lines` : "Every changed path outside the allowed paths is identified and none remain after the repair",
+    scoped_fix: sizeOnly ? sizeFix : overSize ? `${revert}. ${sizeFix}` : revert,
     post_fix_checks: contract.required_check_ids,
     preserved_constraints: ["Do not edit protected paths, policy, CI configuration or check definitions", "Keep the behaviour tests that prove the acceptance criteria"]
   };
@@ -64250,6 +64279,7 @@ var init_diagnosing = __esm({
     init_decisions();
     init_budget();
     init_workers2();
+    init_gates();
     init_knowledge_hooks();
     init_common();
     init_obtain();

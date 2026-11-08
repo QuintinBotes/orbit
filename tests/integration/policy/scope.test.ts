@@ -162,6 +162,21 @@ describe.skipIf(!gitAvailable)('inspectScope on a real repository (skipped when 
     });
   });
 
+  it('lists the heaviest files, by added plus deleted lines, only when the change is over a size limit (#157)', async () => {
+    const before = git('rev-parse', 'HEAD');
+    write('apps/dist/b.mjs', `${Array.from({ length: 3000 }, (_, i) => `export const v${i} = ${i};`).join('\n')}\n`);
+    write('apps/a.ts', `${Array.from({ length: 10 }, (_, i) => `export const a${i} = ${i};`).join('\n')}\n`);
+    git('add', 'apps/dist/b.mjs', 'apps/a.ts');
+    git('commit', '-q', '-m', 'bundle');
+    const after = git('rev-parse', 'HEAD');
+    const tight = snapshotOf('scope: {allowed_paths: ["**"]}\nscheduler: {hard_limits: {changed_lines: 100}}\n');
+    const r = await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: tight });
+    expect(r.within_size_limits).toBe(false);
+    expect(r.largest_changes).toEqual([{ path: 'apps/dist/b.mjs', lines: 3000 }, { path: 'apps/a.ts', lines: 10 }]);
+    const roomy = snapshotOf('scope: {allowed_paths: ["**"]}\nscheduler: {hard_limits: {changed_lines: 5000}}\n');
+    expect((await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: roomy })).largest_changes).toBeUndefined();
+  });
+
   it('sees through attributes that mark text as binary', async () => {
     // A .gitattributes in the checkout makes git call .ts files binary; lines and test diffs must still be inspected.
     write('.gitattributes', '*.ts -diff\n');

@@ -298,6 +298,14 @@ and say what it includes (`hard cap 8, including 4 for replaced reviewers`). Thi
 is bounded: a listed reviewer fails at most once until a resume, and resumes that
 start reviewers again spend `recovery_attempts`. The cost, wall-clock and every
 other hard limit stay as they are.
+
+`changed_files` and `changed_lines` bound each candidate against the base
+revision, counting every text line added or deleted, generated files included.
+A candidate over either limit is denied before any check runs; the denial and
+the repair brief name the five files with the most changed lines. When a repair
+comes back with the same tree, the run blocks and names the limit instead of
+spending more attempts: if one of those files is a generated file the task
+requires, raise the limit and start a new run.
 `worker_turns_per_session` is passed to every Claude worker session as
 `--max-turns`; the curator also keeps its smaller six-turn cap. Every attempt
 is a new session, never a resumed one, so the cap applies to each session

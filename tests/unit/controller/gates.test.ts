@@ -263,6 +263,11 @@ describe('implementationScopeGate', () => {
     expect(weak.passed).toBe(true);
     expect(weak.notes[0]).toMatch(/oracle weakening/);
   });
+
+  it('names the heaviest files when the change is over the size limits (#157)', () => {
+    const g = implementationScopeGate(scope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/b.mjs', lines: 3000 }, { path: 'src/a.ts', lines: 10 }] }), snap());
+    expect(g.reasons).toEqual(['the change is over the size limits (2 files, 3010 lines); the largest changes: dist/b.mjs (3000 lines), src/a.ts (10 lines)']);
+  });
 });
 
 describe('staticSecurityGate', () => {
