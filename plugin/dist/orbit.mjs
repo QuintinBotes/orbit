@@ -37077,7 +37077,7 @@ function normalizeLine(line3, roots = []) {
   return s.length > MAX_LINE ? s.slice(0, MAX_LINE) : s;
 }
 function isRelevant(line3) {
-  return RELEVANT.test(line3) && !SUMMARY.test(line3) && !PASSING.test(line3);
+  return RELEVANT.test(line3) && !SUMMARY.test(line3);
 }
 function fingerprintFailure(output, check, options = {}) {
   const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
@@ -37111,7 +37111,7 @@ function fingerprintFailure(output, check, options = {}) {
   const seen = /* @__PURE__ */ new Set();
   const excerptLines = [];
   for (const p of picked) {
-    if (seen.has(p.norm)) continue;
+    if (seen.has(p.norm) || PASSING.test(p.raw)) continue;
     seen.add(p.norm);
     excerptLines.push(p.raw.trimEnd());
     if (excerptLines.length >= maxLines) break;
@@ -37138,7 +37138,7 @@ var init_fingerprint = __esm({
     ANSI = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]/g;
     RELEVANT = /\b(error|errors|fail|failed|failure|failing|exception|assert|assertion|assertionerror|panic|fatal|expected|received|not ok|typeerror|referenceerror|syntaxerror|rangeerror|cannot find|enoent|eacces|traceback|unhandled|timeout|timed out|refused|denied|undefined is not|is not a function|is not defined)\b|[✗✖×]|^\s*FAIL\b|^\s*●|^\s*not ok\b/i;
     SUMMARY = /\b\d+\s+(?:passed|failed|skipped|total|todo|pending|passing|failing)\b|\b(?:tests?|test files|suites?|duration|time|snapshots?)\s*:/i;
-    PASSING = /^\s*(?:ok\s+\d|# Subtest:|[✓✔]|PASS\b)/;
+    PASSING = /^\s*(?:ok\s+\d+\b|# Subtest:|[✓✔]\s|PASS\s)/;
     STACK_FRAME = /^\s+at\s|^\s+\S+:\d+(?::\d+)?\s*$|^\s*File ".+", line \d+/;
   }
 });
@@ -40734,7 +40734,10 @@ async function closeInterruptedProbes(db, runDir2, runId, clock, opts = {}) {
         continue;
       }
     }
-    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", "interrupted: a probe whose controller stopped is not established and runs again", clock.now(), row.id);
+    const ended = clock.now();
+    if (db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", "interrupted: a probe whose controller stopped is not established and runs again", ended, row.id).changes === 1) {
+      probeEvent(db, "check.fail-before-probe-finished", probeRow(db, row.id), ended);
+    }
     out.closed.push(row.id);
   }
   return out;

@@ -636,7 +636,10 @@ export async function closeInterruptedProbes(db: OrbitDb, runDir: string, runId:
         continue;
       }
     }
-    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', clock.now(), row.id);
+    const ended = clock.now();
+    if (db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', ended, row.id).changes === 1) {
+      probeEvent(db, 'check.fail-before-probe-finished', probeRow(db, row.id), ended);
+    }
     out.closed.push(row.id);
   }
   return out;

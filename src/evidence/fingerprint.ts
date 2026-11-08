@@ -47,8 +47,10 @@ const RELEVANT =
   /\b(error|errors|fail|failed|failure|failing|exception|assert|assertion|assertionerror|panic|fatal|expected|received|not ok|typeerror|referenceerror|syntaxerror|rangeerror|cannot find|enoent|eacces|traceback|unhandled|timeout|timed out|refused|denied|undefined is not|is not a function|is not defined)\b|[✗✖×]|^\s*FAIL\b|^\s*●|^\s*not ok\b/i;
 // "Tests: 1 failed, 3 passed", "Test Files 1 failed | 3 passed": counts shift when tests are added, so they say nothing about the cause.
 const SUMMARY = /\b\d+\s+(?:passed|failed|skipped|total|todo|pending|passing|failing)\b|\b(?:tests?|test files|suites?|duration|time|snapshots?)\s*:/i;
-// Passing results ("ok 13 - rejects when all fail", "# Subtest: retries on timeout", a check mark, PASS) name a failure word without being one. "not ok" never starts a line with "ok".
-const PASSING = /^\s*(?:ok\s+\d|# Subtest:|[✓✔]|PASS\b)/;
+// Passing results ("ok 13 - rejects when all fail", "# Subtest: retries on timeout", a check mark, "PASS  file") name a
+// failure word without being one. They are left out of the excerpt only: the fingerprint keeps every line, because a
+// baseline exception is matched by fingerprint and a line left out there could hide a new failure.
+const PASSING = /^\s*(?:ok\s+\d+\b|# Subtest:|[✓✔]\s|PASS\s)/;
 const STACK_FRAME = /^\s+at\s|^\s+\S+:\d+(?::\d+)?\s*$|^\s*File ".+", line \d+/;
 
 export function stripAnsi(text: string): string {
@@ -90,7 +92,7 @@ export function normalizeLine(line: string, roots: readonly string[] = []): stri
 }
 
 function isRelevant(line: string): boolean {
-  return RELEVANT.test(line) && !SUMMARY.test(line) && !PASSING.test(line);
+  return RELEVANT.test(line) && !SUMMARY.test(line);
 }
 
 export function fingerprintFailure(output: string, check: { id: string }, options: FingerprintOptions = {}): FailureFingerprint {
@@ -135,7 +137,7 @@ export function fingerprintFailure(output: string, check: { id: string }, option
   const seen = new Set<string>();
   const excerptLines: string[] = [];
   for (const p of picked) {
-    if (seen.has(p.norm)) continue;
+    if (seen.has(p.norm) || PASSING.test(p.raw)) continue;
     seen.add(p.norm);
     excerptLines.push(p.raw.trimEnd());
     if (excerptLines.length >= maxLines) break;
