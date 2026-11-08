@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ManualClock } from '../../../src/core/clock.ts';
+import { ManualClock, systemClock, type Clock } from '../../../src/core/clock.ts';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import type { OrbitConfig } from '../../../src/policy/types.ts';
@@ -56,6 +56,21 @@ export function unitConfig(tweak?: (c: OrbitConfig) => void): OrbitConfig {
   c.knowledge = { ...c.knowledge, enabled: false };
   tweak?.(c);
   return c;
+}
+
+/**
+ * The lab clock for a runner that supervises real processes: each poll waits in real time before the simulated time moves
+ * on, so simulated time never runs ahead of the check (issue #129). The plain lab clock moves on every poll without waiting,
+ * and on a loaded machine passed a check's timeout before its child had exited.
+ */
+export function pacedClock(clock: ManualClock): Clock {
+  return {
+    now: () => clock.now(),
+    sleep: async (ms) => {
+      await systemClock.sleep(ms);
+      clock.advance(ms);
+    },
+  };
 }
 
 export function makeUnitLab(opts: UnitLabOptions = {}): UnitLab {

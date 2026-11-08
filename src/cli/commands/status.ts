@@ -15,7 +15,7 @@ import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { pruneDeadControllers } from '../../controller/service.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
-import { BudgetLedger, NUM_TURNS_COUNTER, spendBreakdown } from '../../scheduling/budget.ts';
+import { BudgetLedger, grantNote, NUM_TURNS_COUNTER, spendBreakdown } from '../../scheduling/budget.ts';
 import type { CostMeasurement, CounterState, ReserveState, SpendBreakdown } from '../../scheduling/types.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
@@ -163,7 +163,7 @@ function fmtCounter(c: CounterState): string {
   const cost = c.counter === 'cost_usd';
   const wall = c.counter === 'wall_ms';
   const f = (n: number) => (cost ? `$${n.toFixed(2)}` : wall ? `${(n / 60_000).toFixed(1)}m` : String(n));
-  return `${c.counter.padEnd(26)} ${f(c.used)} used / ${f(c.allowance)} allowed (hard cap ${f(c.hard_cap)})`;
+  return `${c.counter.padEnd(26)} ${f(c.used)} used / ${f(c.allowance)} allowed (hard cap ${f(c.hard_cap)}${grantNote(c)})`;
 }
 
 export function renderRunStatus(s: RunStatus, now: number): string {
