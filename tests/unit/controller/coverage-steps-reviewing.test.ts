@@ -8,7 +8,7 @@ import { insertLedgerEntry, insertQuestion } from '../../../src/inquisition/stor
 import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
 import { listFindings, listReviews, recordReview } from '../../../src/review/store.ts';
 import type { IngestedFinding } from '../../../src/review/types.ts';
-import { getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
+import { finishWorker, getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { newRunNeeded } from '../../../src/controller/resume.ts';
 import { REVIEW_REPAIR_EVENT, cancelObsoleteWork, implementerProvider, prepareReview, reviewFocuses, reviewingStep } from '../../../src/controller/steps/reviewing.ts';
@@ -384,6 +384,46 @@ describe('a review that is already recorded', () => {
     record(cand, 'REPAIR_REQUIRED', [finding('NIT-1', { severity: 'low', category: 'style', claim: 'a naming nit in calc', evidence: 'naming' })]);
     await run();
     expect(['BLOCKED', 'REPAIRING', 'INQUISITION']).toContain(state());
+  });
+
+  // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
+  it('a carried finding going to repair again after a repair whose implementer named no test for it ends EXHAUSTED as non-progress, not with another brief', async () => {
+    const { cand, repo } = await setup();
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    /** Attempt n's tree, from an implementer that ended with `outcome`, then a review that raises nothing new. */
+    const attempt = async (n: number, outcome: Parameters<typeof finishWorker>[2]) => {
+      writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), `export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // ${n}\n`);
+      const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: n, workerId: null });
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: n }));
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: c.id }));
+      addEvidence(lab, c);
+      const w = planWorker(lab.db, { id: `wrk-impl-${n}`, runId: lab.runId, role: 'implementer', provider: 'claude', attempt: n, workerDir: join(lab.base, `wi${n}`), cwd: lab.repo }, lab.clock, OWNER);
+      markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+      finishWorker(lab.db, w.id, outcome, lab.clock, OWNER);
+      record(c, 'REPAIR_REQUIRED', []);
+      lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    };
+    const usage = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
+    const named = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
+    // The first repair names a test for TEST-1, so sending it again is not yet non-progress.
+    await attempt(2, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: named, text: null, error: null, exitCode: 0, usage, durationMs: 1 } });
+    await run();
+    expect(state()).toBe('REPAIRING');
+    expect(existsSync(briefPath(lab.ctx(), 3))).toBe(true);
+    // The second ends at its turn cap without a report: it named no test, and TEST-1 would go to repair unchanged.
+    await attempt(3, { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' });
+    expect(await run()).toMatchObject({ done: true });
+    expect(state()).toBe('EXHAUSTED');
+    expect(existsSync(briefPath(lab.ctx(), 4))).toBe(false);
+    expect(lab.db.all('SELECT 1 FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT)).toHaveLength(2);
+    expect(decisions('repair.non-progress')).toHaveLength(1);
+    const reason = getRun(lab.db, lab.runId).outcomeReason!;
+    expect(reason).toMatch(/^non-progress: the review repair brief of attempt 3 was sent TEST-1, and no implementer report since names a test for it \(the implementer of attempt 3 ended FAILED \(max_turns\) without a report\)/);
+    expect(reason).toMatch(/open findings: TEST-1 \(high\)/);
+    expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!).open_findings.map((f: { external_id: string }) => f.external_id)).toEqual(['TEST-1']);
   });
 });
 

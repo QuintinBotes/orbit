@@ -231,6 +231,15 @@ COR-1", "unit passed on the repaired tree in the probe checkout: COR-1" and
 "unit failed on the pre-repair tree with the tests named for the
 finding (exit 1, 2 attempts): COR-1".
 
+A review repair, once one goes, is also briefed every unresolved finding a
+`REPAIR_REQUIRED` review of the tree raised, whatever its severity; what blocks
+the tree does not change. When every finding about to go to repair
+was in the previous review repair and no implementer report since names a test
+for any of them (an implementer that ended at its turn cap without a report
+names none), the run ends `EXHAUSTED` as non-progress (`repair.non-progress`)
+naming the open findings, since only such a test can close them and the same
+brief would end the same way.
+
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
 reason. Given a description instead of a run id, it starts a new run with the
