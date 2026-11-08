@@ -1209,6 +1209,11 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord, going: read
   const prev = last?.data_json ? (JSON.parse(last.data_json) as ReviewRepairRecord) : null;
   if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id)) return null;
   const asked = prev.findings.filter((f) => going.some((d) => d.fingerprint === f.fingerprint));
+  // An external id (TEST-1) names a finding only when no other finding in the brief shares it; otherwise only the
+  // fingerprint does, so a test for one review's TEST-1 is not read as a test for another's.
+  const shared = (id: string): boolean => prev.findings.filter((f) => f.external_id === id).length > 1;
+  const namesUniquely = (text: string, f: { fingerprint: string; external_id: string | null }): boolean =>
+    namesId(text, f.fingerprint) || (typeof f.external_id === 'string' && f.external_id.length > 0 && !shared(f.external_id) && namesId(text, f.external_id));
   if (!going.every((d) => asked.some((f) => f.fingerprint === d.fingerprint))) return null;
   const ended: string[] = [];
   for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' })) {
@@ -1224,7 +1229,7 @@ function stalledReviewRepair(ctx: RunContext, cand: CandidateRecord, going: read
       continue;
     }
     const texts = [...o.evidence_refs.map((e) => `${e.ref} ${e.note}`), ...o.tests_added.map((t) => `${t.path} ${t.name}`)];
-    if (texts.some((x) => asked.some((f) => namesFinding(x, f)))) return null;
+    if (texts.some((x) => asked.some((f) => namesUniquely(x, f)))) return null;
   }
   const names = [...new Set(asked.map((f) => f.external_id ?? f.finding_id))].join(', ');
   return stop(

@@ -425,6 +425,30 @@ describe('a review that is already recorded', () => {
     expect(reason).toMatch(/open findings: TEST-1 \(high\)/);
     expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!).open_findings.map((f: { external_id: string }) => f.external_id)).toEqual(['TEST-1']);
   });
+
+  it('an external id two briefed findings share does not count as naming either of them (#156)', async () => {
+    const { cand, repo } = await setup();
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 })]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // 2\n');
+    const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: 2, workerId: null });
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2, candidate_id: c.id }));
+    addEvidence(lab, c);
+    const w = planWorker(lab.db, { id: 'wrk-impl-2', runId: lab.runId, role: 'implementer', provider: 'claude', attempt: 2, workerDir: join(lab.base, 'wi2'), cwd: lab.repo }, lab.clock, OWNER);
+    markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+    const usage = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
+    const ambiguous = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
+    finishWorker(lab.db, w.id, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: ambiguous, text: null, error: null, exitCode: 0, usage, durationMs: 1 } }, lab.clock, OWNER);
+    record(c, 'REPAIR_REQUIRED', []);
+    lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    expect(await run()).toMatchObject({ done: true });
+    expect(state()).toBe('EXHAUSTED');
+    expect(decisions('repair.non-progress')).toHaveLength(1);
+  });
 });
 
 describe('a review that has to be run', () => {
