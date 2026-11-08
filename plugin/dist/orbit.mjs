@@ -64674,9 +64674,11 @@ async function resolveAndDecide(ctx, cand) {
   const repairRequested = state.reviews.some((r) => r.verdict === "REPAIR_REQUIRED");
   const blockRank = blockSeverityRank(ctx);
   const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
-  const toRepair = open2.filter(
+  const routed = open2.filter(
     (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
+  const askedHere = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === "REPAIR_REQUIRED")).map((f) => f.id));
+  const toRepair = routed.length === 0 ? routed : open2.filter((d) => routed.includes(d) || d.memberIds.some((id) => askedHere.has(id)));
   if (toRepair.length > 0) {
     const texts = findingTexts(state);
     const waiting = blockingQuestions(ctx.db, ctx.run.id);
@@ -64692,7 +64694,7 @@ async function resolveAndDecide(ctx, cand) {
       });
       if (blocked) return blocked;
     }
-    const stalled = stalledReviewRepair(ctx, cand);
+    const stalled = stalledReviewRepair(ctx, cand, repairable);
     if (stalled) {
       const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
       const blocked = await blockOnOpenQuestions(ctx, "another review repair", { detail: `non-progress: ${stalled.reason}.`, outcome });
@@ -65152,14 +65154,41 @@ function blockedCriteriaIn(d, t, blocked) {
   const text2 = [d.claim, d.location ?? "", t?.evidence ?? "", t?.suggestedValidation ?? ""].join("\n");
   return blocked.filter((id) => namesId(text2, id));
 }
-function stalledReviewRepair(ctx, cand) {
+function stalledReviewRepair(ctx, cand, going) {
   const latest = currentAttempt(ctx);
   if (latest === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
+  const resumedSince = (id) => ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, id) !== void 0;
+  const stop = (reason) => ({ terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" });
   const sent = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? AND json_extract(data_json, '$.tree_hash') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT, latest, cand.treeHash);
-  if (!sent) return null;
-  if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, sent.id)) return null;
-  const reason = `attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`;
-  return { terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" };
+  if (sent) {
+    if (resumedSince(sent.id)) return null;
+    return stop(`attempt ${latest} reproduced tree ${cand.treeHash.slice(0, 12)}, the tree its review repair brief was written for: no measurable progress (same tree as attempt ${cand.attempt}); the same review, findings and brief would follow, so more attempts, tokens or lines would not change that`);
+  }
+  const last = ctx.db.get("SELECT id, data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT);
+  const prev = last?.data_json ? JSON.parse(last.data_json) : null;
+  if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id)) return null;
+  const asked = prev.findings.filter((f) => going.some((d) => d.fingerprint === f.fingerprint));
+  if (!going.every((d) => asked.some((f) => f.fingerprint === d.fingerprint))) return null;
+  const ended = [];
+  for (const w of listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" })) {
+    if ((w.attempt ?? 0) < prev.attempt) continue;
+    if (w.state !== "SUCCEEDED" || !w.resultJson) {
+      ended.push(`the implementer of attempt ${w.attempt} ended ${w.state}${w.resultStatus ? ` (${w.resultStatus})` : ""} without a report`);
+      continue;
+    }
+    let o;
+    try {
+      o = validateModelOutput("implementer", JSON.parse(w.resultJson).structured);
+    } catch {
+      continue;
+    }
+    const texts = [...o.evidence_refs.map((e) => `${e.ref} ${e.note}`), ...o.tests_added.map((t) => `${t.path} ${t.name}`)];
+    if (texts.some((x) => asked.some((f) => namesFinding(x, f)))) return null;
+  }
+  const names = [...new Set(asked.map((f) => f.external_id ?? f.finding_id))].join(", ");
+  return stop(
+    `the review repair brief of attempt ${prev.attempt} was sent ${names}, and no implementer report since names a test for ${asked.length === 1 ? "it" : "any of them"}${ended.length > 0 ? ` (${ended.join("; ")})` : ""}: only such a test closes a finding sent to repair, so the same brief would end the same way, and more attempts, tokens or lines would not change that`
+  );
 }
 async function reviewRoundsSpent(ctx, open2, outcome) {
   const rounds = ctx.ledger.state("review_rounds");

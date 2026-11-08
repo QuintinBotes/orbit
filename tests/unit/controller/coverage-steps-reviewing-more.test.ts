@@ -309,6 +309,10 @@ describe('a repair that named its validation test', () => {
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2, candidate_id: c2.id }));
     addEvidence(lab, c2, { attempt: 2 });
+    // The repair names a test for COR-1, so going back to repair is not non-progress (#156).
+    const w = planWorker(lab.db, { id: 'wrk-impl-2', runId: lab.runId, role: 'implementer', provider: 'claude', workerDir: join(lab.base, 'wi2'), cwd: repo.worktree, attempt: 2 }, lab.clock, OWNER);
+    const out = { summary: 's', changed_paths: [], tests_added: [], checks_run: [], evidence_refs: [{ criterion_id: null, ref: 'tests/mul.test.mjs', note: 'validation for finding COR-1' }], remaining_issues: [], next_action: { kind: 'request-verification', detail: 'd' } };
+    lab.db.run("UPDATE workers SET state = 'SUCCEEDED', result_json = ? WHERE id = ?", JSON.stringify({ structured: out }), w.id);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     record(c2, 'APPROVE', []);
     // No check run at all: nothing is proven by the repair.

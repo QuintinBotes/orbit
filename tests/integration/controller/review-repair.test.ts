@@ -126,16 +126,18 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(listProbeAttempts(l.db(), run.id).filter((a) => a.logPath?.includes('/repair-probe/')).map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'PASSED']);
   }, 120_000);
 
-  it('a finding the repair did not cover stays open and the run ends EXHAUSTED at the review_rounds cap, naming the open finding', async () => {
-    const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
-    // The second attempt changes something, but names no test for the finding, so nothing closes it.
+  it('a finding the repair did not cover stays open and the run ends EXHAUSTED as non-progress, naming the open finding', async () => {
+    const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 3) });
+    // The second attempt changes something, but names no test for the finding, so nothing closes it, and a third
+    // attempt with the same brief would end the same way (#156): the run stops with a review round left.
     writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])], reviewer: [REPAIR_REQUIRED, REPAIR_REQUIRED] }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
-    expect(done.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1/);
+    expect(done.outcomeReason).toMatch(/^non-progress: the review repair brief of attempt 2 was sent COR-1, and no implementer report since names a test for it: .*open findings: COR-1/);
+    expect(listDecisions(l.db(), run.id, { kind: 'repair.non-progress' })).toHaveLength(1);
     const outcome = JSON.parse(done.outcomeJson!) as { open_findings: { external_id: string; status: string }[] };
     expect(outcome.open_findings.map((f) => f.external_id)).toContain('COR-1');
     expect(listFindings(l.db(), run.id).every((f) => f.status !== 'rejected' && f.status !== 'resolved')).toBe(true);
@@ -162,6 +164,21 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     const report = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.json'), 'utf8')) as { next_action: string };
     expect(report.next_action).toMatch(/no measurable progress/);
     expect(report.next_action).not.toMatch(/budget is spent/);
+  }, 120_000);
+
+  it('a REPAIR_REQUIRED review briefs its medium finding with its high one, so the repair is asked for both (#156)', async () => {
+    const l = lab();
+    const test1 = { ...FINDING, id: 'TEST-1', category: 'test-adequacy', claim: 'No test covers mul with non-numeric arguments.' };
+    const doc1 = { ...FINDING, id: 'DOC-1', severity: 'medium', category: 'documentation', location: 'README.md:1', claim: 'The README does not say that mul throws on non-numeric arguments.' };
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*')], reviewer: [{ structured: { verdict: 'REPAIR_REQUIRED', candidate_revision: '$CANDIDATE', findings: [test1, doc1] } }] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const stored = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'briefs', 'attempt-2.json'), 'utf8')) as { brief: { briefs?: { finding_ids: string[] }[]; finding_ids?: string[] } };
+    const briefed = (stored.brief.briefs ?? [stored.brief]).flatMap((b) => b.finding_ids ?? []);
+    const ids = new Map(listFindings(l.db(), run.id).map((f) => [f.externalId, f.id]));
+    expect(briefed).toContain(ids.get('TEST-1'));
+    expect(briefed).toContain(ids.get('DOC-1'));
   }, 120_000);
 
   it('a blocking finding about financial semantics goes to the Inquisition before any repair', async () => {
