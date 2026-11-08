@@ -13,10 +13,11 @@ import { criterionFailBefore, newTestSupport, type CheckProbe } from '../../../s
 import type { BaseComparison } from '../../../src/evidence/report.ts';
 import type { CandidateRecord } from '../../../src/evidence/store.ts';
 import { defaultCheck, defaultUi } from '../../../src/policy/config.ts';
+import type { OrbitConfig } from '../../../src/policy/types.ts';
 import type { UiRunInput } from '../../../src/ui/runner.ts';
 import type { UiJourneyResult, UiJourneyStatus, UiNotExecuted, UiRunResult, UiRunVerdict } from '../../../src/ui/types.ts';
 import { result } from '../evidence/report-fixtures.ts';
-import { giveRepository, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
+import { giveRepository, makeUnitLab, pacedClock, setContract, type UnitLab } from './coverage-helpers.ts';
 
 const labs: UnitLab[] = [];
 afterEach(() => {
@@ -152,7 +153,7 @@ async function collect(b: BrowserLab, uiRunner: UiRunner, cand: CandidateRecord 
     base: b.comparison,
     results: [result(ctx.snapshot, 'unit')],
     installOk: true,
-    runner: { ...checkRunnerFor(ctx), checkoutDir: b.worktree },
+    runner: { ...checkRunnerFor(ctx), clock: pacedClock(b.lab.clock), checkoutDir: b.worktree },
     uiRunner,
   });
 }
@@ -411,37 +412,11 @@ describe('the fail-before ui probe', () => {
     expect(check.reason).toMatch(/the locked install \(orbit-install\) for the ui control on the base revision shows that a dependency could not be fetched or installed/);
   }, 60_000);
 
-  it('a command check criterion is probed as before, and the ui runner is never called', async () => {
-    const lab = makeUnitLab({ tweak: (c) => void (c.verification.fail_before = 'advisory') });
-    labs.push(lab);
-    const { base, tree, worktree } = await giveRepository(lab);
-    setContract(lab, { baseline_revision: base });
-    writeFileSync(join(worktree, 'apps/calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n');
-    writeFileSync(join(worktree, 'tests/mul.test.mjs'), 'export {};\n');
-    const cand = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree, runId: lab.runId, baseRev: base, attempt: 1, workerId: null });
-    const s = scripted({}, {});
-    const ctx = lab.ctx();
-    const evidence = await collectFailBefore(ctx, cand, {
-      contract: ctx.contract!,
-      base: { treeHash: tree, checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['apps/calc.mjs', 'tests/mul.test.mjs'] },
-      results: [result(ctx.snapshot, 'unit')],
-      installOk: true,
-      runner: { ...checkRunnerFor(ctx), checkoutDir: worktree },
-      uiRunner: s.runner,
-    });
-    expect(s.controls).toHaveLength(0);
-    expect(s.probes).toHaveLength(0);
-    expect(evidence.probe!.checks).toEqual([{ checkId: 'unit', outcome: 'passed-before', reason: 'unit passed on the base revision with the new tests', attempts: [expect.objectContaining({ status: 'PASSED', exitCode: 0 })] }]);
-  }, 120_000);
-
-  // The install step is shared with the command probe: a masked status must not pass there either, or a check
-  // failing on an incomplete install would count as failed-before.
-  it('an install that exits 0 but whose log shows a registry refusal stops the command probe as an environment cause', async () => {
-    const masked = [process.execPath, '-e', "console.error('npm error code E403'); console.error('npm error 403 Forbidden - GET https://registry.npmjs.org/playwright')"];
+  async function probeCommand(tweak: (c: OrbitConfig) => void = () => {}) {
     const lab = makeUnitLab({
       tweak: (c) => {
         c.verification.fail_before = 'advisory';
-        c.dependencies.install_command = masked;
+        tweak(c);
       },
     });
     labs.push(lab);
@@ -457,12 +432,30 @@ describe('the fail-before ui probe', () => {
       base: { treeHash: tree, checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['apps/calc.mjs', 'tests/mul.test.mjs'] },
       results: [result(ctx.snapshot, 'unit')],
       installOk: true,
-      runner: { ...checkRunnerFor(ctx), checkoutDir: worktree },
+      runner: { ...checkRunnerFor(ctx), clock: pacedClock(lab.clock), checkoutDir: worktree },
       uiRunner: s.runner,
     });
     expect(s.controls).toHaveLength(0);
     expect(s.probes).toHaveLength(0);
-    const check = evidence.probe!.checks.find((c) => c.checkId === 'unit')!;
+    return evidence.probe!.checks;
+  }
+
+  it('a command check criterion is probed as before, and the ui runner is never called', async () => {
+    expect(await probeCommand()).toEqual([{ checkId: 'unit', outcome: 'passed-before', reason: 'unit passed on the base revision with the new tests', attempts: [expect.objectContaining({ status: 'PASSED', exitCode: 0 })] }]);
+  }, 120_000);
+
+  // Issue #129: a check that takes a real second, far inside its 5 s timeout, outlasted the runner's polls on the plain lab
+  // clock, which moves 20 ms per poll without waiting, so the runner's backstop (timeout plus 2.1 s) passed first: TIMEOUT.
+  it('a check that takes a real second within its 5 s timeout passes, however often the runner polls the lab clock', async () => {
+    const checks = await probeCommand((c) => void (c.checks.unit = { ...c.checks.unit!, command: [process.execPath, '-e', 'setTimeout(() => {}, 1000)'], timeout_seconds: 5 }));
+    expect(checks).toEqual([expect.objectContaining({ checkId: 'unit', outcome: 'passed-before', attempts: [expect.objectContaining({ status: 'PASSED', exitCode: 0 })] })]);
+  }, 120_000);
+
+  // The install step is shared with the command probe: a masked status must not pass there either, or a check
+  // failing on an incomplete install would count as failed-before.
+  it('an install that exits 0 but whose log shows a registry refusal stops the command probe as an environment cause', async () => {
+    const masked = [process.execPath, '-e', "console.error('npm error code E403'); console.error('npm error 403 Forbidden - GET https://registry.npmjs.org/playwright')"];
+    const check = (await probeCommand((c) => void (c.dependencies.install_command = masked))).find((c) => c.checkId === 'unit')!;
     expect(check).toMatchObject({ outcome: 'not-established', cause: 'environment' });
     expect(check.reason).toMatch(/the locked install \(orbit-install\) on the probe tree shows that a dependency could not be fetched or installed/);
   }, 120_000);

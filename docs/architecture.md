@@ -234,7 +234,9 @@ and verifies `rev-parse <commit>^{tree}` before pushing.
 ## Budgets
 
 Counters (spec §7) live in `budget_counters`; hard caps are copied from the
-policy snapshot at run start and never change. Allowances start from the
+policy snapshot at run start and never change, except that the effective
+`review_rounds` cap adds the rounds a reviewer replaced at run time had spent
+(ADR 0007). Allowances start from the
 difficulty class and extend by one only with recorded progress, a new
 hypothesis, remaining scope and remaining reserve. Infrastructure retries do
 not consume implementation attempts but do consume wall time and cost. When a

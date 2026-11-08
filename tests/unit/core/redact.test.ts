@@ -251,6 +251,10 @@ describe('redactValue', () => {
   });
 });
 
+// The bound catches catastrophic backtracking, which takes hours on a megabyte, not a busy runner: 1.5 s failed on
+// GitHub runners running the suite in parallel (1.83 s, then 1.74 s, for query strings).
+const LINEAR_BOUND_MS = 6_000;
+
 describe('redact: linear time on hostile input', () => {
   const hostile: [string, string][] = [
     ['jwt prefixes', 'eyJ'.repeat(300_000)],
@@ -271,11 +275,9 @@ describe('redact: linear time on hostile input', () => {
   ];
   for (const [name, text] of hostile) {
     it(name, () => {
-      // The bound catches catastrophic backtracking, which takes hours on a megabyte, not a busy runner: 1.5 s failed
-      // once on a GitHub runner (1.83 s for query strings) running the suite in parallel.
       const t0 = performance.now();
       R(text);
-      expect(performance.now() - t0).toBeLessThan(6_000);
+      expect(performance.now() - t0).toBeLessThan(LINEAR_BOUND_MS);
     });
   }
 });
@@ -367,7 +369,7 @@ describe('redact: adversarial review', () => {
     it(`linear time: ${name}`, () => {
       const t0 = performance.now();
       R(text);
-      expect(performance.now() - t0).toBeLessThan(1_500);
+      expect(performance.now() - t0).toBeLessThan(LINEAR_BOUND_MS);
     });
   }
 });
