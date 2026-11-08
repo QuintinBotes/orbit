@@ -149,7 +149,9 @@ describe('startApp', () => {
 
   it('gives the app a scrubbed environment: host credentials do not reach it', async () => {
     const out = join(dir, 'env.json');
-    const command = [process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.env)); setInterval(() => {}, 1000)`];
+    // Written to a temporary file and renamed into place, so env.json exists only once it is complete (issue #160):
+    // writeFileSync creates the file before it writes it, and the probe below waits only for it to exist.
+    const command = [process.execPath, '-e', `const fs = require('fs'); fs.writeFileSync(${JSON.stringify(`${out}.tmp`)}, JSON.stringify(process.env)); fs.renameSync(${JSON.stringify(`${out}.tmp`)}, ${JSON.stringify(out)}); setInterval(() => {}, 1000)`];
     // Ready only once the app has written its environment, waited for in real time (the manual clock's sleeps are
     // instant): a fixed 150 ms delay raced the node start on a loaded CI runner, which read env.json before it existed.
     const probe = async () => {

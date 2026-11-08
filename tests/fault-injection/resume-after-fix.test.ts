@@ -19,14 +19,15 @@ async function resume(l: Lab, runId: string): Promise<{ code: number; out: strin
 
 describe.skipIf(!canStripTypes)('fault: resume after the cause of a block was fixed', () => {
   it('a reviewer that failed twice blocks; after the fix, resume starts review attempt 3 instead of replaying the stored failure', async () => {
-    const l = t.lab();
+    // With no other reviewer to try and review.when_unavailable: block, the failed reviewer blocks the run (#116).
+    const l = t.lab({ tweak: (c) => void (c.review = { ...c.review, when_unavailable: 'block' }) });
     // Two reviewer sessions that end without a result, then (the wrapper fixed) a working reviewer.
     writeScenario(l, baseScenario({ implementer: [implementMul('*')], reviewer: [{ outcome: 'no_result' }, { outcome: 'no_result' }, APPROVE] }));
     const run = startLabRun(l);
     await drive(l, run.id);
     const blocked = runState(l, run.id);
     expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
-    expect(blocked.outcomeReason).toMatch(/no usable result after 2 attempt/);
+    expect(blocked.outcomeReason).toMatch(/failed at run time: .*after 2 attempt/);
     expect(calls(l, 'reviewer')).toHaveLength(2);
 
     const r = await resume(l, run.id);
@@ -65,7 +66,12 @@ describe.skipIf(!canStripTypes)('fault: resume after the cause of a block was fi
   }, 120_000);
 
   it('resets are bounded by recovery_attempts: with the budget spent, resume ends the run EXHAUSTED instead of looping', async () => {
-    const l = t.lab({ tweak: (c) => void (c.scheduler.hard_limits.recovery_attempts = 1) });
+    const l = t.lab({
+      tweak: (c) => {
+        c.scheduler.hard_limits.recovery_attempts = 1;
+        c.review = { ...c.review, when_unavailable: 'block' };
+      },
+    });
     writeScenario(l, baseScenario({ implementer: [implementMul('*')], reviewer: [{ outcome: 'no_result' }] }));
     const run = startLabRun(l);
     await drive(l, run.id);

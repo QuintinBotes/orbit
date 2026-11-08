@@ -67,6 +67,35 @@ function ext(patch: Partial<ExtensionRequest> = {}): ExtensionRequest {
   return { counter: 'implementation_attempts', progress, hypothesisIsNew: true, withinScope: true, nextExperiment: 'Run a multi-page filtered fixture.', estimatedCostUsd: 1, estimatedWallMs: 60_000, ...patch };
 }
 
+describe('review_rounds grants for replaced reviewers', () => {
+  const failure = (db: OrbitDb, clock: ManualClock, id: string, rounds: number) => db.run("INSERT INTO decisions (id, run_id, kind, summary, data_json, created_at) VALUES (?, 'run-1', 'review.reviewer-failed', 's', ?, ?)", id, JSON.stringify({ rounds_granted: rounds }), clock.now());
+
+  it('raises the effective cap from the recorded decisions, counts every round, and leaves the stored cap and every other limit alone', () => {
+    const { db, clock, ledger, p } = setup();
+    for (let i = 0; i < 4; i++) ledger.consume('review_rounds', 1);
+    expect(caught(() => ledger.consume('review_rounds', 1)).message).toBe('review_rounds exhausted at the hard cap 4: used 4, requested 1');
+
+    failure(db, clock, 'd1', 2);
+    expect(ledger.state('review_rounds')).toEqual({ counter: 'review_rounds', used: 4, allowance: 6, hard_cap: 6, remaining: 2, granted: 2 });
+    ledger.consume('review_rounds', 2);
+    expect(caught(() => ledger.consume('review_rounds', 1)).message).toBe('review_rounds exhausted at the hard cap 6, including 2 for replaced reviewers: used 6, requested 1');
+    expect(ledger.snapshot().counters.find((c) => c.counter === 'review_rounds')).toMatchObject({ used: 6, hard_cap: 6, granted: 2 });
+
+    // A restart attaches against the frozen value and derives the same cap: nothing was granted a second time.
+    expect(db.get<{ hard_cap: number }>("SELECT hard_cap FROM budget_counters WHERE run_id = 'run-1' AND counter = 'review_rounds'")?.hard_cap).toBe(4);
+    expect(new BudgetLedger(db, clock).attach('run-1', { config: p }).state('review_rounds').hard_cap).toBe(6);
+    expect(ledger.state('cost_usd').hard_cap).toBe(30);
+    expect(ledger.state('implementation_attempts').hard_cap).toBe(12);
+  });
+
+  it('ignores a decision of another kind, and a failure recorded without a grant', () => {
+    const { db, clock, ledger } = setup();
+    db.run("INSERT INTO decisions (id, run_id, kind, summary, data_json, created_at) VALUES ('d1', 'run-1', 'review.select', 's', ?, ?)", JSON.stringify({ rounds_granted: 9 }), clock.now());
+    db.run("INSERT INTO decisions (id, run_id, kind, summary, data_json, created_at) VALUES ('d2', 'run-1', 'review.reviewer-failed', 's', '{}', ?)", clock.now());
+    expect(ledger.state('review_rounds')).toEqual({ counter: 'review_rounds', used: 0, allowance: 4, hard_cap: 4, remaining: 4 });
+  });
+});
+
 describe('implementation attempt wall-time minimum', () => {
   it('leaves the 30 minute implementer ceiling before the configured closing reserve', () => {
     const low = policy({ hard: { wall_minutes: 20 } });
