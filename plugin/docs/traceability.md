@@ -225,7 +225,7 @@ sometimes shortened.
 | S7.4 | Record why an allowance was selected | `BudgetLedger` bind | U/scheduling/budget.test.ts "records the difficulty assessment..." | done |
 | S7.5 | Extend only with a remaining failure, new hypothesis, authorized scope, budget | `BudgetLedger.requestExtension` | U/scheduling/budget.test.ts "requires a new hypothesis, authorized scope and a remaining failure" | done |
 | S7.6 | Progress definition; tokens and diff size are not progress | `inquisition/repair.ts:progressSince` | U/inquisition/repair.test.ts "more tokens and a bigger diff never count" | done |
-| S7.7 | Allowances rise within caps; caps never change | `BudgetLedger` | U/scheduling/budget.test.ts "is idempotent on restart and refuses changed hard caps" | done |
+| S7.7 | Allowances rise within caps; caps never change, except the effective `review_rounds` cap, which adds rounds spent by a reviewer replaced at run time (#116) | `BudgetLedger` | U/scheduling/budget.test.ts "is idempotent on restart and refuses changed hard caps", "review_rounds grants for replaced reviewers" | done |
 | S7.8 | Reserve for final verification, review, reporting | `BudgetLedger` reserve | U/scheduling/budget.test.ts "protects the closing reserve..." | done |
 | S7.9 | Unmeasured cost: report it, conservative admission | `BudgetLedger` role ceilings | U/scheduling/budget.test.ts "charges a conservative role ceiling when cost is unavailable" | done |
 | S7.10 | Inquisition after repeated equivalent failures | `triggers.ts` repeated_failure | U/inquisition/triggers.test.ts "fires once the fingerprint has hit the threshold" | done |
@@ -334,6 +334,7 @@ sometimes shortened.
 | S12.12 | Record why findings were accepted or rejected | `review/store.ts:persistResolution` | U/review/store.test.ts "writes statuses with reasons and blocking flags, then one decision per decided claim" | done |
 | S12.13 | Accepted and waived findings reach the final report as residual risk | `controller/report.ts` | U/controller/report-findings.test.ts "lists unresolved accepted findings as blocking", "lists excepted findings with the exception reason and expiry" | done |
 | S12.14 | Mandatory other provider unavailable: block, no silent substitute | `review/select.ts` | F/model-faults.test.ts "a mandatory independent reviewer that is missing blocks the run" | done |
+| I116 | A reviewer that fails at run time is recorded and excluded; the next listed reviewer reviews under its own name, else `when_unavailable` applies; each session is charged and counted | `steps/reviewing.ts:reviewerFailed`, `review/select.ts` (`failed`), `controller/report.ts` | I/controller/reviewer-fallback.test.ts | done |
 
 Muse as an independent reviewer (issue #108, ADR 0017; the claims of the issue, numbered as there):
 

@@ -43,8 +43,27 @@ export interface SelectReviewerInput {
   credentials: Readonly<Record<string, CredentialStatus | undefined>>;
   /** Who produced the candidate. */
   implementer: { provider: string; model: string | null };
+  /** Providers whose review of this candidate already failed at run time, with why (#116): not selected again for it. */
+  failed?: Readonly<Record<string, string>>;
   /** Needed to qualify models and to pick a different tier; without it only a model named in providers.<id>.model can be chosen. */
   registry?: ReviewerRegistry;
+}
+
+/** A reviewer that used every regeneration on a candidate without a usable review (#116). */
+export const REVIEWER_FAILED_KIND = 'review.reviewer-failed';
+
+export interface ReviewerFailure {
+  candidate_id: string;
+  provider: string;
+  model: string | null;
+  /** The last attempt's status and error. */
+  reason: string;
+  /** The latest `run.resumed` event when it failed: a later resume lets the provider be tried again. */
+  resumed_event_id: number | null;
+  /** The review rounds this reviewer spent on the candidate since its last grant, added to the effective review_rounds hard cap (scheduling/budget.ts). Absent in older records. */
+  rounds_granted?: number;
+  /** The ids of its reviews of the tree that this failure set aside: no fresh review stands for them. Absent in older records. */
+  set_aside?: string[];
 }
 
 export interface RejectedReviewer {
@@ -122,6 +141,8 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
   // `unverifiedOk`: the implementer's own provider is judged as the environment gate judges the implementer, where a
   // credential that is present but unverified until a request succeeds is enough.
   const providerProblem = (p: string, unverifiedOk = false): { reason: string; code: OrbitErrorCode } | null => {
+    const failed = input.failed?.[p];
+    if (failed !== undefined) return { reason: `"${p}" failed at run time: ${failed}`, code: 'PROVIDER_UNAVAILABLE' };
     const cap = input.capabilities[p];
     if (!cap) return { reason: `no adapter capabilities were reported for "${p}"`, code: 'PROVIDER_UNAVAILABLE' };
     if (!cap.available) return { reason: `provider "${p}" is not available: ${cap.detail || 'adapter reported unavailable'}`, code: 'PROVIDER_UNAVAILABLE' };

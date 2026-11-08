@@ -24,6 +24,7 @@ import type { BudgetPhase } from '../../scheduling/types.ts';
 import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
+import { grantNote } from '../../scheduling/budget.ts';
 import { recordAskedLedger } from '../undecided-ledger.ts';
 import { assertContract, budgetPhaseOf, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
@@ -60,7 +61,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
   const rounds = resume === 'REVIEWING' ? ctx.ledger?.state('review_rounds') : undefined;
   const approved = ctx.candidate !== null && listReviews(ctx.db, ctx.run.id, { treeHash: ctx.candidate.treeHash }).some((r) => r.verdict === 'APPROVE');
   if (rounds && rounds.used >= rounds.allowance && !approved) {
-    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2000), {
+    return finishRun(ctx, 'EXHAUSTED', `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}): the inquiry into ${trigger.key} would need another review round, so no inquisitor starts`.slice(0, 2000), {
       data: { counter: 'review_rounds', used: rounds.used, hard_cap: rounds.hard_cap },
     });
   }

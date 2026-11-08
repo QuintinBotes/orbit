@@ -85,12 +85,13 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean } = {}): Promise<StepResult> {
   let advice = '';
   if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
     // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
-    const setting = frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
+    // `resumable`: the step knows from its records that a resume can clear this, whatever the reason's text names.
+    const setting = opts.resumable === true ? null : frozenPolicyCause(reason, typeof opts.data?.code === 'string' ? opts.data.code : undefined);
     if (setting !== null) {
       advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
       reason = withSentence(reason, advice);
@@ -419,7 +420,7 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
 export async function handleWorkerFailure(
   ctx: RunContext,
   failed: { provider: string; status: string; error: string | null; reason?: string | null },
-  opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: () => Promise<StepResult> },
+  opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
 ): Promise<FailureHandling> {
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
@@ -440,7 +441,7 @@ export async function handleWorkerFailure(
     note(ctx, 'worker.regenerate', { what: opts.what, status: failed.status, attempts: opts.attemptsUsed, error: failed.error?.slice(0, 300) ?? null });
     return { retry: true };
   }
-  if (opts.exhausted) return { retry: false, result: await opts.exhausted() };
+  if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
 }
 

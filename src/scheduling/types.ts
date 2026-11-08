@@ -56,6 +56,8 @@ export interface CounterState {
   allowance: number;
   hard_cap: number;
   remaining: number;
+  /** review_rounds only: rounds included in `allowance` and `hard_cap` for reviewers replaced at run time. Absent when none. */
+  granted?: number;
 }
 
 /** Spec section 7 progress kinds. Anything else a caller sends is ignored and reported as such. */
