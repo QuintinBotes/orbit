@@ -3,19 +3,20 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TaskResult } from '../../../src/adapters/types.ts';
-import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, type CandidateRecord } from '../../../src/evidence/store.ts';
+import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, setCandidateScope, type CandidateRecord } from '../../../src/evidence/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { insertQuestion, listHypotheses } from '../../../src/inquisition/store.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { DIAGNOSIS } from '../../integration/controller/harness.ts';
-import { addCandidate, addEvidence, giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
+import { addCandidate, addEvidence, cleanScope, giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 const FP = 'fp:calc-mul';
+const OVER_SIZE = cleanScope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/b.mjs', lines: 3000 }, { path: 'apps/a.ts', lines: 10 }] });
 const diagnosis = (over: { fingerprint?: string; statement?: string; scopedFix?: string; ruledOut?: boolean; confidence?: 'low' | 'medium' | 'high' } = {}) => {
   const d = structuredClone(DIAGNOSIS.structured) as typeof DIAGNOSIS.structured;
   const fp = over.fingerprint ?? FP;
@@ -155,6 +156,21 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     }
   });
 
+  it('the same tree denied for size again blocks on a person, naming the limit and the heaviest files (#157)', async () => {
+    const { cand, adapter } = await judgedTwice({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(adapter.specs).toHaveLength(0);
+    const done = getRun(lab.db, lab.runId);
+    expect(done.outcomeReason).toContain('over scheduler.hard_limits.changed_lines again (3010 lines against a limit of 2000)');
+    expect(done.outcomeReason).toContain('The largest changes: dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(done.outcomeReason).toContain('too small for a generated file the task requires');
+    expect(done.outcomeReason).not.toMatch(/[\u2013\u2014]/u);
+    expect(JSON.parse(done.outcomeJson!)).toMatchObject({ frozen_policy: { setting: 'scheduler.hard_limits.changed_lines' } });
+    expect(decisions('repair.non-progress')[0]?.data).toMatchObject({ attempt: 2, same_tree_as: 1, tree_hash: cand.treeHash, settings: ['scheduler.hard_limits.changed_lines'] });
+  });
+
   it('an attempt whose session stopped before it finished is not a stall: the diagnosis and the repair follow', async () => {
     const { adapter } = await judgedTwice();
     // What IMPLEMENTING notes when the attempt's last session ends max_turns, timeout, failed or malformed_output.
@@ -220,6 +236,26 @@ describe('the repair brief', () => {
     expect(stored).toMatchObject({ attempt: 2, source: 'scope', fingerprint: FP });
     expect(stored.brief.scoped_fix).toContain('apps/**, tests/**');
     expect(decisions('repair.brief')[0]?.summary).toBe(`repair brief (scope) for attempt 2: ${FP}`);
+  });
+
+  it('a refusal for size alone gets a size hypothesis naming the heaviest files and no out-of-scope revert (#157)', async () => {
+    const { cand } = await setup({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    await run();
+    const { brief } = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8'));
+    expect(brief.hypotheses).toHaveLength(1);
+    expect(brief.hypotheses[0].statement).toBe('The change is over the size limits (40 files, 2000 lines); its largest changes are dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(brief.scoped_fix).toContain('by shrinking the changes to dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(JSON.stringify(brief)).not.toContain('Revert the out-of-scope changes');
+  });
+
+  it('a refusal for size and scope keeps the revert and adds the size hypothesis', async () => {
+    const { cand } = await setup({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, { ...OVER_SIZE, allowed_paths_pass: false, out_of_scope_paths_changed: ['docs/x.md'] });
+    await run();
+    const { brief } = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8'));
+    expect(brief.hypotheses.map((h: { statement: string }) => h.statement)).toEqual([expect.stringMatching(/outside the authorized scope/), expect.stringMatching(/^The change is over the size limits/)]);
+    expect(brief.scoped_fix).toMatch(/^Revert the out-of-scope changes .*shrinking the changes to dist\/b\.mjs/);
   });
 
   it('a scope refusal without an excerpt still says what was denied', async () => {
