@@ -7,7 +7,7 @@ import { listDecisions, recordDecision } from '../storage/decisions.ts';
 import { isIndependentReviewer } from '../policy/config.ts';
 import { reviewFallback } from '../policy/review.ts';
 import { SAME_PROVIDER_APPROVED_KIND } from './select.ts';
-import { listFindings, listReviews, markReviewInvalidated } from './store.ts';
+import { findingLabel, listFindings, listReviews, markReviewInvalidated } from './store.ts';
 import { exceptionApplies, isSecurityFinding, readSecurityPolicy, severityBlocks, type SecurityPolicy } from './resolve.ts';
 import type { FindingRecord, FindingStatus, ReviewRecord } from './types.ts';
 
@@ -140,13 +140,13 @@ export function reviewGate(db: OrbitDb, input: ReviewGateInput): ReviewGateResul
     const closers = r.verdict === 'BLOCK' ? CLEARS_BLOCK : CLEARS_REPAIR;
     const open = own.filter((f) => !closers.includes(f.status));
     if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
-    else if (open.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open.length} of its finding(s) are unresolved (${open.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(', ')})`);
+    else if (open.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open.length} of its finding(s) are unresolved (${open.map((f) => `${findingLabel(db, f)} ${f.status}`).join(', ')})`);
     else cleared.push(r);
   }
 
   for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
     const why = lapsed.has(f.id) ? ' (its policy exception has expired or no longer covers it)' : '';
-    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
+    reasons.push(`finding ${findingLabel(db, f)} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
   }
 
   // review.when_unavailable (decision 0007): block requires an independent clearing review; ask accepts a

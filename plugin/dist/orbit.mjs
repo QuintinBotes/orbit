@@ -37111,7 +37111,7 @@ function fingerprintFailure(output, check, options = {}) {
   const seen = /* @__PURE__ */ new Set();
   const excerptLines = [];
   for (const p of picked) {
-    if (seen.has(p.norm)) continue;
+    if (seen.has(p.norm) || PASSING.test(p.raw)) continue;
     seen.add(p.norm);
     excerptLines.push(p.raw.trimEnd());
     if (excerptLines.length >= maxLines) break;
@@ -37125,7 +37125,7 @@ function fingerprintFailure(output, check, options = {}) {
 [orbit: excerpt truncated]`;
   return { fingerprint, excerpt: excerpt3, signature };
 }
-var DEFAULT_MAX_LINES, DEFAULT_MAX_EXCERPT, MAX_LINE, MAX_SCANNED_LINES, ANSI, RELEVANT, SUMMARY, STACK_FRAME;
+var DEFAULT_MAX_LINES, DEFAULT_MAX_EXCERPT, MAX_LINE, MAX_SCANNED_LINES, ANSI, RELEVANT, SUMMARY, PASSING, STACK_FRAME;
 var init_fingerprint = __esm({
   "src/evidence/fingerprint.ts"() {
     "use strict";
@@ -37138,6 +37138,7 @@ var init_fingerprint = __esm({
     ANSI = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u001B[@-Z\\-_]/g;
     RELEVANT = /\b(error|errors|fail|failed|failure|failing|exception|assert|assertion|assertionerror|panic|fatal|expected|received|not ok|typeerror|referenceerror|syntaxerror|rangeerror|cannot find|enoent|eacces|traceback|unhandled|timeout|timed out|refused|denied|undefined is not|is not a function|is not defined)\b|[✗✖×]|^\s*FAIL\b|^\s*●|^\s*not ok\b/i;
     SUMMARY = /\b\d+\s+(?:passed|failed|skipped|total|todo|pending|passing|failing)\b|\b(?:tests?|test files|suites?|duration|time|snapshots?)\s*:/i;
+    PASSING = /^\s*(?:ok\s+\d+\b|# Subtest:|[✓✔]\s|PASS\s)/;
     STACK_FRAME = /^\s+at\s|^\s+\S+:\d+(?::\d+)?\s*$|^\s*File ".+", line \d+/;
   }
 });
@@ -40650,6 +40651,10 @@ function probeRow(db, id) {
   if (!row) throw new OrbitError("NOT_FOUND", `no fail-before probe attempt ${id}`);
   return row;
 }
+function probeEvent(db, type, r, at) {
+  const finished2 = type === "check.fail-before-probe-finished" ? { status: r.status, exit_code: r.exit_code } : {};
+  appendEvent(db, r.run_id, type, "controller", { probe_attempt_id: r.id, probe_id: r.probe_id, check_id: r.check_id, tree_hash: r.probe_tree, attempt: r.attempt, candidate_id: r.candidate_id || null, ...finished2 }, at);
+}
 function probeRecords(probeId) {
   return {
     list: (db, q) => db.all("SELECT * FROM fail_before_probes WHERE run_id = ? AND candidate_id = ? AND check_id = ? ORDER BY rowid", q.runId, q.candidateId ?? "", q.checkId).map(toCheckRun2),
@@ -40683,14 +40688,15 @@ function probeRecords(probeId) {
         return toCheckRun2(probeRow(db, id));
       });
     },
-    running: (db, id, pid, clock) => {
-      db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, clock.now(), id);
+    running: (db, id, pid, clock) => db.tx(() => {
+      const now = clock.now();
+      if (db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, now, id).changes === 1) probeEvent(db, "check.fail-before-probe-started", probeRow(db, id), now);
       return toCheckRun2(probeRow(db, id));
-    },
-    finish: (db, id, f) => {
-      db.run("UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id);
+    }),
+    finish: (db, id, f) => db.tx(() => {
+      if (db.run("UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id).changes === 1) probeEvent(db, "check.fail-before-probe-finished", probeRow(db, id), f.endedAt);
       return toCheckRun2(probeRow(db, id));
-    }
+    })
   };
 }
 function probeDirs(runDir2) {
@@ -40728,7 +40734,10 @@ async function closeInterruptedProbes(db, runDir2, runId, clock, opts = {}) {
         continue;
       }
     }
-    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", "interrupted: a probe whose controller stopped is not established and runs again", clock.now(), row.id);
+    const ended = clock.now();
+    if (db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", "interrupted: a probe whose controller stopped is not established and runs again", ended, row.id).changes === 1) {
+      probeEvent(db, "check.fail-before-probe-finished", probeRow(db, row.id), ended);
+    }
     out.closed.push(row.id);
   }
   return out;
@@ -41037,6 +41046,7 @@ var init_fail_before = __esm({
     init_config();
     init_test_files();
     init_decisions();
+    init_events();
     init_candidate();
     init_check_misconfigured();
     init_check_shim();
@@ -44468,7 +44478,7 @@ async function watchRun(opts, cfg, run, report2) {
   const stepStart = lastTransitionAt(db, run) ?? run.updatedAt;
   const lease = getLease(db, run.id);
   const workers = listWorkers(db, { runId: run.id, states: ["PLANNED", "RUNNING"] });
-  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now)].filter((t) => t !== null);
+  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now), ...probeActivity(db, run, now)].filter((t) => t !== null);
   const lastActivity = Math.max(stepStart, run.lastProgressAt ?? 0, ...activity);
   const idle = now - lastActivity;
   const timeout = cfg.stepTimeoutMs[run.state] ?? cfg.defaultStepTimeoutMs;
@@ -44523,6 +44533,22 @@ function checkActivity(db, run, now) {
     }
   });
 }
+function probeActivity(db, run, now) {
+  const open2 = db.all("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  if (open2.length === 0) return [];
+  const dirs = probeDirs(dirname21(run.policyPath));
+  return open2.map((p) => {
+    let t = p.started_at;
+    const found = dirs.get(p.id);
+    if (found) {
+      try {
+        t = statSync12(shimPath(found.dir, "output")).mtimeMs;
+      } catch {
+      }
+    }
+    return t <= now ? t : null;
+  });
+}
 async function abandon(opts, run, workers, detail) {
   const { db, clock, ownerId } = opts;
   for (const w of workers) {
@@ -44559,6 +44585,7 @@ var init_watchdog = __esm({
     init_budget2();
     init_reconcile();
     init_check_shim();
+    init_fail_before();
     MIN = 6e4;
     DEFAULT_WATCHDOG = Object.freeze({
       stallMs: 10 * MIN,
@@ -46642,6 +46669,10 @@ function markReviewInvalidated(db, reviewId, reason, clock) {
     appendEvent(db, row.run_id, "review.invalidated", "controller", { review_id: reviewId, tree_hash: row.tree_hash, reason }, now);
     return true;
   });
+}
+function findingLabel(db, f) {
+  const row = db.get("SELECT r.round AS round FROM findings f JOIN reviews r ON r.id = f.review_id WHERE f.id = ?", f.id);
+  return row ? `${f.externalId ?? f.id} (review ${row.round})` : f.externalId ?? f.id;
 }
 function listFindings(db, runId, filter = {}) {
   const clauses = ["run_id = ?"];
@@ -56610,12 +56641,12 @@ function reviewGate(db, input) {
     const closers = r.verdict === "BLOCK" ? CLEARS_BLOCK : CLEARS_REPAIR;
     const open2 = own.filter((f) => !closers.includes(f.status));
     if (own.length === 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} with no findings to resolve`);
-    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${f.externalId ?? f.id} ${f.status}`).join(", ")})`);
+    else if (open2.length > 0) reasons.push(`${r.provider} review ${r.id} is ${r.verdict} and ${open2.length} of its finding(s) are unresolved (${open2.map((f) => `${findingLabel(db, f)} ${f.status}`).join(", ")})`);
     else cleared.push(r);
   }
   for (const f of blockingUnresolved(all, input.snapshot, security, lapsed)) {
     const why = lapsed.has(f.id) ? " (its policy exception has expired or no longer covers it)" : "";
-    reasons.push(`finding ${f.externalId ?? f.id} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
+    reasons.push(`finding ${findingLabel(db, f)} (${f.severity}, ${f.status}) blocks delivery${why}: ${f.claim.slice(0, 120)}`);
   }
   const fallback = reviewFallback(config.review);
   if (fallback !== "claude" && cleared.length > 0 && input.implementerProvider === void 0) {
@@ -56848,9 +56879,9 @@ function uiGate(input) {
   return result("ui", [], evidence, [...r.reasons, ...r.unverified], { verdict: r.verdict }, true);
 }
 function withWholeClaim(db, runId, reason) {
-  const m = /^(finding (\S+) \([^)]*\) blocks delivery[^:]*): (.*)$/s.exec(reason);
+  const m = /^(finding .+? blocks delivery[^:]*): (.*)$/s.exec(reason);
   if (!m) return reason;
-  const f = listFindings(db, runId).find((x) => (x.externalId ?? x.id) === m[2] && x.claim.startsWith(m[3]));
+  const f = listFindings(db, runId).find((x) => m[1].startsWith(`finding ${findingLabel(db, x)} (`) && x.claim.startsWith(m[2]));
   return f ? `${m[1]}: ${clipAtWord(f.claim, 200)}` : reason;
 }
 function independentReviewGate(db, input) {
@@ -64159,7 +64190,8 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     "a scoped fix, post-fix checks (trusted check ids only) and the constraints the repair must preserve.",
     `Trusted check ids: ${Object.keys(ctx.snapshot.config.checks).join(", ") || "none"}.`,
     priors.length > 0 ? `Hypotheses already recorded (a reworded one is not new): ${priors.map((h) => `[${h.status}] ${h.statement}`).join(" | ")}` : "No earlier hypotheses.",
-    ...timeouts ? timeoutPromptLines(timeouts) : []
+    ...timeouts ? timeoutPromptLines(timeouts) : [],
+    ...sessionEndPromptLines(ctx)
   ].join("\n");
   return renderWorkerPrompt({
     role: "verifier",
@@ -64171,6 +64203,16 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt })),
     advisoryBlock: advisoryBlockFor(ctx, { role: "verifier", workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] })
   });
+}
+function sessionEndPromptLines(ctx) {
+  const attempt = currentAttempt(ctx);
+  const row = ctx.db.get("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
+  if (row?.status !== "max_turns" && row?.status !== "timeout") return [];
+  const cap = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  return [
+    `Session end: the implementer session of attempt ${attempt} ended at ${row.status === "max_turns" ? `its turn cap (${cap} model requests)` : "its timeout"} before it finished, so the candidate may be unfinished.`,
+    "One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done."
+  ];
 }
 function timeoutContext(ctx, candidateId, probe2 = machineProbe(ctx)) {
   const rows = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId }).filter((r) => r.status === "TIMEOUT" || r.timedOut);
@@ -64653,7 +64695,7 @@ async function resolveAndDecide(ctx, cand) {
       const blocked = await blockOnOpenQuestions(ctx, "another review repair", { detail: `non-progress: ${stalled.reason}.`, outcome });
       if (blocked) return blocked;
       decide2(ctx, { id: `dec-${ctx.run.id}-non-progress-review-${currentAttempt(ctx)}`, kind: "repair.non-progress", summary: stalled.reason, data: stalled });
-      return finishRun(ctx, "EXHAUSTED", clipAtWord(`non-progress: ${stalled.reason}; open findings: ${describeFindings(toRepair)}`, 2e3), { outcome });
+      return finishRun(ctx, "EXHAUSTED", clipAtWord(`non-progress: ${stalled.reason}; open findings: ${describeFindings(ctx, toRepair)}`, 2e3), { outcome });
     }
     const inquire = repairable.filter((d) => d.status !== "accepted" && !undecided.has(d.findingId)).map((d) => ({ d, why: d.disagreement ? [`disagreement (${d.disagreement.kinds.join(", ")})`] : materialSemantics(ctx, d, texts.get(d.findingId)) })).filter((x) => x.why.length > 0);
     if (inquire.length > 0) {
@@ -64667,7 +64709,7 @@ async function resolveAndDecide(ctx, cand) {
         key: `review:${cand.treeHash}:${inquire.map((x) => x.d.fingerprint).sort().join(",")}`.slice(0, 500)
       };
       if (!handledTriggerKeys(ctx).has(trigger.key)) {
-        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(repairable)}`, { open_findings: openFindings(repairable) });
+        const spent = await reviewRoundsSpent(ctx, `${repairable.length} open finding(s): ${describeFindings(ctx, repairable)}`, { open_findings: openFindings(repairable) });
         if (spent) return spent;
         return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
       }
@@ -64686,7 +64728,7 @@ async function resolveAndDecide(ctx, cand) {
     if (!handledTriggerKeys(ctx).has(trigger.key)) {
       if (!gate.details.approved) {
         const claims = resolution.dispositions.filter((d) => resolution.claimsToTest.some((c) => c.findingId === d.findingId));
-        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(claims)}`, { open_findings: openFindings(claims) });
+        const spent = await reviewRoundsSpent(ctx, `${resolution.claimsToTest.length} review claim(s) still needing a discriminating test: ${describeFindings(ctx, claims)}`, { open_findings: openFindings(claims) });
         if (spent) return spent;
       }
       return move2(ctx, "INQUISITION", trigger.summary, { data: { trigger } });
@@ -65119,8 +65161,8 @@ async function reviewRoundsSpent(ctx, open2, outcome) {
   if (rounds.used < rounds.allowance) return null;
   return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${open2}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
 }
-function describeFindings(list3) {
-  return list3.map((d) => `${d.externalId ?? d.findingId} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join("; ");
+function describeFindings(ctx, list3) {
+  return list3.map((d) => `${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}): ${clipAtWord(d.claim, 200)}`).join("; ");
 }
 async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = { held: [], criteria: [], questions: [] }) {
   const ledger = ctx.ledger;
@@ -65128,12 +65170,12 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
   const outcome = { open_findings: openFindings(toRepair) };
   const rounds = ledger.state("review_rounds");
   if (rounds.used >= rounds.allowance) {
-    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(toRepair)}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
+    return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}) with ${toRepair.length} open finding(s): ${describeFindings(ctx, toRepair)}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
   }
   const next = currentAttempt(ctx) + 1;
   const att = ledger.state("implementation_attempts");
   if (att.used >= att.hard_cap) {
-    return finishRun(ctx, "EXHAUSTED", `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}) with ${toRepair.length} open review finding(s): ${describeFindings(toRepair)}`.slice(0, 2e3), { data: { counter: "implementation_attempts" }, outcome });
+    return finishRun(ctx, "EXHAUSTED", `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}) with ${toRepair.length} open review finding(s): ${describeFindings(ctx, toRepair)}`.slice(0, 2e3), { data: { counter: "implementation_attempts" }, outcome });
   }
   const earlier = new Set(reviewRepairs(ctx).flatMap((r) => r.findings.map((f) => f.fingerprint)));
   if (att.used >= att.allowance && !ctx.db.get("SELECT 1 AS x FROM decisions WHERE id = ?", `dec-${ctx.run.id}-extension-${next}`)) {
@@ -65153,7 +65195,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
     const rec2 = extensionDecisionRecord(decision);
     decide2(ctx, { id: `dec-${ctx.run.id}-extension-${next}`, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
     if (decision.decision === "deny_extension") {
-      return finishRun(ctx, "EXHAUSTED", clipAtWord(`implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join("; ")}; open findings: ${describeFindings(toRepair)}`, 2e3), { outcome: { ...outcome, extension: decision } });
+      return finishRun(ctx, "EXHAUSTED", clipAtWord(`implementation attempt allowance spent (${att.used} of ${att.allowance}) and no extension for the review repair: ${decision.denied_because.join("; ")}; open findings: ${describeFindings(ctx, toRepair)}`, 2e3), { outcome: { ...outcome, extension: decision } });
     }
   }
   const claims = new Map(resolution.claims.map((c) => [c.findingId, c]));
@@ -65171,7 +65213,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
     if (ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ?", ctx.run.id, REVIEW_REPAIR_EVENT, next)) return;
     appendEvent(ctx.db, ctx.run.id, REVIEW_REPAIR_EVENT, ctx.ownerId, record, ctx.clock.now());
   });
-  decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (review) for attempt ${next}: ${describeFindings(toRepair)}`, data: { attempt: next, source: "review", findings: record.findings, path: `briefs/attempt-${next}.json` } });
+  decide2(ctx, { id: `dec-${ctx.run.id}-brief-${next}`, kind: "repair.brief", summary: `repair brief (review) for attempt ${next}: ${describeFindings(ctx, toRepair)}`, data: { attempt: next, source: "review", findings: record.findings, path: `briefs/attempt-${next}.json` } });
   return move2(ctx, "REPAIRING", `review requires repair of ${toRepair.length} finding(s); brief for attempt ${next}`, { data: { attempt: next, findings: record.findings.map((f) => f.finding_id) } });
 }
 function reviewBrief(ctx, d, validation, t, contract) {
@@ -73399,6 +73441,12 @@ function renderEvent(e, data, l) {
       const cand = c?.candidate_id ? ` on candidate ${candidateSeq(c.candidate_id)}` : "";
       const fp = str7(data.fingerprint) ?? c?.fingerprint ?? null;
       return { text: `${str7(data.check_id) ?? c?.check_id ?? "check"} ${status2}${exit !== null ? ` (exit ${exit})` : ""}${cand}${took}${c?.flaky ? " (flaky)" : ""}${fp && status2 !== "PASSED" ? `; fingerprint ${fp}` : ""}` };
+    }
+    case "check.fail-before-probe-started":
+      return { text: `fail-before probe of ${str7(data.check_id) ?? "a check"} started on tree ${short2(str7(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
+    case "check.fail-before-probe-finished": {
+      const exit = num6(data.exit_code);
+      return { text: `fail-before probe of ${str7(data.check_id) ?? "a check"} ${str7(data.status) ?? "?"}${exit !== null ? ` (exit ${exit})` : ""} on tree ${short2(str7(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
     }
     case "evidence.report": {
       const verdict = str7(data.verdict) ?? "?";

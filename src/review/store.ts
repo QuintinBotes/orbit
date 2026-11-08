@@ -266,6 +266,12 @@ export function markReviewInvalidated(db: OrbitDb, reviewId: string, reason: str
   });
 }
 
+/** A finding's id with its review round: two reviews can each raise a TEST-1, and the round tells them apart. */
+export function findingLabel(db: OrbitDb, f: { id: string; externalId: string | null }): string {
+  const row = db.get<{ round: number }>('SELECT r.round AS round FROM findings f JOIN reviews r ON r.id = f.review_id WHERE f.id = ?', f.id);
+  return row ? `${f.externalId ?? f.id} (review ${row.round})` : (f.externalId ?? f.id);
+}
+
 export function getFinding(db: OrbitDb, id: string): FindingRecord | null {
   const row = db.get<FindingRow>('SELECT * FROM findings WHERE id = ?', id);
   return row ? toFinding(row) : null;

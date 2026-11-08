@@ -7,7 +7,7 @@ import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, type Can
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { insertQuestion, listHypotheses } from '../../../src/inquisition/store.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
-import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
+import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, sessionEndPromptLines, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { DIAGNOSIS } from '../../integration/controller/harness.ts';
 import { addCandidate, addEvidence, giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
@@ -163,6 +163,21 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     expect(state()).toBe('REPAIRING');
     expect(adapter.specs).toHaveLength(1);
     expect(decisions('repair.non-progress')).toEqual([]);
+    const cap = lab.ctx().ledger!.maxTurnsPerSession();
+    expect(adapter.specs[0]!.prompt).toContain(`Session end: the implementer session of attempt 2 ended at its turn cap (${cap} model requests) before it finished, so the candidate may be unfinished.`);
+    expect(adapter.specs[0]!.prompt).toContain('One competing hypothesis must be that the task did not fit one session');
+  });
+
+  it('a diagnosis after a session that timed out says so; one after a failed session or an earlier attempt\'s timeout does not', async () => {
+    const { adapter } = await judgedTwice();
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, status: 'timeout', error: null }));
+    await settle();
+    expect(adapter.specs[0]!.prompt).toContain('Session end: the implementer session of attempt 2 ended at its timeout before it finished, so the candidate may be unfinished.');
+    for (const ended of [{ attempt: 2, status: 'failed' }, { attempt: 1, status: 'max_turns' }]) {
+      lab.db.run("DELETE FROM events WHERE type = 'implementation.worker-ended'");
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ ...ended, error: null }));
+      expect(sessionEndPromptLines(lab.ctx()), JSON.stringify(ended)).toEqual([]);
+    }
   });
 
   it('a session of an earlier attempt that stopped early does not excuse the latest attempt', async () => {

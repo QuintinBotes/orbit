@@ -16,7 +16,7 @@ import type { CredentialCheck } from '../recovery/credentials.ts';
 import { reviewerLabel, type ReviewerSelection } from '../review/select.ts';
 import type { DeliveryEnvironmentProblem } from './delivery-env.ts';
 import { reviewGate, type ReviewGateResult } from '../review/stale.ts';
-import { listFindings, listReviews } from '../review/store.ts';
+import { findingLabel, listFindings, listReviews } from '../review/store.ts';
 import { clipAtWord } from '../core/text.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { contractProblems, releaseEnvironmentProblem } from '../contract/validate.ts';
@@ -376,9 +376,9 @@ export interface ReviewGateArgs {
  * (the whole text stays in the report's review findings).
  */
 function withWholeClaim(db: OrbitDb, runId: string, reason: string): string {
-  const m = /^(finding (\S+) \([^)]*\) blocks delivery[^:]*): (.*)$/s.exec(reason);
+  const m = /^(finding .+? blocks delivery[^:]*): (.*)$/s.exec(reason);
   if (!m) return reason;
-  const f = listFindings(db, runId).find((x) => (x.externalId ?? x.id) === m[2] && x.claim.startsWith(m[3]!));
+  const f = listFindings(db, runId).find((x) => m[1]!.startsWith(`finding ${findingLabel(db, x)} (`) && x.claim.startsWith(m[2]!));
   return f ? `${m[1]}: ${clipAtWord(f.claim, 200)}` : reason;
 }
 

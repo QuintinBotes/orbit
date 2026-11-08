@@ -413,6 +413,12 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       const fp = str(data.fingerprint) ?? c?.fingerprint ?? null;
       return { text: `${str(data.check_id) ?? c?.check_id ?? 'check'} ${status}${exit !== null ? ` (exit ${exit})` : ''}${cand}${took}${c?.flaky ? ' (flaky)' : ''}${fp && status !== 'PASSED' ? `; fingerprint ${fp}` : ''}` };
     }
+    case 'check.fail-before-probe-started':
+      return { text: `fail-before probe of ${str(data.check_id) ?? 'a check'} started on tree ${short(str(data.tree_hash))} (attempt ${num(data.attempt) ?? '?'})` };
+    case 'check.fail-before-probe-finished': {
+      const exit = num(data.exit_code);
+      return { text: `fail-before probe of ${str(data.check_id) ?? 'a check'} ${str(data.status) ?? '?'}${exit !== null ? ` (exit ${exit})` : ''} on tree ${short(str(data.tree_hash))} (attempt ${num(data.attempt) ?? '?'})` };
+    }
     case 'evidence.report': {
       const verdict = str(data.verdict) ?? '?';
       const report = l.evidence.get(str(data.report_id) ?? '')?.report ?? {};
