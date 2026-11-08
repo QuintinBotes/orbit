@@ -56802,7 +56802,11 @@ function baselineGate(report2) {
   return result("baseline", reasons, evidence, notes, { failures: report2.failures }, !report2.complete && reasons.length === 0);
 }
 function describeLargestChanges(scope) {
-  return (scope.largest_changes ?? []).map((c) => `${c.path} (${c.lines} lines)`).join(", ");
+  const safe2 = (p) => {
+    const plain = p.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+    return plain.length > 120 ? `...${plain.slice(-117)}` : plain;
+  };
+  return (scope.largest_changes ?? []).map((c) => `${safe2(c.path)} (${c.lines} lines)`).join(", ");
 }
 function implementationScopeGate(scope, snapshot2) {
   const reasons = [];
@@ -64111,6 +64115,10 @@ function stalledRepair(ctx, cand) {
     failingChecks
   };
 }
+function attemptsLeft(ctx) {
+  const c = ctx.ledger?.state("implementation_attempts");
+  return c !== void 0 && c.used < c.hard_cap;
+}
 function blockOnSize(ctx, cand, scope, stalled) {
   const limits = ctx.snapshot.config.scheduler.hard_limits;
   const over = [
@@ -64119,7 +64127,7 @@ function blockOnSize(ctx, cand, scope, stalled) {
   ];
   const setting = over.map((o) => o.setting).join(", ") || "scheduler.hard_limits.changed_lines";
   const heavy = describeLargestChanges(scope);
-  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join("; ")}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ""}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.`;
+  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join("; ")}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ""}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; ${attemptsLeft(ctx) ? `to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.` : "no implementation attempt is left for a smaller change in this run."}`;
   decide2(ctx, { id: `dec-${ctx.run.id}-size-block-${stalled.attempt}`, kind: "repair.non-progress", summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, settings: over.map((o) => o.setting), largest_changes: scope.largest_changes ?? [] } });
   return finishRun(ctx, "BLOCKED", reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
 }

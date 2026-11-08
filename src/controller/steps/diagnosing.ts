@@ -247,6 +247,12 @@ export function stalledRepair(ctx: RunContext, cand: CandidateRecord): StalledRe
  * The same tree denied for size twice (issue #157): its weight is usually a file the task needs, such as a committed
  * generated bundle, which another repair cannot shrink. The limit is the run's frozen policy, so a new run is how it changes.
  */
+/** Whether the run could start another implementation attempt (a resume after the size block would need one). */
+function attemptsLeft(ctx: RunContext): boolean {
+  const c = ctx.ledger?.state('implementation_attempts');
+  return c !== undefined && c.used < c.hard_cap;
+}
+
 function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport, stalled: StalledRepair): Promise<StepResult> {
   const limits = ctx.snapshot.config.scheduler.hard_limits;
   const over = [
@@ -255,7 +261,7 @@ function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport,
   ];
   const setting = over.map((o) => o.setting).join(', ') || 'scheduler.hard_limits.changed_lines';
   const heavy = describeLargestChanges(scope);
-  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join('; ')}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ''}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.`;
+  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join('; ')}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ''}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; ${attemptsLeft(ctx) ? `to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.` : 'no implementation attempt is left for a smaller change in this run.'}`;
   decide(ctx, { id: `dec-${ctx.run.id}-size-block-${stalled.attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, settings: over.map((o) => o.setting), largest_changes: scope.largest_changes ?? [] } });
   return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
 }

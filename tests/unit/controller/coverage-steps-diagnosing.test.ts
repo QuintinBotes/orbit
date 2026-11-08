@@ -156,6 +156,19 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     }
   });
 
+  it('does not offer a forced resume for a smaller change when no implementation attempt is left (#157)', async () => {
+    const { cand } = await judgedTwice({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    const attempts = lab.ctx().ledger!.state('implementation_attempts');
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'implementation_attempts'", lab.runId);
+    expect(attempts.hard_cap).toBeGreaterThan(0);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    const reason = getRun(lab.db, lab.runId).outcomeReason!;
+    expect(reason).not.toContain('--force');
+    expect(reason).toContain('no implementation attempt is left for a smaller change in this run');
+  });
+
   it('the same tree denied for size again blocks on a person, naming the limit and the heaviest files (#157)', async () => {
     const { cand, adapter } = await judgedTwice({ failure: 'scope' });
     setCandidateScope(lab.db, cand.id, OVER_SIZE);
@@ -166,6 +179,7 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     expect(done.outcomeReason).toContain('over scheduler.hard_limits.changed_lines again (3010 lines against a limit of 2000)');
     expect(done.outcomeReason).toContain('The largest changes: dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
     expect(done.outcomeReason).toContain('too small for a generated file the task requires');
+    expect(done.outcomeReason).toContain(`resume with orbit resume ${lab.runId} --force`);
     expect(done.outcomeReason).not.toMatch(/[\u2013\u2014]/u);
     expect(JSON.parse(done.outcomeJson!)).toMatchObject({ frozen_policy: { setting: 'scheduler.hard_limits.changed_lines' } });
     expect(decisions('repair.non-progress')[0]?.data).toMatchObject({ attempt: 2, same_tree_as: 1, tree_hash: cand.treeHash, settings: ['scheduler.hard_limits.changed_lines'] });

@@ -268,6 +268,14 @@ describe('implementationScopeGate', () => {
     const g = implementationScopeGate(scope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/b.mjs', lines: 3000 }, { path: 'src/a.ts', lines: 10 }] }), snap());
     expect(g.reasons).toEqual(['the change is over the size limits (2 files, 3010 lines); the largest changes: dist/b.mjs (3000 lines), src/a.ts (10 lines)']);
   });
+
+  it('drops control characters from the paths it names and clips long ones (#157)', () => {
+    const long = `dist/${'x'.repeat(300)}.mjs`;
+    const g = implementationScopeGate(scope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/\u001b]0;owned\u0007b.mjs', lines: 3000 }, { path: long, lines: 10 }] }), snap());
+    expect(g.reasons[0]).toContain('dist/]0;ownedb.mjs (3000 lines)');
+    expect(g.reasons[0]).not.toMatch(/[\u0000-\u001f]/);
+    expect(g.reasons[0]).toContain(`...${long.slice(-117)} (10 lines)`);
+  });
 });
 
 describe('staticSecurityGate', () => {
