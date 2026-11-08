@@ -59,6 +59,7 @@ degraded but usable.
 | `service` | installed but not loaded | `orbit service install` reloads it. |
 | `service` | heartbeat is stale | The controller may be wedged. Read `~/.orbit/logs`, then `orbit service install` to restart it. |
 | `service` | lingering is off (Linux) | `loginctl enable-linger <user>`, or the service stops at logout. |
+| `service.launcher` | launcher entry is missing | Run the installed plugin's `bin/orbit`, or `orbit service install`. An installed bundle can replace a missing entry even when it claimed a newer version. |
 | `guard.terms` | no publish-guard terms file | Create `~/.config/publish-guard/terms.txt`, or set `guard.terms_file`. Required when `knowledge.share_globally` is true. |
 
 ## Human policy decisions in auto mode
@@ -609,6 +610,14 @@ of these settings is the fix, `orbit doctor` prints the same note.
   spent budget.
 - **The service is not picking up my change to `config.yaml`.** Runs freeze the
   policy when they start. Start a new run.
+- **The service or `/orbit:*` skills fail with `MODULE_NOT_FOUND` after a worktree was deleted.**
+  Run the installed plugin's `bin/orbit`, or `orbit service install`. An installed
+  bundle can replace the missing launcher entry regardless of its recorded version.
+  New launchers record their plugin cache directory. If the entry disappears,
+  they start the newest cached version with `dist/orbit.mjs` and name it on stderr.
+  With no cached bundle, they exit with the missing path and the fix.
+  `orbit doctor` reports this as `service.launcher`. Clones and development
+  worktrees need `ORBIT_LAUNCHER_REPOINT=1` to take over another installation.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and
   ownerless runs. Worktrees are under `~/.orbit/worktrees/`; a run that ends
   `SUCCEEDED` or `CANCELLED` removes its own (its work is in its candidate refs,

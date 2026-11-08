@@ -36,7 +36,7 @@ import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus } from '../../co
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
-import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
+import { launcherPath, orbitInstallDir, readLauncher, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
@@ -969,6 +969,15 @@ function checkGitleaks(p: Probe): DoctorCheck {
 
 // -- service ------------------------------------------------------------------
 
+function checkLauncher(p: Probe): DoctorCheck[] {
+  const path = launcherPath(p.ctx.orbitHome);
+  if (!existsSync(path)) return [];
+  const target = readLauncher(path);
+  return [target && !existsSync(target.entry)
+    ? fail('service.launcher', 'service', `launcher entry is missing: ${target.entry}`, target.entry, "run the installed plugin's bin/orbit, or orbit service install")
+    : pass('service.launcher', 'service', `launcher at ${path} has no missing entry`)];
+}
+
 async function checkService(p: Probe): Promise<DoctorCheck> {
   const { repo, ctx } = p;
   if (!repo) return warn('service', 'service', 'no repository, so no service to check', 'a repository', null);
@@ -1113,6 +1122,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   await safely('delivery', 'delivery', () => checkDelivery(p));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));
+  await safely('service.launcher', 'service', () => checkLauncher(p));
   await safely('guard.terms', 'guard', () => checkGuard(p));
 
   const counts: Record<CheckStatus, number> = { pass: 0, warn: 0, fail: 0 };

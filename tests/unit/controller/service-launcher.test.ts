@@ -3,17 +3,18 @@
  * on every update, so the launchd plist and the systemd unit point at a stable launcher under the Orbit home, and the
  * launcher (not the definition) records the current bundle and node.
  */
-import { afterEach, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installService, launcherPath, launchdPlistPath, readLauncher, refreshLauncher, renderLaunchdPlist, renderSystemdUnit, serviceSpec, systemdUnitPath, type CommandRunner } from '../../../src/controller/service.ts';
+import { installService, launcherPath, launchdPlistPath, readLauncher, refreshLauncher, renderLaunchdPlist, renderSystemdUnit, serviceSpec, systemdUnitPath, writeLauncher, type CommandRunner } from '../../../src/controller/service.ts';
 import { profileForWorker } from '../../../src/isolation/profiles.ts';
 import { snapshotFor } from '../isolation/fixtures.ts';
 
 const dirs: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -179,6 +180,117 @@ describe('a stable launcher under the Orbit home', () => {
     expect(refreshLauncher({ orbitHome, entry: a, nodePath: node2 })).toBe('updated');
     expect(readLauncher(launcherPath(orbitHome))).toEqual({ node: node2, entry: a });
     expect(refreshLauncher({ orbitHome, entry: a, nodePath: node2 })).toBe('current');
+  });
+});
+
+describe('issue #154: launcher ownership and recovery', () => {
+  function cachedBundle(cache: string, version: string): string {
+    const entry = join(cache, version, 'dist', 'orbit.mjs');
+    mkdirSync(join(entry, '..'), { recursive: true });
+    writeFileSync(entry, `console.log(JSON.stringify({ version: ${JSON.stringify(version)}, args: process.argv.slice(2) }));\n`);
+    return entry;
+  }
+
+  it.each([undefined, '0', 'true'])('refuses a newer development bundle outside a plugin cache (override: %s)', (override) => {
+    vi.stubEnv('ORBIT_LAUNCHER_REPOINT', override);
+    const h = home();
+    const orbitHome = join(h, '.orbit');
+    const installed = cachedBundle(join(h, 'plugins', 'cache', 'marketplace', 'orbit'), '0.3.1');
+    const development = bundle(join(h, '.claude', 'worktrees', 'development'), 'plugin');
+    const launcher = writeLauncher(orbitHome, { node: process.execPath, entry: installed, version: '0.3.1' });
+    const before = readFileSync(launcher, 'utf8');
+    expect(refreshLauncher({ orbitHome, entry: development, nodePath: process.execPath, version: '0.3.2' })).toBe('other-install');
+    expect(readFileSync(launcher, 'utf8')).toBe(before);
+  });
+
+  it.each(['0.3.0', '0.3.2'])('allows a development bundle at %s with ORBIT_LAUNCHER_REPOINT=1', (version) => {
+    vi.stubEnv('ORBIT_LAUNCHER_REPOINT', '1');
+    const h = home();
+    const orbitHome = join(h, '.orbit');
+    const installed = cachedBundle(join(h, 'plugins', 'cache', 'marketplace', 'orbit'), '0.3.1');
+    const development = bundle(join(h, '.claude', 'worktrees', 'development'), 'plugin');
+    writeLauncher(orbitHome, { node: process.execPath, entry: installed, version: '0.3.1' });
+    expect(refreshLauncher({ orbitHome, entry: development, nodePath: process.execPath, version })).toBe('updated');
+    expect(readLauncher(launcherPath(orbitHome))).toMatchObject({ entry: development, version });
+  });
+
+  it('lets an installed bundle replace a missing entry that claimed a newer version', () => {
+    vi.stubEnv('ORBIT_LAUNCHER_REPOINT', undefined);
+    const h = home();
+    const orbitHome = join(h, '.orbit');
+    const installed = cachedBundle(join(h, 'plugins', 'cache', 'marketplace', 'orbit'), '0.3.1');
+    const missing = join(h, '.claude', 'worktrees', 'deleted', 'plugin', 'dist', 'orbit.mjs');
+    writeLauncher(orbitHome, { node: process.execPath, entry: missing, version: '9.9.9' });
+    expect(refreshLauncher({ orbitHome, entry: installed, nodePath: process.execPath, version: '0.3.1' })).toBe('updated');
+    expect(readLauncher(launcherPath(orbitHome))).toMatchObject({ entry: installed, version: '0.3.1' });
+  });
+
+  it('refreshes an old installed launcher to record its cache even when the target is unchanged', () => {
+    const h = home();
+    const orbitHome = join(h, '.orbit');
+    const cache = join(h, 'plugins', 'cache', 'marketplace', 'orbit');
+    const entry = cachedBundle(cache, '0.3.1');
+    const launcher = writeLauncher(orbitHome, { node: process.execPath, entry, version: '0.3.1' });
+    writeFileSync(launcher, `#!/bin/sh\n# orbit-launcher v1\n# node: ${process.execPath}\n# entry: ${entry}\n# version: 0.3.1\n`);
+    expect(refreshLauncher({ orbitHome, entry, nodePath: process.execPath, version: '0.3.1' })).toBe('updated');
+    expect(readLauncher(launcher)).toMatchObject({ cacheDir: cache });
+    expect(refreshLauncher({ orbitHome, entry, nodePath: process.execPath, version: '0.3.1' })).toBe('current');
+  });
+
+  it.each([
+    ['0.9.99', '0.10.1', '0.10.11'],
+    ['1.2.99', '1.9.99', '1.10.0'],
+    ['0.99.99', '1.99.99', '2.0.0'],
+  ])('sh falls back to the newest cached version among %s, %s, %s', (a, b, newest) => {
+    const h = home();
+    const cache = join(h, "it's here", 'plugins', 'cache', 'market place', 'orbit');
+    const entry = cachedBundle(cache, '0.3.1');
+    for (const version of [newest, a, b]) cachedBundle(cache, version);
+    mkdirSync(join(cache, '99.0.0', 'dist'), { recursive: true });
+    cachedBundle(join(h, 'plugins', 'cache', 'other', 'orbit'), '100.0.0');
+    const launcher = writeLauncher(join(h, '.orbit'), { node: process.execPath, entry, version: '0.3.1' });
+    rmSync(entry);
+    const args = ['a b', "c'd", '$HOME'];
+    const result = spawnSync('sh', [launcher, ...args], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ version: newest, args });
+    expect(result.stderr.trim().split('\n')).toHaveLength(1);
+    expect(result.stderr).toContain(join(cache, newest, 'dist', 'orbit.mjs'));
+    expect(readLauncher(launcher)).toMatchObject({ cacheDir: cache });
+  });
+
+  it('sh uses a present entry even when a newer cached version exists', () => {
+    const h = home();
+    const cache = join(h, 'plugins', 'cache', 'marketplace', 'orbit');
+    const entry = cachedBundle(cache, '0.3.1');
+    cachedBundle(cache, '0.3.2');
+    const launcher = writeLauncher(join(h, '.orbit'), { node: process.execPath, entry });
+    const result = spawnSync('sh', [launcher], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ version: '0.3.1', args: [] });
+    expect(result.stderr).toBe('');
+  });
+
+  it.each([true, false])('sh exits with the missing entry and fix when no fallback exists (cached: %s)', (cached) => {
+    const h = home();
+    const entry = cached
+      ? cachedBundle(join(h, 'plugins', 'cache', 'marketplace', 'orbit'), '0.3.1')
+      : bundle(h, 'development');
+    const launcher = writeLauncher(join(h, '.orbit'), { node: process.execPath, entry });
+    rmSync(entry);
+    const result = spawnSync('sh', [launcher], { encoding: 'utf8' });
+    expect(result.status).not.toBeNull();
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain(entry);
+    expect(result.stderr).toContain("run the installed plugin's bin/orbit, or orbit service install");
+  });
+
+  it('reads an old launcher without a cache directory header', () => {
+    const h = home();
+    const launcher = join(h, 'old-launcher');
+    writeFileSync(launcher, '#!/bin/sh\n# orbit-launcher v1\n# node: /usr/bin/node\n# entry: /old/dist/orbit.mjs\n# version: 0.3.1\nexec /usr/bin/node /old/dist/orbit.mjs "$@"\n');
+    expect(readLauncher(launcher)).toEqual({ node: '/usr/bin/node', entry: '/old/dist/orbit.mjs', version: '0.3.1' });
   });
 });
 

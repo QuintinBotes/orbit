@@ -110,10 +110,23 @@ describe('Nm2: only the installed bundle may repoint the launcher', () => {
     expect(readLauncher(launcherPath(l.orbitHome))!.entry).toBe(updated);
   });
 
+  it('issue #154: honors ORBIT_LAUNCHER_REPOINT=1 from the CLI environment', async () => {
+    const l = lab();
+    prepare(l);
+    const installed = bundleAt(l, 'plugins', 'cache', 'marketplace', 'orbit', '9.9.9');
+    const development = bundleAt(l, '.claude', 'worktrees', 'development', 'plugin');
+    writeLauncher(l.orbitHome, { node, entry: installed, version: '9.9.9' });
+    await l.cli(['status', '--json'], {
+      ...darwin(l, development, runner()),
+      env: { ...process.env, HOME: l.home, ORBIT_LAUNCHER_REPOINT: '1' },
+    });
+    expect(readLauncher(launcherPath(l.orbitHome))!.entry).toBe(development);
+  });
+
   it('refreshLauncher: same entry follows a new node, another place needs a newer version, an older or unknown version is refused', () => {
     const l = lab();
     const installed = bundleAt(l, 'plugin-cache', 'orbit', '0.1.0');
-    const elsewhere = bundleAt(l, 'elsewhere', 'plugin');
+    const elsewhere = bundleAt(l, 'plugins', 'cache', 'elsewhere', 'orbit', '0.2.0');
     writeLauncher(l.orbitHome, { node, entry: installed, version: '0.1.0' });
     expect(refreshLauncher({ orbitHome: l.orbitHome, entry: elsewhere, nodePath: node, version: '0.1.0' })).toBe('other-install');
     expect(refreshLauncher({ orbitHome: l.orbitHome, entry: elsewhere, nodePath: node, version: '0.0.9' })).toBe('other-install');

@@ -77,8 +77,21 @@ per repository, running `orbit service run --repo <root>`. The label is
 | macOS | `~/Library/LaunchAgents/dev.orbit.controller.<key>.plist` | loaded with `launchctl bootstrap gui/<uid>` |
 | Linux | `~/.config/systemd/user/dev.orbit.controller.<key>.service` | `Restart=on-failure`, `KillMode=process`. Run `loginctl enable-linger <user>` or the service stops at logout. |
 
-The definition uses absolute paths for Node and the bundle, restarts only on
-failure, throttles restarts, and writes logs under `~/.orbit/logs`. Installing
+The definition starts `~/.orbit/bin/orbit`. The launcher records absolute paths
+for Node and the bundle. A command from the same installation refreshes them.
+Only a bundle under `plugins/cache/<marketplace>/orbit/<version>/` can take over
+by claiming a newer version. An installed bundle can also replace a missing
+entry, even when that entry claimed a newer version. A clone or development
+worktree needs `ORBIT_LAUNCHER_REPOINT=1` to take over another installation.
+
+The launcher records its plugin cache directory when it has one. If its entry
+is missing, it starts the newest cached version with `dist/orbit.mjs` and names
+that build on stderr. Versions are compared numerically. With no fallback, it
+exits with the missing path and the fix: run the installed plugin's `bin/orbit`,
+or `orbit service install`. `orbit doctor` also fails on a missing launcher entry.
+
+The service restarts only on failure, throttles restarts, and writes logs under
+`~/.orbit/logs`. Installing
 again reloads it. `orbit service uninstall` removes it and waits for the service
 manager to let go of the job; runs and state are untouched. A controller finishes
 its current step before it stops, so uninstall can report that the manager is
@@ -807,7 +820,7 @@ To upgrade:
    files that match, including the `-wal` and `-shm` files, with no controller running.
 3. Install the new Orbit, then run `orbit doctor`. The service definition
    starts the launcher `~/.orbit/bin/orbit`, not the bundle, and any `orbit`
-   command run from the new install repoints the launcher at it, so the service
+   command run from a new version of the same plugin repoints the launcher at it, so the service
    needs no reinstall. `orbit service status` shows the bundle the launcher runs
    and says when it is missing. A running controller keeps the old bundle until
    it restarts; `orbit service install` restarts it at once.

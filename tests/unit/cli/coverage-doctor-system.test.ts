@@ -24,7 +24,7 @@ import type { ProviderAdapter } from '../../../src/adapters/types.ts';
 import { registerController, markControllerStopped } from '../../../src/storage/controllers.ts';
 import { openDb } from '../../../src/storage/db.ts';
 import { stateDbPath } from '../../../src/controller/start.ts';
-import type { CommandRunner } from '../../../src/controller/service.ts';
+import { writeLauncher, type CommandRunner } from '../../../src/controller/service.ts';
 
 const hooks = vi.hoisted(() => ({
   config: null as null | (() => unknown),
@@ -837,6 +837,31 @@ describe('service', () => {
   const noLinger = () => {
     hooks.exec = (argv) => (argv[0] === 'loginctl' ? { exitCode: 0, signal: null, stdout: 'Linger=yes\n', stderr: '' } : undefined);
   };
+
+  it('issue #154: fails when the launcher entry is missing', async () => {
+    const w = world();
+    const entry = join(w.base, 'deleted', 'dist', 'orbit.mjs');
+    writeLauncher(join(w.home, '.orbit'), { node: process.execPath, entry });
+    const checks = await doctor(w, { config: cfg() });
+    expect(checks['service.launcher']).toMatchObject({
+      status: 'fail',
+      area: 'service',
+      fix: "run the installed plugin's bin/orbit, or orbit service install",
+    });
+    expect(checks['service.launcher']!.summary).toContain(entry);
+  });
+
+  it('issue #154: passes when the launcher entry is present', async () => {
+    const w = world();
+    const entry = join(w.base, 'orbit.mjs');
+    writeFileSync(entry, '');
+    writeLauncher(join(w.home, '.orbit'), { node: process.execPath, entry });
+    expect((await doctor(w, { config: cfg() }))['service.launcher']).toMatchObject({ status: 'pass', fix: null });
+  });
+
+  it('issue #154: omits the launcher check when no launcher exists', async () => {
+    expect((await doctor(world(), { config: cfg() }))['service.launcher']).toBeUndefined();
+  });
 
   it('has nothing to check without a repository, or on a platform without a service manager', async () => {
     const outside = world({ git: false });

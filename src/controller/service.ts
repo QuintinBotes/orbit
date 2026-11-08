@@ -17,15 +17,15 @@
  *
  * Neither definition names the bundle. The plugin's bundle sits under a versioned path that changes on every plugin
  * update, so a definition that recorded it would silently break at the next update. Both start a stable launcher,
- * ~/.orbit/bin/orbit, a three-line shell script that execs the current node on the current bundle. Install writes it,
+ * ~/.orbit/bin/orbit, a shell script that execs the current node on the current bundle. Install writes it,
  * and the CLI refreshes it when the installed bundle moves (a new node, or the next version of the same plugin, or a
- * newer version; refreshLauncher), so an update needs no reinstall. Any other copy of Orbit leaves it alone, and the
+ * newer installed version; refreshLauncher), so an update needs no reinstall. Other copies need an explicit override, and the
  * last `service uninstall` removes it. The launcher is a sibling of worktrees/, not inside any path a worker may write, and ~/.orbit is on the
  * read-deny list of every profile (isolation/profiles.ts HOME_DENY_READ).
  */
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWrite } from '../core/fsx.ts';
 import { execCapture } from '../core/exec.ts';
 import { OrbitError } from '../core/errors.ts';
@@ -101,10 +101,15 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+function pluginCacheDir(entry: string): string | undefined {
+  return /^(.*\/plugins\/cache\/[^/]+\/orbit)\/[^/]+\//.exec(resolve(entry))?.[1];
+}
+
 export function renderLauncher(target: { node: string; entry: string; version?: string }): string {
   for (const v of [target.node, target.entry]) {
     if (!isAbsolute(v) || /[\n\r\0]/.test(v)) throw new OrbitError('CONFIG_INVALID', `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
+  const cacheDir = pluginCacheDir(target.entry);
   return [
     '#!/bin/sh',
     LAUNCHER_MARK,
@@ -112,13 +117,31 @@ export function renderLauncher(target: { node: string; entry: string; version?: 
     `# node: ${target.node}`,
     `# entry: ${target.entry}`,
     ...(target.version && !/[\n\r\0]/.test(target.version) ? [`# version: ${target.version}`] : []),
-    `exec ${shQuote(target.node)} ${shQuote(target.entry)} "$@"`,
+    ...(cacheDir ? [`# cache-dir: ${cacheDir}`] : []),
+    `entry=${shQuote(target.entry)}`,
+    'if [ ! -f "$entry" ]; then',
+    ...(cacheDir ? [
+      `  cache_dir=${shQuote(cacheDir)}`,
+      '  version=$(for candidate in "$cache_dir"/*; do',
+      '    [ -f "$candidate/dist/orbit.mjs" ] && printf \'%s\\n\' "${candidate##*/}"',
+      '  done | LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)',
+      '  if [ -n "$version" ]; then',
+      '    entry="$cache_dir/$version/dist/orbit.mjs"',
+      '    printf \'orbit launcher: using %s\\n\' "$entry" >&2',
+      '  fi',
+    ] : []),
+    '  if [ ! -f "$entry" ]; then',
+    '    printf \'%s\\n\' "orbit launcher: missing entry: $entry; run the installed plugin\'s bin/orbit, or orbit service install" >&2',
+    '    exit 1',
+    '  fi',
+    'fi',
+    `exec ${shQuote(target.node)} "$entry" "$@"`,
     '',
   ].join('\n');
 }
 
 /** The node and bundle a launcher starts, or null when there is no launcher or Orbit did not write it. */
-export function readLauncher(path: string): { node: string; entry: string; version?: string } | null {
+export function readLauncher(path: string): { node: string; entry: string; version?: string; cacheDir?: string } | null {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
@@ -129,7 +152,8 @@ export function readLauncher(path: string): { node: string; entry: string; versi
   const node = /^# node: (.+)$/m.exec(text)?.[1];
   const entry = /^# entry: (.+)$/m.exec(text)?.[1];
   const version = /^# version: (.+)$/m.exec(text)?.[1];
-  return node && entry ? { node, entry, ...(version ? { version } : {}) } : null;
+  const cacheDir = /^# cache-dir: (.+)$/m.exec(text)?.[1];
+  return node && entry ? { node, entry, ...(version ? { version } : {}), ...(cacheDir ? { cacheDir } : {}) } : null;
 }
 
 /**
@@ -187,7 +211,7 @@ function sameInstallation(a: string, b: string): boolean {
  * creates a launcher (no service was installed), never touches a file Orbit did not write, and never points the
  * service at a TypeScript source entry, which only a development checkout runs.
  */
-export function refreshLauncher(input: { orbitHome: string; entry: string; nodePath: string; version?: string }): LauncherRefresh {
+export function refreshLauncher(input: { orbitHome: string; entry: string; nodePath: string; version?: string; env?: NodeJS.ProcessEnv }): LauncherRefresh {
   const path = launcherPath(input.orbitHome);
   let st;
   try {
@@ -198,13 +222,13 @@ export function refreshLauncher(input: { orbitHome: string; entry: string; nodeP
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return 'foreign';
   if (!input.entry.endsWith('.mjs') || !isAbsolute(input.entry) || !existsSync(input.entry) || !isAbsolute(input.nodePath) || !existsSync(input.nodePath)) return 'skipped';
-  // The launcher belongs to the installation that ran `service install`. A command run from any other copy of Orbit (a
-  // stale clone, a development checkout) must not repoint a user's service at it: only the installed bundle follows
-  // itself (a new node, a new version directory of the same plugin), or a copy that says it is a newer version.
-  const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || (input.version !== undefined && current.version !== undefined && newerVersion(input.version, current.version));
+  const cacheDir = pluginCacheDir(input.entry);
+  const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry)
+    || (input.env ?? process.env).ORBIT_LAUNCHER_REPOINT === '1'
+    || (cacheDir !== undefined && (!existsSync(current.entry) || (input.version !== undefined && current.version !== undefined && newerVersion(input.version, current.version))));
   if (!ours) return 'other-install';
   const version = input.version ?? current.version;
-  const unchanged = current.node === input.nodePath && current.entry === input.entry && current.version === version && (st.mode & 0o777) === 0o700;
+  const unchanged = current.node === input.nodePath && current.entry === input.entry && current.version === version && current.cacheDir === cacheDir && (st.mode & 0o777) === 0o700;
   if (unchanged) return 'current';
   writeLauncher(input.orbitHome, { node: input.nodePath, entry: input.entry, ...(version !== undefined ? { version } : {}) });
   return 'updated';
