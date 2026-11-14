@@ -42,7 +42,7 @@ function managerOptions(ctx: CliContext): ServiceManagerOptions {
  */
 export function refreshServiceLauncher(ctx: CliContext): void {
   try {
-    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath, version: ORBIT_VERSION });
+    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath, version: ORBIT_VERSION, env: ctx.env });
   } catch {
     // A launcher that cannot be refreshed is reported by `orbit service status`, which reads it.
   }
