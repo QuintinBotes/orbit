@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { shimPath } from '../../../src/evidence/check-shim.ts';
 import { markCheckRunning, planCheckRun } from '../../../src/evidence/store.ts';
+import { probeRecords } from '../../../src/evidence/fail-before.ts';
 import { acquireLease, getRun, markProgress, setPaused } from '../../../src/controller/run-store.ts';
 import { getWorker, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { heartbeatController, registerController, getController } from '../../../src/storage/controllers.ts';
@@ -92,6 +93,31 @@ describe('watchdog', () => {
     expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toEqual([]);
     expect(getRun(db, 'r1').state).toBe('PREFLIGHT');
     expect(eventTypes(db, 'r1')).not.toContain('watchdog.stall');
+  });
+
+  it('a running fail-before probe counts as activity from its start, then from its output, so a long VERIFYING step is not stalled (issue #144)', async () => {
+    const { db, clock } = setup();
+    makeRun(db, clock, 'r1', 'ctl-1', ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING']);
+    const runDir = mkdtempSync(join(tmpdir(), 'orbit-watchdog-'));
+    db.run('UPDATE runs SET policy_path = ? WHERE id = ?', join(runDir, 'policy.json'), 'r1');
+    clock.advance(DEFAULT_WATCHDOG.stallMs);
+    const records = probeRecords('fbp-probe-1');
+    const row = records.plan(db, { runId: 'r1', candidateId: 'cand-1', checkId: 'unit', kind: 'command', treeHash: 't'.repeat(40), checkConfigHash: 'c', policyHash: 'sha256:x', command: ['npm', 'test'], cwd: '/repo', isolation: 'none', limitations: [] }, clock);
+    records.running(db, row.id, 4242, clock);
+    clock.advance(MIN);
+    // Last progress 11 minutes ago, the probe started 1 minute ago and has written nothing yet.
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toEqual([]);
+    const dir = join(runDir, 'evidence', '1', 'fail-before', 'unit');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(shimPath(dir, 'intent'), JSON.stringify({ token: 'tok', checkRunId: row.id }));
+    writeFileSync(shimPath(dir, 'output'), 'ok 1 - adds\n');
+    clock.advance(DEFAULT_WATCHDOG.stallMs);
+    utimesSync(shimPath(dir, 'output'), (clock.now() - MIN) / 1000, (clock.now() - MIN) / 1000);
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toEqual([]);
+    expect(eventTypes(db, 'r1')).not.toContain('watchdog.stall');
+    // Output that stops is a stall again.
+    clock.advance(DEFAULT_WATCHDOG.stallMs);
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common })).findings).toMatchObject([{ kind: 'stalled-run', runId: 'r1' }]);
   });
 
   it('exhausts the run when the recovery budget is spent, instead of abandoning forever', async () => {
