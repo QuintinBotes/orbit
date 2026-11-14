@@ -1,18 +1,20 @@
 import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { execCapture } from '../core/exec.ts';
 import { sha256 } from '../core/hash.ts';
 import type { OrbitDb } from './db.ts';
 import { appendEvent } from './events.ts';
+import { orbitTmpRoot, privateRootProblem, workerTmpDir } from '../isolation/profiles.ts';
 import { releaseRunCheckouts } from '../recovery/release.ts';
 
 /**
  * Artifact retention (spec section 3, `retention.keep_runs_days`). A run that
  * ended longer ago than the retention period loses its artifacts: the run
- * directory `.orbit/runs/<id>/` (snapshot, evidence, worker logs, final.md)
- * and its worktrees under `<orbit home>/worktrees/<repo key>/<id>/`. The
+ * directory `.orbit/runs/<id>/` (snapshot, evidence, worker logs, final.md),
+ * its worktrees under `<orbit home>/worktrees/<repo key>/<id>/` and its
+ * workers' private temp directories under `/tmp/orbit-<uid>/`. The
  * SQLite rows stay, so `orbit status` and the statistics still know the run,
  * and the run is marked with a `run.artifacts_pruned` event, which is also
  * what makes a second pass skip it.
@@ -29,8 +31,9 @@ import { releaseRunCheckouts } from '../recovery/release.ts';
  * goes, and a run whose release keeps a checkout (a check that may still run
  * in it, work that could not be pinned, a checkout that could not be removed)
  * is skipped and reported, so its checkout is never deleted unpinned. Nothing
- * outside the two locations above is ever removed: a run whose recorded paths
- * point anywhere else is skipped and reported.
+ * outside the locations above is ever removed: a run whose recorded paths
+ * point anywhere else, or whose temp root or worker temp directory is a link or
+ * not this user's, is skipped and reported.
  */
 
 export const PRUNABLE_STATES: readonly string[] = Object.freeze(['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE', 'CANCELLED']);
@@ -48,6 +51,8 @@ export interface PruneOptions {
   orbitHome?: string;
   /** Report what would be pruned without removing anything or writing events. */
   dryRun?: boolean;
+  /** Root of the workers' private temp directories; orbitTmpRoot() by default. */
+  tmpRoot?: string;
 }
 
 export interface PrunedRun {
@@ -104,6 +109,7 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
     ARTIFACTS_PRUNED_EVENT,
   );
 
+  const tmpRoot = opts.tmpRoot ?? orbitTmpRoot();
   const result: PruneResult = { cutoff, pruned: [], skipped: [] };
   let removedWorktree = false;
   for (const row of rows) {
@@ -131,7 +137,14 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
       continue;
     }
     const worktree = join(worktreesRoot, row.id);
-    const targets = [runDir, worktree].filter((p) => isRealDirectory(p));
+    // Each worker's private temp directory holds its build state (issue #140) and lives outside the run directory.
+    const workerTmps = db.all<{ worker_dir: string }>('SELECT worker_dir FROM workers WHERE run_id = ?', row.id).filter((w) => isAbsolute(w.worker_dir)).map((w) => workerTmpDir(w.worker_dir, tmpRoot));
+    const tmpProblem = workerTmps.length === 0 ? null : (tmpRootProblem(tmpRoot) ?? workerTmps.map(workerTmpProblem).find((p) => p !== null) ?? null);
+    if (tmpProblem !== null) {
+      result.skipped.push({ runId: row.id, reason: `${tmpProblem}, so nothing of the run was removed` });
+      continue;
+    }
+    const targets = [runDir, worktree, ...workerTmps].filter((p) => isRealDirectory(p));
     if (!opts.dryRun && targets.includes(worktree)) {
       const kept = await releaseBeforePrune(db, row.id, worktree, home, opts.clock);
       if (kept !== null) {
@@ -173,6 +186,34 @@ function realOrResolved(p: string): string {
   } catch {
     return resolve(p);
   }
+}
+
+/**
+ * Why gc may not remove anything under the workers' temp root, or null when it may: lstat only, never realpath, so a
+ * link planted at the root is refused rather than followed to a directory of this user's elsewhere. A missing root holds
+ * nothing to remove.
+ */
+function tmpRootProblem(root: string): string | null {
+  let st;
+  try {
+    st = lstatSync(root);
+  } catch {
+    return null;
+  }
+  const problem = privateRootProblem(st);
+  return problem === null ? null : `the workers' temp root ${root} is not a private directory owned by this user (${problem})`;
+}
+
+/** Why a worker's temp directory may not be removed: it exists but is not a real directory of this user's. */
+function workerTmpProblem(dir: string): string | null {
+  let st;
+  try {
+    st = lstatSync(dir);
+  } catch {
+    return null;
+  }
+  const uid = process.getuid?.();
+  return st.isDirectory() && (uid === undefined || st.uid === uid) ? null : `the worker temp directory ${dir} is not a directory owned by this user`;
 }
 
 /** A directory itself, not a symlink to one: removing through a link would delete what it points at. */

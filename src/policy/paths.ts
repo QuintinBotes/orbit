@@ -128,6 +128,16 @@ export function isCaseInsensitiveFs(dir: string): boolean {
 
 const caseCache = new Map<string, boolean>();
 
+/**
+ * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same shape Claude Code uses for its own
+ * /tmp/claude-<uid>. It is short on purpose: Claude Code and srt create Unix sockets in temp directories, and a socket
+ * path over 104 bytes (macOS) fails. Only /tmp is resolved (a link on macOS): a link planted at the root itself must be
+ * seen by lstat, not followed (review of #140).
+ */
+export function orbitTmpRoot(uid: number | undefined = process.getuid?.()): string {
+  return join(canonicalize('/tmp'), uid === undefined ? 'orbit' : `orbit-${uid}`);
+}
+
 /** Repository-relative POSIX path when `abs` is `root` or below it, else null. */
 export function relativeInside(root: string, abs: string, caseInsensitive: boolean): string | null {
   const r = segments(root.slice(parse(root).root.length));
