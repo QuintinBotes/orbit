@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep development builds from taking over the installed launcher without `ORBIT_LAUNCHER_REPOINT=1`, recover missing bundles from the plugin cache, and report missing launcher entries in `orbit doctor` (#154).
 - State database migrations refuse to run while any unexpired run lease exists (#143). The error names each run and owner and explains how to proceed. The schema version stays unchanged; expired leases and fresh databases migrate as before.
 - `orbit init` warns when proposed checks come from manifests and tracked root agent docs were not read. It names `CLAUDE.md`, `AGENTS.md` and `AGENTS.override.md` when present, with the same list in `checks.unread_docs` in `--json`. `/orbit:init` relays the warning and offers to compare commands, editing the config only with the person's agreement (#138).
 - `orbit run` refuses the same goal (byte for byte, after surrounding spaces are trimmed) while a run in the same repository is unfinished, even when paused (#139). It names the existing run id and state and the status, resume and cancel commands. No run or policy snapshot is created. `BLOCKED` counts as finished. There is no override flag.
