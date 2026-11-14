@@ -74,6 +74,26 @@ describe('orbit service install, status and uninstall', () => {
     expect(unit).not.toContain(entry);
   });
 
+  it.each(['darwin', 'linux'] as const)('carries config locations from the CLI context into the %s definition and reports their names', async (platform) => {
+    const l = lab();
+    const { entry, runner } = prepare(l);
+    const env = { PATH: '/usr/bin:/bin', CLAUDE_CONFIG_DIR: '/h/.claude-alt', CODEX_HOME: '/h/.codex-alt', XDG_CONFIG_HOME: '', ANTHROPIC_API_KEY: 'sk-x', CLAUDE_CODE_OAUTH_TOKEN: 'tok-y' };
+    const r = await l.cli(['service', 'install', '--entry', entry], { platform, uid: 501, seams: { serviceRunner: runner }, env });
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain('\nlocation variables: CLAUDE_CONFIG_DIR, CODEX_HOME\n');
+    expect(r.out).not.toContain(env.CLAUDE_CONFIG_DIR);
+    const definitionPath = /^definition: (.+)$/m.exec(r.out)![1]!;
+    const definition = readFileSync(definitionPath, 'utf8');
+    expect(definition).toContain(platform === 'darwin'
+      ? '<key>CLAUDE_CONFIG_DIR</key><string>/h/.claude-alt</string>'
+      : 'Environment="CLAUDE_CONFIG_DIR=/h/.claude-alt"');
+    expect(definition).not.toMatch(/XDG_CONFIG_HOME|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|sk-x|tok-y/);
+
+    const json = await l.cli(['service', 'install', '--entry', entry, '--json'], { platform, uid: 501, seams: { serviceRunner: runner }, env });
+    expect(json.code, json.err).toBe(0);
+    expect(JSON.parse(json.out).locationVariables).toEqual(['CLAUDE_CONFIG_DIR', 'CODEX_HOME']);
+  });
+
   it('reports a service that is not running with exit code 1, like systemctl is-active', async () => {
     const l = lab();
     const { runner } = prepare(l);
