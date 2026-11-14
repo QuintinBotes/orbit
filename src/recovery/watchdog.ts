@@ -16,6 +16,7 @@ import { releaseEndedRunWorktrees } from './release.ts';
 import { enterRecovery, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
 import { findCheckDirs, stopWorker } from './reconcile.ts';
 import { shimPath } from '../evidence/check-shim.ts';
+import { probeDirs } from '../evidence/fail-before.ts';
 
 /**
  * The watchdog (spec section 4: "Publish heartbeat and last-progress
@@ -182,8 +183,8 @@ async function watchRun(opts: WatchdogOptions, cfg: WatchdogConfig, run: RunReco
   const stepStart = lastTransitionAt(db, run) ?? run.updatedAt;
   const lease = getLease(db, run.id);
   const workers = listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] });
-  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now)].filter((t): t is number => t !== null);
-  // Activity is the latest evidence of life for this run: progress recorded for it, a worker or a check still writing its log, or the step starting.
+  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now), ...probeActivity(db, run, now)].filter((t): t is number => t !== null);
+  // Activity is the latest evidence of life for this run: progress recorded for it, a worker, a check or a fail-before probe still writing its log, or the step starting.
   // The owner controller's own last_progress_at is not used: it moves when any of its runs progresses, so it would hide a stuck one.
   const lastActivity = Math.max(stepStart, run.lastProgressAt ?? 0, ...activity);
   const idle = now - lastActivity;
@@ -248,6 +249,25 @@ function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null
     } catch {
       return null;
     }
+  });
+}
+
+/** When each fail-before probe of the run that is still PLANNED or RUNNING last wrote its output, or started when it has written none yet. */
+function probeActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+  const open = db.all<{ id: string; started_at: number }>("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  if (open.length === 0) return [];
+  const dirs = probeDirs(dirname(run.policyPath));
+  return open.map((p) => {
+    let t = p.started_at;
+    const found = dirs.get(p.id);
+    if (found) {
+      try {
+        t = statSync(shimPath(found.dir, 'output')).mtimeMs;
+      } catch {
+        /* no output yet */
+      }
+    }
+    return t <= now ? t : null;
   });
 }
 
