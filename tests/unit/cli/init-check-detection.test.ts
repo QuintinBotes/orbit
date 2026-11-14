@@ -47,8 +47,9 @@ function pathWith(tools: string[], opts: { clippy?: boolean } = {}): string {
 
 interface InitJson {
   config: { status: string };
-  checks: { proposed: { id: string; ecosystem: string; command: string[]; category: string; timeout_seconds: number; reason: string }[]; not_proposed: { ecosystem: string; reason: string }[] };
+  checks: { proposed: { id: string; ecosystem: string; command: string[]; category: string; timeout_seconds: number; reason: string }[]; not_proposed: { ecosystem: string; reason: string }[]; unread_docs?: string[] };
   config_problems: string[];
+  warnings: string[];
 }
 
 const envFor = (l: Lab, PATH?: string) => ({ ...process.env, ...GIT_ENV, HOME: l.home, ORBIT_HOME: l.orbitHome, ...(PATH !== undefined ? { PATH } : {}) });
@@ -272,6 +273,65 @@ describe('init proposes checks: Rust', () => {
   });
 });
 
+describe('init proposes checks: unread agent docs', () => {
+  const files = {
+    'package.json': pkg({ scripts: { test: 'vitest run' } }),
+    'pnpm-lock.yaml': 'lockfileVersion: 9\n',
+    'src/index.ts': 'export {};\n',
+  };
+
+  it.each([
+    { docs: ['CLAUDE.md'] },
+    { docs: ['AGENTS.md'] },
+    { docs: ['AGENTS.override.md'] },
+    { docs: ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md'] },
+  ])('reports tracked root docs in JSON: $docs', async ({ docs }) => {
+    const l = repoWith({ ...files, ...Object.fromEntries(docs.map((name) => [name, 'Run pnpm test --maxWorkers=2.\n'])) });
+    const r = await init(l, ['pnpm']);
+    expect(r.json.checks.unread_docs).toEqual(docs);
+    const warning = r.json.warnings.find((w) => w.includes('init did not read'));
+    expect(warning).toContain(docs.join(', '));
+    expect(warning).toContain('manifests only');
+    expect(warning).toContain('.orbit/config.yaml');
+    expect(r.checks['unit-tests']?.command).toEqual(['pnpm', 'test']);
+  });
+
+  it('prints the unread docs warning with the proposed checks', async () => {
+    const l = repoWith({ ...files, 'CLAUDE.md': '', 'AGENTS.md': '', 'AGENTS.override.md': '' });
+    const r = await l.cli(['init'], { env: envFor(l, pathWith(['pnpm'])) });
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain('unit-tests: pnpm test');
+    expect(r.out).toContain('WARN: the proposed checks come from manifests only');
+    expect(r.out).toContain('init did not read CLAUDE.md, AGENTS.md, AGENTS.override.md');
+    expect(r.out).toContain('compare the commands documented there and edit .orbit/config.yaml');
+  });
+
+  it.each<{ name: string; docs: Record<string, string> }>([
+    { name: 'absent', docs: {} },
+    { name: 'nested', docs: { 'src/CLAUDE.md': '', 'src/AGENTS.md': '', 'src/AGENTS.override.md': '' } },
+    { name: 'other', docs: { 'README.md': '', 'claude.md': '' } },
+  ])('omits the note when root agent docs are $name', async ({ docs }) => {
+    const r = await init(repoWith({ ...files, ...docs }), ['pnpm']);
+    expect(r.json.checks).not.toHaveProperty('unread_docs');
+    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+  });
+
+  it('ignores untracked root agent docs', async () => {
+    const l = repoWith(files);
+    for (const name of ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md']) writeFileSync(join(l.repo, name), 'Run a different check.\n');
+    const r = await init(l, ['pnpm']);
+    expect(r.json.checks).not.toHaveProperty('unread_docs');
+    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+  });
+
+  it('omits the note when no checks are proposed', async () => {
+    const r = await init(repoWith({ ...files, 'CLAUDE.md': '' }), []);
+    expect(r.ids).toEqual([]);
+    expect(r.json.checks).not.toHaveProperty('unread_docs');
+    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+  });
+});
+
 describe('init proposes checks: several ecosystems, existing configs, output', () => {
   it('preserves normal text output with only the added commit advice', async () => {
     const l = repoWith({ 'src/index.ts': 'export {};\n', 'package.json': pkg({ scripts: { test: 'node --test' } }), 'package-lock.json': '{}' });
@@ -323,13 +383,14 @@ describe('init proposes checks: several ecosystems, existing configs, output', (
   });
 
   it('never touches an existing config: no proposal, same bytes', async () => {
-    const l = repoWith({ 'package.json': pkg({ scripts: { test: 'node --test' } }) });
+    const l = repoWith({ 'package.json': pkg({ scripts: { test: 'node --test' } }), 'CLAUDE.md': 'Run a different check.\n' });
     mkdirSync(join(l.repo, '.orbit'), { recursive: true });
     const mine = 'version: 1\nchecks:\n  my-check:\n    command: ["true"]\n';
     writeFileSync(join(l.repo, '.orbit', 'config.yaml'), mine);
     const r = await init(l, ['npm']);
     expect(r.json.config.status).toBe('exists');
     expect(r.json.checks).toEqual({ proposed: [], not_proposed: [] });
+    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
     expect(r.text).toBe(mine);
   });
 
