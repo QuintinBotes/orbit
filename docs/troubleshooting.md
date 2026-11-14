@@ -604,9 +604,10 @@ of these settings is the fix, `orbit doctor` prints the same note.
   repaired by guessing: the run blocks naming the question. Answer it with
   `orbit decide <run-id> <question-id> <answer>` (ids are not case-sensitive),
   then `orbit resume <run-id>`. A review repair that reproduces the tree it was
-  sent to fix ends the loop too: `BLOCKED` while a question is open, otherwise
-  `EXHAUSTED` as non-progress, and the report names that cause instead of a
-  spent budget.
+  sent to fix ends the loop too, as does one whose findings would all go to
+  repair again when no implementer report named a test for any of them:
+  `BLOCKED` while a question is open, otherwise `EXHAUSTED` as non-progress,
+  and the report names that cause instead of a spent budget.
 - **The service is not picking up my change to `config.yaml`.** Runs freeze the
   policy when they start. Start a new run.
 - **Stale or leftover state.** `orbit cancel <run-id>` works on blocked and
