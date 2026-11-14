@@ -15789,7 +15789,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref2];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve27.call(this, root, ref2);
+      let _sch = resolve28.call(this, root, ref2);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref2];
         const { schemaId } = this.opts;
@@ -15816,7 +15816,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve27(root, ref2) {
+    function resolve28(root, ref2) {
       let sch;
       while (typeof (sch = this.refs[ref2]) == "string")
         ref2 = sch;
@@ -16646,7 +16646,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve27(baseURI, relativeURI, options) {
+    function resolve28(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -17015,7 +17015,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize4,
-      resolve: resolve27,
+      resolve: resolve28,
       resolveComponent,
       equal,
       serialize: serialize3,
@@ -23360,7 +23360,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve27) => setTimeout(resolve27, ms))
+      sleep: (ms) => new Promise((resolve28) => setTimeout(resolve28, ms))
     };
   }
 });
@@ -32436,14 +32436,14 @@ var init_sandbox_runtime = __esm({
         if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where2} has an unknown version (no readable package.json), and the srt preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
         if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where2} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
         if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where2} is version ${String(pkg.version)}, and the srt preload was verified against ${SRT_VERIFIED_VERSION} only`);
-        const resolve27 = (path, what) => {
+        const resolve28 = (path, what) => {
           try {
             return realpathSync5(path);
           } catch {
             throw unavailable(`${what} ${path} is missing`);
           }
         };
-        return { node: resolve27(this.opts.nodePath ?? process.execPath, "node"), preload: resolve27(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
+        return { node: resolve28(this.opts.nodePath ?? process.execPath, "node"), preload: resolve28(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
@@ -57364,9 +57364,9 @@ async function scanBlobInChunks(repoRoot, commit, rel) {
     for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
   };
   const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv3(), stdio: ["ignore", "pipe", "ignore"] });
-  const exited = new Promise((resolve27, reject2) => {
+  const exited = new Promise((resolve28, reject2) => {
     child.once("error", reject2);
-    child.once("close", (code2) => resolve27(code2));
+    child.once("close", (code2) => resolve28(code2));
   });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
   try {
@@ -66968,8 +66968,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve27) => {
-          wedge = setTimeout(() => resolve27("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve28) => {
+          wedge = setTimeout(() => resolve28("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -67379,7 +67379,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync8, existsSync as existsSync52, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync35, readdirSync as readdirSync15, rmSync as rmSync20, rmdirSync, statSync as statSync15 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname34, isAbsolute as isAbsolute26, join as join73 } from "node:path";
+import { dirname as dirname34, isAbsolute as isAbsolute26, join as join73, resolve as resolve19 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -67413,10 +67413,14 @@ function launcherPath(orbitHome) {
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
+function pluginCacheDir(entry) {
+  return /^(.*\/plugins\/cache\/[^/]+\/orbit)\/[^/]+\//.exec(resolve19(entry))?.[1];
+}
 function renderLauncher(target) {
   for (const v of [target.node, target.entry]) {
     if (!isAbsolute26(v) || /[\n\r\0]/.test(v)) throw new OrbitError("CONFIG_INVALID", `the launcher needs absolute paths without line breaks, got ${JSON.stringify(v)}`);
   }
+  const cacheDir = pluginCacheDir(target.entry);
   return [
     "#!/bin/sh",
     LAUNCHER_MARK,
@@ -67424,7 +67428,25 @@ function renderLauncher(target) {
     `# node: ${target.node}`,
     `# entry: ${target.entry}`,
     ...target.version && !/[\n\r\0]/.test(target.version) ? [`# version: ${target.version}`] : [],
-    `exec ${shQuote(target.node)} ${shQuote(target.entry)} "$@"`,
+    ...cacheDir ? [`# cache-dir: ${cacheDir}`] : [],
+    `entry=${shQuote(target.entry)}`,
+    'if [ ! -f "$entry" ]; then',
+    ...cacheDir ? [
+      `  cache_dir=${shQuote(cacheDir)}`,
+      '  version=$(for candidate in "$cache_dir"/*; do',
+      `    [ -f "$candidate/dist/orbit.mjs" ] && printf '%s\\n' "\${candidate##*/}"`,
+      "  done | LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)",
+      '  if [ -n "$version" ]; then',
+      '    entry="$cache_dir/$version/dist/orbit.mjs"',
+      `    printf 'orbit launcher: using %s\\n' "$entry" >&2`,
+      "  fi"
+    ] : [],
+    '  if [ ! -f "$entry" ]; then',
+    `    printf '%s\\n' "orbit launcher: missing entry: $entry; run the installed plugin's bin/orbit, or orbit service install" >&2`,
+    "    exit 1",
+    "  fi",
+    "fi",
+    `exec ${shQuote(target.node)} "$entry" "$@"`,
     ""
   ].join("\n");
 }
@@ -67439,7 +67461,8 @@ function readLauncher(path) {
   const node = /^# node: (.+)$/m.exec(text2)?.[1];
   const entry = /^# entry: (.+)$/m.exec(text2)?.[1];
   const version = /^# version: (.+)$/m.exec(text2)?.[1];
-  return node && entry ? { node, entry, ...version ? { version } : {} } : null;
+  const cacheDir = /^# cache-dir: (.+)$/m.exec(text2)?.[1];
+  return node && entry ? { node, entry, ...version ? { version } : {}, ...cacheDir ? { cacheDir } : {} } : null;
 }
 function secureLauncherDir(orbitHome) {
   const uid = process.getuid?.();
@@ -67484,10 +67507,11 @@ function refreshLauncher(input) {
   const current = st.isFile() ? readLauncher(path) : null;
   if (!current) return "foreign";
   if (!input.entry.endsWith(".mjs") || !isAbsolute26(input.entry) || !existsSync52(input.entry) || !isAbsolute26(input.nodePath) || !existsSync52(input.nodePath)) return "skipped";
-  const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version);
+  const cacheDir = pluginCacheDir(input.entry);
+  const ours = current.entry === input.entry || sameInstallation(current.entry, input.entry) || (input.env ?? process.env).ORBIT_LAUNCHER_REPOINT === "1" || cacheDir !== void 0 && (!existsSync52(current.entry) || input.version !== void 0 && current.version !== void 0 && newerVersion(input.version, current.version));
   if (!ours) return "other-install";
   const version = input.version ?? current.version;
-  const unchanged = current.node === input.nodePath && current.entry === input.entry && current.version === version && (st.mode & 511) === 448;
+  const unchanged = current.node === input.nodePath && current.entry === input.entry && current.version === version && current.cacheDir === cacheDir && (st.mode & 511) === 448;
   if (unchanged) return "current";
   writeLauncher(input.orbitHome, { node: input.nodePath, entry: input.entry, ...version !== void 0 ? { version } : {} });
   return "updated";
@@ -67935,7 +67959,7 @@ var init_drive = __esm({
 });
 
 // src/cli/commands/notify.ts
-import { dirname as dirname36, resolve as resolve19 } from "node:path";
+import { dirname as dirname36, resolve as resolve20 } from "node:path";
 function depsOf(ctx) {
   return resolveNotifyDeps({ hostEnv: ctx.env, ...ctx.seams.notify ? { notify: ctx.seams.notify } : {} });
 }
@@ -67943,7 +67967,7 @@ async function notifyTestCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const policy = args.str("policy");
-  const config = loadConfig(repo, policy ? resolve19(ctx.cwd, policy) : void 0);
+  const config = loadConfig(repo, policy ? resolve20(ctx.cwd, policy) : void 0);
   const outcomes = await sendTestNotification({ config, repoRoot: repo, deps: depsOf(ctx) });
   if (args.bool("json")) json(ctx.io, { outcomes });
   else for (const o of outcomes) line(ctx.io, `${o.channel}: ${o.status} (${o.detail})`);
@@ -67993,7 +68017,7 @@ var init_notify2 = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join75, resolve as resolve20 } from "node:path";
+import { join as join75, resolve as resolve21 } from "node:path";
 async function pauseCommand(args, ctx) {
   const [id] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
@@ -68072,7 +68096,7 @@ async function resumeCommand(args, ctx) {
     if (foreground) {
       if (!args.bool("json")) line(ctx.io, `run ${after.id}: ${notes.join(", ")}; driving it in the foreground (Ctrl-C pauses it)`);
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve20(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve21(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -68419,7 +68443,7 @@ function managerOptions(ctx) {
 }
 function refreshServiceLauncher(ctx) {
   try {
-    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath, version: ORBIT_VERSION });
+    refreshLauncher({ orbitHome: ctx.orbitHome, entry: ctx.entry, nodePath: process.execPath, version: ORBIT_VERSION, env: ctx.env });
   } catch {
   }
 }
@@ -68745,7 +68769,7 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync56, lstatSync as lstatSync13, readdirSync as readdirSync16, readFileSync as readFileSync37 } from "node:fs";
-import { basename as basename20, join as join78, posix as posix6, resolve as resolve21 } from "node:path";
+import { basename as basename20, join as join78, posix as posix6, resolve as resolve22 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
@@ -68821,7 +68845,7 @@ function mayRunTests(check) {
 function dotnetTestsCheck(input) {
   const { config, repo, files } = input;
   const atRisk = Object.values(config.checks).filter(
-    (c) => c.kind === "command" && onOneProcessor(c.env) && mayRunTests(c) && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve21(repo, c.cwd)] }).includes("dotnet")
+    (c) => c.kind === "command" && onOneProcessor(c.env) && mayRunTests(c) && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve22(repo, c.cwd)] }).includes("dotnet")
   );
   if (atRisk.length === 0) return [];
   const projects = xunitBefore28(repo, files);
@@ -69150,7 +69174,7 @@ var init_doctor_dotnet = __esm({
     MSBUILD_FILE = /\.(?:cs|fs|vb)?proj$/i;
     SDK_ATTRIBUTE = /\bSdk\s*=\s*"([^"]*\/[^"]*)"/gi;
     SDK_ELEMENT = /<Sdk\b([^>]*)>/gi;
-    checkUsesDotnet = (repo, c) => c.kind === "command" && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve21(repo, c.cwd)] }).includes("dotnet");
+    checkUsesDotnet = (repo, c) => c.kind === "command" && detectToolchains({ command: c.command, shell: c.shell, roots: [repo, resolve22(repo, c.cwd)] }).includes("dotnet");
     AUDIT_PROPERTY = /<(NuGetAudit|TreatWarningsAsErrors|MSBuildTreatWarningsAsErrors|WarningsAsErrors|MSBuildWarningsAsErrors|NoWarn|WarningsNotAsErrors|MSBuildWarningsNotAsErrors)\b([^>]*)>([^<]*)<\/\1\s*>/g;
     CONDITION = /\bCondition\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
     DEFERS = /\$\(\s*NuGetAudit\s*\)/i;
@@ -69170,7 +69194,7 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync57, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync9, realpathSync as realpathSync21, writeFileSync as writeFileSync11 } from "node:fs";
 import { tmpdir as tmpdir14 } from "node:os";
-import { basename as basename21, dirname as dirname38, isAbsolute as isAbsolute27, join as join79, resolve as resolve22 } from "node:path";
+import { basename as basename21, dirname as dirname38, isAbsolute as isAbsolute27, join as join79, resolve as resolve23 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -69281,7 +69305,7 @@ async function checkSandboxCheck(input) {
     const named2 = label ? { label } : {};
     const id2 = label ?? check.id;
     const loads = formats2 ? formatLoadsProject(check) : null;
-    const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve22(repo, check.cwd), repo);
+    const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve23(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
     const host = inProcess || !loads ? null : `runs "${loads.shown}", which loads the project through a build host whose named pipe .NET binds under /tmp`;
     const reads = !formats2 || folderForm ? null : formatReadsFolder(check);
@@ -69316,7 +69340,7 @@ async function checkSandboxCheck(input) {
     return false;
   };
   for (const check of checks) {
-    const ids = detectToolchains({ command: check.command, shell: check.shell, roots: repo ? [repo, resolve22(repo, check.cwd)] : [] });
+    const ids = detectToolchains({ command: check.command, shell: check.shell, roots: repo ? [repo, resolve23(repo, check.cwd)] : [] });
     if (repo) {
       for (const id2 of ids) {
         used.add(id2);
@@ -69337,8 +69361,8 @@ async function checkSandboxCheck(input) {
       details.push(`${check.id}: not started (${word ? `shell builtin "${word}"` : "no command"})`);
       continue;
     }
-    const cwd = repo ? resolve22(repo, check.cwd) : process.cwd();
-    const found = word.includes("/") ? which(isAbsolute27(word) ? word : resolve22(cwd, word), input.env.PATH) : which(word, input.env.PATH);
+    const cwd = repo ? resolve23(repo, check.cwd) : process.cwd();
+    const found = word.includes("/") ? which(isAbsolute27(word) ? word : resolve23(cwd, word), input.env.PATH) : which(word, input.env.PATH);
     if (!found) {
       details.push(`${check.id}: not started ("${word}" was not found; see the checks entry)`);
       continue;
@@ -69349,7 +69373,7 @@ async function checkSandboxCheck(input) {
       continue;
     }
     started++;
-    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename21(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve22(repo, check.cwd) : null, null, msbuildFix(check));
+    const out = await probeOrRefuse(probeInput, check, exe, PROBE_ARGS[basename21(exe)] ?? DEFAULT_PROBE_ARGS, repo ? resolve23(repo, check.cwd) : null, null, msbuildFix(check));
     details.push(`${check.id}: ${out.detail}`);
     if (out.kind === "refused") refused.push({ check, failure: out.failure, ...out.fix ? { fix: out.fix } : {}, ...out.msbuild ? { msbuild: out.msbuild } : {} });
   }
@@ -69574,10 +69598,10 @@ var init_doctor_workers = __esm({
 
 // src/cli/policy-file.ts
 import { existsSync as existsSync58 } from "node:fs";
-import { resolve as resolve23 } from "node:path";
+import { resolve as resolve24 } from "node:path";
 function explicitPolicyPath(cwd, policy) {
   if (policy === void 0) return void 0;
-  const path = resolve23(cwd, policy);
+  const path = resolve24(cwd, policy);
   if (!existsSync58(path)) throw new OrbitError("NOT_FOUND", `policy file ${path} does not exist; check the --policy path`);
   return path;
 }
@@ -69598,7 +69622,7 @@ import { accessSync as accessSync4, constants as constants6, existsSync as exist
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir15 } from "node:os";
-import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join80, resolve as resolve24, sep as sep17 } from "node:path";
+import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join80, resolve as resolve25, sep as sep17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -69608,7 +69632,7 @@ function which2(cmd, env, cwd = process.cwd()) {
     }
   };
   if (cmd.includes("/")) {
-    const p = isAbsolute28(cmd) ? cmd : resolve24(cwd, cmd);
+    const p = isAbsolute28(cmd) ? cmd : resolve25(cwd, cmd);
     return ok(p) ? p : null;
   }
   for (const dir of (env.PATH ?? "").split(delimiter5)) {
@@ -69783,7 +69807,7 @@ function checkWord2(check) {
 }
 function installMayCreate(word, cwd, repo, config) {
   if (!repo || !config.dependencies.install_command?.length || isAbsolute28(word) || !word.includes("/")) return false;
-  const target = resolve24(cwd, word);
+  const target = resolve25(cwd, word);
   return target.startsWith(repo.endsWith(sep17) ? repo : repo + sep17);
 }
 function checkConfiguredChecks(p) {
@@ -69793,7 +69817,7 @@ function checkConfiguredChecks(p) {
   const details = [];
   let status2 = "pass";
   for (const c of entries) {
-    const cwd = repo ? resolve24(repo, c.cwd) : ctx.cwd;
+    const cwd = repo ? resolve25(repo, c.cwd) : ctx.cwd;
     const word = checkWord2(c);
     const bump = (s) => {
       if (s === "fail" || s === "warn" && status2 === "pass") status2 = s;
@@ -70291,6 +70315,12 @@ function checkGitleaks(p) {
   const found = which2("gitleaks", p.ctx.env);
   return found ? pass("gitleaks", "security", `gitleaks at ${found} (the secret scan uses Orbit's trusted configuration)`) : warn2("gitleaks", "security", "gitleaks is not installed; Orbit's built-in secret patterns are used and the evidence says so", "the gitleaks executable (optional)", "install gitleaks for a stronger secret scan");
 }
+function checkLauncher(p) {
+  const path = launcherPath(p.ctx.orbitHome);
+  if (!existsSync59(path)) return [];
+  const target = readLauncher(path);
+  return [target && !existsSync59(target.entry) ? fail2("service.launcher", "service", `launcher entry is missing: ${target.entry}`, target.entry, "run the installed plugin's bin/orbit, or orbit service install") : pass("service.launcher", "service", `launcher at ${path} has no missing entry`)];
+}
 async function checkService(p) {
   const { repo, ctx } = p;
   if (!repo) return warn2("service", "service", "no repository, so no service to check", "a repository", null);
@@ -70353,7 +70383,7 @@ async function runDoctor(ctx, opts) {
   let config = defaultConfig();
   let configLoaded = false;
   let configError2 = null;
-  const policyPath = opts.policy ? resolve24(ctx.cwd, opts.policy) : void 0;
+  const policyPath = opts.policy ? resolve25(ctx.cwd, opts.policy) : void 0;
   if (repo) {
     try {
       config = loadCommandPolicy(repo, ctx.cwd, opts.policy);
@@ -70425,6 +70455,7 @@ async function runDoctor(ctx, opts) {
   await safely("delivery", "delivery", () => checkDelivery(p));
   await safely("gitleaks", "security", () => checkGitleaks(p));
   await safely("service", "service", () => checkService(p));
+  await safely("service.launcher", "service", () => checkLauncher(p));
   await safely("guard.terms", "guard", () => checkGuard(p));
   const counts = { pass: 0, warn: 0, fail: 0 };
   for (const c of checks) counts[c.status]++;
@@ -71786,14 +71817,14 @@ async function checkRunnerCommand(rawArgs, ctx) {
   }
   mkdirSync26(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve27) => {
+  return new Promise((resolve28) => {
     const child = spawn6(process.execPath, [shim, checkDir2], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve27(EXIT.FAILURE);
+      resolve28(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve27(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve28(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -71914,7 +71945,7 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync63, mkdirSync as mkdirSync27, readFileSync as readFileSync41, statSync as statSync17 } from "node:fs";
-import { basename as basename24, isAbsolute as isAbsolute30, join as join83, relative as relative11, resolve as resolve25 } from "node:path";
+import { basename as basename24, isAbsolute as isAbsolute30, join as join83, relative as relative11, resolve as resolve26 } from "node:path";
 function knowledgePath(ctx, repo, global) {
   return global ? join83(ctx.orbitHome, "knowledge.sqlite") : join83(repo, ".orbit", "knowledge.sqlite");
 }
@@ -71989,9 +72020,9 @@ async function learnExportCommand(args, ctx) {
     const doc = JSON.stringify(store.exportJsonLd(), null, 2);
     const out = args.str("out");
     if (out) {
-      atomicWrite(resolve25(ctx.cwd, out), `${doc}
+      atomicWrite(resolve26(ctx.cwd, out), `${doc}
 `);
-      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve25(ctx.cwd, out)}`);
+      line(ctx.io, `exported ${store.count()} lesson(s) as JSON-LD to ${resolve26(ctx.cwd, out)}`);
     } else ctx.io.out(`${doc}
 `);
     return EXIT.OK;
@@ -72030,7 +72061,7 @@ async function readSource(ctx, repo, ref2, label) {
     }
     return { kind: "url", ref: ref2, content: Buffer.concat(chunks).toString("utf8") };
   }
-  const path = resolve25(ctx.cwd, ref2);
+  const path = resolve26(ctx.cwd, ref2);
   if (!existsSync63(path)) throw new OrbitError("NOT_FOUND", `${path} does not exist`);
   const st = statSync17(path);
   if (!st.isFile()) throw new OrbitError("SCHEMA_INVALID", `${path} is not a regular file`);
@@ -72077,7 +72108,7 @@ async function learnIngestCommand(args, ctx) {
   const prepared = args.str("curator-output");
   if (prepared) {
     try {
-      output = JSON.parse(readFileSync41(resolve25(ctx.cwd, prepared), "utf8"));
+      output = JSON.parse(readFileSync41(resolve26(ctx.cwd, prepared), "utf8"));
     } catch (err) {
       throw new OrbitError("SCHEMA_INVALID", `${prepared} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
     }
@@ -72195,7 +72226,7 @@ async function learnEvalCommand(args, ctx) {
       if (metricsFile) {
         let m;
         try {
-          m = JSON.parse(readFileSync41(resolve25(ctx.cwd, metricsFile), "utf8"));
+          m = JSON.parse(readFileSync41(resolve26(ctx.cwd, metricsFile), "utf8"));
         } catch (err) {
           throw new OrbitError("SCHEMA_INVALID", `${metricsFile} is not readable JSON: ${err instanceof Error ? oneLine(err.message, 120) : "error"}`);
         }
@@ -72932,7 +72963,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve26 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -72997,7 +73028,7 @@ async function repairCommand(args, ctx) {
         line(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve26(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve27(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
