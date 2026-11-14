@@ -491,6 +491,7 @@ function toCheckRun(r: ProbeRow): CheckRunRecord {
     excerpt: r.excerpt,
     artifacts: [],
     limitations: [],
+    checkout: null,
     startedAt: r.started_at,
     endedAt: r.ended_at,
   };

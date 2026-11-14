@@ -200,6 +200,8 @@ export interface CheckRunRecord {
   artifacts: CheckResult['artifacts'];
   /** Limits the isolation provider reported for this run, kept in the artifacts column's sibling meta. */
   limitations: string[];
+  /** The identity of the checkout a checkout-bound check ran in (evidence/git.ts checkoutId), kept beside the limitations; null for any other. */
+  checkout: string | null;
   startedAt: number;
   endedAt: number | null;
 }
@@ -232,10 +234,11 @@ interface CheckRunRow {
   ended_at: number | null;
 }
 
-// artifacts_json holds {artifacts, limitations}: the table has no column for the isolation limitations, and they belong with the result.
+// artifacts_json holds {artifacts, limitations, checkout}: the table has no column for the isolation limitations or the checkout, and they belong with the result.
 interface ArtifactsBlob {
   artifacts: CheckResult['artifacts'];
   limitations: string[];
+  checkout?: string;
 }
 
 function toCheckRun(r: CheckRunRow): CheckRunRecord {
@@ -265,6 +268,7 @@ function toCheckRun(r: CheckRunRow): CheckRunRecord {
     excerpt: r.excerpt,
     artifacts: blob.artifacts ?? [],
     limitations: blob.limitations ?? [],
+    checkout: blob.checkout ?? null,
     startedAt: r.started_at,
     endedAt: r.ended_at,
   };
@@ -283,6 +287,9 @@ export interface NewCheckRun {
   isolation: string;
   limitations: readonly string[];
   rerunOf?: string | null;
+  checkout?: string | null;
+  /** Plan it even when the run has ended (never once its cancellation is requested): `orbit verify` installs in its own checkout. */
+  afterEnd?: boolean;
 }
 
 /** Persist the intent to run a check. Must commit before the process is started. */
@@ -292,7 +299,7 @@ export function planCheckRun(db: OrbitDb, input: NewCheckRun, clock: Clock): Che
     // New work for a cancelled or ended run is refused in the same transaction as the insert, like planWorker.
     const run = db.get<{ cancel_requested: number; state: string }>('SELECT cancel_requested, state FROM runs WHERE id = ?', input.runId);
     if (!run) throw new OrbitError('NOT_FOUND', `no run ${input.runId}`);
-    if (run.cancel_requested === 1 || TERMINAL_STATES.has(run.state as RunState)) {
+    if (run.cancel_requested === 1 || (!input.afterEnd && TERMINAL_STATES.has(run.state as RunState))) {
       throw new OrbitError('CANCELLED', `run ${input.runId} is ${run.cancel_requested === 1 ? 'cancelled' : run.state}; no new check starts`, { runId: input.runId, checkId: input.checkId });
     }
     const id = newId('chk');
@@ -311,7 +318,7 @@ export function planCheckRun(db: OrbitDb, input: NewCheckRun, clock: Clock): Che
       input.cwd,
       input.isolation,
       input.rerunOf ?? null,
-      JSON.stringify({ artifacts: [], limitations: [...input.limitations] } satisfies ArtifactsBlob),
+      JSON.stringify({ artifacts: [], limitations: [...input.limitations], ...(input.checkout ? { checkout: input.checkout } : {}) } satisfies ArtifactsBlob),
       now,
     );
     appendEvent(db, input.runId, 'check.planned', 'controller', { check_run_id: id, check_id: input.checkId, candidate_id: input.candidateId, rerun_of: input.rerunOf ?? null }, now);
@@ -358,7 +365,7 @@ export function finishCheckRun(db: OrbitDb, id: string, f: FinishedCheck): Check
       f.logSha256,
       f.fingerprint,
       f.excerpt,
-      JSON.stringify({ artifacts: f.artifacts, limitations: cur.limitations } satisfies ArtifactsBlob),
+      JSON.stringify({ artifacts: f.artifacts, limitations: cur.limitations, ...(cur.checkout ? { checkout: cur.checkout } : {}) } satisfies ArtifactsBlob),
       f.endedAt,
       id,
     );
