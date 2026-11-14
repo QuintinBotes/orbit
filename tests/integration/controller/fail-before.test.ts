@@ -150,6 +150,10 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
       ['unit', 1, 'FAILED'],
       ['unit', 2, 'FAILED'],
     ]);
+    // The probe's attempts are on the timeline, so a long quiet VERIFYING step shows what is running (issue #144).
+    const tree = listProbeAttempts(l.db(), run.id)[0]!.probeTree.slice(0, 12);
+    const probeLines = buildTimeline(l.db(), getRun(l.db(), run.id)).entries.filter((e) => e.kind.startsWith('check.fail-before-probe-')).map((e) => e.text);
+    expect(probeLines).toEqual([1, 2].flatMap((n) => [`fail-before probe of unit started on tree ${tree} (attempt ${n})`, `fail-before probe of unit FAILED (exit 1) on tree ${tree} (attempt ${n})`]));
     expect(l.db().all('SELECT * FROM failures WHERE run_id = ?', run.id)).toEqual([]);
     expectProbesApart(l, run.id);
     // The review packet carries the probe log's failing lines, says an import failure of the new function counts, and

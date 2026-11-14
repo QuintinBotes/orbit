@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isOrbitError } from '../../../src/core/errors.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { resolveFindings } from '../../../src/review/resolve.ts';
-import { getFinding, getReview, listFindings, listReviews, loadResolverState, persistResolution, recordReview, updateFindingStatus } from '../../../src/review/store.ts';
+import { findingLabel, getFinding, getReview, listFindings, listReviews, loadResolverState, persistResolution, recordReview, updateFindingStatus } from '../../../src/review/store.ts';
 import { assertReviewGate, findStaleReviews, invalidateStaleReviews, isReviewCurrent, reviewGate } from '../../../src/review/stale.ts';
 import { TREE_A, TREE_B, candidateOf, dbFixture, evidence, ingested, snapshotOf, snapshotWithSecurity } from './fixtures.ts';
 
@@ -96,7 +96,7 @@ describe('reviewGate: policy exceptions are judged at gate time', () => {
     const res = gateAt(T0 + 2 * HOUR);
     expect(res.ok).toBe(false);
     expect(getFinding(db, findingId)!.status).toBe('excepted');
-    expect(res.reasons.join(' ')).toMatch(/SEC-1 \(high, open\) blocks delivery \(its policy exception has expired or no longer covers it\)/);
+    expect(res.reasons.join(' ')).toMatch(/SEC-1 \(review 1\) \(high, open\) blocks delivery \(its policy exception has expired or no longer covers it\)/);
     expect(res.reasons.join(' ')).toMatch(/1 of its finding\(s\) are unresolved/);
   });
 
@@ -157,7 +157,7 @@ describe('reviewGate', () => {
     recordReview(db, mk({ id: 'rev-2', provider: 'claude' }), clock);
     const res = gate(db, TREE_A, 'someone-else');
     expect(res.ok).toBe(false);
-    expect(res.reasons.join(' ')).toContain('1 of its finding(s) are unresolved (SEC-1 open)');
+    expect(res.reasons.join(' ')).toContain('1 of its finding(s) are unresolved (SEC-1 (review 1) open)');
   });
 
   it('clears a REPAIR_REQUIRED review once every finding is closed by recorded evidence', () => {
@@ -182,6 +182,20 @@ describe('reviewGate', () => {
     expect(gate(other.db).reasons[0]).toContain('BLOCK with no findings to resolve');
   });
 
+  it('labels each finding with its review round, so a carried finding and a current one with the same id read as two (issue #144)', () => {
+    const { db, clock, runDir } = dbFixture();
+    recordReview(db, mk({ verdict: 'REPAIR_REQUIRED', findings: [ingested()] }), clock);
+    const s1 = loadResolverState(db, 'run-1', TREE_A);
+    persistResolution(db, runDir, 'run-1', resolveFindings({ ...s1, snapshot: snap, treeHash: TREE_A, evidence: [evidence({ findingId: s1.findings[0]!.id, verdict: 'confirms', status: 'FAILED' })] }), clock);
+    invalidateStaleReviews(db, { runId: 'run-1', runDir, current: { treeHash: TREE_B } }, clock);
+    recordReview(db, mk({ id: 'rev-2', treeHash: TREE_B, round: 2, provider: 'claude', verdict: 'REPAIR_REQUIRED', findings: [ingested({ claim: 'Import omits tenant scope.' })] }), clock);
+    const reasons = gate(db, TREE_B, 'claude-impl').reasons;
+    expect(reasons).toContain('claude review rev-2 is REPAIR_REQUIRED and 1 of its finding(s) are unresolved (SEC-1 (review 2) open)');
+    expect(reasons).toContain('finding SEC-1 (review 1) (high, accepted) blocks delivery: Export omits tenant scope.');
+    expect(reasons).toContain('finding SEC-1 (review 2) (high, open) blocks delivery: Import omits tenant scope.');
+    expect(listFindings(db, 'run-1').map((f) => findingLabel(db, f))).toEqual(['SEC-1 (review 1)', 'SEC-1 (review 2)']);
+  });
+
   it('is stopped by an unresolved blocking finding carried from an older tree', () => {
     const { db, clock, runDir } = dbFixture();
     recordReview(db, mk({ verdict: 'REPAIR_REQUIRED', findings: [ingested()] }), clock);
@@ -191,7 +205,7 @@ describe('reviewGate', () => {
     recordReview(db, mk({ id: 'rev-2', treeHash: TREE_B, provider: 'claude' }), clock);
     const res = gate(db, TREE_B, 'claude-impl');
     expect(res.ok).toBe(false);
-    expect(res.reasons.join(' ')).toContain('SEC-1 (high, accepted) blocks delivery');
+    expect(res.reasons.join(' ')).toContain('SEC-1 (review 1) (high, accepted) blocks delivery');
 
     // Evidence on the new tree that the claim no longer holds resolves it, and the tree clears.
     const s2 = loadResolverState(db, 'run-1', TREE_B);

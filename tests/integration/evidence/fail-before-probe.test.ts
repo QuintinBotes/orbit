@@ -223,7 +223,11 @@ describe('closeInterruptedProbes', () => {
     const [closed] = listProbeAttempts(e.run.db, e.run.runId);
     expect(closed).toMatchObject({ id: row.id, status: 'CANCELLED' });
     expect(e.run.db.get<{ excerpt: string }>('SELECT excerpt FROM fail_before_probes WHERE id = ?', row.id)?.excerpt).toMatch(/^interrupted/);
+    // Closed by recovery, it still has its finished event, once, so the timeline does not show a probe left running.
+    const finished = () => e.run.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'check.fail-before-probe-finished'", e.run.runId);
+    expect(finished().map((r) => JSON.parse(r.data_json).status)).toEqual(['CANCELLED']);
     expect(await closeInterruptedProbes(e.run.db, e.run.runDir, e.run.runId, systemClock)).toEqual({ closed: [], kept: [] });
+    expect(finished()).toHaveLength(1);
   }, 60_000);
 
   it('keeps an attempt open, and the probe neither runs nor touches its checkout, while its shim may still run', async () => {
