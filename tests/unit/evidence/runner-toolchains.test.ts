@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { planInstall } from '../../../src/evidence/baseline.ts';
-import { candidateSubject, checkEnv, checkToolchains, INSTALL_CHECK_ID, runCheckSet, runChecks } from '../../../src/evidence/runner.ts';
+import { candidateSubject, checkEnv, checkToolchains, INSTALL_CHECK_ID, runCheckSet, runChecks, WORKTREE_INSTALL_IDS } from '../../../src/evidence/runner.ts';
 import { NUGET_AUDIT_LIMITATION, toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { checkDef, nodeCheck } from './fixtures.ts';
@@ -114,6 +114,16 @@ describe('the runner and toolchain profiles', () => {
     expect(r!.status).toBe('PASSED');
     expect(other.isolation.profiles[0]!.writablePaths).toContain(join(other.cacheRoot, 'gomod'));
     expect(printed(r!.logPath).GOMODCACHE).toBe(join(other.cacheRoot, 'gomod'));
+  });
+
+  // Issue #132: the install PREFLIGHT runs in the implementer's worktree is the same install under its own ids.
+  it('gives the worktree install the same writable caches as the baseline install', async () => {
+    const { ctx, cacheRoot, e } = await goEnv([]);
+    const layout = (id: string) => checkToolchains(ctx, nodeCheck(id, PRINT_ENV), e.checkoutDir, { toolchainsDir: '/s' }, '/t');
+    for (const id of Object.values(WORKTREE_INSTALL_IDS)) {
+      expect(layout(id).writable).toContain(join(cacheRoot, 'gomod'));
+      expect(layout(id)).toEqual(layout(INSTALL_CHECK_ID));
+    }
   });
 
   it('lets the check\'s own env override every toolchain variable', async () => {

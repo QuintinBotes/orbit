@@ -16,7 +16,7 @@ import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from './candidate.ts';
 import { activeChecksIn, activeChecksReason } from './active-checks.ts';
 import { resolveCommit, treeOf } from './git.ts';
-import { assertRunPolicy, baselineSubject, candidateSubject, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runCheckSet, type CheckSubject, type RunnerContext } from './runner.ts';
+import { assertRunPolicy, baselineSubject, candidateSubject, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, runCheckSet, WORKTREE_INSTALL_IDS, worktreeInstallSubject, type CheckSubject, type RunnerContext } from './runner.ts';
 import { isFinalCheckStatus, listCheckRuns, recordFailure } from './store.ts';
 import type { EnvironmentSignal } from './environment-failure.ts';
 import type { Candidate, CheckResult, CheckStatus } from './types.ts';
@@ -117,9 +117,10 @@ export interface InstallOutcome {
 /**
  * Install dependencies into `ctx.checkoutDir` from the existing lockfile,
  * inside isolation with registry-only network. Bound to `candidate` when
- * given (a candidate checkout), otherwise to the base revision tree.
+ * given (a candidate checkout), to `worktreeTree` for the implementer's
+ * worktree (under ids of its own), otherwise to the base revision tree.
  */
-export async function installDependencies(ctx: RunnerContext & { baseTree?: string; candidate?: Candidate; registryHosts?: readonly string[] }): Promise<InstallOutcome> {
+export async function installDependencies(ctx: RunnerContext & { baseTree?: string; worktreeTree?: string; candidate?: Candidate; registryHosts?: readonly string[] }): Promise<InstallOutcome> {
   const plan = planInstall(ctx.snapshot, ctx.checkoutDir, { registryHosts: ctx.registryHosts });
   if (plan.skip) {
     // Nothing to install, but a candidate's lockfile can still bring in what the audit policy forbids.
@@ -127,19 +128,21 @@ export async function installDependencies(ctx: RunnerContext & { baseTree?: stri
     if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results: [], audit };
     return { skipped: true, reason: plan.reason, ok: false, results: [], audit };
   }
-  const definitions = { ...ctx.definitions, ...Object.fromEntries(plan.definitions.map((d) => [d.id, d])) };
+  const steps = ctx.worktreeTree && !ctx.candidate ? plan.definitions.map((d) => ({ ...d, id: WORKTREE_INSTALL_IDS[d.id]! })) : plan.definitions;
+  const definitions = { ...ctx.definitions, ...Object.fromEntries(steps.map((d) => [d.id, d])) };
   let subject: CheckSubject;
   if (ctx.candidate) subject = { ...candidateSubject(ctx.runDir, ctx.candidate), source: 'install' };
+  else if (ctx.worktreeTree) subject = worktreeInstallSubject(ctx.runDir, ctx.worktreeTree);
   else if (ctx.baseTree) subject = baselineSubject(ctx.runDir, ctx.baseTree, 'install');
   else throw new OrbitError('INTERNAL', 'installDependencies needs a candidate or a base tree to bind to');
   const results: CheckResult[] = [];
-  for (const def of plan.definitions) {
+  for (const def of steps) {
     const [r] = await runCheckSet({ ...ctx, definitions }, subject, [def]);
     if (!r) break; // cancelled before it started
     results.push(r);
     if (r.status !== 'PASSED') break; // the allowlisted rebuild is pointless after a failed install
   }
-  const ok = results.length === plan.definitions.length && results.every((r) => r.status === 'PASSED');
+  const ok = results.length === steps.length && results.every((r) => r.status === 'PASSED');
   if (!ok || !ctx.candidate) return { skipped: false, reason: null, ok, results };
   const audit = await auditCandidate({ ...ctx, candidate: ctx.candidate });
   if (audit && audit.blocking.length > 0) return { skipped: false, reason: audit.summary, ok: false, results, audit };

@@ -311,6 +311,11 @@ describe('contract and policy helpers', () => {
     expect(ro).toContain('trusted checks (run by the controller, not you): none');
     const rw = policySummary(ctx, { readOnly: false });
     expect(rw).not.toContain('read-only');
+    // Issue #132: shell writes into files may be refused, and workers cannot install what they need.
+    expect(rw).toContain('change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused');
+    expect(rw).toContain('dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages');
+    expect(ro).not.toContain('Edit and Write');
+    expect(ro).toContain('you cannot install packages');
     ctx.contract = { allowed_paths: ['apps/calc.mjs'] } as never;
     expect(policySummary(ctx, { readOnly: false })).toContain('you may edit only: apps/calc.mjs');
   });

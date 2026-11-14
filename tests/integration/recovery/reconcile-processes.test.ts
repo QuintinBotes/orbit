@@ -15,8 +15,8 @@ afterEach(cleanupAll);
 const run = (env: Env, extra: object = {}) => reconcileOnStart({ db: env.db, ownerId: OWNER, clock, adapters: env.adapters, graceMs: 300, ...extra });
 
 /** A real check: the real check shim supervising `sleep`, planned and started the way evidence/runner does it. */
-function startCheck(env: Env, name = 'lint'): { checkRunId: string; dir: string; shimPid: number; childPid: () => number } {
-  const dir = join(env.runDir, 'baseline', name);
+function startCheck(env: Env, name = 'lint', parent = 'baseline'): { checkRunId: string; dir: string; shimPid: number; childPid: () => number } {
+  const dir = join(env.runDir, parent, name);
   mkdirSync(dir, { recursive: true });
   const row = planCheckRun(env.db, { runId: env.runId, candidateId: null, checkId: name, kind: 'command', treeHash: 't', checkConfigHash: 'c', policyHash: env.f.policyHash, command: ['sleep', '30'], cwd: env.f.repo, isolation: 'none', limitations: [] }, clock);
   const token = 'tok-' + name;
@@ -70,6 +70,20 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: detached checks', () => {
     transition(env.db, { runId: env.runId, to: 'CANCELLED', ownerId: OWNER, reason: 'test' }, clock);
     const rep = await run(env);
     expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'orphan-terminated', terminated: true, closed: true });
+    await waitFor(() => (!alive(c.shimPid) && !alive(child)) || null);
+    expect(checkRow(env, c.checkRunId)).toMatchObject({ status: 'CANCELLED', cancelled: 1 });
+  });
+
+  it('a running worktree install of a run with a pending cancellation is stopped through its shim and its row is closed', async () => {
+    const env = makeEnv();
+    makeRun(env);
+    const c = startCheck(env, 'orbit-worktree-install', 'worktree-install');
+    env.kids.push({ pid: c.shimPid } as never);
+    const child = await waitFor(() => c.childPid() || null);
+    env.kids.push({ pid: child } as never);
+    env.db.run('UPDATE runs SET cancel_requested = 1 WHERE id = ?', env.runId);
+    const rep = await run(env);
+    expect(rep.runs[0]!.checks[0]).toMatchObject({ checkRunId: c.checkRunId, observation: 'orphan-terminated', terminated: true, closed: true });
     await waitFor(() => (!alive(c.shimPid) && !alive(child)) || null);
     expect(checkRow(env, c.checkRunId)).toMatchObject({ status: 'CANCELLED', cancelled: 1 });
   });

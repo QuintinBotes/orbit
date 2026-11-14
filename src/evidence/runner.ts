@@ -250,6 +250,11 @@ export function baselineSubject(runDir: string, baseTree: string, source: 'basel
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join(runDir, 'baseline'), source };
 }
 
+/** The dependency install in the implementer's worktree (issue #132): its own binding and evidence, never baseline or candidate evidence. */
+export function worktreeInstallSubject(runDir: string, tree: string): CheckSubject {
+  return { candidateId: null, bindingId: `worktree:${tree}`, treeHash: tree, evidenceDir: join(runDir, 'worktree-install'), source: 'install' };
+}
+
 /** The recorded configuration hash for a check, verified against its definition. */
 /**
  * One attempt of `def` on the subject's tree, recorded through `ctx.records` under `configHash`, without the group's
@@ -335,6 +340,7 @@ async function assertCheckoutTree(dir: string, treeHash: string): Promise<void> 
 
 function subjectForRow(ctx: RunnerContext, row: CheckRunRecord): CheckSubject {
   const install = INSTALL_CHECK_IDS.includes(row.checkId);
+  if (Object.values(WORKTREE_INSTALL_IDS).includes(row.checkId)) return worktreeInstallSubject(ctx.runDir, row.treeHash);
   if (row.candidateId === null) return baselineSubject(ctx.runDir, row.treeHash, install ? 'install' : 'baseline');
   const subject = candidateSubject(ctx.runDir, getCandidate(ctx.db, row.candidateId));
   return install ? { ...subject, source: 'install' } : subject;
@@ -345,11 +351,15 @@ export const INSTALL_CHECK_ID = 'orbit-install';
 /** Check id of the allowlisted lifecycle-script step that follows a script-free install. */
 export const INSTALL_SCRIPTS_CHECK_ID = 'orbit-install-scripts';
 const INSTALL_CHECK_IDS: readonly string[] = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
+/** The install steps' ids in the implementer's worktree, so their rows never answer a query for the baseline's. */
+export const WORKTREE_INSTALL_IDS: Readonly<Record<string, string>> = { [INSTALL_CHECK_ID]: 'orbit-worktree-install', [INSTALL_SCRIPTS_CHECK_ID]: 'orbit-worktree-install-scripts' };
+/** Every id Orbit's own install steps run under, wherever they install. */
+const ALL_INSTALL_IDS: readonly string[] = [...INSTALL_CHECK_IDS, ...Object.values(WORKTREE_INSTALL_IDS)];
 /**
  * Checks whose value is the untracked state they leave in their checkout (node_modules): a recorded attempt is reused or
  * reattached only in the checkout it ran in (evidence/git.ts checkoutId), and runs again in any other.
  */
-const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set(INSTALL_CHECK_IDS);
+const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set(ALL_INSTALL_IDS);
 
 const DEFINITION_FILE = 'definition.json';
 
@@ -757,7 +767,7 @@ function stillRunsMessage(row: CheckRunRecord, why: string): string {
  * host's by default; a container's is Linux) decide whether NuGet's vulnerability audit can run in it.
  */
 export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
-  const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
+  const install = ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return commandToolchains({
     command: def.command,
     shell: def.shell,
@@ -779,7 +789,7 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
  * `dependencies.install_command` (it has no env a person sets), any other check is `checks.<id>`.
  */
 function msbuildFixWhere(ctx: Pick<RunnerContext, 'snapshot'>, def: CheckDefinition): MsbuildFixWhere | null {
-  return INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
+  return ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
 }
 
 /**
