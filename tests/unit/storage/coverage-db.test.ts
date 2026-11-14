@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { OrbitError } from '../../../src/core/errors.ts';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
 import { MIGRATIONS } from '../../../src/storage/schema.ts';
@@ -27,7 +28,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const T1 = 'CREATE TABLE t1 (id INTEGER PRIMARY KEY, v TEXT)';
+const T1 = 'CREATE TABLE t1 (id INTEGER PRIMARY KEY, v TEXT); CREATE TABLE leases (run_id TEXT, owner_id TEXT, expires_at INTEGER)';
 const T2 = 'CREATE TABLE t2 (id INTEGER PRIMARY KEY, v TEXT)';
 
 describe('openDb', () => {
@@ -55,6 +56,49 @@ describe('openDb', () => {
 });
 
 describe('migrations', () => {
+  it('refuses to migrate while any lease is unexpired and names every run and owner', () => {
+    const path = join(dir, 'leased.db');
+    const old = openDb(path, { migrations: MIGRATIONS.slice(0, 5) });
+    const now = Date.now();
+    for (const [id, owner] of [['r1', 'owner-one'], ['r2', 'owner-two']] as const) {
+      old.run('INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', id, '/repo', 'g', 'supervised', 'IMPLEMENTING', 'h', '/p', now, now);
+      old.run('INSERT INTO leases (run_id, owner_id, acquired_at, heartbeat_at, expires_at) VALUES (?, ?, ?, ?, ?)', id, owner, now, now, now + 60_000);
+    }
+    old.close();
+
+    let error: unknown;
+    try {
+      track(openDb(path));
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(OrbitError);
+    expect(error).toMatchObject({
+      code: 'CONCURRENT_UPDATE',
+      message: 'Cannot migrate the state database while an older Orbit is driving these runs: r1 (owner owner-one), r2 (owner owner-two). Let the runs finish, stop them, or use that same Orbit version until their leases end.',
+    });
+
+    const unchanged = track(openDb(path, { migrations: MIGRATIONS.slice(0, 5) }));
+    expect((unchanged.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(5);
+    expect(unchanged.all('SELECT run_id, owner_id, expires_at FROM leases ORDER BY run_id')).toEqual([
+      { run_id: 'r1', owner_id: 'owner-one', expires_at: now + 60_000 },
+      { run_id: 'r2', owner_id: 'owner-two', expires_at: now + 60_000 },
+    ]);
+  });
+
+  it.each([-60_000, 0])('migrates with a lease that expired %i ms from now', (offset) => {
+    const path = join(dir, 'expired.db');
+    const old = openDb(path, { migrations: MIGRATIONS.slice(0, 5) });
+    const now = Date.now();
+    old.run("INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at) VALUES ('r1', '/repo', 'g', 'supervised', 'IMPLEMENTING', 'h', '/p', 1, 1)");
+    old.run('INSERT INTO leases (run_id, owner_id, acquired_at, heartbeat_at, expires_at) VALUES (?, ?, ?, ?, ?)', 'r1', 'crashed-owner', now - 120_000, now - 120_000, now + offset);
+    old.close();
+
+    const db = track(openDb(path));
+    expect((db.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    expect(db.get('SELECT owner_id FROM leases WHERE run_id = ?', 'r1')).toEqual({ owner_id: 'crashed-owner' });
+  });
+
   it('runs only the migrations a database has not seen, in order', () => {
     const path = join(dir, 'm.db');
     const first = openDb(path, { migrations: [T1] });
