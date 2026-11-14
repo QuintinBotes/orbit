@@ -48,8 +48,10 @@ orbit service install
 orbit service status
 ```
 
-Orbit writes no credentials into the service definition. The service process
-gets only `PATH` (copied from your shell at install time), `NODE_OPTIONS` and
+The service carries `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` from
+the shell that installs it, so rerun `orbit service install` after changing them.
+Orbit never writes an API key or token into the service definition. The service
+also gets `PATH` (copied from your shell at install time), `NODE_OPTIONS` and
 `ORBIT_HOME`, plus whatever launchd or systemd provides. Make the credentials
 it needs visible to the user manager, then restart the service:
 
