@@ -274,6 +274,17 @@ export interface ScopeGateDetails {
   repairable: string[];
 }
 
+/** The heaviest files of a candidate over the size limits, as `path (N lines)`, heaviest first. */
+export function describeLargestChanges(scope: ScopeReport): string {
+  // A path is the candidate's own text: control characters are dropped (no terminal escapes) and each is clipped so the
+  // reason keeps its instructions within its length cap.
+  const safe = (p: string): string => {
+    const plain = p.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+    return plain.length > 120 ? `...${plain.slice(-117)}` : plain;
+  };
+  return (scope.largest_changes ?? []).map((c) => `${safe(c.path)} (${c.lines} lines)`).join(', ');
+}
+
 export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnapshot): GateResult<ScopeGateDetails> {
   const reasons: string[] = [];
   const repairable: string[] = [];
@@ -286,7 +297,7 @@ export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnap
     repairable.push(why);
   };
   if (scope.out_of_scope_paths_changed.length > 0) add(`paths outside the authorized scope changed: ${scope.out_of_scope_paths_changed.join(', ')}`);
-  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)`);
+  if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)${scope.largest_changes?.length ? `; the largest changes: ${describeLargestChanges(scope)}` : ''}`);
   if (scope.lockfile_changed && !deps.change_lockfile) add('a lockfile changed, which the policy does not allow');
   if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(', ')}`);
   const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];

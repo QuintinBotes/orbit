@@ -57,6 +57,8 @@ export interface ScopeReport {
   changed_files: number;
   changed_lines: number;
   within_size_limits: boolean;
+  /** Only when over a size limit: the five files with the most added plus deleted lines, heaviest first. */
+  largest_changes?: { path: string; lines: number }[];
   lockfile_changed: boolean;
   dependency_manifest_changed: string[];
   symlinks_escaping: string[];
