@@ -90,11 +90,11 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   // Lines: binary entries count as zero unless git only calls them binary
   // because of an attribute (`*.ts -diff` hides text from numstat even with
   // --text); those are counted from the --text patch instead.
-  let changedLines = 0;
+  const linesByPath = new Map<string, number>();
   const binary = new Set<string>();
   for (const entry of numstat) {
     if (entry.binary) binary.add(entry.path);
-    else changedLines += entry.added + entry.deleted;
+    else linesByPath.set(entry.path, (linesByPath.get(entry.path) ?? 0) + entry.added + entry.deleted);
   }
   const forcedText = await textLooking(repoRoot, base, cand, changes, binary);
   for (const p of forcedText) binary.delete(p);
@@ -105,20 +105,24 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
 
   const textChanges = changes.filter((c) => !binary.has(c.path));
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
-  for (const p of forcedText) changedLines += countPatchLines(diffs.get(p) ?? '');
+  for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ''));
+  let changedLines = 0;
+  for (const n of linesByPath.values()) changedLines += n;
   const weakeningInputs: WeakeningInput[] = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? '' }));
   // Which changed files are tests depends on project files of both trees (.NET test projects, Rust crates; ADR 0011).
   const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString('utf8')), base, cand, changes.map((c) => c.path));
   const weakening = detectWeakening(weakeningInputs, testLayout);
 
   const limits = config.scheduler.hard_limits;
+  const withinSize = changes.length <= limits.changed_files && changedLines <= limits.changed_lines;
   return {
     allowed_paths_pass: forbidden.length === 0 && outOfScope.length === 0,
     forbidden_paths_changed: forbidden,
     out_of_scope_paths_changed: outOfScope,
     changed_files: changes.length,
     changed_lines: changedLines,
-    within_size_limits: changes.length <= limits.changed_files && changedLines <= limits.changed_lines,
+    within_size_limits: withinSize,
+    ...(withinSize ? {} : { largest_changes: [...linesByPath].map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) }),
     lockfile_changed: lockfileChanged,
     dependency_manifest_changed: manifests,
     symlinks_escaping: symlinks,
