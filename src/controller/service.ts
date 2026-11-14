@@ -61,6 +61,7 @@ export interface ServiceSpecInput {
   entry: string;
   nodePath?: string;
   path?: string;
+  env?: Readonly<Record<string, string | undefined>>;
   version?: string;
 }
 
@@ -69,6 +70,15 @@ export function serviceLabel(repoRoot: string): string {
 }
 
 export function serviceSpec(input: ServiceSpecInput): ServiceSpec {
+  const env: Record<string, string> = {
+    PATH: input.path ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    NODE_OPTIONS: '--disable-warning=ExperimentalWarning',
+    ORBIT_HOME: input.orbitHome,
+  };
+  for (const key of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'XDG_CONFIG_HOME']) {
+    const value = input.env?.[key];
+    if (value) env[key] = value;
+  }
   return {
     label: serviceLabel(input.repoRoot),
     launcher: launcherPath(input.orbitHome),
@@ -78,11 +88,7 @@ export function serviceSpec(input: ServiceSpecInput): ServiceSpec {
     args: ['service', 'run', '--repo', input.repoRoot],
     workingDirectory: input.repoRoot,
     logDir: join(input.orbitHome, 'logs'),
-    env: {
-      PATH: input.path ?? '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-      NODE_OPTIONS: '--disable-warning=ExperimentalWarning',
-      ORBIT_HOME: input.orbitHome,
-    },
+    env,
     throttleSeconds: 10,
     stopTimeoutSeconds: 30,
   };
