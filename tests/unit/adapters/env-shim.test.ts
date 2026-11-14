@@ -45,7 +45,7 @@ describe('buildWorkerEnv', () => {
         expect(env, `${provider}: ${leaked}`).not.toHaveProperty(leaked);
       }
       expect(env).toMatchObject({ PATH: HOST.PATH, HOME: HOST.HOME, LANG: HOST.LANG, LC_CTYPE: 'UTF-8', HTTPS_PROXY: HOST.HTTPS_PROXY, GIT_OPTIONAL_LOCKS: '0', TMPDIR: '/tmp/orbit-1/x' });
-      expect(env).toMatchObject({ ORBIT_POLICY_PATH: '/run/policy.json', ORBIT_POLICY_HASH: 'sha256:abc', ORBIT_WORKTREE: '/wt' });
+      expect(env).toMatchObject({ ORBIT_POLICY_PATH: '/run/policy.json', ORBIT_POLICY_HASH: 'sha256:abc', ORBIT_WORKTREE: '/wt', ORBIT_WORKER_TMPDIR: env.TMPDIR });
     }
   });
 
@@ -77,7 +77,7 @@ describe('buildWorkerEnv', () => {
   });
 
   it('refuses extra variables that would add credentials or undo fixed settings, and cannot be used to move the guard', () => {
-    for (const bad of ['GH_TOKEN', 'AWS_REGION', 'SSH_AUTH_SOCK', 'NODE_OPTIONS', 'LD_PRELOAD', 'CLAUDE_CODE_EFFORT_LEVEL', 'ORBIT_POLICY_PATH', 'ORBIT_WORKTREE']) {
+    for (const bad of ['GH_TOKEN', 'AWS_REGION', 'SSH_AUTH_SOCK', 'NODE_OPTIONS', 'LD_PRELOAD', 'CLAUDE_CODE_EFFORT_LEVEL', 'ORBIT_POLICY_PATH', 'ORBIT_WORKTREE', 'ORBIT_WORKER_TMPDIR']) {
       expect(() => buildWorkerEnv(input('claude', { [bad]: 'x' })), bad).toThrow(/may not set/);
     }
     expect(buildWorkerEnv(input('claude', { ORBIT_FAKE_SCENARIO: '/s.json', CI: '1' }))).toMatchObject({ ORBIT_FAKE_SCENARIO: '/s.json', CI: '1' });

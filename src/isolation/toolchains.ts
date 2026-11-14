@@ -1,6 +1,7 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { basename, isAbsolute, join } from 'node:path';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { OrbitError } from '../core/errors.ts';
 import { hostAllowed } from '../policy/hosts.ts';
 
 /**
@@ -465,12 +466,94 @@ export function commandToolchains(input: CommandToolchainsInput): ToolchainLayou
   });
 }
 
-/** Create the layout's directories, owner-only. Orbit (trusted) creates the caches; only the install step fills them. */
-export function prepareToolchainLayout(layout: ToolchainLayout): void {
+/**
+ * Create the layout's directories, owner-only. Orbit (trusted) creates the caches; only the install step fills them.
+ * `reused` names a scratch root a sandboxed process may already have written (a restarted worker's): mkdir and chmod
+ * follow links, so a link or file it left on the way to a directory makes the whole root be removed first.
+ */
+export function prepareToolchainLayout(layout: ToolchainLayout, reused?: string): void {
+  if (reused !== undefined && layout.directories.some((d) => notDirectoryOnPath(reused, d))) removeScratch(reused);
   for (const d of layout.directories) {
     mkdirSync(d, { recursive: true, mode: 0o700 });
     chmodSync(d, 0o700);
   }
+}
+
+/** A Claude worker's next build-state directory (`root`, in its temp directory) and where it is built first (`staging`). */
+export interface WorkerScratch {
+  root: string;
+  staging: string;
+}
+
+/**
+ * A fresh build-state directory for a Claude worker whose temp directory is `tmpDir`, checked by prepareWorkerTmpDir.
+ * A process the worker started can outlive its session and write, and rename entries in, that directory, so the
+ * controller (outside any sandbox) never creates anything through a path there: the tree is built in a directory with
+ * an unpredictable name in the temp root, which no worker may read or write, and moved into place in one rename.
+ */
+export function freshWorkerScratch(tmpDir: string): WorkerScratch {
+  const staging = mkdtempSync(join(dirname(tmpDir), 'toolchains-'));
+  return { root: join(tmpDir, basename(staging)), staging };
+}
+
+/**
+ * Create a worker's toolchain directories: the repository caches as prepareToolchainLayout does, the build state in
+ * `scratch.staging` with one mkdir per directory (mode 0700, which the umask can only narrow, and no chmod), then rename
+ * it to `scratch.root`. Anything already where a directory is to be created fails closed. With `removeEarlier`, every
+ * earlier build-state directory beside the root goes: rmSync unlinks a link instead of following it. Build state is
+ * never reused across sessions of a worker.
+ */
+export function prepareWorkerScratch(layout: ToolchainLayout, scratch: WorkerScratch, opts: { removeEarlier: boolean }): void {
+  const inside = (d: string) => d.startsWith(`${scratch.root}${sep}`);
+  try {
+    prepareToolchainLayout({ ...layout, directories: layout.directories.filter((d) => !inside(d)) });
+    const made = new Set<string>();
+    for (const d of layout.directories.filter(inside)) {
+      let p = scratch.staging;
+      for (const part of relative(scratch.root, d).split(sep)) {
+        p = join(p, part);
+        if (made.has(p)) continue;
+        try {
+          mkdirSync(p, { mode: 0o700 });
+        } catch (err) {
+          throw new OrbitError('ISOLATION_UNAVAILABLE', `${p} already exists where Orbit creates a worker's build state (${(err as NodeJS.ErrnoException).code ?? String(err)}); refusing to start the worker`, { path: p });
+        }
+        made.add(p);
+      }
+    }
+    renameSync(scratch.staging, scratch.root);
+  } catch (err) {
+    rmSync(scratch.staging, { recursive: true, force: true });
+    throw err;
+  }
+  if (!opts.removeEarlier) return;
+  const tmpDir = dirname(scratch.root);
+  for (const name of readdirSync(tmpDir)) {
+    if (name === basename(scratch.root) || !(name === 'toolchains' || name.startsWith('toolchains-'))) continue;
+    try {
+      rmSync(join(tmpDir, name), { recursive: true, force: true });
+    } catch {
+      // shortcut: a tree the worker made unremovable stays until orbit gc; the new root does not depend on it.
+    }
+  }
+}
+
+/** Whether an entry from `root` down to `dir` exists as something other than a real directory (lstat: a link is not). */
+function notDirectoryOnPath(root: string, dir: string): boolean {
+  const rel = relative(root, dir);
+  if (rel.startsWith('..') || isAbsolute(rel)) return false;
+  let p = root;
+  for (const part of ['', ...rel.split(sep).filter(Boolean)]) {
+    p = join(p, part);
+    let st;
+    try {
+      st = lstatSync(p);
+    } catch {
+      return false;
+    }
+    if (!st.isDirectory()) return true;
+  }
+  return false;
 }
 
 /**
