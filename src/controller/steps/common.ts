@@ -23,6 +23,7 @@ import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
 import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees, retainRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
+import { findVerifiedCandidate, heldSentence, offerAdvice, writeOfferBody } from '../verified-candidate.ts';
 import { blockingQuestions } from '../gates.ts';
 import { listQuestions, withdrawQuestion } from '../../inquisition/store.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
@@ -90,10 +91,22 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  *
  * The transition records why the run ended as a failure class, from the outcome and data given here and the run's
  * events (failure-class.ts). `cause` names the class for an end those records carry no marker for.
+ *
+ * A run that would end EXHAUSTED while it holds a candidate that passed verification ends BLOCKED instead and offers
+ * that candidate (issue #169, verified-candidate.ts): the outcome names it beside `decided: 'EXHAUSTED'`, and the reason
+ * says why the run stopped, what it holds, and how to deliver or discard it.
  */
 export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
   let advice = '';
-  if (to === 'BLOCKED') {
+  const stopped = reason;
+  const offered = to === 'EXHAUSTED' ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  if (offered) {
+    // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
+    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    reason = withSentence(reason, advice);
+    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: 'EXHAUSTED', verified_candidate: offered } };
+    to = 'BLOCKED';
+  } else if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
     // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
     // `resumable`: the step knows from its records that a resume can clear this, whatever the reason's text names.
@@ -121,6 +134,8 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   // implementer edit as a candidate, and the report names the newest one, and a retention is what the report names too.
   if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
   else if (target === 'EXHAUSTED' || target === 'IMPOSSIBLE') await retainRunWorktrees(ctx);
+  // The pull request body the delivery command names, written with the outcome that names it.
+  if (offered && target === 'BLOCKED') writeOfferBody(ctx.runDir, ctx.run.id, offered, ctx.contract, stopped);
   await finalizeRun(ctx);
   return result;
 }

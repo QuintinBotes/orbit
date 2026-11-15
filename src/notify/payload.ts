@@ -8,6 +8,7 @@
 import { redact } from '../core/redact.ts';
 import { candidateEnvironmentFailures, declinedLedger, freshReviewSpent, frozenPolicySetting } from '../controller/resume.ts';
 import type { RunRecord } from '../controller/run-store.ts';
+import { heldVerifiedCandidate } from '../controller/verified-candidate.ts';
 
 export const PAYLOAD_SCHEMA = 'orbit.notification/1';
 export const REASON_MAX = 160;
@@ -60,6 +61,10 @@ export function sanitizeReason(text: string | null | undefined): string | null {
 function nextAction(input: PayloadInput): string {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
+  // A run that ran out holding a verified candidate (issue #169): a resume stops again on the same limit; a person
+  // delivers the candidate or discards it. The commands are in the report, not in a notification.
+  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null });
+  if (offered) return `Read orbit report ${run.id}: candidate ${offered.seq} passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${run.id}.`;
   // A decision a person declined: no answer to another question makes a resume succeed.
   if (run.state === 'BLOCKED' && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {
     return `Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`;

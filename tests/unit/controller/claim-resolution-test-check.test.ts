@@ -562,8 +562,9 @@ describe('a reviewer who raises the finding again on a tree that has the repair 
     expect(all.map((x) => x.status).filter((s) => s === 'resolved')).toEqual([]);
     expect(all.at(-1)!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
     expect(probes()).toEqual([]);
-    // TEST-1 would go to repair again after a repair that named no test for it: non-progress (#156), not attempt 4.
-    expect(state()).toBe('EXHAUSTED');
+    // TEST-1 would go to repair again after a repair that named no test for it: non-progress (#156), not attempt 4. The
+    // candidates passed verification, so the run that ran out offers the newest of them (#169).
+    expect(state()).toBe('BLOCKED');
     expect(listDecisions(lab.db, lab.runId, { kind: 'repair.non-progress' })).toHaveLength(1);
   });
 

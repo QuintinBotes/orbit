@@ -137,6 +137,18 @@ describe('the CLI closing line of a blocked run', () => {
     expect(buildRunStatus({ clock: systemClock }, l.db(), getRun(l.db(), id)).stage).toBe("BLOCKED (a new run is needed: the fix changes checks.unit-tests.command, which this run's frozen policy keeps as it started)");
   });
 
+  // Issue #169: a run that ran out holding a verified candidate ends BLOCKED; a resume would stop again on the same limit.
+  it('says to deliver or discard the verified candidate a run that ran out holds, not to resume it', async () => {
+    const l = lab();
+    await l.cli(['init']);
+    hooks.start = async (id) => block(l, id, ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'REVIEWING'], { decided: 'EXHAUSTED', verified_candidate: { seq: 2, commit: 'c'.repeat(40), deliver_command: 'git push origin cc:refs/heads/orbit/x', discard_command: `orbit cancel ${id}` } });
+    const r = await drive(l, ['run', '--goal', 'one', '--foreground']);
+    expect(r.out).toMatch(/candidate 2 passed verification before the run stopped: deliver it with the command above, or discard it with "orbit cancel orb-\S+"; resuming would only stop again on the same limit\n$/);
+    expect(r.out).not.toMatch(/then "orbit resume|resolve the reason above/);
+    const id = /run (orb-\S+) ended/.exec(r.out)![1]!;
+    expect(buildRunStatus({ clock: systemClock }, l.db(), getRun(l.db(), id)).stage).toBe('BLOCKED (holding verified candidate 2: deliver it or discard it)');
+  });
+
   it('still says to resolve and resume for a block a resume can clear', async () => {
     const l = lab();
     await l.cli(['init']);

@@ -50,6 +50,14 @@ passes only when the runtime meets each one.
 | 19 | Security findings follow severity/exception policy | `review-and-security.test.ts` | scenario 19: ... waived with its recorded reason; ... blocks completion; ... reported as advisory |
 | 20 | Cancellation remains effective after restart | `restart-and-delivery.test.ts` | scenario 20: a cancellation recorded with `orbit cancel` while the controller is dead ... |
 
+### A verified candidate is always offered (issue #169)
+
+| Scenario | File | Test |
+|---|---|---|
+| 1. A run whose candidate passed verification stops on a limit: it ends `BLOCKED` and the report gives the candidate commit, the checks it passed and the open findings | `verified-candidate.test.ts` | scenario 1: a run whose candidate passed verification and that stops on its review round cap ends BLOCKED ... |
+| 2. The delivery command the report gives delivers that candidate as a draft pull request listing the open findings | `verified-candidate.test.ts` | scenario 2: the delivery command the report gives pushes that exact candidate ... (the push runs; the lab has no `gh`, so the pull request body is read) |
+| Edge case: several passing candidates, the newest is offered (the #156 replay, SC-001) | `verified-candidate.test.ts` | edge case, several passing candidates: ... |
+
 ### Safe stops (spec section 2)
 
 | Stop | File | Test |

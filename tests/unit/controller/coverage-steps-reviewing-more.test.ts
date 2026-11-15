@@ -441,13 +441,13 @@ describe('parallel review units under pressure', () => {
     expect(workersCount()).toBe(1);
   });
 
-  it('a unit that cannot be funded ends the run EXHAUSTED', async () => {
+  it('a unit that cannot be funded stops the run (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand } = await setup({ ui: true, difficulty: sensitive });
     uiPaths(cand);
     // Review may spend up to the hard cap itself; with less than one worst-case request left, nothing can start.
     lab.db.run("UPDATE budget_counters SET used = hard_cap - 0.01 WHERE counter = 'cost_usd'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('unit cannot start: no model budget left for review under the hard cap');
     expect(workersCount()).toBe(0);
   });

@@ -104,7 +104,8 @@ function markedCauses(outcome: Record<string, unknown>, data: Record<string, unk
  * The class of a run that ends in `state`, and its second cause when it had two. Success has none; a cancelled run is
  * `cancelled` whatever the step had decided. For the rest the first cause that stopped progress is the class: sessions
  * that ended at their turn cap (they came first, in a run that then ran out), what the records mark, the fallback the
- * step names, and `model` only when nothing else explains the end. An EXHAUSTED run always ran out of a budget last.
+ * step names, and `model` only when nothing else explains the end. An EXHAUSTED run always ran out of a budget last, and
+ * so did a BLOCKED one whose step had decided EXHAUSTED (`outcome.decided`): it holds a verified candidate (issue #169).
  */
 export function classifyRunEnd(e: RunEndEvidence): RunEndClass {
   if (!TERMINAL_STATES.has(e.state)) throw new OrbitError('INTERNAL', `${e.state} is not a terminal state: it has no failure class`);
@@ -114,15 +115,18 @@ export function classifyRunEnd(e: RunEndEvidence): RunEndClass {
 
   const outcome = e.outcome ?? {};
   const data = e.data ?? {};
+  // Issue #169: a run that ran out while it held a verified candidate ends BLOCKED so a person can deliver it. It stopped
+  // for what would have ended it EXHAUSTED, so it is classified as that end (verified-candidate.ts).
+  const state = e.state === 'BLOCKED' && outcome.decided === 'EXHAUSTED' ? 'EXHAUSTED' : e.state;
   const causes: FailureClass[] = [];
-  const ranOut = e.state === 'EXHAUSTED' || e.state === 'IMPOSSIBLE';
+  const ranOut = state === 'EXHAUSTED' || state === 'IMPOSSIBLE';
   if (ranOut && e.turnCapSessions > 0) causes.push('turn-cap');
   for (const c of markedCauses(outcome, data)) if (!causes.includes(c)) causes.push(c);
   if (causes.length === 0) {
     if (e.cause !== null) causes.push(e.cause);
-    else if (e.state !== 'EXHAUSTED' || workDidNotConverge(outcome, data)) causes.push('model');
+    else if (state !== 'EXHAUSTED' || workDidNotConverge(outcome, data)) causes.push('model');
   }
-  if (e.state === 'EXHAUSTED' && !causes.includes('budget')) causes.push('budget');
+  if (state === 'EXHAUSTED' && !causes.includes('budget')) causes.push('budget');
   return { failureClass: causes[0] ?? null, secondary: causes[1] ?? null };
 }
 

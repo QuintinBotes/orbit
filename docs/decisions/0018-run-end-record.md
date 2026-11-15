@@ -77,3 +77,22 @@ its header, on the entry that created the run and on the entry that ended it.
   an older controller never meets the new columns mid-run.
 - A report saved before this change is printed as saved; its JSON gets the
   three fields from the run's row.
+
+## Addendum (2026-11-15): a run that stops holding a verified candidate (issue #169)
+
+A run that would end `EXHAUSTED` while it holds a candidate that passed
+verification and was not delivered now ends `BLOCKED`, so a person can deliver
+or discard that candidate (`src/controller/verified-candidate.ts`). Its outcome
+records `decided: "EXHAUSTED"` and the candidate (`verified_candidate`).
+
+Such a run keeps the class the `EXHAUSTED` end would have had: `classifyRunEnd`
+reads a `BLOCKED` run whose outcome says `decided: "EXHAUSTED"` as an
+`EXHAUSTED` one. A stop on money or time is `budget`; a review round cap with
+open findings, or a review repair that made no progress, is `review-dispute`
+with `budget` second; attempts that went into the same failure are `model` with
+`budget` second; sessions that ended at their turn cap come first as before. The
+class says why the run stopped, and holding a verified candidate does not change
+that: it changes what a person can do next. No new class was added, so the
+published list is unchanged. `orbit stats` counts these runs on their own as
+well (`runs.verified_undelivered`), so they are not read as failures with
+nothing to show.

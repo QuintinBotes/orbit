@@ -82,7 +82,7 @@ describe('orbit stats', () => {
 function metrics(over: Partial<Metrics> = {}): Metrics {
   return {
     window: { from: null, to: null, orbit_version: null },
-    runs: { total: 4, finished: 3, accepted: 2, by_state: { SUCCEEDED: 2, BLOCKED: 1, CREATED: 1 } },
+    runs: { total: 4, finished: 3, accepted: 2, verified_undelivered: 0, by_state: { SUCCEEDED: 2, BLOCKED: 1, CREATED: 1 } },
     failure_classes: { ended: 0, by_class: {}, secondary: {}, without_class: 0, unclassified: 0 },
     by_version: [],
     verified_pass_rate: { numerator: 2, denominator: 3, rate: 2 / 3, evidence_reports: { numerator: 5, denominator: 6, rate: 5 / 6 } },
@@ -136,7 +136,7 @@ describe('renderStats', () => {
 
   it('shows a dash for every metric with no data, flags partial spend, lists what could not be measured, and omits an empty model table', () => {
     const empty = metrics({
-      runs: { total: 0, finished: 0, accepted: 0, by_state: {} },
+      runs: { total: 0, finished: 0, accepted: 0, verified_undelivered: 0, by_state: {} },
       verified_pass_rate: { numerator: 0, denominator: 0, rate: null, evidence_reports: { numerator: 0, denominator: 0, rate: null } },
       false_pass_rate: { numerator: 0, denominator: 0, rate: null },
       escalation_quality: { numerator: 0, denominator: 0, rate: null, escalations: 0, fixed: 0, not_fixed: 0, pending: 0, unmeasured: 0, other_escalations: 0 },

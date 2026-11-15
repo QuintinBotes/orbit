@@ -137,6 +137,17 @@ describe('the other ways a run ends', () => {
   it('what the records say outranks the cause the step names as a fallback', () => {
     expect(end({ state: 'BLOCKED', data: { code: 'SCOPE_VIOLATION' }, cause: 'environment' })).toEqual(['scope', null]);
   });
+
+  it('issue #169: a run that ran out holding a verified candidate ends BLOCKED and keeps the class it would have had as EXHAUSTED', () => {
+    const held = { decided: 'EXHAUSTED', verified_candidate: { candidate_id: 'c1', seq: 1 } };
+    expect(end({ state: 'BLOCKED', outcome: held, data: { counter: 'cost_usd', used: 5, hard_cap: 5 } })).toEqual(['budget', null]);
+    expect(end({ state: 'BLOCKED', outcome: { ...held, open_findings: [{ id: 'f1' }] }, data: { counter: 'review_rounds' } })).toEqual(['review-dispute', 'budget']);
+    expect(end({ state: 'BLOCKED', outcome: { ...held, non_progress: { terminate: true } } })).toEqual(['model', 'budget']);
+    expect(end({ state: 'BLOCKED', outcome: held, turnCapSessions: 1, data: { counter: 'implementation_attempts' } })).toEqual(['turn-cap', 'budget']);
+    // Any other block is judged as a block: only the step's own EXHAUSTED decision makes a block a run that ran out.
+    expect(end({ state: 'BLOCKED', outcome: { decided: 'BLOCKED' } })).toEqual(['model', null]);
+    expect(end({ state: 'CANCELLED', outcome: held })).toEqual(['cancelled', null]);
+  });
 });
 
 describe('two causes (edge case 1)', () => {

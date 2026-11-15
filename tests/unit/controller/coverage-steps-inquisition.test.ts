@@ -234,14 +234,14 @@ describe('inquisitionStep', () => {
     expect(listDecisions(lab.db, lab.runId, { kind: LEDGER_ASKED_KIND })).toEqual([]);
   });
 
-  it('an inquiry that would return to REVIEWING after the last review round starts no inquisitor: the run ends EXHAUSTED', async () => {
+  it('an inquiry that would return to REVIEWING after the last review round starts no inquisitor: the run stops (BLOCKED, offering the verified candidate: #169)', async () => {
     setup({ candidate: true, from: 'VERIFYING' });
     initLedger(lab);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'review_rounds'", lab.runId);
     lab.db.run("UPDATE runs SET resume_state = 'REVIEWING' WHERE id = ?", lab.runId);
     expect(await inquisitionStep(lab.ctx())).toMatchObject({ done: true });
     expect(hooks.runInquisition).not.toHaveBeenCalled();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\): the inquiry into k:1 would need another review round/);
   });
 

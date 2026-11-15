@@ -96,8 +96,13 @@ export function measureRun(db: OrbitDb, runId: string, requiredCheckIds?: readon
   return { state: run.state, verified, attempts, costUsd: usage.costComplete ? usage.totals.costUsd : null, spentUsd, falsePass };
 }
 
-/** Run states that settle a task: a verdict the run will not take back. BLOCKED waits for a person; CANCELLED says nothing about the prompt. */
+/**
+ * Run states that settle a task: a verdict the run will not take back. BLOCKED waits for a person; CANCELLED says nothing
+ * about the prompt. A run that ran out holding a verified candidate is BLOCKED only so a person can deliver it (issue
+ * #169): for the prompt it settled as EXHAUSTED did, so it counts (SETTLED_BLOCK).
+ */
 const SETTLED_STATES = ['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE'] as const;
+const SETTLED_BLOCK = "(state = 'BLOCKED' AND CASE WHEN json_valid(outcome_json) THEN json_extract(outcome_json, '$.decided') = 'EXHAUSTED' ELSE 0 END)";
 
 export interface LiveWindow extends EvalMetrics {
   /** Settled tasks in the window. */
@@ -111,7 +116,7 @@ export interface LiveWindow extends EvalMetrics {
  */
 export function liveWindow(db: OrbitDb, sinceMs: number): LiveWindow | null {
   const rows = db.all<{ id: string }>(
-    `SELECT id FROM runs WHERE state IN (${SETTLED_STATES.map(() => '?').join(', ')}) AND created_at >= ? ORDER BY created_at, id`,
+    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => '?').join(', ')}) OR ${SETTLED_BLOCK}) AND created_at >= ? ORDER BY created_at, id`,
     ...SETTLED_STATES,
     sinceMs,
   );

@@ -305,6 +305,24 @@ stays null until a branch exists, and `candidate_ref` carries the ref. In the de
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
+A run that runs out (a budget, a cap, non-progress: anything that would end it
+`EXHAUSTED`) while it holds a candidate that passed verification and was not
+delivered ends `BLOCKED` instead, and offers that candidate (issue #169). The
+newest candidate whose standing evidence is PASS is the one offered. The outcome
+reason says why the run stopped, then names the candidate (its number, commit
+and ref, the checks it passed, and each open review finding with its review round,
+severity and status), then the way forward: deliver it or discard it. The report
+has a "Verified candidate" section and `verified_candidate` in `final.json` with
+the same facts and two commands. `deliver_command`, run from the repository root,
+pushes the candidate commit to `<repository.branch_prefix><run-id>` and opens a
+draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
+lists the checks it passed and every open finding; it needs `gh`, and you run
+it, because no review approved the candidate. `discard_command` is
+`orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
+mode, and `orbit resume` would only stop again on the same limit. The failure
+class is the one the `EXHAUSTED` end would have had (ADR 0018), and
+`orbit stats` counts these runs on their own as well.
+
 ### The final report
 
 `orbit report <run-id>` prints `final.md`; `final.json` has the same content.
@@ -341,7 +359,9 @@ stores one class from the list in `schemas/failure-class.schema.json`
 (`environment`, `check-misconfigured`, `gate-deadlock`, `scope`, `budget`,
 `turn-cap`, `model`, `review-dispute`, `credentials`, `cancelled`), a second
 one when it had two causes, and the Orbit version that started it; a run that
-succeeded has no class. The rules are in
+succeeded has no class. Runs that stopped holding a verified candidate (see
+[Where a run's result goes](#where-a-runs-result-goes)) are also counted on
+their own, in the header and as `runs.verified_undelivered` in `--json`. The rules are in
 [decision 0018](decisions/0018-run-end-record.md). `orbit report` and `orbit
 timeline` show the same fields for one run. Runs that ended before Orbit
 recorded them show no class and version `unknown`. `orbit gc` deletes the run
