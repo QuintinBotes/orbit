@@ -278,6 +278,14 @@ export interface CouldNotRunInput {
    * count, and the failure goes to repair. Absent: the base revision itself is judged (or a probe), and every signal counts.
    */
   baseSignals?: readonly EnvironmentSignal[];
+  /**
+   * For a caller whose check may write everything it owns, with nothing protected inside (doctor's probe, in a scratch
+   * checkout): a read-only file system refusal on a filesystem call counts as well when its line names no absolute
+   * path, since whatever was refused was then outside `insideRoots`. uutils coreutils, which Ubuntu 26.04 ships, prints
+   * `mkdir: Read-only file system` where GNU names the directory. Not for a run's check: a protected path inside its
+   * checkout is read-only too, and a refusal there is the code's.
+   */
+  pathlessReadOnly?: boolean;
 }
 
 // A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
@@ -292,6 +300,8 @@ const LISTEN_CALL = /\blisten\b/i;
 // macOS's Seatbelt refuses a write with EPERM; srt on Linux mounts everything outside the writable paths read-only, so
 // the same write fails there with EROFS.
 const DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
+// The Linux half of DENIAL, which only a write to a read-only mount gives.
+const READ_ONLY = /\bEROFS\b|read-only file system/i;
 // A Unix socket or a file the host's permissions (or the sandbox) forbid: EACCES, "permission denied", and .NET's
 // "Access to the path '/x' is denied".
 const PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
@@ -475,7 +485,8 @@ function pipeCause(pipes: readonly PipeDenial[]): string {
  *   - a denial on a filesystem call that names a path outside `insideRoots`: EPERM or "operation not permitted"
  *     (macOS), EROFS or "read-only file system" (Linux): the .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1;
  *     errno == EPERM`, node's `EPERM: operation not permitted, mkdir '/x'`, a shell tool's `mkdir: /x: Operation not
- *     permitted` or `mkdir: cannot create directory ‘/x’: Read-only file system` (filesystem-denied); or EACCES or
+ *     permitted` or `mkdir: cannot create directory ‘/x’: Read-only file system` (filesystem-denied; with
+ *     `pathlessReadOnly`, a read-only file system refusal that names no absolute path too); or EACCES or
  *     "permission denied" (the host's permissions, or a Unix socket the sandbox refuses: node's `listen EACCES:
  *     permission denied /tmp/x.pipe`; permission-denied);
  *   - a Seatbelt deny line (one for a file operation only on such a path);
@@ -525,9 +536,10 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     const tls = NUGET_TLS_DENIAL.exec(line);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line) : null;
     const pathOutside = (): boolean => (line.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const readOnlyWithoutPath = (): boolean => input.pathlessReadOnly === true && READ_ONLY.test(line) && (line.match(ABSOLUTE_PATH) ?? []).length === 0;
     const candidates: { signal: EnvironmentSignal; at: number }[] = [];
     if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) candidates.push({ signal: 'sandbox-violation', at: deny.index });
-    if (denial && FS_CALL.test(line) && pathOutside()) candidates.push({ signal: 'filesystem-denied', at: denial.index });
+    if (denial && FS_CALL.test(line) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: 'filesystem-denied', at: denial.index });
     if (permission && (FS_CALL.test(line) || LISTEN_CALL.test(line)) && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
     if (network) candidates.push({ signal: 'network-denied', at: network.index });
     if (nuget) candidates.push({ signal: 'nuget-http-denied', at: nuget.index });

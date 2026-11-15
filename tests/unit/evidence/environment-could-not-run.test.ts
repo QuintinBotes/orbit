@@ -113,6 +113,25 @@ describe('classifyCouldNotRun: other denials it reads', () => {
     }
   });
 
+  // Ubuntu 26.04's coreutils (uutils 0.10.0) name no directory: captured from `mkdir` under srt in `orbit doctor`'s probe.
+  it('reads a read-only refusal that names no absolute path only for a caller that owns everything its check may write', () => {
+    const output = 'mkdir: Read-only file system\n';
+    expect(classifyCouldNotRun({ checkId: 'build', output, insideRoots: ROOTS })).toBeNull();
+    const f = classifyCouldNotRun({ checkId: 'build', output, insideRoots: ROOTS, pathlessReadOnly: true });
+    expect(f?.signals).toEqual(['filesystem-denied']);
+    expect(f!.lines).toEqual(['mkdir: Read-only file system']);
+    for (const other of [
+      // A path inside the checkout is still the code's, another refusal still needs its path, and so does no filesystem call.
+      `mkdir: cannot create directory ‘${CHECKOUT}/out’: Read-only file system\n`,
+      'mkdir: Operation not permitted\n',
+      'mkdir: Permission denied\n',
+      'Read-only file system\n',
+      `mkdir: Read-only file system\n${COMPILE_ERROR}`,
+    ]) {
+      expect(classifyCouldNotRun({ checkId: 'build', output: other, insideRoots: ROOTS, pathlessReadOnly: true }), other).toBeNull();
+    }
+  });
+
   it('reads Seatbelt deny lines: a file operation only on an absolute path outside the checkout, any other operation as it is', () => {
     const deny = (op: string, path: string) => `Sandbox: dotnet(4242) deny(1) ${op} ${path}\n`;
     expect(classifyCouldNotRun({ checkId: 'build', output: deny('file-write-create', '/private/tmp/.dotnet'), insideRoots: ROOTS })).toMatchObject({ signals: ['sandbox-violation'], lines: ['Sandbox: dotnet(4242) deny(1) file-write-create /private/tmp/.dotnet'] });
