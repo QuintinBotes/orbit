@@ -6,7 +6,7 @@ import { isOrbitError } from '../../../src/core/errors.ts';
 import { systemClock } from '../../../src/core/clock.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { runBaseline } from '../../../src/evidence/baseline.ts';
-import { cleanupCandidateCheckout } from '../../../src/evidence/candidate.ts';
+import { cleanupCandidateCheckout, materializeCandidate } from '../../../src/evidence/candidate.ts';
 import { candidateSubject, INSTALL_CHECK_ID, resumeChecks, runChecks, runCheckSet } from '../../../src/evidence/runner.ts';
 import { listCheckRuns } from '../../../src/evidence/store.ts';
 import { makeRepo, makeRun, nodeCheck, tempRoot } from '../../unit/evidence/fixtures.ts';
@@ -126,6 +126,44 @@ describe('reattaching an Orbit-generated install step', () => {
     const err = await rejection(resumeChecks(e.ctx));
     expect(isOrbitError(err, 'POLICY_TAMPERED')).toBe(true);
     await first;
+  });
+});
+
+describe('an install belongs to the checkout it ran in (#133)', () => {
+  // An install killed mid-flight with its controller: its row stays RUNNING in the first checkout.
+  async function runningInstall(e: RunnerEnv) {
+    const install = nodeCheck(INSTALL_CHECK_ID, 'setTimeout(()=>require("fs").mkdirSync("deps"),800)', { mandatory: false });
+    const subject = { ...candidateSubject(e.run.runDir, e.candidate), source: 'install' as const };
+    const definitions = { [INSTALL_CHECK_ID]: install };
+    const detach = new AbortController();
+    const first = runCheckSet({ ...e.ctx, definitions, detachSignal: detach.signal }, subject, [install]).catch((err: unknown) => err);
+    await waitFor(() => existsSync(join(checkDirOf(e, INSTALL_CHECK_ID), 'pid.json')));
+    detach.abort(new Error('controller killed'));
+    expect(isOrbitError(await first, 'CANCELLED')).toBe(true);
+    const other = await materializeCandidate(e.r.repo, e.candidate.commitSha, join(e.t.root, 'checkout-2'), { readOnly: false });
+    cleanups.push(() => cleanupCandidateCheckout(e.r.repo, other));
+    const roots = () => listCheckRuns(e.run.db, { runId: e.run.runId, checkId: INSTALL_CHECK_ID, rootsOnly: true });
+    return { install, subject, definitions, other, roots };
+  }
+
+  it('does not accept an install still running in another checkout for a new one', async () => {
+    const e = await setup([nodeCheck('tests', '')]);
+    const { install, subject, definitions, other, roots } = await runningInstall(e);
+    const [r] = await runCheckSet({ ...e.ctx, checkoutDir: other, definitions }, subject, [install]);
+    expect(r).toMatchObject({ status: 'PASSED' });
+    expect(existsSync(join(other, 'deps'))).toBe(true);
+    expect(roots()).toHaveLength(2);
+    expect(r!.id).toBe(roots()[1]!.id);
+  });
+
+  it('a restart in the first checkout reattaches to its own install there and starts none', async () => {
+    const e = await setup([nodeCheck('tests', '')]);
+    const { install, subject, definitions, other, roots } = await runningInstall(e);
+    await runCheckSet({ ...e.ctx, checkoutDir: other, definitions }, subject, [install]);
+    const [again] = await runCheckSet({ ...e.ctx, definitions }, subject, [install]);
+    expect(again).toMatchObject({ status: 'PASSED', id: roots()[0]!.id });
+    expect(existsSync(join(e.checkoutDir, 'deps'))).toBe(true);
+    expect(roots()).toHaveLength(2);
   });
 });
 

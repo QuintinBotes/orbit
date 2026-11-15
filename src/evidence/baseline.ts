@@ -564,9 +564,8 @@ export async function runBaseline(input: RunBaselineInput): Promise<BaselineOutc
   const classified = sameBase && Array.isArray(prior.failures) ? prior.failures.filter((f) => f.classification !== undefined && checkIds.includes(f.checkId)).map((f) => f.checkId) : [];
   const finalBaseRuns = (checkId: string): string[] => listCheckRuns(db, { runId: run.id, candidateId: null, checkId, rootsOnly: true }).filter((r) => isFinalCheckStatus(r.status)).map((r) => r.id);
   const setAside = new Set(classified.flatMap(finalBaseRuns));
-  // A check that runs again, or for the first time after PREFLIGHT, runs in a fresh checkout: the recorded install says
-  // nothing about this one, so it is installed again rather than reused (ADR 0012).
-  if (setAside.size > 0 || amending) for (const id of [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID]) for (const r of finalBaseRuns(id)) setAside.add(r);
+  // The checkout below is always made again, so a recorded install, which belongs to the checkout it ran in, runs again
+  // there (ADR 0012; evidence/runner.ts CHECKOUT_BOUND_CHECK_IDS).
 
   const checkoutDir = input.checkoutDir ?? join(prepareWorkerTmpDir(join(runDir, 'baseline-checkout')), `base-${sha256(run.id).slice(0, 8)}`);
   await cleanupCandidateCheckout(input.repoRoot, checkoutDir);

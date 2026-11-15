@@ -123,7 +123,9 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 `orbit verify [run-id]` (default: the most recent run) re-runs the independent
 verification of the run's latest candidate: a clean checkout of the exact
 candidate tree, the frozen policy's checks, scope inspection and the evidence
-evaluation. It prints a verdict per contract criterion with the artifacts it
+evaluation. The dependency install always runs again in that checkout, even
+for a run that has ended, since a recorded install left its files in another
+one. It prints a verdict per contract criterion with the artifacts it
 rests on. It takes a short lease so it never runs beside a live controller and
 never changes the run's state. It uses the same evidence function as the
 VERIFYING step, so a waived finding gives the same verdict in both. Exit 0

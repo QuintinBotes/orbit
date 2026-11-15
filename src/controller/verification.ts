@@ -37,6 +37,8 @@ import { collectFailBefore } from './fail-before.ts';
 export interface CollectOptions<S> {
   /** A clean, writable checkout of exactly the candidate tree (the caller materializes and removes it). */
   checkoutDir: string;
+  /** `orbit verify`: the run may have ended, and the dependency install still runs in this checkout. */
+  installAfterEnd?: boolean;
   /** The implementation-scope report of the candidate, as the caller inspected (and, in supervised mode, authorized) it. */
   scope: ScopeReport;
   /** Disclosures the caller adds to the report's unverified list (one-shot authorizations). */
@@ -88,7 +90,7 @@ export async function collectVerificationEvidence<S = never>(ctx: RunContext, ca
 
   // Trusted checks in a clean, writable checkout of exactly this tree.
   const runner: RunnerContext = { ...checkRunnerFor(ctx), checkoutDir };
-  const install = await installDependencies({ ...runner, candidate: cand });
+  const install = await installDependencies({ ...runner, candidate: cand, installAfterEnd: opts.installAfterEnd === true });
   const commandChecks = contract.required_check_ids.filter((id) => snapshot.config.checks[id]?.kind === 'command');
   const results: CheckResult[] = [...install.results];
   if (install.skipped || install.ok) results.push(...(await runChecks({ ...runner, candidate: cand, checkIds: commandChecks })));
