@@ -80,6 +80,9 @@ describe('user story 1: a cheaper tier that works gets used', () => {
     expect(d.alternatives_considered.find((a) => a.model === 's-1')?.rejected_because).toMatch(/measured outcomes give h-1 a lower expected cost per verified task/);
     // A cheaper tier is not an escalation: no observed-difficulty signal, so effort is not raised by it.
     expect(d.justification.signals).toEqual([]);
+    // Each cost says where it comes from: Haiku's is measured, Sonnet's (no outcomes) is its list price.
+    expect(d.learning!.reason).toMatch(/; expected cost per verified task \$[\d.]+ for h-1 \(measured\) vs \$[\d.]+ for s-1 \(list price\)$/);
+    expect(d.learning!.reason).not.toMatch(/measured expected cost/);
   });
 
   it('scenario 2: when the cheaper tier\'s measured pass rate falls below the threshold, the table default is restored and the decision says why', () => {
@@ -189,6 +192,22 @@ describe('learning stays inside what the policy and the person allow', () => {
     expect(d.learning).toMatchObject({ applied: false, reason: 'difficulty is being escalated, so measured outcomes do not displace the route' });
   });
 
+  it('never routes below the tier an earlier attempt of this run was escalated or held to', () => {
+    // Attempt 1 ran on Opus; with no solved diagnosis attempt 2 stays there. Sonnet, the table's default, has the
+    // record that would otherwise displace Opus.
+    const held = signals({ attempt: 2, previousRoute: { provider: 'claude', model: 'o-1', outcome: 'failed' } });
+    const d = decide([stat('routine-code', sonnet, 40, 0, 0.01)], policy(), held);
+    expect(d.model).toBe('o-1');
+    expect(d.learning).toMatchObject({ applied: false });
+    expect(d.learning!.reason).toBe('the routing table decides: s-1 is below opus, where an earlier attempt of this run ran');
+    expect(d.learning!.measured.find((m) => m.model === 's-1')?.verdict).toBe('an earlier attempt of this run ran on opus, and measured outcomes never route the run below it');
+    // An attempt after one on Sonnet is not sent down to Haiku either.
+    const after = signals({ attempt: 2, previousRoute: { provider: 'claude', model: 's-1', outcome: 'failed' } });
+    expect(decide([stat('routine-code', haiku, 40, 0, 0.01)], policy(), after).model).toBe('s-1');
+    // Without an earlier attempt the same record moves the work as usual.
+    expect(decide([stat('routine-code', haiku, 40, 0, 0.01)]).model).toBe('h-1');
+  });
+
   it('without outcomes (routing.learning.enabled false passes none) the table decides exactly as before', () => {
     const d = decide([]);
     expect(d.model).toBe('s-1');
@@ -253,19 +272,22 @@ describe('route outcomes in the state database', () => {
     expect(routeStats(db, { workKind: 'routine-code', difficulty: 'medium' })).toEqual([]);
   });
 
-  it('FR-002: failures recorded in a run that ended for an environment or misconfigured-check cause are not read', () => {
+  it('FR-002: only the attempt a run ended on for an environment or misconfigured-check cause is left out; its other attempts count', () => {
     const { db, clock } = setup();
     for (const [id, cls] of [['run-env', 'environment'], ['run-chk', 'check-misconfigured'], ['run-model', 'model']] as const) {
       createRun(db, { id, repoRoot: '/repo/acme', goal: id, mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, clock);
-      db.run("UPDATE runs SET state = 'BLOCKED', failure_class = ? WHERE id = ?", cls, id);
-      const rec = (outcome: 'verified' | 'failed' | 'rejected') => recordRouteOutcome(db, { runId: id, workKind: 'routine-code', provider: 'claude', modelId: HAIKU, outcome, costUsd: 0.1, difficulty: 'simple' }, clock);
-      rec('failed');
-      rec('rejected');
-      rec('verified');
+      // The end record names the evidence of the attempt whose failure was the environment's (verifying.ts).
+      db.run("UPDATE runs SET state = 'BLOCKED', failure_class = ?, outcome_json = ? WHERE id = ?", cls, JSON.stringify({ report_id: `ev-${id}-last` }), id);
+      const rec = (outcome: 'verified' | 'failed' | 'rejected', evidenceRef: string) => recordRouteOutcome(db, { runId: id, workKind: 'routine-code', provider: 'claude', modelId: HAIKU, outcome, costUsd: 0.1, difficulty: 'simple', evidenceRef }, clock);
+      rec('failed', `ev-${id}-first`);
+      rec('rejected', 'review-gate:t');
+      rec('verified', 'review-gate:u');
+      rec('failed', `ev-${id}-last`);
     }
-    // Only the run the model itself failed in counts against the route; what was verified counts everywhere.
-    expect(routeStats(db, { workKind: 'routine-code', difficulty: 'simple' })[0]).toMatchObject({ samples: 5, verified: 3, failed: 1, rejected: 1, successRate: 0.6 });
+    // Left out: the last attempt of run-env and of run-chk. Earlier real failures and review rejections of those runs
+    // count, and in run-model the last failure was the model's.
+    expect(routeStats(db, { workKind: 'routine-code', difficulty: 'simple' })[0]).toMatchObject({ samples: 10, verified: 3, failed: 4, rejected: 3, successRate: 0.3 });
     // The rows are kept: the record of what happened is not rewritten.
-    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM route_outcomes')!.n).toBe(9);
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM route_outcomes')!.n).toBe(12);
   });
 });

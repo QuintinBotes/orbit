@@ -29,11 +29,11 @@ function start(tweak?: UnitLabOptions['tweak']): void {
 }
 
 /** Outcomes of earlier runs of this repository, as their own controllers recorded them. */
-function seed(n: number, outcome: 'verified' | 'failed', over: { model?: string; difficulty?: string; run?: string } = {}): void {
+function seed(n: number, outcome: 'verified' | 'failed', over: { model?: string; difficulty?: string; run?: string; role?: string | null } = {}): void {
   const run = over.run ?? 'orb-earlier';
   if (!lab.db.get('SELECT 1 AS x FROM runs WHERE id = ?', run)) createRun(lab.db, { id: run, repoRoot: lab.repo, goal: 'earlier', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, lab.clock);
   for (let i = 0; i < n; i++) {
-    recordRouteOutcome(lab.db, { runId: run, workKind: 'routine-code', provider: 'claude', modelId: over.model ?? HAIKU, outcome, costUsd: 0.05, tokens: 1000, role: 'implementer', effort: 'medium', difficulty: over.difficulty ?? 'medium' }, lab.clock);
+    recordRouteOutcome(lab.db, { runId: run, workKind: 'routine-code', provider: 'claude', modelId: over.model ?? HAIKU, outcome, costUsd: 0.05, tokens: 1000, role: over.role === undefined ? 'implementer' : over.role, effort: 'medium', difficulty: over.difficulty ?? 'medium' }, lab.clock);
   }
 }
 
@@ -103,6 +103,27 @@ describe('routeFor reads measured outcomes', () => {
     expect(routeFor(lab.ctx(), 'implement:1', 'routine-code', signals).model).toBe(SONNET);
   });
 
+  it('moves only implementation attempts: the planner and the inquisitor keep the table, and status shows the route it moved', () => {
+    start();
+    seed(20, 'verified');
+    expect(routeFor(lab.ctx(), 'implement:1', 'routine-code', signals).model).toBe(HAIKU);
+    // Implementer outcomes say nothing about a planner or an inquisitor on that model: neither reads them.
+    for (const purpose of ['plan', 'inquire:abc123']) {
+      expect(routeFor(lab.ctx(), purpose, 'routine-code', signals).model).toBe(SONNET);
+      expect(decisionOf(purpose).learning).toBeUndefined();
+    }
+    // The route learning did move stays the one orbit status explains, though other routes were decided after it.
+    expect(buildRunStatus({ clock: lab.clock }, lab.db, getRun(lab.db, lab.runId)).routing).toMatchObject({ purpose: 'implement:1', model: HAIKU, displaced_table: true });
+  });
+
+  it('reads only implementer outcomes: passes recorded for another role do not move an implementation attempt', () => {
+    start();
+    seed(20, 'verified', { role: 'reviewer' });
+    seed(20, 'verified', { role: null });
+    expect(routeFor(lab.ctx(), 'implement:1', 'routine-code', signals).model).toBe(SONNET);
+    expect(decisionOf('implement:1').learning).toBeUndefined();
+  });
+
   it('an explicit routing.overrides entry wins over measured outcomes', () => {
     start((c) => void (c.routing.overrides = { 'routine-code': 'sonnet' }));
     seed(40, 'verified');
@@ -144,7 +165,8 @@ describe('orbit status explains a learned route', () => {
 });
 
 describe('settleRouteOutcome', () => {
-  function attempt(n: number, usage: ({ cost: number | null } | null)[]): ReturnType<typeof addCandidate> {
+  /** Attempt n: its route, its implementer sessions, and the candidate its tree became, as the implementing step records them. */
+  function attempt(n: number, usage: ({ cost: number | null } | null)[], tree = String(n).repeat(40)): ReturnType<typeof addCandidate> {
     const route = routeFor(lab.ctx(), `implement:${n}`, 'routine-code', { ...signals, attempt: n });
     usage.forEach((u, i) => {
       const w = planWorker(lab.db, { id: `wrk-${n}-${i}`, runId: lab.runId, role: 'implementer', purpose: `implement:${n}#${i + 1}`, provider: route.provider, model: route.model, effort: route.effort, attempt: n, workerDir: join(lab.base, 'w', `${n}-${i}`), cwd: lab.repo }, lab.clock, OWNER);
@@ -152,7 +174,9 @@ describe('settleRouteOutcome', () => {
         recordUsage(lab.db, { runId: lab.runId, workerId: w.id, usage: { provider: 'claude', model: route.model, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: u.cost, costSource: u.cost === null ? 'unavailable' : 'reported' }, durationMs: 10, pricing: null }, lab.clock);
       }
     });
-    return addCandidate(lab, { attempt: n, tree: String(n).repeat(40) });
+    const cand = addCandidate(lab, { attempt: n, tree });
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: cand.id }));
+    return cand;
   }
   const rows = () => lab.db.all<Record<string, unknown>>('SELECT work_kind, provider, model_id, outcome, cost_usd, tokens, role, effort, difficulty, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', lab.runId);
 
@@ -168,8 +192,22 @@ describe('settleRouteOutcome', () => {
     const c2 = attempt(2, [{ cost: 0.1 }]);
     settleRouteOutcome(lab.ctx(), c2, { outcome: 'verified', evidenceRef: `review-gate:${c2.treeHash}` });
     expect(rows()).toEqual([
-      { work_kind: 'routine-code', provider: 'claude', model_id: SONNET, outcome: 'failed', cost_usd: 0.75, tokens: 2400, role: 'implementer', effort: 'medium', difficulty: 'medium', attempt_key: c1.id, evidence_ref: 'ev-1' },
-      { work_kind: 'routine-code', provider: 'claude', model_id: SONNET, outcome: 'verified', cost_usd: 0.1, tokens: 1200, role: 'implementer', effort: 'medium', difficulty: 'medium', attempt_key: c2.id, evidence_ref: `review-gate:${c2.treeHash}` },
+      { work_kind: 'routine-code', provider: 'claude', model_id: SONNET, outcome: 'failed', cost_usd: 0.75, tokens: 2400, role: 'implementer', effort: 'medium', difficulty: 'medium', attempt_key: 'attempt:1', evidence_ref: 'ev-1' },
+      { work_kind: 'routine-code', provider: 'claude', model_id: SONNET, outcome: 'verified', cost_usd: 0.1, tokens: 1200, role: 'implementer', effort: 'medium', difficulty: 'medium', attempt_key: 'attempt:2', evidence_ref: `review-gate:${c2.treeHash}` },
+    ]);
+  });
+
+  it('a repair that reproduces an earlier tree is its own attempt: it records its own outcome and its own cost', () => {
+    start();
+    const c1 = attempt(1, [{ cost: 0.25 }]);
+    settleRouteOutcome(lab.ctx(), c1, { outcome: 'failed', evidenceRef: 'ev-1' });
+    // Same tree, same candidate: the candidate record still names attempt 1, and the fresh report of that tree is reused.
+    const again = attempt(2, [{ cost: 0.4 }], c1.treeHash);
+    expect(again).toMatchObject({ id: c1.id, attempt: 1 });
+    expect(settleRouteOutcome(lab.ctx(), again, { outcome: 'failed', evidenceRef: 'ev-1' })).not.toBeNull();
+    expect(rows().map((r) => [r.attempt_key, r.outcome, r.cost_usd])).toEqual([
+      ['attempt:1', 'failed', 0.25],
+      ['attempt:2', 'failed', 0.4],
     ]);
   });
 

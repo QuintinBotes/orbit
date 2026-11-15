@@ -318,12 +318,16 @@ export function recordRouteOutcome(db: OrbitDb, input: RouteOutcomeInput, clock:
 }
 
 /**
- * Outcomes recorded against a route in a run that then ended for a cause that was not the model's (issue #168, FR-002):
- * the run's failure class (issue #167) is `environment` or `check-misconfigured`, so a check that failed or a review
- * that refused in that run measured the machine or the check, not the route. The class is known only when the run
- * ends, after the outcome was written, so the rows stay and every reader leaves them out of the judged outcomes.
+ * A failed outcome whose own attempt the run then ended on for a cause that was not the model's (issue #168, FR-002):
+ * the run's failure class (issue #167) is `environment` or `check-misconfigured` and its end record names this
+ * outcome's evidence report. Only that attempt is left out: the run's earlier failures, its review rejections and its
+ * verified attempts were judged on the work and still count. The class is known only when the run ends, after the
+ * outcome was written, so the row stays and every reader of `route_outcomes` (unaliased) leaves it out of the judged
+ * outcomes.
  */
-export const ROUTE_OUTCOME_NOT_THE_ROUTES = "(outcome IN ('failed', 'rejected') AND run_id IN (SELECT id FROM runs WHERE failure_class IN ('environment', 'check-misconfigured')))";
+export const ROUTE_OUTCOME_NOT_THE_ROUTES = `(outcome = 'failed' AND evidence_ref IS NOT NULL AND EXISTS (
+  SELECT 1 FROM runs r WHERE r.id = route_outcomes.run_id AND r.failure_class IN ('environment', 'check-misconfigured')
+     AND (CASE WHEN json_valid(r.outcome_json) THEN json_extract(r.outcome_json, '$.report_id') END) = route_outcomes.evidence_ref))`;
 
 export interface RouteStatsFilter {
   workKind?: WorkKind;
@@ -333,6 +337,8 @@ export interface RouteStatsFilter {
   sinceMs?: number;
   /** Only outcomes recorded under this difficulty class; outcomes recorded without one are left out. */
   difficulty?: string;
+  /** Only outcomes of this role's attempts; outcomes recorded without a role are left out. */
+  role?: string;
 }
 
 export function routeStats(db: OrbitDb, filter: RouteStatsFilter = {}): RouteStat[] {
@@ -341,6 +347,10 @@ export function routeStats(db: OrbitDb, filter: RouteStatsFilter = {}): RouteSta
   if (filter.workKind) {
     where.push('work_kind = ?');
     params.push(filter.workKind);
+  }
+  if (filter.role) {
+    where.push('role = ?');
+    params.push(filter.role);
   }
   if (filter.difficulty) {
     where.push('difficulty = ?');

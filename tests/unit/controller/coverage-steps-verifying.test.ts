@@ -27,7 +27,8 @@ const { PLANNER_FILE } = await import('../../../src/controller/steps/contracting
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { getCandidate, listFailures, currentEvidenceReport, listEvidenceReports } = await import('../../../src/evidence/store.ts');
 const { evaluateEvidence } = await import('../../../src/evidence/report.ts');
-const { listDecisions } = await import('../../../src/storage/decisions.ts');
+const { listDecisions, recordDecision } = await import('../../../src/storage/decisions.ts');
+const { implementRouteDecisionId } = await import('../../../src/controller/route-outcome.ts');
 const { planWorker, finishWorker, markWorkerRunning } = await import('../../../src/storage/workers.ts');
 const { setQuestionAnswer } = await import('../../../src/inquisition/store.ts');
 const { APPROVE_ONCE, DENY } = await import('../../../src/controller/authorization.ts');
@@ -391,5 +392,50 @@ describe('pendingTrigger', () => {
     await pendingTrigger(lab.ctx(), withDiff, ['repeated_failure']);
     expect(hooks.git).not.toHaveBeenCalled();
     expect((hooks.detectTriggers.mock.calls.at(-1)![0] as { testLayout?: unknown }).testLayout).toBeUndefined();
+  });
+});
+
+describe('route outcomes of a failed verification (issue #168)', () => {
+  type Check = import('../../../src/evidence/types.ts').EvidenceReport['checks'][number];
+  /** The route attempt 1 was given, as routeFor records it. */
+  function routed(): void {
+    recordDecision(lab.db, lab.ctx().runDir, { id: implementRouteDecisionId(lab.runId, 1), runId: lab.runId, kind: 'route', summary: 'implement:1', data: { purpose: 'implement:1', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', work_kind: 'routine-code' } }, lab.clock);
+  }
+  const outcomes = () => lab.db.all<{ outcome: string; attempt_key: string; evidence_ref: string }>('SELECT outcome, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ?', lab.runId);
+  const check = (status: Check['status']): Check => ({ id: 'unit', status, exit_code: status === 'PASSED' ? 0 : 1, flaky: false, log: 'unit.log' });
+
+  it('a trusted check that ran on the candidate and failed settles the attempt as failed', async () => {
+    const { cand } = setup();
+    routed();
+    const ev = addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('FAILED')] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([{ outcome: 'failed', attempt_key: 'attempt:1', evidence_ref: ev.id }]);
+  });
+
+  it.each(['TIMEOUT', 'CANCELLED'] as const)('a check that only ended %s settles nothing: no check ran on the work to its end', async (status) => {
+    const { cand } = setup();
+    routed();
+    addEvidence(lab, cand, { verdict: 'FAIL', checks: [check(status)] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([]);
+  });
+
+  it('a required browser journey that failed settles the attempt as failed, though every command check passed', async () => {
+    const { cand } = setup();
+    routed();
+    const ev = addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('PASSED')], ui: [{ journey: 'checkout', status: 'FAILED', artifacts: [] }] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([{ outcome: 'failed', attempt_key: 'attempt:1', evidence_ref: ev.id }]);
+  });
+
+  it('a browser journey that only timed out settles nothing either', async () => {
+    const { cand } = setup();
+    routed();
+    addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('PASSED')], ui: [{ journey: 'checkout', status: 'TIMEOUT', artifacts: [] }] });
+    await runStep();
+    expect(outcomes()).toEqual([]);
   });
 });

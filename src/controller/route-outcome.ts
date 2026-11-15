@@ -11,16 +11,20 @@
  * refused session), for an environment failure, for a gate refusal that ran no check (scope, size, policy), or for a
  * run that stopped before its candidate was judged: none of those say how well the model did the work.
  *
- * The exclusion rests first on where the controller calls this, after its own environment classification. A run can
- * also find out later that a failed check was the environment's or misconfigured; it then ends with that failure class
- * (issue #167), and the readers of `route_outcomes` leave that run's failures out (ROUTE_OUTCOME_NOT_THE_ROUTES).
+ * The exclusion rests first on where the controller calls this, after its own environment classification. When a run
+ * ends with failure class `environment` or `check-misconfigured` (issue #167) on the evidence of an attempt that was
+ * recorded, the readers of `route_outcomes` leave that one attempt out (ROUTE_OUTCOME_NOT_THE_ROUTES).
+ *
+ * An outcome belongs to an implementation attempt, not to a candidate: an attempt that reproduces an earlier tree gets
+ * the earlier candidate back (same tree, same candidate, still naming the earlier attempt), and is still an attempt of
+ * its own, with its own route and its own cost.
  */
 import type { CandidateRecord } from '../evidence/store.ts';
 import { getDecision } from '../storage/decisions.ts';
 import { recordRouteOutcome } from '../routing/usage.ts';
 import { roundUsd } from '../routing/pricing.ts';
 import { WORK_KINDS, type RouteOutcome, type WorkKind } from '../routing/types.ts';
-import type { RunContext } from './context.ts';
+import { CANDIDATE_EVENT, type RunContext } from './context.ts';
 
 export interface RouteSettlement {
   outcome: Extract<RouteOutcome, 'verified' | 'failed' | 'rejected'>;
@@ -36,17 +40,32 @@ export function implementRouteDecisionId(runId: string, attempt: number): string
 }
 
 /**
- * Record the outcome of the attempt that produced `cand`, once. Returns the row id, or null when nothing was recorded
- * (an environment result, or no route decision with a provider and model for the attempt). Never throws on missing
- * measurements: a cost or token count that is not fully known is stored as null, never as zero.
+ * The implementation attempt whose result `cand` is now: the newest attempt the implementing step recorded as producing
+ * it. The candidate's own `attempt` is the first attempt that produced its tree, used only when no event names it.
+ */
+function attemptOf(ctx: RunContext, cand: CandidateRecord): number {
+  const row = ctx.db.get<{ n: number | null }>(
+    "SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.candidate_id') = ? ORDER BY id DESC LIMIT 1",
+    ctx.run.id,
+    CANDIDATE_EVENT,
+    cand.id,
+  );
+  return typeof row?.n === 'number' && row.n > 0 ? row.n : cand.attempt;
+}
+
+/**
+ * Record the outcome of the attempt whose result `cand` is, once per attempt. Returns the row id, or null when nothing
+ * was recorded (an environment result, or no route decision with a provider and model for the attempt). Never throws
+ * on missing measurements: a cost or token count that is not fully known is stored as null, never as zero.
  */
 export function settleRouteOutcome(ctx: RunContext, cand: CandidateRecord, settlement: RouteSettlement): number | null {
   if (settlement.environment) return null;
-  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, cand.attempt));
+  const attempt = attemptOf(ctx, cand);
+  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, attempt));
   const d = (decision?.data ?? null) as { provider?: unknown; model?: unknown; effort?: unknown; work_kind?: unknown } | null;
   if (!d || typeof d.provider !== 'string' || typeof d.model !== 'string' || !d.provider || !d.model) return null;
   const workKind = (WORK_KINDS as readonly string[]).includes(String(d.work_kind)) ? (d.work_kind as WorkKind) : 'routine-code';
-  const spent = attemptSpend(ctx, cand.attempt);
+  const spent = attemptSpend(ctx, attempt);
   return recordRouteOutcome(
     ctx.db,
     {
@@ -60,7 +79,7 @@ export function settleRouteOutcome(ctx: RunContext, cand: CandidateRecord, settl
       role: 'implementer',
       effort: typeof d.effort === 'string' ? d.effort : null,
       difficulty: ctx.run.difficulty ?? null,
-      attemptKey: cand.id,
+      attemptKey: `attempt:${attempt}`,
       evidenceRef: settlement.evidenceRef,
     },
     ctx.clock,

@@ -297,12 +297,6 @@ export function defaultUi(): UiConfig {
  * A response that still exceeds its cap is retried once with the cap doubled, up to OUTPUT_CAP_CEILING
  * (controller/workers.ts), so these are starting points and not walls.
  */
-/**
- * `routing.learning` defaults (issue #168): twenty judged outcomes of a route in one task class before they decide
- * anything, a measured pass rate of 80% to displace the table's choice, and outcomes of the last 90 days only.
- */
-export const DEFAULT_ROUTING_LEARNING: Readonly<RoutingLearning> = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
-
 export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Object.freeze({
   planner: 16000,
   implementer: 24000,
@@ -314,6 +308,24 @@ export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Obje
 });
 
 export const BUDGET_ROLES: readonly BudgetRole[] = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS) as BudgetRole[]);
+
+/**
+ * `routing.learning` defaults (issue #168): twenty judged outcomes of a route in one task class before they decide
+ * anything, a measured pass rate of 80% to displace the table's choice, and outcomes of the last 90 days only.
+ */
+export const DEFAULT_ROUTING_LEARNING: Readonly<RoutingLearning> = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
+
+/** `routing.learning` as configured, a value outside its range replaced by the default; an older snapshot without it reads the defaults. */
+export function routingLearning(config: { routing: { learning?: Partial<RoutingLearning> } }): RoutingLearning {
+  const l = config.routing.learning ?? {};
+  const num = (v: unknown, fallback: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback);
+  return {
+    enabled: typeof l.enabled === 'boolean' ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
+    min_samples: Math.floor(num(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 100_000)),
+    min_pass_rate: num(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
+    window_days: num(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650),
+  };
+}
 
 export function defaultUiExploration(): UiExplorationConfig {
   return { enabled: false, max_minutes: 15, budget_usd: 2 };
@@ -351,17 +363,6 @@ export function defaultReleaseEnvironment(baseBranch: string): Omit<ReleaseEnvir
  * The sections added after the first snapshots were written, read with their
  * defaults when a config (an older snapshot's) does not carry them.
  */
-export function routingLearning(config: { routing: { learning?: Partial<RoutingLearning> } }): RoutingLearning {
-  const l = config.routing.learning ?? {};
-  const num = (v: unknown, fallback: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback);
-  return {
-    enabled: typeof l.enabled === 'boolean' ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
-    min_samples: Math.floor(num(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 100_000)),
-    min_pass_rate: num(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
-    window_days: num(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650),
-  };
-}
-
 export function outputBudgets(config: Pick<OrbitConfig, 'routing'>): Record<BudgetRole, number> {
   return { ...DEFAULT_OUTPUT_BUDGETS, ...(config.routing.output_budgets ?? {}) };
 }

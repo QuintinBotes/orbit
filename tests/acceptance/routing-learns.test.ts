@@ -75,7 +75,8 @@ describe.skipIf(!READY)('acceptance: routing learns from measured outcomes (issu
     const rows = outcomesOf(l, run.id);
     // Attempt 1 failed a trusted check; attempt 2 passed verification and review cleared its tree.
     expect(rows.map((r) => r.outcome)).toEqual(['failed', 'verified']);
-    expect(rows.map((r) => r.attempt_key)).toEqual(reports.map((r) => r.candidateId));
+    // One outcome per implementation attempt, keyed by the attempt (not by the candidate its tree became).
+    expect(rows.map((r) => r.attempt_key)).toEqual(['attempt:1', 'attempt:2']);
     expect(rows[0]!.evidence_ref).toBe(reports[0]!.id);
     expect(rows[1]!.evidence_ref).toBe(`review-gate:${reports[1]!.treeHash}`);
     const workers = listWorkers(db, { runId: run.id, role: 'implementer' });

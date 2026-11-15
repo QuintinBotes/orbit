@@ -115,8 +115,12 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     // its route: one outcome per attempt whose candidate failed, with the route the attempt was given.
     const outcomes = l.db().all<{ outcome: string; role: string; provider: string; model_id: string; work_kind: string; attempt_key: string; evidence_ref: string }>('SELECT outcome, role, provider, model_id, work_kind, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', run.id);
     const failed = listEvidenceReports(l.db(), run.id).filter((r) => r.verdict === 'FAIL');
+    const attempts = l.db().all<{ n: number }>("SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = 'implementation.candidate' ORDER BY id", run.id).map((r) => `attempt:${r.n}`);
     expect(outcomes.length).toBeGreaterThan(0);
-    expect(outcomes.map((o) => [o.attempt_key, o.evidence_ref])).toEqual(failed.map((r) => [r.candidateId, r.id]));
+    // Each attempt that became a candidate once at most, and every failed report settled the attempt it judged.
+    expect(new Set(outcomes.map((o) => o.attempt_key)).size).toBe(outcomes.length);
+    for (const o of outcomes) expect(attempts).toContain(o.attempt_key);
+    expect(new Set(outcomes.map((o) => o.evidence_ref))).toEqual(new Set(failed.map((r) => r.id)));
     for (const o of outcomes) expect(o).toMatchObject({ outcome: 'failed', role: 'implementer', provider: 'claude', work_kind: 'routine-code' });
   }, 240_000);
 

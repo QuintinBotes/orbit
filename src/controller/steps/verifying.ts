@@ -187,11 +187,12 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === 'FAIL') {
-    // The attempt's evidence is settled against it only when a trusted check ran on the candidate to its end and
-    // failed (issue #168). An environment failure returned above; a refusal by a gate that ran no check (scope, size,
-    // the static security gate) and a check that only timed out, was cancelled or could not run (a loaded machine
-    // looks the same) are not measurements of how well the route did the work.
-    if (ev.report.checks.some((c) => c.status === 'FAILED')) settleRouteOutcome(ctx, cand, { outcome: 'failed', evidenceRef: ev.id });
+    // The attempt's evidence is settled against it only when a trusted check or a required browser journey ran on the
+    // candidate to its end and failed (issue #168). An environment failure returned above; a refusal by a gate that ran
+    // no check (scope, size, the static security gate) and a check or journey that only timed out, was cancelled or
+    // could not run (a loaded machine looks the same) are not measurements of how well the route did the work.
+    const ranAndFailed = ev.report.checks.some((c) => c.status === 'FAILED') || (ev.report.ui ?? []).some((j) => j.status === 'FAILED');
+    if (ranAndFailed) settleRouteOutcome(ctx, cand, { outcome: 'failed', evidenceRef: ev.id });
     return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
   }
   // Fail-before under `required` (ADR 0014): not established blocks with a question per criterion; new tests that pass on

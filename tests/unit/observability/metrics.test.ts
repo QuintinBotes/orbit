@@ -282,10 +282,10 @@ describe('stale-evidence prevention and UI defects', () => {
 });
 
 describe('routes (issue #168)', () => {
-  function outcome(s: Seed, runId: string, p: { model?: string; difficulty?: string | null; outcome: string; cost?: number | null; effort?: string; role?: string | null; ts?: number }): void {
+  function outcome(s: Seed, runId: string, p: { model?: string; difficulty?: string | null; outcome: string; cost?: number | null; effort?: string; role?: string | null; ts?: number; evidenceRef?: string }): void {
     s.db.run(
-      "INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty) VALUES (?, 'routine-code', 'claude', ?, ?, ?, NULL, ?, ?, ?, ?)",
-      runId, p.model ?? 'claude-haiku-4-5-20251001', p.outcome, p.cost === undefined ? 0.1 : p.cost, p.ts ?? T0, p.role === undefined ? 'implementer' : p.role, p.effort ?? 'medium', p.difficulty === undefined ? 'simple' : p.difficulty,
+      "INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty, evidence_ref) VALUES (?, 'routine-code', 'claude', ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+      runId, p.model ?? 'claude-haiku-4-5-20251001', p.outcome, p.cost === undefined ? 0.1 : p.cost, p.ts ?? T0, p.role === undefined ? 'implementer' : p.role, p.effort ?? 'medium', p.difficulty === undefined ? 'simple' : p.difficulty, p.evidenceRef ?? null,
     );
   }
 
@@ -311,15 +311,16 @@ describe('routes (issue #168)', () => {
     ]);
   });
 
-  it('FR-002: a failure in a run that ended for an environment cause is counted as not judged, not against the route', () => {
+  it('FR-002: the failure a run ended on for an environment cause is counted as not judged; its earlier failure and its rejection count', () => {
     const s = new Seed();
     s.run('r1', 'SUCCEEDED');
     s.run('r2', 'BLOCKED');
-    s.db.run("UPDATE runs SET failure_class = 'environment' WHERE id = 'r2'");
+    s.db.run("UPDATE runs SET failure_class = 'environment', outcome_json = ? WHERE id = 'r2'", JSON.stringify({ report_id: 'ev-last' }));
     outcome(s, 'r1', { outcome: 'verified' });
-    outcome(s, 'r2', { outcome: 'failed' });
-    outcome(s, 'r2', { outcome: 'rejected' });
-    expect(metricsFor(s.db).routes[0]).toMatchObject({ outcomes: 3, verified: 1, failed: 0, rejected: 0, excluded: 2, pass_rate: { numerator: 1, denominator: 1, rate: 1 } });
+    outcome(s, 'r2', { outcome: 'failed', evidenceRef: 'ev-first' });
+    outcome(s, 'r2', { outcome: 'rejected', evidenceRef: 'review-gate:t' });
+    outcome(s, 'r2', { outcome: 'failed', evidenceRef: 'ev-last' });
+    expect(metricsFor(s.db).routes[0]).toMatchObject({ outcomes: 4, verified: 1, failed: 1, rejected: 1, excluded: 1, pass_rate: { numerator: 1, denominator: 3, rate: 0.3333 } });
   });
 
   it('an unknown cost is not a zero cost: the route has no cost per accepted task, and it is listed as missing', () => {

@@ -1081,6 +1081,9 @@ export interface RouteChoice {
   decisionId: string;
 }
 
+/** The purpose prefix of an implementation attempt's route (`implement:<n>`): the only route measured outcomes move. */
+const IMPLEMENT_PURPOSE = 'implement:';
+
 /**
  * Route a work unit once and record why. The decision id is derived from the
  * purpose, so a retried step reuses the recorded route instead of routing
@@ -1095,10 +1098,12 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
   }
   const config = ctx.snapshot.config;
   try {
-    // Measured outcomes of the same task class (work kind and difficulty) inside the learning window; none at all when
-    // routing.learning.enabled is false, so the table and the priors decide alone (issue #168).
+    // Measured outcomes of the same task class (work kind and difficulty) inside the learning window (issue #168). Only
+    // implementer attempts are measured, so only an implementation attempt reads them, and only the implementer's: a
+    // planner, a diagnosis or an inquisitor keeps the table. None at all when routing.learning.enabled is false.
     const learning = routingLearning(config);
-    const outcomes = learning.enabled ? routeStats(ctx.db, { workKind, difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 86_400_000 }) : [];
+    const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
+    const outcomes = learns ? routeStats(ctx.db, { workKind, role: 'implementer', difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 86_400_000 }) : [];
     const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
     const rec = toDecisionRecord(decision);
     recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose, ...(learning.enabled ? {} : { learning_disabled: 'routing.learning.enabled is false: measured outcomes were not read' }) } }, ctx.clock);

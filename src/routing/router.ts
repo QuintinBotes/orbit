@@ -48,7 +48,9 @@ import {
  * verified task is clearly lower, displaces the table's choice; when its rate
  * falls below the threshold the table's choice stands again. Learning chooses
  * only among the models the policy made eligible, never into Fable, never
- * while difficulty is being escalated and never against `routing.overrides`.
+ * while difficulty is being escalated, never below the tier an earlier attempt
+ * of the same run ran on, and never against `routing.overrides`. The caller
+ * passes outcomes only for implementation attempts.
  * Every decision that read outcomes records what it read and why (`learning`).
  *
  * route() is pure: it reads the registry and the outcomes it is given and
@@ -398,7 +400,11 @@ function calibrate(ctx: Ctx, tier: number, chosen: ModelEntry, byTier: Map<numbe
   const candidates: { m: ModelEntry; c: RouteCost; t: number }[] = [];
   const below: string[] = [];
   const short: string[] = [];
-  const describe = (m: ModelEntry, verdict: string): void => {
+  const held: string[] = [];
+  // The tier an earlier attempt of this run ran on (escalated or held there): outcomes measured on other runs never
+  // send the work below it.
+  const floorTier = ctx.previousTier;
+  const describe =(m: ModelEntry, verdict: string): void => {
     const st = statFor(ctx, m);
     if (!st) return;
     const judged = st.verified + st.failed + st.rejected;
@@ -426,7 +432,10 @@ function calibrate(ctx: Ctx, tier: number, chosen: ModelEntry, byTier: Map<numbe
       const rate = judged > 0 ? st.verified / judged : null;
       const c = costOf(m);
       let verdict: string;
-      if (judged < min || rate === null) {
+      if (t < tier && floorTier !== null && t < floorTier) {
+        verdict = `an earlier attempt of this run ran on ${TIER_NAME[floorTier]}, and measured outcomes never route the run below it`;
+        held.push(`${m.modelId} is below ${TIER_NAME[floorTier]}, where an earlier attempt of this run ran`);
+      } else if (judged < min || rate === null) {
         verdict = `${judged} of the ${min} judged outcomes needed`;
         short.push(`${m.modelId} has ${verdict}`);
       } else if (t < tier && rate < floor) {
@@ -451,10 +460,11 @@ function calibrate(ctx: Ctx, tier: number, chosen: ModelEntry, byTier: Map<numbe
   if (best) {
     const st = statFor(ctx, best.m) as RouteStat;
     const judged = st.verified + st.failed + st.rejected;
-    const reason = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); measured expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} vs $${fmt(mine.total)} for ${chosen.modelId}`;
+    const reason = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} (${costBasisWords(best.c.basis)}) vs $${fmt(mine.total)} for ${chosen.modelId} (${costBasisWords(mine.basis)})`;
     return { pick: best.m, restored: false, reason, measured };
   }
   if (below.length > 0) return { pick: null, restored: true, reason: `${below.join('; ')}, so ${chosen.modelId} from the routing table is used`, measured };
+  if (held.length > 0) return { pick: null, restored: false, reason: `the routing table decides: ${held.join('; ')}`, measured };
   const reason = short.length > 0 ? `the routing table decides: ${short.join('; ')}` : `the routing table decides: no measured route is clearly cheaper per verified task than ${chosen.modelId}`;
   return { pick: null, restored: false, reason, measured };
 }
@@ -760,6 +770,11 @@ function priceProfile(t: WorkProfile['tokens'], p: ModelPricing): number {
   const written = t.input * t.cacheWriteShare;
   const uncached = Math.max(0, t.input - cached - written);
   return (uncached * p.input + cached * p.cache_read + written * p.cache_write_5m + t.output * p.output) / 1_000_000;
+}
+
+/** Where an expected cost comes from, in words: a list-price estimate is never called measured. */
+function costBasisWords(basis: CostBasis): string {
+  return basis === 'measured' ? 'measured' : basis === 'blended' ? 'measured cost blended with list price' : basis === 'prior' ? 'list price' : 'unknown';
 }
 
 /** The measured outcomes of one route in this task class. Statistics read for another difficulty class are not comparable and are not used. */

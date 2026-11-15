@@ -56,22 +56,29 @@ difficulty class), the result and the cost.
 
 | Result | When it is recorded |
 |---|---|
-| `failed` | a trusted check ran on the attempt's candidate to its end and failed |
+| `failed` | a trusted check or a required browser journey ran on the attempt's candidate to its end and failed |
 | `rejected` | verification passed and review sent the candidate back to repair |
 | `verified` | verification passed and review cleared the tree |
 
 Nothing is recorded when the result says nothing about the model: an attempt
 that never became a candidate (the provider was unavailable, the session was
-lost or refused), a failure the environment caused, a check that timed out or
-could not run, a refusal by a gate that ran no check (scope, size, the static
-security gate), or a run that stopped before its candidate was judged. A cost
-is recorded only when every session of the attempt reported one; otherwise it
-is stored as unknown, never as zero. Each attempt is recorded once.
+lost or refused), a failure the environment caused, a check or journey that
+timed out or could not run, a refusal by a gate that ran no check (scope,
+size, the static security gate), or a run that stopped before its candidate
+was judged. A cost is recorded only when every session of the attempt reported
+one; otherwise it is stored as unknown, never as zero. Each implementation
+attempt is recorded once. A repair that reproduces an earlier attempt's tree
+gets the earlier candidate back, and is still recorded as its own attempt with
+its own route and cost.
 
-A run can find out only later that a failing check was broken or that the
-machine was at fault. When a run ends with the failure class `environment` or
-`check-misconfigured`, the `failed` and `rejected` outcomes it recorded are
-not read by routing, and `orbit stats` counts them as not judged.
+When a run ends with the failure class `environment` or `check-misconfigured`
+on the evidence of an attempt that was recorded, routing does not read that
+attempt's outcome and `orbit stats` counts it as not judged. The run's other
+attempts were judged on the work and still count.
+
+Only implementation attempts are recorded, so only an implementation attempt's
+route reads outcomes, and only the implementer's. The planner, diagnoses, the
+reviewer and the inquisitor always keep the routing table's choice.
 
 When a new attempt is routed, Orbit reads the outcomes of the same task class
 from the last `routing.learning.window_days` days (default 90). The routing
@@ -95,9 +102,15 @@ model on its own. A tier above the table's choice displaces it only when both
 are measured and it is clearly cheaper per verified task, and never Fable.
 
 What this cannot do: choose a model outside `routing.allowed_models`, override
-an entry in `routing.overrides`, or change a route while repeated failures are
-escalating it. The same recorded outcomes always give the same route; ties go
-to the lower expected cost, then the lower tier, then the model id.
+an entry in `routing.overrides`, change a route while repeated failures are
+escalating it, or route an attempt below the tier the run's previous attempt
+ran on. The same recorded outcomes always give the same route; ties go to the
+lower expected cost, then the lower tier, then the model id. The recorded
+reason says which costs were measured and which are list prices.
+
+`routing.learning.min_samples` is also the number of measured outcomes every
+other measured routing decision needs: when a route's cost counts as measured,
+and when measured evidence justifies Fable.
 
 Each route decision that read outcomes records what it read under `learning`:
 the table's choice, the counts, the pass rate, the window and one sentence

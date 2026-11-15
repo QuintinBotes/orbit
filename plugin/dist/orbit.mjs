@@ -21750,6 +21750,16 @@ function defaultUi() {
     exploration: defaultUiExploration()
   };
 }
+function routingLearning(config) {
+  const l = config.routing.learning ?? {};
+  const num7 = (v, fallback, min, max) => typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+  return {
+    enabled: typeof l.enabled === "boolean" ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
+    min_samples: Math.floor(num7(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 1e5)),
+    min_pass_rate: num7(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
+    window_days: num7(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650)
+  };
+}
 function defaultUiExploration() {
   return { enabled: false, max_minutes: 15, budget_usd: 2 };
 }
@@ -21767,16 +21777,6 @@ function defaultReleaseMerge() {
 }
 function defaultReleaseEnvironment(baseBranch) {
   return { verify_command: null, allowed_branches: [baseBranch], require_ci_green: true, network_hosts: [], timeout_seconds: 1800 };
-}
-function routingLearning(config) {
-  const l = config.routing.learning ?? {};
-  const num7 = (v, fallback, min, max) => typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
-  return {
-    enabled: typeof l.enabled === "boolean" ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
-    min_samples: Math.floor(num7(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 1e5)),
-    min_pass_rate: num7(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
-    window_days: num7(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650)
-  };
 }
 function outputBudgets(config) {
   return { ...DEFAULT_OUTPUT_BUDGETS, ...config.routing.output_budgets ?? {} };
@@ -22118,7 +22118,7 @@ function deepFreeze2(value) {
   }
   return value;
 }
-var import__, import_ajv_formats, Ajv2020, addFormats, CONFIG_RELATIVE_PATH, RUN_MODES, DEFAULT_MODE, DELIVERY_MODES, UNATTENDED_MODES, DELIVERY_ACTIONS, RELEASE_ACTIONS, FORBIDDEN_CHECK_ENV, DANGEROUS_KEYS, DEFAULT_ROUTING_LEARNING, DEFAULT_OUTPUT_BUDGETS, BUDGET_ROLES, DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS, REVIEW_REASONING_EFFORTS, DEFAULT_REVIEW_REASONING_EFFORT, MUSE_REASONING_EFFORTS, MUSE_DEFAULT_MODEL, MUSE_DEFAULT_REASONING_EFFORT, CONTAINER_DEFAULTS, compiled, SEMANTIC_RULES;
+var import__, import_ajv_formats, Ajv2020, addFormats, CONFIG_RELATIVE_PATH, RUN_MODES, DEFAULT_MODE, DELIVERY_MODES, UNATTENDED_MODES, DELIVERY_ACTIONS, RELEASE_ACTIONS, FORBIDDEN_CHECK_ENV, DANGEROUS_KEYS, DEFAULT_OUTPUT_BUDGETS, BUDGET_ROLES, DEFAULT_ROUTING_LEARNING, DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS, REVIEW_REASONING_EFFORTS, DEFAULT_REVIEW_REASONING_EFFORT, MUSE_REASONING_EFFORTS, MUSE_DEFAULT_MODEL, MUSE_DEFAULT_REASONING_EFFORT, CONTAINER_DEFAULTS, compiled, SEMANTIC_RULES;
 var init_config = __esm({
   "src/policy/config.ts"() {
     "use strict";
@@ -22155,7 +22155,6 @@ var init_config = __esm({
       "NODE_AUTH_TOKEN"
     ]);
     DANGEROUS_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-    DEFAULT_ROUTING_LEARNING = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
     DEFAULT_OUTPUT_BUDGETS = Object.freeze({
       planner: 16e3,
       implementer: 24e3,
@@ -22166,6 +22165,7 @@ var init_config = __esm({
       explorer: 6e3
     });
     BUDGET_ROLES = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS));
+    DEFAULT_ROUTING_LEARNING = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
     DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS = 900;
     REVIEW_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
     DEFAULT_REVIEW_REASONING_EFFORT = "medium";
@@ -36156,6 +36156,10 @@ function routeStats(db, filter = {}) {
     where2.push("work_kind = ?");
     params.push(filter.workKind);
   }
+  if (filter.role) {
+    where2.push("role = ?");
+    params.push(filter.role);
+  }
   if (filter.difficulty) {
     where2.push("difficulty = ?");
     params.push(filter.difficulty);
@@ -36217,7 +36221,9 @@ var init_usage = __esm({
     init_pricing();
     init_types2();
     init_pricing();
-    ROUTE_OUTCOME_NOT_THE_ROUTES = "(outcome IN ('failed', 'rejected') AND run_id IN (SELECT id FROM runs WHERE failure_class IN ('environment', 'check-misconfigured')))";
+    ROUTE_OUTCOME_NOT_THE_ROUTES = `(outcome = 'failed' AND evidence_ref IS NOT NULL AND EXISTS (
+  SELECT 1 FROM runs r WHERE r.id = route_outcomes.run_id AND r.failure_class IN ('environment', 'check-misconfigured')
+     AND (CASE WHEN json_valid(r.outcome_json) THEN json_extract(r.outcome_json, '$.report_id') END) = route_outcomes.evidence_ref))`;
   }
 });
 
@@ -45328,6 +45334,8 @@ function calibrate(ctx, tier, chosen, byTier, costOf2, blocked) {
   const candidates = [];
   const below = [];
   const short3 = [];
+  const held = [];
+  const floorTier = ctx.previousTier;
   const describe3 = (m, verdict) => {
     const st = statFor(ctx, m);
     if (!st) return;
@@ -45356,7 +45364,10 @@ function calibrate(ctx, tier, chosen, byTier, costOf2, blocked) {
       const rate2 = judged > 0 ? st.verified / judged : null;
       const c = costOf2(m);
       let verdict;
-      if (judged < min || rate2 === null) {
+      if (t < tier && floorTier !== null && t < floorTier) {
+        verdict = `an earlier attempt of this run ran on ${TIER_NAME[floorTier]}, and measured outcomes never route the run below it`;
+        held.push(`${m.modelId} is below ${TIER_NAME[floorTier]}, where an earlier attempt of this run ran`);
+      } else if (judged < min || rate2 === null) {
         verdict = `${judged} of the ${min} judged outcomes needed`;
         short3.push(`${m.modelId} has ${verdict}`);
       } else if (t < tier && rate2 < floor) {
@@ -45381,10 +45392,11 @@ function calibrate(ctx, tier, chosen, byTier, costOf2, blocked) {
   if (best) {
     const st = statFor(ctx, best.m);
     const judged = st.verified + st.failed + st.rejected;
-    const reason2 = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); measured expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} vs $${fmt(mine.total)} for ${chosen.modelId}`;
+    const reason2 = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} (${costBasisWords(best.c.basis)}) vs $${fmt(mine.total)} for ${chosen.modelId} (${costBasisWords(mine.basis)})`;
     return { pick: best.m, restored: false, reason: reason2, measured };
   }
   if (below.length > 0) return { pick: null, restored: true, reason: `${below.join("; ")}, so ${chosen.modelId} from the routing table is used`, measured };
+  if (held.length > 0) return { pick: null, restored: false, reason: `the routing table decides: ${held.join("; ")}`, measured };
   const reason = short3.length > 0 ? `the routing table decides: ${short3.join("; ")}` : `the routing table decides: no measured route is clearly cheaper per verified task than ${chosen.modelId}`;
   return { pick: null, restored: false, reason, measured };
 }
@@ -45634,6 +45646,9 @@ function priceProfile(t, p) {
   const written = t.input * t.cacheWriteShare;
   const uncached = Math.max(0, t.input - cached - written);
   return (uncached * p.input + cached * p.cache_read + written * p.cache_write_5m + t.output * p.output) / 1e6;
+}
+function costBasisWords(basis) {
+  return basis === "measured" ? "measured" : basis === "blended" ? "measured cost blended with list price" : basis === "prior" ? "list price" : "unknown";
 }
 function statFor(ctx, m) {
   return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider && (s.difficulty === void 0 || s.difficulty === null || s.difficulty === ctx.signals.difficulty));
@@ -48546,7 +48561,8 @@ function routeFor(ctx, purpose, workKind, signals) {
   const config = ctx.snapshot.config;
   try {
     const learning = routingLearning(config);
-    const outcomes = learning.enabled ? routeStats(ctx.db, { workKind, difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 864e5 }) : [];
+    const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
+    const outcomes = learns ? routeStats(ctx.db, { workKind, role: "implementer", difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 864e5 }) : [];
     const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
     const rec2 = toDecisionRecord(decision);
     recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose, ...learning.enabled ? {} : { learning_disabled: "routing.learning.enabled is false: measured outcomes were not read" } } }, ctx.clock);
@@ -48614,7 +48630,7 @@ async function collectIfFinished(ctx, w, phase = "work") {
   settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
   return false;
 }
-var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES;
+var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES, IMPLEMENT_PURPOSE;
 var init_workers2 = __esm({
   "src/controller/workers.ts"() {
     "use strict";
@@ -48648,6 +48664,7 @@ var init_workers2 = __esm({
     OUTPUT_CAP_CEILING = 32e3;
     OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
     ZERO_COST_STATUSES = /* @__PURE__ */ new Set(["auth_failed", "failed", "transient_error"]);
+    IMPLEMENT_PURPOSE = "implement:";
   }
 });
 
@@ -64214,13 +64231,23 @@ var init_implementing = __esm({
 function implementRouteDecisionId(runId, attempt) {
   return `dec-route-${runId}-implement_${attempt}`;
 }
+function attemptOf2(ctx, cand) {
+  const row = ctx.db.get(
+    "SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.candidate_id') = ? ORDER BY id DESC LIMIT 1",
+    ctx.run.id,
+    CANDIDATE_EVENT,
+    cand.id
+  );
+  return typeof row?.n === "number" && row.n > 0 ? row.n : cand.attempt;
+}
 function settleRouteOutcome(ctx, cand, settlement) {
   if (settlement.environment) return null;
-  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, cand.attempt));
+  const attempt = attemptOf2(ctx, cand);
+  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, attempt));
   const d = decision?.data ?? null;
   if (!d || typeof d.provider !== "string" || typeof d.model !== "string" || !d.provider || !d.model) return null;
   const workKind = WORK_KINDS.includes(String(d.work_kind)) ? d.work_kind : "routine-code";
-  const spent = attemptSpend(ctx, cand.attempt);
+  const spent = attemptSpend(ctx, attempt);
   return recordRouteOutcome(
     ctx.db,
     {
@@ -64234,7 +64261,7 @@ function settleRouteOutcome(ctx, cand, settlement) {
       role: "implementer",
       effort: typeof d.effort === "string" ? d.effort : null,
       difficulty: ctx.run.difficulty ?? null,
-      attemptKey: cand.id,
+      attemptKey: `attempt:${attempt}`,
       evidenceRef: settlement.evidenceRef
     },
     ctx.clock
@@ -64263,6 +64290,7 @@ var init_route_outcome = __esm({
     init_usage();
     init_pricing();
     init_types2();
+    init_context2();
   }
 });
 
@@ -64377,7 +64405,8 @@ async function act(ctx, cand, ev) {
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n2) => !sameAsBase.some((b) => b.checkId === n2.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
   if (verdict === "FAIL") {
-    if (ev.report.checks.some((c) => c.status === "FAILED")) settleRouteOutcome(ctx, cand, { outcome: "failed", evidenceRef: ev.id });
+    const ranAndFailed = ev.report.checks.some((c) => c.status === "FAILED") || (ev.report.ui ?? []).some((j) => j.status === "FAILED");
+    if (ranAndFailed) settleRouteOutcome(ctx, cand, { outcome: "failed", evidenceRef: ev.id });
     return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
   }
   const routed = await routeFailBefore(ctx, cand, ev, async () => {
@@ -65533,9 +65562,9 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
   const holders = (path) => [...passed.keys()].filter((id) => underCheck(path, checks[id])).sort();
   const reports = listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.state === "SUCCEEDED" && w.resultJson);
   const everyFinding = repairs2.flatMap((r) => r.findings);
-  const attemptOf2 = /* @__PURE__ */ new Map();
-  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf2.set(c.treeHash, Math.max(attemptOf2.get(c.treeHash) ?? 0, c.attempt));
-  const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf2.get(t) ?? 0) >= attempt) ?? null;
+  const attemptOf3 = /* @__PURE__ */ new Map();
+  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf3.set(c.treeHash, Math.max(attemptOf3.get(c.treeHash) ?? 0, c.attempt));
+  const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf3.get(t) ?? 0) >= attempt) ?? null;
   const judged = /* @__PURE__ */ new Set();
   for (const r of [...pending].reverse()) {
     const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id) => seen.closed.has(id)));
