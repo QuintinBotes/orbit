@@ -4073,7 +4073,7 @@ function gitHandler(info, args, outer) {
     info.raise("unknown");
     return;
   }
-  const has = (...flags) => restText.some((t) => flags.includes(t) || flags.some((f) => f.startsWith("--") && t.startsWith(`${f}=`)));
+  const has2 = (...flags) => restText.some((t) => flags.includes(t) || flags.some((f) => f.startsWith("--") && t.startsWith(`${f}=`)));
   const nonFlag = rest.filter((w) => !w.text.startsWith("-"));
   if (sub === "push" || sub === "send-email") {
     info.raise("publish", `git ${sub} sends work to a remote; delivery is the controller's job`);
@@ -4083,7 +4083,7 @@ function gitHandler(info, args, outer) {
     info.raise("privilege", "git credential reads stored credentials");
     return;
   }
-  if (sub === "difftool" && has("-x", "--extcmd", "-t", "--tool", "-g", "--gui") || sub === "grep" && restText.some((t) => t.startsWith("-O") || t.startsWith("--open-files-in-pager"))) {
+  if (sub === "difftool" && has2("-x", "--extcmd", "-t", "--tool", "-g", "--gui") || sub === "grep" && restText.some((t) => t.startsWith("-O") || t.startsWith("--open-files-in-pager"))) {
     markOpaque(env.state, `git ${sub} runs a program named on its command line`);
     info.raise("unknown");
     return;
@@ -4116,7 +4116,7 @@ function gitHandler(info, args, outer) {
       return;
     }
     case "config": {
-      const reading = has("--get", "--get-all", "--get-regexp", "--list", "-l", "--get-urlmatch", "--get-color", "--get-colorbool") || ["get", "list"].includes(nonFlag[0]?.text ?? "") || nonFlag.length === 1 && !has("--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit");
+      const reading = has2("--get", "--get-all", "--get-regexp", "--list", "-l", "--get-urlmatch", "--get-color", "--get-colorbool") || ["get", "list"].includes(nonFlag[0]?.text ?? "") || nonFlag.length === 1 && !has2("--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit");
       info.raise(reading ? "vcs-read" : "vcs-write", reading ? void 0 : "git config changes repository or user configuration");
       return;
     }
@@ -4135,10 +4135,10 @@ function gitHandler(info, args, outer) {
       writeIf(info, !["list", "show"].includes(nonFlag[0]?.text ?? "list"), "git notes changes notes refs");
       return;
     case "symbolic-ref":
-      writeIf(info, nonFlag.length >= 2 || has("-d", "--delete"), "git symbolic-ref moves a ref");
+      writeIf(info, nonFlag.length >= 2 || has2("-d", "--delete"), "git symbolic-ref moves a ref");
       return;
     case "hash-object":
-      writeIf(info, has("-w"), "git hash-object -w writes objects");
+      writeIf(info, has2("-w"), "git hash-object -w writes objects");
       return;
     case "add":
     case "stage":
@@ -4152,12 +4152,12 @@ function gitHandler(info, args, outer) {
     case "rm":
     case "mv": {
       info.raise("build-test");
-      for (const w of positional(rest, /* @__PURE__ */ new Set(["--pathspec-from-file"]))) deleteTarget(info, w, env, `git ${sub}`, has("-r"));
+      for (const w of positional(rest, /* @__PURE__ */ new Set(["--pathspec-from-file"]))) deleteTarget(info, w, env, `git ${sub}`, has2("-r"));
       return;
     }
     case "apply": {
-      const checkOnly = has("--check", "--stat", "--numstat", "--summary");
-      if (has("--index", "--cached") && !checkOnly) info.raise("build-test");
+      const checkOnly = has2("--check", "--stat", "--numstat", "--summary");
+      if (has2("--index", "--cached") && !checkOnly) info.raise("build-test");
       info.raise(checkOnly ? "vcs-read" : "build-test");
       return;
     }
@@ -4168,7 +4168,7 @@ function gitHandler(info, args, outer) {
         for (const w of rest.slice(dd + 1)) addWrite(env.state, w, env.base, "write", "git checkout --", false);
         return;
       }
-      if (has("-b", "-B", "--orphan", "--detach")) {
+      if (has2("-b", "-B", "--orphan", "--detach")) {
         info.raise("vcs-write", "git checkout creates or switches branches");
         return;
       }
@@ -4180,7 +4180,7 @@ function gitHandler(info, args, outer) {
       return;
     }
     case "reset": {
-      if (has("--hard", "--merge", "--keep", "--soft")) {
+      if (has2("--hard", "--merge", "--keep", "--soft")) {
         info.raise("vcs-write", "git reset --hard/--soft/--merge/--keep discards work or moves the branch");
         return;
       }
@@ -4198,7 +4198,7 @@ function gitHandler(info, args, outer) {
     case "pull":
     case "ls-remote":
     case "archive": {
-      if (sub === "archive" && !has("--remote")) {
+      if (sub === "archive" && !has2("--remote")) {
         info.raise("build-test");
         const o = valueOf(rest, "-o") ?? valueOfLong(rest, "--output");
         if (o) addWrite(env.state, o, env.base, "write", "git archive", false);
@@ -24323,6 +24323,15 @@ var init_schema4 = __esm({
   ) STRICT;
   CREATE INDEX fail_before_probes_candidate ON fail_before_probes(run_id, candidate_id, check_id);
   CREATE INDEX fail_before_probes_probe ON fail_before_probes(probe_id, check_id);
+  `,
+      /* 7: why a run ended and which Orbit version started it (docs/decisions/0018-run-end-record.md) */
+      `
+  -- failure_class and failure_secondary hold a value of schemas/failure-class.schema.json, set in the transition that
+  -- ends the run; both are null while it runs and when it succeeded. Rows written before this migration keep null in
+  -- all three columns: they are shown with no class and version unknown, and are never classified after the fact.
+  ALTER TABLE runs ADD COLUMN failure_class TEXT;
+  ALTER TABLE runs ADD COLUMN failure_secondary TEXT;
+  ALTER TABLE runs ADD COLUMN orbit_version TEXT;
   `
     ];
   }
@@ -24581,6 +24590,107 @@ var init_accounting = __esm({
   }
 });
 
+// src/cli/version.ts
+var ORBIT_VERSION;
+var init_version = __esm({
+  "src/cli/version.ts"() {
+    "use strict";
+    ORBIT_VERSION = "0.3.2";
+  }
+});
+
+// src/controller/failure-class.ts
+function isFailureClass(value) {
+  return typeof value === "string" && FAILURE_CLASSES.includes(value);
+}
+function failureClassOrNull(value) {
+  return isFailureClass(value) ? value : null;
+}
+function markedCauses(outcome, data) {
+  const causes = [];
+  const add = (c, when) => {
+    if (when && !causes.includes(c)) causes.push(c);
+  };
+  const code2 = typeof data.code === "string" ? CODE_CLASS[data.code] : void 0;
+  const counter = typeof data.counter === "string" ? data.counter : typeof outcome.limit === "string" ? outcome.limit : null;
+  const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === "string" ? outcome.frozen_policy.setting : "";
+  const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === "string" ? outcome.gate.gate : null;
+  add("credentials", isRecord(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || has(outcome, "git_credentials") || code2 === "credentials");
+  add("check-misconfigured", has(outcome, "misconfigured_checks") || /^checks\./.test(frozen));
+  add(
+    "environment",
+    has(outcome, "environment_failures") || has(outcome, "incomplete_checks") || has(outcome, "worker_refusal") || has(outcome, "dirty") || has(outcome, "reviewer") || has(outcome, "release_error") || has(outcome, "release_pending") || has(outcome, "base_conflict") || gate === "environment" || gate === "baseline" || code2 === "environment" || counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)
+  );
+  add("scope", has(outcome, "scope") || has(outcome, "ungranted") || has(outcome, "largest_changes") || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code2 === "scope");
+  add("review-dispute", has(outcome, "open_findings") || has(outcome, "held_findings") || counter === "review_rounds");
+  add(
+    "gate-deadlock",
+    has(outcome, "questions") || has(outcome, "blocked_criteria") || has(outcome, "authorization") || has(outcome, "ledger_entries") || has(outcome, "ledger_declined") || has(outcome, "fail_before") || has(outcome, "review_gate") || has(outcome, "shallow_reviews") || Array.isArray(outcome.gate)
+  );
+  return causes;
+}
+function classifyRunEnd(e) {
+  if (!TERMINAL_STATES.has(e.state)) throw new OrbitError("INTERNAL", `${e.state} is not a terminal state: it has no failure class`);
+  if (e.cause !== null && !isFailureClass(e.cause)) throw new OrbitError("INTERNAL", "the cause named for the end of a run is not a failure class");
+  if (e.state === "SUCCEEDED") return { failureClass: null, secondary: null };
+  if (e.state === "CANCELLED") return { failureClass: "cancelled", secondary: null };
+  const outcome = e.outcome ?? {};
+  const data = e.data ?? {};
+  const causes = [];
+  const ranOut = e.state === "EXHAUSTED" || e.state === "IMPOSSIBLE";
+  if (ranOut && e.turnCapSessions > 0) causes.push("turn-cap");
+  for (const c of markedCauses(outcome, data)) if (!causes.includes(c)) causes.push(c);
+  if (causes.length === 0) {
+    if (e.cause !== null) causes.push(e.cause);
+    else if (e.state !== "EXHAUSTED" || workDidNotConverge(outcome, data)) causes.push("model");
+  }
+  if (e.state === "EXHAUSTED" && !causes.includes("budget")) causes.push("budget");
+  return { failureClass: causes[0] ?? null, secondary: causes[1] ?? null };
+}
+function workDidNotConverge(outcome, data) {
+  return has(outcome, "non_progress") || has(outcome, "extension") || has(outcome, "fingerprint") || has(outcome, "hypotheses") || data.counter === "implementation_attempts";
+}
+function turnCapSessions(db, runId) {
+  return Number(db.get("SELECT COUNT(*) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.status') = 'max_turns'", runId, TURN_CAP_EVENT)?.n ?? 0);
+}
+function parseOutcome(json3) {
+  if (!json3) return null;
+  try {
+    const o = JSON.parse(json3);
+    return isRecord(o) ? o : null;
+  } catch {
+    return null;
+  }
+}
+var FAILURE_CLASSES, TURN_CAP_EVENT, CODE_CLASS, INFRASTRUCTURE_COUNTERS, isRecord, has;
+var init_failure_class = __esm({
+  "src/controller/failure-class.ts"() {
+    "use strict";
+    init_run_states();
+    init_errors();
+    FAILURE_CLASSES = ["environment", "check-misconfigured", "gate-deadlock", "scope", "budget", "turn-cap", "model", "review-dispute", "credentials", "cancelled"];
+    TURN_CAP_EVENT = "implementation.worker-ended";
+    CODE_CLASS = {
+      AUTH_EXPIRED: "credentials",
+      AUTH_MISSING: "credentials",
+      SCOPE_VIOLATION: "scope",
+      POLICY_DENIED: "scope",
+      ISOLATION_UNAVAILABLE: "environment",
+      PROVIDER_UNAVAILABLE: "environment",
+      POLICY_TAMPERED: "environment",
+      CONFIG_INVALID: "environment",
+      CONTRACT_INVALID: "environment"
+    };
+    INFRASTRUCTURE_COUNTERS = /* @__PURE__ */ new Set(["recovery_attempts", "infrastructure_retries"]);
+    isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    has = (o, key2) => {
+      const v = o[key2];
+      if (v === void 0 || v === null || v === false || v === "") return false;
+      return Array.isArray(v) ? v.length > 0 : true;
+    };
+  }
+});
+
 // src/controller/run-store.ts
 function toRecord2(r) {
   if (!isRunState(r.state)) throw new OrbitError("INTERNAL", `run ${r.id} has unknown state ${r.state}`);
@@ -24604,6 +24714,9 @@ function toRecord2(r) {
     environment: r.environment ?? null,
     outcomeReason: r.outcome_reason,
     outcomeJson: r.outcome_json,
+    failureClass: failureClassOrNull(r.failure_class),
+    failureSecondary: failureClassOrNull(r.failure_secondary),
+    orbitVersion: r.orbit_version ?? null,
     paused: r.paused === 1,
     cancelRequested: r.cancel_requested === 1,
     createdAt: r.created_at,
@@ -24614,12 +24727,20 @@ function toRecord2(r) {
     version: r.version
   };
 }
+function isOrbitVersion(value) {
+  return VERSION_SHAPE.test(value);
+}
+function orbitVersionOf(run) {
+  return run.orbitVersion ?? UNKNOWN_ORBIT_VERSION;
+}
 function createRun(db, input, clock, actor = "cli") {
   const now = clock.now();
+  const named2 = input.orbitVersion ?? ORBIT_VERSION;
+  const orbitVersion = isOrbitVersion(named2) ? named2 : UNKNOWN_ORBIT_VERSION;
   return db.tx(() => {
     db.run(
-      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, orbit_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repoRoot,
       input.goal,
@@ -24627,10 +24748,11 @@ function createRun(db, input, clock, actor = "cli") {
       input.policyHash,
       input.policyPath,
       input.environment ?? null,
+      orbitVersion,
       now,
       now
     );
-    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {}, accounting: RUN_ACCOUNTING_VERSION }, now, null, "CREATED");
+    appendEvent(db, input.id, "run.created", actor, { mode: input.mode, policy_hash: input.policyHash, ...input.environment ? { environment: input.environment } : {}, accounting: RUN_ACCOUNTING_VERSION, orbit_version: orbitVersion }, now, null, "CREATED");
     return getRun(db, input.id);
   });
 }
@@ -24674,12 +24796,23 @@ function transition(db, req, clock) {
       sets.push("started_at = ?");
       params.push(now);
     }
+    let ended = {};
     if (isTerminal(req.to)) {
-      sets.push("ended_at = ?");
-      params.push(now);
+      if (req.cause !== void 0 && !isFailureClass(req.cause)) throw new OrbitError("INTERNAL", `run ${run.id}: the cause named for its end is not a failure class`);
+      const outcomeJson = req.patch && "outcomeJson" in req.patch ? req.patch.outcomeJson : run.outcomeJson;
+      const cls = classifyRunEnd({
+        state: req.to,
+        outcome: parseOutcome(outcomeJson),
+        data: typeof req.data === "object" && req.data !== null && !Array.isArray(req.data) ? req.data : null,
+        cause: req.cause ?? null,
+        turnCapSessions: turnCapSessions(db, run.id)
+      });
+      sets.push("ended_at = ?", "failure_class = ?", "failure_secondary = ?");
+      params.push(now, cls.failureClass, cls.secondary);
+      ended = { ...cls.failureClass ? { failure_class: cls.failureClass } : {}, ...cls.secondary ? { failure_secondary: cls.secondary } : {} };
     }
     if (isTerminal(run.state) && !isTerminal(req.to)) {
-      sets.push("ended_at = NULL");
+      sets.push("ended_at = NULL", "failure_class = NULL", "failure_secondary = NULL");
       if (!req.patch || !("outcomeReason" in req.patch)) sets.push("outcome_reason = NULL");
       if (!req.patch || !("outcomeJson" in req.patch)) sets.push("outcome_json = NULL");
     }
@@ -24691,7 +24824,7 @@ function transition(db, req, clock) {
     }
     const res = db.run(`UPDATE runs SET ${sets.join(", ")} WHERE id = ? AND version = ?`, ...params, run.id, run.version);
     if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `run ${run.id} changed during transition`);
-    appendEvent(db, run.id, "state.transition", req.actor ?? "controller", { reason: req.reason, ...req.data ? { data: req.data } : {} }, now, run.state, req.to);
+    appendEvent(db, run.id, "state.transition", req.actor ?? "controller", { reason: req.reason, ...req.data ? { data: req.data } : {}, ...ended }, now, run.state, req.to);
     return getRun(db, run.id);
   });
   faultPoint("controller.transition.after-commit");
@@ -24760,7 +24893,7 @@ function getLease(db, runId) {
   const r = db.get("SELECT * FROM leases WHERE run_id = ?", runId);
   return r ? { runId: r.run_id, ownerId: r.owner_id, acquiredAt: r.acquired_at, heartbeatAt: r.heartbeat_at, expiresAt: r.expires_at } : null;
 }
-var PATCH_COLUMNS, INTERRUPTING;
+var UNKNOWN_ORBIT_VERSION, VERSION_SHAPE, PATCH_COLUMNS, INTERRUPTING;
 var init_run_store = __esm({
   "src/controller/run-store.ts"() {
     "use strict";
@@ -24769,6 +24902,10 @@ var init_run_store = __esm({
     init_states();
     init_events();
     init_accounting();
+    init_version();
+    init_failure_class();
+    UNKNOWN_ORBIT_VERSION = "unknown";
+    VERSION_SHAPE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/;
     PATCH_COLUMNS = {
       outcomeReason: "outcome_reason",
       outcomeJson: "outcome_json",
@@ -24988,11 +25125,11 @@ function walk2(node, path, depth, isRoot, defs, totals, out) {
   }
   const types2 = readTypes(node.type, path, out);
   if (types2.length === 0) return;
-  const has = (t) => types2.includes(t);
-  if ((has("object") || has("array")) && depth > STRICT_LIMITS.maxObjectDepth) {
+  const has2 = (t) => types2.includes(t);
+  if ((has2("object") || has2("array")) && depth > STRICT_LIMITS.maxObjectDepth) {
     out.push(`${path}: nesting deeper than ${STRICT_LIMITS.maxObjectDepth} levels`);
   }
-  if (has("object")) {
+  if (has2("object")) {
     if (node.additionalProperties !== false) out.push(`${path}: additionalProperties must be false`);
     const props = node.properties;
     if (!isNode2(props)) {
@@ -25019,7 +25156,7 @@ function walk2(node, path, depth, isRoot, defs, totals, out) {
       if (k in node) out.push(`${path}: "${k}" on a non-object schema`);
     }
   }
-  if (has("array")) {
+  if (has2("array")) {
     if (!isNode2(node.items)) out.push(`${path}: arrays must declare a single items schema`);
     else walk2(node.items, `${path}/items`, depth + 1, false, defs, totals, out);
     checkCount(node, "minItems", path, out);
@@ -25030,7 +25167,7 @@ function walk2(node, path, depth, isRoot, defs, totals, out) {
   } else {
     for (const k of ["items", ...ARRAY_KEYWORDS]) if (k in node) out.push(`${path}: "${k}" on a non-array schema`);
   }
-  if (has("string")) {
+  if (has2("string")) {
     if ("pattern" in node) {
       if (typeof node.pattern !== "string") out.push(`${path}: pattern must be a string`);
       else {
@@ -25047,7 +25184,7 @@ function walk2(node, path, depth, isRoot, defs, totals, out) {
   } else {
     for (const k of STRING_KEYWORDS) if (k in node) out.push(`${path}: "${k}" on a non-string schema`);
   }
-  if (has("number") || has("integer")) {
+  if (has2("number") || has2("integer")) {
     for (const k of NUMBER_KEYWORDS) if (k in node && typeof node[k] !== "number") out.push(`${path}: ${k} must be a number`);
   } else {
     for (const k of NUMBER_KEYWORDS) if (k in node) out.push(`${path}: "${k}" on a non-numeric schema`);
@@ -25062,7 +25199,7 @@ function walk2(node, path, depth, isRoot, defs, totals, out) {
         if (typeof v === "string") totals.chars += v.length;
         if (!typeAccepts(types2, v)) out.push(`${path}: enum value of type ${jsonTypeOf(v)} does not match the declared type`);
       }
-      if (has("null") && !values.includes(null)) out.push(`${path}: nullable enum must list null`);
+      if (has2("null") && !values.includes(null)) out.push(`${path}: nullable enum must list null`);
     }
   }
   if ("const" in node) {
@@ -26364,13 +26501,13 @@ function parsePluginList(stdout) {
   if (!Array.isArray(parsed3)) return null;
   const out = [];
   for (const e of parsed3) {
-    if (!isRecord(e) || typeof e.id !== "string") continue;
+    if (!isRecord2(e) || typeof e.id !== "string") continue;
     out.push({ id: e.id, scope: typeof e.scope === "string" ? e.scope : null, enabled: e.enabled !== false });
   }
   return out;
 }
 function isBuiltinPlugin(entry) {
-  return isRecord(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
+  return isRecord2(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
 }
 function workerPlugins(initPlugins, check) {
   if (initPlugins === void 0) return [];
@@ -26378,7 +26515,7 @@ function workerPlugins(initPlugins, check) {
   const out = [];
   for (const e of entries) {
     if (isBuiltinPlugin(e)) continue;
-    const r = isRecord(e) ? e : {};
+    const r = isRecord2(e) ? e : {};
     const id = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
     const name = typeof r.name === "string" ? r.name : null;
     const scope = typeof r.scope === "string" ? r.scope : id === null ? null : check.installed?.find((p) => p.id === id)?.scope ?? null;
@@ -26409,9 +26546,9 @@ function pluginRefusal(plugins) {
 }
 function needsPluginList(initPlugins) {
   if (!Array.isArray(initPlugins)) return false;
-  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord(e) && typeof e.source === "string" && typeof e.scope !== "string");
+  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord2(e) && typeof e.source === "string" && typeof e.scope !== "string");
 }
-function isRecord(v) {
+function isRecord2(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 var STRICT_PLUGIN_POLICY, WORKER_EXCLUDED_SCOPES;
@@ -32727,15 +32864,6 @@ var init_context = __esm({
   }
 });
 
-// src/cli/version.ts
-var ORBIT_VERSION;
-var init_version = __esm({
-  "src/cli/version.ts"() {
-    "use strict";
-    ORBIT_VERSION = "0.3.2";
-  }
-});
-
 // src/policy/test-files.ts
 function isTestPath(path, layout = NO_LAYOUT, diff) {
   const p = path.toLowerCase();
@@ -32810,8 +32938,8 @@ function ancestors(path) {
   } while (dir !== "");
   return out;
 }
-function nearestDir(path, has) {
-  return ancestors(path).find(has) ?? null;
+function nearestDir(path, has2) {
+  return ancestors(path).find(has2) ?? null;
 }
 function addsRunnableRustTest(diff) {
   const lines = wholeCandidate(diff);
@@ -44905,7 +45033,7 @@ async function abandon(opts, run, workers, detail) {
   if (run.state === "RECOVERING") {
     transition(
       db,
-      { runId: run.id, to: "BLOCKED", ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: "RECOVERING", patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
+      { runId: run.id, to: "BLOCKED", ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: "RECOVERING", cause: "environment", patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
       clock
     );
     return "blocked";
@@ -55052,6 +55180,9 @@ function assembleFinalReport(db, run, opts) {
     run_id: run.id,
     outcome: run.state,
     outcome_reason: run.outcomeReason,
+    failure_class: run.failureClass,
+    failure_secondary: run.failureSecondary,
+    orbit_version: orbitVersionOf(run),
     mode: run.mode,
     original_goal: run.goal,
     objective: contract?.objective ?? null,
@@ -55260,6 +55391,7 @@ function renderMarkdown(r) {
   const list3 = (items) => items.length ? items.map((i) => `- ${i}`).join("\n") : "- none";
   out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, "");
   out.push("## Outcome", "", `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ""}`, "");
+  out.push(`Failure class: ${r.failure_class ?? "none"}${r.failure_class && r.failure_secondary ? ` (secondary: ${r.failure_secondary})` : ""}`, "", `Orbit version: ${r.orbit_version ?? "unknown"}`, "");
   out.push("## Original goal", "", r.original_goal, "");
   if (r.objective) out.push("## Delivered behaviour", "", r.objective, "");
   out.push("## Criterion evidence", "", list3(r.criteria.map(criterionLine)), "");
@@ -58902,7 +59034,7 @@ function environmentFixes(failures, platform3) {
     for (const f of group) settings.add(key2(f.checkId));
   };
   const command = (id) => `checks.${id}.command`;
-  const has = (signal) => failures.filter((f) => f.signals.includes(signal));
+  const has2 = (signal) => failures.filter((f) => f.signals.includes(signal));
   const refusedFs = failures.filter((f) => !f.signals.includes("pipe-denied") && (f.signals.includes("filesystem-denied") || f.signals.includes("permission-denied") || f.signals.includes("sandbox-violation")));
   const outsideFs = refusedFs.filter((f) => f.folderForm === false && runsDotnetFormat(f));
   const denied = refusedFs.filter((f) => !outsideFs.includes(f));
@@ -58911,8 +59043,8 @@ function environmentFixes(failures, platform3) {
   } else if (denied.length > 0) {
     fixes.push(`run orbit doctor, which starts each check's executable in the sandbox and shows what it is refused, then let the tool keep its files in the check's HOME or TMPDIR (through the check's env) or change the check definition (docs/troubleshooting.md, "A check cannot run in the sandbox")`);
   }
-  const sockets = has("socket-denied");
-  const pipes = has("pipe-denied");
+  const sockets = has2("socket-denied");
+  const pipes = has2("pipe-denied");
   const msbuild = sockets.filter((f) => !runsDotnetFormat(f));
   const stopped = pipes.filter((f) => f.lines.some((l) => MSBUILD_NODE_DENIAL.test(l)));
   const format = [...sockets.filter(runsDotnetFormat), ...pipes.filter((f) => f.lines.some((l) => !MSBUILD_NODE_DENIAL.test(l))), ...outsideFs];
@@ -58939,14 +59071,14 @@ function environmentFixes(failures, platform3) {
     fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join("; ")} ${FORMAT_OUTSIDE_REASON}`);
     change(outside, (id) => `checks.${id}`);
   }
-  const network = has("network-denied");
+  const network = has2("network-denied");
   const nugetOnMac2 = platform3 === "darwin" ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
   if (network.length > nugetOnMac2.length) {
     fixes.push("the check reached for a host its policy does not let it reach, and the sandbox's network proxy refused it: if it was restoring pinned dependencies, fill their cache outside the sandbox (run that restore outside Orbit, where the check reads the same cache) and resume this run, which runs the baseline again; or add the host to the check's network_hosts in .orbit/config.yaml (it must also be covered by network.allowed_hosts) and start a new run, because this run's policy is frozen; or let the check work offline, with its dependencies restored by the dependency install (dependencies.install_command)");
   }
-  if (has("nuget-http-denied").length > 0) {
+  if (has2("nuget-http-denied").length > 0) {
     fixes.push(`NuGet's HTTP client could not start because it may not read the machine's NIS domain name: Orbit adds the one rule that allows it only with the srt it ships, and the check's record says when it was not added, so run with that srt; and ${NUGET_FILL}`);
-  } else if (nugetOnMac2.length > 0 || has("nuget-tls-denied").length > 0) {
+  } else if (nugetOnMac2.length > 0 || has2("nuget-tls-denied").length > 0) {
     fixes.push(`NuGet's restore could not download its packages in the sandbox: ${NUGET_FILL}`);
   }
   const located = failures.filter((f) => f.programDenial !== void 0 && (f.signals.includes("program-denied") || f.signals.includes("program-not-found")));
@@ -58974,14 +59106,14 @@ function environmentFixes(failures, platform3) {
     fixes.push(`the PATH the check's env sets leads into a folder the check sandbox denies: take that folder out of it, or build the tool environment inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${[...new Set(keys)].join(", ")} in .orbit/config.yaml (docs/configuration.md, "Tool environments")`);
     for (const key2 of keys) settings.add(key2);
   }
-  const refusedProgram = has("program-denied").filter((f) => !located.includes(f));
+  const refusedProgram = has2("program-denied").filter((f) => !located.includes(f));
   if (refusedProgram.length > 0) {
     const named2 = refusedProgram.filter((f) => !foundOnPath(f));
     const path = refusedProgram.length > named2.length ? ", or give the check a PATH that finds it where a check may start it (the PATH Orbit runs its checks with, or the check's env)" : "";
     fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(", ")} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
     change(named2, command);
   }
-  const missing = has("program-not-found").filter((f) => !located.includes(f));
+  const missing = has2("program-not-found").filter((f) => !located.includes(f));
   if (missing.length > 0) {
     const keys = missing.map((f) => command(f.checkId)).join(", ");
     fixes.push(`install the program where the check runs, or give the check a PATH that holds it (through its env); if the name is misspelled, correct ${keys} in .orbit/config.yaml, which needs a new run because this run's policy is frozen (orbit doctor names a check whose executable is missing)`);
@@ -59486,7 +59618,7 @@ var init_baseline_questions = __esm({
 // src/controller/steps/common.ts
 function move2(ctx, to, reason, opts = {}) {
   const from = ctx.run.state;
-  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...opts.patch ? { patch: opts.patch } : {}, ...opts.data === void 0 ? {} : { data: opts.data } }, ctx.clock);
+  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...opts.patch ? { patch: opts.patch } : {}, ...opts.data === void 0 ? {} : { data: opts.data }, ...opts.cause ? { cause: opts.cause } : {} }, ctx.clock);
   heartbeatController(ctx.db, ctx.ownerId, ctx.clock, { progress: true });
   ctx.log.info("transition", { from, to, reason: reason.slice(0, 300) });
   return isTerminal(to) ? DONE : MOVED;
@@ -59523,7 +59655,7 @@ async function finishRun(ctx, to, reason, opts = {}) {
   if (target === "SUCCEEDED") closeMootBaselineQuestions(ctx);
   if (target === "CANCELLED") closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
-  const result2 = move2(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ""), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
+  const result2 = move2(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ""), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data, ...opts.cause ? { cause: opts.cause } : {} });
   if (target === "SUCCEEDED" || target === "CANCELLED") await releaseRunWorktrees(ctx);
   else if (target === "EXHAUSTED" || target === "IMPOSSIBLE") await retainRunWorktrees(ctx);
   await finalizeRun(ctx);
@@ -59691,7 +59823,7 @@ async function scheduleTransientRetry(ctx, failed) {
     if (decision.action === "stop" && (decision.limit === "infrastructure_retries" || decision.limit === "wall")) {
       return finishRun(ctx, "EXHAUSTED", `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { data: { counter: decision.limit === "wall" ? "wall_ms" : "infrastructure_retries" } });
     }
-    return finishRun(ctx, "BLOCKED", `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`);
+    return finishRun(ctx, "BLOCKED", `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { cause: "environment" });
   }
   const record = { what: failed.what, base: failed.base, purpose: failed.purpose, status: failed.status, retry: prior.length + 1, delay_ms: decision.delayMs, ceiling_ms: decision.ceilingMs, retry_after_ms: classification.retryAfterMs, not_before: ctx.clock.now() + decision.delayMs };
   const refusal = ctx.db.tx(() => {
@@ -60085,7 +60217,7 @@ async function preflightStep(ctx) {
   if (stop) return stop;
   const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
   recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
+  if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate: ${intake.reasons.join("; ")}`, { outcome: { gate: intake }, cause: "environment" });
   const env = await checkEnvironment(ctx);
   recordGate(ctx, env.gate);
   if (!env.gate.passed) {
@@ -64041,7 +64173,7 @@ async function act(ctx, cand, ev) {
   if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move2(ctx, "INQUISITION", `verification incomplete: ${trigger.summary}`, { data: { trigger } });
-  return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id } });
+  return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id }, cause: "environment" });
 }
 async function blockOnEnvironment(ctx, cand, ev, failures) {
   const reason = environmentBlockReason({ runId: ctx.run.id, candidateSeq: cand.seq, failures });
@@ -64256,7 +64388,7 @@ async function diagnosingStep(ctx) {
         if (timeouts && raisesTimeout(brief2.scoped_fix)) throw new OrbitError("MALFORMED_OUTPUT", `the scoped fix raises a timeout ("${brief2.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
         return { out: out2, brief: timeouts ? withTimeoutHypothesis(brief2, timeouts) : brief2 };
       },
-      exhausted: () => finishRun(ctx, "EXHAUSTED", `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`)
+      exhausted: () => finishRun(ctx, "EXHAUSTED", `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: "model" })
     });
     if (!got.ok) return got.step;
     const { out, brief } = got.value;
@@ -65829,7 +65961,7 @@ async function deliveringStep(ctx) {
       const s = await safePoint(ctx);
       if (s) return s;
     }
-    if (isOrbitError(err, "DELIVERY_FAILED") && err.details?.definitive === true) return finishRun(ctx, "BLOCKED", `delivery failed: ${err.message}`);
+    if (isOrbitError(err, "DELIVERY_FAILED") && err.details?.definitive === true) return finishRun(ctx, "BLOCKED", `delivery failed: ${err.message}`, { cause: "environment" });
     throw err;
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
@@ -65845,7 +65977,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
   if (!cand) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is releasing without a candidate`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === "APPROVE").at(-1) ?? null;
-  if (!ev || !review) return finishRun(ctx, "BLOCKED", `release refused: ${!ev ? "no live evidence" : "no approving review"} for the delivered tree ${d.tree}`, { outcome });
+  if (!ev || !review) return finishRun(ctx, "BLOCKED", `release refused: ${!ev ? "no live evidence" : "no approving review"} for the delivered tree ${d.tree}`, { outcome, cause: "gate-deadlock" });
   const release = ctx.snapshot.config.release ?? null;
   const envs = release ? Object.keys(release.environments) : [];
   const deliveryRun = { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal };
@@ -66028,7 +66160,7 @@ async function awaitingCiStep(ctx) {
     if (ctx.run.mode === "release") return releaseDelivered(ctx, d, { ...base, ci: "passed" });
     return complete(ctx, d.tree, { ...base, ci: "passed" });
   }
-  if (obs.state === "cancelled") return finishRun(ctx, "BLOCKED", `CI was cancelled on ${d.commit.slice(0, 12)}; re-run it and resume the run`, { outcome: base });
+  if (obs.state === "cancelled") return finishRun(ctx, "BLOCKED", `CI was cancelled on ${d.commit.slice(0, 12)}; re-run it and resume the run`, { outcome: base, cause: "environment" });
   if (obs.state === "failed") {
     const brief = ciRepairBrief(obs.failures, { sha: d.commit, ...d.pr ? { pr: d.pr.number } : {} });
     const previous = ctx.db.all("SELECT json_extract(data_json, '$.fingerprint') AS fp FROM events WHERE run_id = ? AND type = ?", ctx.run.id, CI_CYCLE_EVENT).map((r) => r.fp).filter((x) => typeof x === "string");
@@ -66036,7 +66168,7 @@ async function awaitingCiStep(ctx) {
     decide2(ctx, { id: `dec-${ctx.run.id}-ci-${d.commit}`, kind: "ci.repair-decision", summary: `CI failed on ${d.commit.slice(0, 12)}: ${decision.reason}`, data: { decision, failures: brief.failures } });
     for (const f of obs.failures) recordFailure(ctx.db, { runId: ctx.run.id, candidateId: ctx.candidate?.id ?? null, source: "ci", sourceId: `ci:${d.commit}:${f.name}`, fingerprint: f.fingerprint, excerpt: f.logExcerpt.slice(0, 2e3) || null }, ctx.clock);
     if (!decision.allowed) {
-      return decision.remaining === 0 ? finishRun(ctx, "EXHAUSTED", `CI failed and the CI repair budget is spent: ${decision.reason}`, { outcome: base }) : finishRun(ctx, "BLOCKED", `CI failed and repair is not authorized: ${decision.reason}`, { outcome: base });
+      return decision.remaining === 0 ? finishRun(ctx, "EXHAUSTED", `CI failed and the CI repair budget is spent: ${decision.reason}`, { outcome: base }) : finishRun(ctx, "BLOCKED", `CI failed and repair is not authorized: ${decision.reason}`, { outcome: base, cause: "gate-deadlock" });
     }
     const next = currentAttempt(ctx) + 1;
     ctx.db.tx(() => {
@@ -66051,7 +66183,7 @@ async function awaitingCiStep(ctx) {
   const timeoutMs = config.delivery.ci_timeout_minutes * 6e4;
   if (obs.absent && elapsed >= ctx.timing.ciAbsentGraceMs) {
     if (config.delivery.require_ci) {
-      if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base });
+      if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base, cause: "environment" });
       return WAIT("no CI checks reported yet");
     }
     const moved = await handleMovedBase(ctx, d, base);
@@ -66059,7 +66191,7 @@ async function awaitingCiStep(ctx) {
     if (ctx.run.mode === "release") return releaseDelivered(ctx, d, { ...base, ci: "none reported" }, ["no CI checks were reported for the delivered commit; CI is unverified"]);
     return complete(ctx, d.tree, { ...base, ci: "none reported" }, ["no CI checks were reported for the delivered commit; CI is unverified"]);
   }
-  if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(", ") || "unknown"})`, { outcome: base });
+  if (elapsed >= timeoutMs) return finishRun(ctx, "BLOCKED", `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(", ") || "unknown"})`, { outcome: base, cause: "environment" });
   return WAIT(`CI pending on ${d.commit.slice(0, 12)}${obs.pending.length ? ` (${obs.pending.join(", ")})` : ""}`);
 }
 async function baseMovement(ctx, d) {
@@ -66613,7 +66745,7 @@ async function loadFailure(deps, runId, signal, err) {
   if (!isOrbitError(err, "POLICY_TAMPERED") && !isOrbitError(err, "CONTRACT_INVALID")) throw err;
   if (isTerminal(getRun(deps.db, runId).state)) return { progressed: false, done: true };
   const ctx = lenientContext(deps, runId, signal);
-  return finishRun(ctx, "BLOCKED", `${err.code}: ${err.message}`);
+  return finishRun(ctx, "BLOCKED", `${err.code}: ${err.message}`, { cause: "environment" });
 }
 async function retryOrBlock(ctx, err) {
   const message = redact(err instanceof Error ? err.message : String(err)).slice(0, 1e3);
@@ -66632,7 +66764,7 @@ async function retryOrBlock(ctx, err) {
       limit = 0;
     }
   }
-  if (prior + 1 >= limit) return finishRun(ctx, "BLOCKED", `${ctx.run.state} failed ${prior + 1} time(s); last error ${code2}: ${message}`, { data: { code: code2 } });
+  if (prior + 1 >= limit) return finishRun(ctx, "BLOCKED", `${ctx.run.state} failed ${prior + 1} time(s); last error ${code2}: ${message}`, { data: { code: code2 }, cause: "environment" });
   return { progressed: false, waiting: `step failed (${code2}); retrying: ${message}` };
 }
 var STEPS, DEFAULT_STEP_ERRORS, STEP_ERROR_EVENT;
@@ -70822,7 +70954,7 @@ function nodeDrafts(input, out) {
     return [];
   }
   const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? pkg.scripts : {};
-  const has = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
+  const has2 = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
   let pm = "npm";
   let pmFrom = "no lockfile, so npm";
   if (existsSync61(join81(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
@@ -70857,7 +70989,7 @@ function nodeDrafts(input, out) {
   };
   const drafts = [];
   const script = (name, scriptNames, category, timeout) => {
-    const found = scriptNames.find(has);
+    const found = scriptNames.find(has2);
     if (found !== void 0) {
       drafts.push({ name, command: run(found), category, timeout_seconds: timeout, reason: `package.json declares a ${found} script (${pm}, from ${pmFrom})` });
       return true;
@@ -70878,7 +71010,7 @@ function nodeDrafts(input, out) {
       drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
     }
   }
-  if (has("test") && /no test specified/i.test(scripts.test)) {
+  if (has2("test") && /no test specified/i.test(scripts.test)) {
     out.skip("node", 'the test script is the npm placeholder ("no test specified"), so no test check was proposed');
   } else script("unit-tests", ["test"], "test", TIMEOUT.nodeTest);
   script("build", ["build"], "build", TIMEOUT.nodeBuild);
@@ -72665,7 +72797,7 @@ async function reportCommand(args, ctx) {
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync65(finalMd)) {
       if (asJson) {
-        if (existsSync65(finalJson)) ctx.io.out(readFileSync42(finalJson, "utf8"));
+        if (existsSync65(finalJson)) ctx.io.out(withRunEnd(readFileSync42(finalJson, "utf8"), run));
         else json(ctx.io, buildFinalReport(db, run, { runDir: runDir2, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
       } else ctx.io.out(readFileSync42(finalMd, "utf8"));
       return EXIT.OK;
@@ -72681,6 +72813,16 @@ async function reportCommand(args, ctx) {
     ctx.io.out(renderMarkdown(report2));
     return EXIT.OK;
   });
+}
+function withRunEnd(saved, run) {
+  try {
+    const report2 = JSON.parse(saved);
+    if (typeof report2 !== "object" || report2 === null || "orbit_version" in report2) return saved;
+    return `${JSON.stringify({ ...report2, failure_class: run.failureClass, failure_secondary: run.failureSecondary, orbit_version: orbitVersionOf(run) }, null, 2)}
+`;
+  } catch {
+    return saved;
+  }
 }
 function snapshotOrNull(path, hash) {
   try {
@@ -72748,6 +72890,7 @@ var init_report4 = __esm({
     "use strict";
     init_controller();
     init_states();
+    init_run_store();
     init_snapshot();
     init_store2();
     init_context();
@@ -73120,16 +73263,19 @@ var init_repair2 = __esm({
 function metricsFor(db, window = {}) {
   const from = window.from ?? null;
   const to = window.to ?? null;
-  const where2 = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}`;
-  const params = [...from === null ? [] : [from], ...to === null ? [] : [to]];
+  const orbitVersion = window.orbitVersion ?? null;
+  const where2 = `created_at >= ${from === null ? "0" : "?"} AND created_at < ${to === null ? "9223372036854775807" : "?"}${orbitVersion === null ? "" : ` AND COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') = ?`}`;
+  const params = [...from === null ? [] : [from], ...to === null ? [] : [to], ...orbitVersion === null ? [] : [orbitVersion]];
   const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where2})`;
   const missing = [];
-  const runRows = db.all(`SELECT id, state, created_at, started_at FROM runs WHERE ${where2} ORDER BY created_at`, ...params);
+  const runRows = db.all(`SELECT id, state, created_at, started_at, failure_class, failure_secondary, COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') AS orbit_version FROM runs WHERE ${where2} ORDER BY created_at`, ...params);
   const byState = {};
   for (const r of runRows) byState[r.state] = (byState[r.state] ?? 0) + 1;
   const finished2 = runRows.filter((r) => FINISHED_STATES.includes(r.state));
   const accepted = runRows.filter((r) => r.state === "SUCCEEDED");
   if (runRows.length === 0) missing.push("no runs were created in this window");
+  const classes = failureClasses(runRows, missing);
+  const versions = byVersion(db, runRows);
   const evidence = db.get(`SELECT COUNT(*) AS total, COALESCE(SUM(verdict = 'PASS'), 0) AS pass FROM evidence_reports WHERE ${inWindow}`, ...params);
   const passCandidates = db.get(
     `SELECT COUNT(*) AS reviewed, COALESCE(SUM(refused), 0) AS refused FROM (
@@ -73165,8 +73311,10 @@ function metricsFor(db, window = {}) {
     ...params
   );
   return {
-    window: { from, to },
+    window: { from, to, orbit_version: orbitVersion },
     runs: { total: runRows.length, finished: finished2.length, accepted: accepted.length, by_state: byState },
+    failure_classes: classes,
+    by_version: versions,
     verified_pass_rate: { ...rate(accepted.length, finished2.length), evidence_reports: rate(evidence.pass, evidence.total) },
     false_pass_rate: rate(passCandidates.refused, passCandidates.reviewed),
     escalation_quality: escalation,
@@ -73179,6 +73327,66 @@ function metricsFor(db, window = {}) {
     ui_defects: { discovered: ui.discovered, runs_with_ui_defects: ui.runs },
     missing
   };
+}
+function failureClasses(runs, missing) {
+  const byClass = Object.fromEntries(FAILURE_CLASSES.map((c) => [c, 0]));
+  const secondary = {};
+  let ended = 0;
+  let withoutClass = 0;
+  let unclassified = 0;
+  for (const r of runs) {
+    if (!isEnded(r)) continue;
+    ended += 1;
+    if (isFailureClass(r.failure_class)) byClass[r.failure_class] = (byClass[r.failure_class] ?? 0) + 1;
+    else if (r.state === "SUCCEEDED") withoutClass += 1;
+    else unclassified += 1;
+    if (isFailureClass(r.failure_secondary)) secondary[r.failure_secondary] = (secondary[r.failure_secondary] ?? 0) + 1;
+  }
+  if (unclassified > 0) missing.push(`${unclassified} ended run(s) carry no failure class: they ended before Orbit recorded one`);
+  return { ended, by_class: byClass, secondary, without_class: withoutClass, unclassified };
+}
+function compareVersions2(a, b) {
+  if (a === b) return 0;
+  if (a === UNKNOWN_ORBIT_VERSION) return 1;
+  if (b === UNKNOWN_ORBIT_VERSION) return -1;
+  return a.localeCompare(b, "en", { numeric: true });
+}
+function byVersion(db, runs) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const r of runs) {
+    const g = groups.get(r.orbit_version);
+    if (g) g.push(r);
+    else groups.set(r.orbit_version, [r]);
+  }
+  return [...groups.entries()].sort(([a], [b]) => compareVersions2(a, b)).map(([version, rows]) => {
+    const finished2 = rows.filter((r) => FINISHED_STATES.includes(r.state)).length;
+    const accepted = rows.filter((r) => r.state === "SUCCEEDED").length;
+    let spend = 0;
+    let unmeasured = 0;
+    for (const r of rows.filter(isEnded)) {
+      for (const u of db.all("SELECT cost_usd, cost_source FROM usage WHERE run_id = ?", r.id)) {
+        if (u.cost_usd === null || u.cost_source === "unavailable") unmeasured += 1;
+        else spend += u.cost_usd;
+      }
+    }
+    const classes = {};
+    for (const c of FAILURE_CLASSES) {
+      const count3 = rows.filter((r) => isEnded(r) && r.failure_class === c).length;
+      if (count3 > 0) classes[c] = count3;
+    }
+    const spendUsd = roundUsd(spend);
+    return {
+      orbit_version: version,
+      runs: rows.length,
+      finished: finished2,
+      accepted,
+      pass_rate: rate(accepted, finished2).rate,
+      spend_usd: spendUsd,
+      per_accepted_usd: accepted > 0 ? roundUsd(spendUsd / accepted) : null,
+      cost_complete: unmeasured === 0,
+      failure_classes: classes
+    };
+  });
 }
 function rate(numerator, denominator) {
   return { numerator, denominator, rate: denominator > 0 ? Math.round(numerator / denominator * 1e4) / 1e4 : null };
@@ -73363,15 +73571,18 @@ function concurrencyOverhead(db, inWindow, params, missing) {
     overhead_ratio: w.n === 0 && waits.length === 0 ? null : ratioOf(waited, waited + active)
   };
 }
-var FINISHED_STATES, TERMINAL2, CANDIDATE_FAILURE_SOURCES;
+var FINISHED_STATES, TERMINAL2, CANDIDATE_FAILURE_SOURCES, isEnded;
 var init_metrics = __esm({
   "src/observability/metrics.ts"() {
     "use strict";
     init_pricing();
     init_pricing();
+    init_failure_class();
+    init_run_store();
     FINISHED_STATES = ["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE", "BLOCKED"];
     TERMINAL2 = ["SUCCEEDED", "BLOCKED", "EXHAUSTED", "IMPOSSIBLE", "CANCELLED"];
     CANDIDATE_FAILURE_SOURCES = ["check", "worker", "ci"];
+    isEnded = (r) => TERMINAL2.includes(r.state);
   }
 });
 
@@ -73393,8 +73604,10 @@ async function statsCommand(args, ctx) {
   const from = sinceText === void 0 ? null : parseWhen(sinceText, now, "since");
   const to = untilText === void 0 ? null : parseWhen(untilText, now, "until");
   if (from !== null && to !== null && from >= to) throw new UsageError("--since must be earlier than --until", STATS_USAGE);
+  const orbitVersion = args.str("orbit-version")?.trim();
+  if (orbitVersion !== void 0 && !isOrbitVersion(orbitVersion)) throw new UsageError(`--orbit-version must be a version such as 0.4.0, or unknown, got ${JSON.stringify(orbitVersion)}`, STATS_USAGE);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const m = await withState(repo, (db) => metricsFor(db, { from, to }));
+  const m = await withState(repo, (db) => metricsFor(db, { from, to, orbitVersion: orbitVersion ?? null }));
   if (args.bool("json")) {
     json(ctx.io, m);
     return EXIT.OK;
@@ -73416,7 +73629,18 @@ function renderStats(m) {
     ["UI defects found", String(m.ui_defects.discovered), `in ${m.ui_defects.runs_with_ui_defects} run(s)`]
   ];
   const span = `${m.window.from === null ? "the beginning" : new Date(m.window.from).toISOString()} to ${m.window.to === null ? "now" : new Date(m.window.to).toISOString()}`;
-  const out = [`Orbit stats for ${m.runs.total} run(s) created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted)`, "", table(rows, ["METRIC", "VALUE", "DETAIL"]).trimEnd()];
+  const started = m.window.orbit_version === null ? "" : ` started by Orbit ${m.window.orbit_version},`;
+  const out = [`Orbit stats for ${m.runs.total} run(s)${started} created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted)`, "", table(rows, ["METRIC", "VALUE", "DETAIL"]).trimEnd()];
+  const fc = m.failure_classes;
+  const classRows = FAILURE_CLASSES.filter((c) => (fc.by_class[c] ?? 0) > 0 || (fc.secondary[c] ?? 0) > 0).map((c) => [c, String(fc.by_class[c] ?? 0), String(fc.secondary[c] ?? 0)]);
+  if (fc.ended > 0) {
+    classRows.push(["(none)", String(fc.without_class), ""]);
+    if (fc.unclassified > 0) classRows.push(["(not recorded)", String(fc.unclassified), ""]);
+    out.push("", table(classRows, ["FAILURE CLASS", "RUNS", "SECONDARY"]).trimEnd());
+  }
+  if (m.by_version.length > 0) {
+    out.push("", table(m.by_version.map((v) => [v.orbit_version, String(v.runs), pct2(v.pass_rate), usd2(v.per_accepted_usd), `${v.accepted} accepted of ${v.finished} finished, ${usd2(v.spend_usd)} spent${v.cost_complete ? "" : " (partial)"}`]), ["ORBIT VERSION", "RUNS", "PASS RATE", "SPEND PER ACCEPTED", "DETAIL"]).trimEnd());
+  }
   if (m.token_usage.by_model.length > 0) {
     out.push("", table(m.token_usage.by_model.map((b) => [b.model ?? "(unknown model)", b.provider, String(b.records), n(b.input), n(b.output), pct2(b.cache_hit_ratio)]), ["MODEL", "PROVIDER", "RECORDS", "INPUT", "OUTPUT", "CACHE HIT"]).trimEnd());
   }
@@ -73430,13 +73654,16 @@ var init_stats = __esm({
   "src/cli/commands/stats.ts"() {
     "use strict";
     init_metrics();
+    init_failure_class();
+    init_run_store();
     init_context();
     init_exit();
     init_io();
-    STATS_USAGE = "orbit stats [--since <when>] [--until <when>] [--json]";
+    STATS_USAGE = "orbit stats [--since <when>] [--until <when>] [--orbit-version <version>] [--json]";
     STATS_OPTIONS = {
       since: { type: "string", valueName: "when", description: "only runs created at or after this time: an ISO date or time, or a span back from now such as 90m, 24h, 7d, 2w" },
-      until: { type: "string", valueName: "when", description: "only runs created before this time (same forms as --since)" }
+      until: { type: "string", valueName: "when", description: "only runs created before this time (same forms as --since)" },
+      "orbit-version": { type: "string", valueName: "version", description: "only runs this Orbit version started, such as 0.4.0; unknown for runs from before the version was recorded" }
     };
     SPAN_MS = { m: 6e4, h: 36e5, d: 864e5, w: 6048e5 };
     pct2 = (r) => r === null ? "-" : `${(r * 100).toFixed(1)}%`;
@@ -73778,9 +74005,12 @@ function renderEvent(e, data, l) {
   };
   switch (e.type) {
     case "run.created":
-      return { text: `run created in ${str7(data.mode) ?? "?"} mode${str7(data.environment) ? ` for environment ${str7(data.environment)}` : ""}` };
-    case "state.transition":
-      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str7(data.reason) ? `: ${str7(data.reason).replace(/\s+/g, " ").trim()}` : ""}` };
+      return { text: `run created in ${str7(data.mode) ?? "?"} mode${str7(data.environment) ? ` for environment ${str7(data.environment)}` : ""}${str7(data.orbit_version) ? ` by Orbit ${str7(data.orbit_version)}` : ""}` };
+    case "state.transition": {
+      const cls = str7(data.failure_class);
+      const why = cls ? ` [${cls}${str7(data.failure_secondary) ? `, secondary ${str7(data.failure_secondary)}` : ""}]` : "";
+      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str7(data.reason) ? `: ${str7(data.reason).replace(/\s+/g, " ").trim()}` : ""}${why}` };
+    }
     case "run.paused":
       return { text: `run paused by ${e.actor}` };
     case "run.unpaused":
@@ -74005,6 +74235,9 @@ function buildTimeline(db, run, opts = {}) {
       paused: run.paused,
       cancel_requested: run.cancelRequested,
       outcome_reason: run.outcomeReason,
+      failure_class: run.failureClass,
+      failure_secondary: run.failureSecondary,
+      orbit_version: orbitVersionOf(run),
       branch: run.branch,
       created_at: run.createdAt,
       started_at: run.startedAt,
@@ -74018,6 +74251,7 @@ var HOUSEKEEPING, str7, num6, rec, list2, plural, short2, round6, SEVERITY_ORDER
 var init_timeline = __esm({
   "src/observability/timeline.ts"() {
     "use strict";
+    init_run_store();
     init_budget();
     HOUSEKEEPING = /* @__PURE__ */ new Set(["progress", "lease.acquired", "lease.released", "check.planned", "check.started", "worker.planned", "worker.start-charged"]);
     str7 = (v) => typeof v === "string" && v.length > 0 ? v : null;
@@ -74047,7 +74281,9 @@ function renderEntry2(e) {
 }
 function renderHeader(t) {
   const lines = [`run ${t.run.id}  ${t.run.state}`, `goal:      ${flat(t.run.goal)}`];
+  lines.push(`orbit:     ${t.run.orbit_version}`);
   if (t.run.outcome_reason) lines.push(`outcome:   ${flat(t.run.outcome_reason)}`);
+  if (t.run.failure_class) lines.push(`class:     ${t.run.failure_class}${t.run.failure_secondary ? ` (secondary: ${t.run.failure_secondary})` : ""}`);
   return `${lines.join("\n")}
 `;
 }

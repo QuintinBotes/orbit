@@ -195,7 +195,7 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
-  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id } });
+  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id }, cause: 'environment' });
 }
 
 async function blockOnEnvironment(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord, failures: BlockedCheck[]): Promise<StepResult> {

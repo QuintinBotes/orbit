@@ -286,7 +286,7 @@ async function abandon(opts: WatchdogOptions, run: RunRecord, workers: WorkerRec
   if (run.state === 'RECOVERING') {
     transition(
       db,
-      { runId: run.id, to: 'BLOCKED', ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: 'RECOVERING', patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
+      { runId: run.id, to: 'BLOCKED', ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: 'RECOVERING', cause: 'environment', patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
       clock,
     );
     return 'blocked';

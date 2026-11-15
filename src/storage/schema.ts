@@ -410,4 +410,12 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX fail_before_probes_candidate ON fail_before_probes(run_id, candidate_id, check_id);
   CREATE INDEX fail_before_probes_probe ON fail_before_probes(probe_id, check_id);
   `,
+  /* 7: why a run ended and which Orbit version started it (docs/decisions/0018-run-end-record.md) */ `
+  -- failure_class and failure_secondary hold a value of schemas/failure-class.schema.json, set in the transition that
+  -- ends the run; both are null while it runs and when it succeeded. Rows written before this migration keep null in
+  -- all three columns: they are shown with no class and version unknown, and are never classified after the fact.
+  ALTER TABLE runs ADD COLUMN failure_class TEXT;
+  ALTER TABLE runs ADD COLUMN failure_secondary TEXT;
+  ALTER TABLE runs ADD COLUMN orbit_version TEXT;
+  `,
 ];

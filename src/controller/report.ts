@@ -50,7 +50,7 @@ import { profileForWorker } from '../isolation/profiles.ts';
 import { renderSystemPrompt } from '../adapters/prompt.ts';
 import { LAUNCH_FILE, type LaunchRecord } from '../adapters/supervise.ts';
 import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
-import { getRun, type RunRecord } from './run-store.ts';
+import { getRun, orbitVersionOf, type RunRecord } from './run-store.ts';
 import { newRunNeeded } from './resume.ts';
 import { createdBranch } from './run-refs.ts';
 import { candidateRef } from '../evidence/candidate.ts';
@@ -66,6 +66,15 @@ export interface FinalReport {
   run_id: string;
   outcome: string;
   outcome_reason: string | null;
+  /**
+   * Why the run ended, from schemas/failure-class.schema.json; null when it succeeded, has not ended, or ended before
+   * the class was recorded. These three fields are absent only in a report saved before Orbit recorded them.
+   */
+  failure_class?: string | null;
+  /** The second cause of a run that had two. */
+  failure_secondary?: string | null;
+  /** The Orbit version that started the run; `unknown` for a run created before it was recorded. */
+  orbit_version?: string;
   mode: string;
   original_goal: string;
   objective: string | null;
@@ -304,6 +313,9 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     run_id: run.id,
     outcome: run.state,
     outcome_reason: run.outcomeReason,
+    failure_class: run.failureClass,
+    failure_secondary: run.failureSecondary,
+    orbit_version: orbitVersionOf(run),
     mode: run.mode,
     original_goal: run.goal,
     objective: contract?.objective ?? null,
@@ -575,6 +587,8 @@ export function renderMarkdown(r: FinalReport): string {
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join('\n') : '- none');
   out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, '');
   out.push('## Outcome', '', `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ''}`, '');
+  // A report saved before these fields existed has neither: it says so instead of printing "undefined".
+  out.push(`Failure class: ${r.failure_class ?? 'none'}${r.failure_class && r.failure_secondary ? ` (secondary: ${r.failure_secondary})` : ''}`, '', `Orbit version: ${r.orbit_version ?? 'unknown'}`, '');
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
   out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');

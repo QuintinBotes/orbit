@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/failure-class.schema.json",
+  "title": "Orbit failure class",
+  "description": "Why a run ended, as stored in runs.failure_class and runs.failure_secondary and shown by orbit stats, orbit report and orbit timeline. A run that succeeded, a run that has not ended and a run that ended before Orbit recorded the class have none (null). The rules that set it are in docs/decisions/0018-run-end-record.md.",
+  "type": "string",
+  "enum": ["environment", "check-misconfigured", "gate-deadlock", "scope", "budget", "turn-cap", "model", "review-dispute", "credentials", "cancelled"]
+}

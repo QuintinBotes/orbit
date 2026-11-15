@@ -55,7 +55,7 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
     if (ctx.run.mode === 'release') return releaseDelivered(ctx, d, { ...base, ci: 'passed' });
     return complete(ctx, d.tree, { ...base, ci: 'passed' });
   }
-  if (obs.state === 'cancelled') return finishRun(ctx, 'BLOCKED', `CI was cancelled on ${d.commit.slice(0, 12)}; re-run it and resume the run`, { outcome: base });
+  if (obs.state === 'cancelled') return finishRun(ctx, 'BLOCKED', `CI was cancelled on ${d.commit.slice(0, 12)}; re-run it and resume the run`, { outcome: base, cause: 'environment' });
   if (obs.state === 'failed') {
     const brief = ciRepairBrief(obs.failures, { sha: d.commit, ...(d.pr ? { pr: d.pr.number } : {}) });
     const previous = ctx.db.all<{ fp: string | null }>("SELECT json_extract(data_json, '$.fingerprint') AS fp FROM events WHERE run_id = ? AND type = ?", ctx.run.id, CI_CYCLE_EVENT).map((r) => r.fp).filter((x): x is string => typeof x === 'string');
@@ -65,7 +65,7 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
     if (!decision.allowed) {
       return decision.remaining === 0
         ? finishRun(ctx, 'EXHAUSTED', `CI failed and the CI repair budget is spent: ${decision.reason}`, { outcome: base })
-        : finishRun(ctx, 'BLOCKED', `CI failed and repair is not authorized: ${decision.reason}`, { outcome: base });
+        : finishRun(ctx, 'BLOCKED', `CI failed and repair is not authorized: ${decision.reason}`, { outcome: base, cause: 'gate-deadlock' });
     }
     const next = currentAttempt(ctx) + 1;
     // The cycle is counted with its record, so a crash cannot count it twice.
@@ -83,7 +83,7 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
   const timeoutMs = config.delivery.ci_timeout_minutes * 60_000;
   if (obs.absent && elapsed >= ctx.timing.ciAbsentGraceMs) {
     if (config.delivery.require_ci) {
-      if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base });
+      if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `no CI checks were reported for ${d.commit.slice(0, 12)} within ${config.delivery.ci_timeout_minutes} minutes and delivery.require_ci is true`, { outcome: base, cause: 'environment' });
       return WAIT('no CI checks reported yet');
     }
     const moved = await handleMovedBase(ctx, d, base);
@@ -91,7 +91,7 @@ export async function awaitingCiStep(ctx: RunContext): Promise<StepResult> {
     if (ctx.run.mode === 'release') return releaseDelivered(ctx, d, { ...base, ci: 'none reported' }, ['no CI checks were reported for the delivered commit; CI is unverified']);
     return complete(ctx, d.tree, { ...base, ci: 'none reported' }, ['no CI checks were reported for the delivered commit; CI is unverified']);
   }
-  if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(', ') || 'unknown'})`, { outcome: base });
+  if (elapsed >= timeoutMs) return finishRun(ctx, 'BLOCKED', `CI did not finish within ${config.delivery.ci_timeout_minutes} minutes (pending: ${obs.pending.join(', ') || 'unknown'})`, { outcome: base, cause: 'environment' });
   return WAIT(`CI pending on ${d.commit.slice(0, 12)}${obs.pending.length ? ` (${obs.pending.join(', ')})` : ''}`);
 }
 

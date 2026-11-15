@@ -85,7 +85,7 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
       const s = await safePoint(ctx);
       if (s) return s;
     }
-    if (isOrbitError(err, 'DELIVERY_FAILED') && err.details?.definitive === true) return finishRun(ctx, 'BLOCKED', `delivery failed: ${err.message}`);
+    if (isOrbitError(err, 'DELIVERY_FAILED') && err.details?.definitive === true) return finishRun(ctx, 'BLOCKED', `delivery failed: ${err.message}`, { cause: 'environment' });
     throw err;
   }
   // delivery/deliver checked freshness before each external action; the gate trail records the delivered tree.
@@ -120,7 +120,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is releasing without a candidate`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === 'APPROVE').at(-1) ?? null;
-  if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome });
+  if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome, cause: 'gate-deadlock' });
   const release = ctx.snapshot.config.release ?? null;
   const envs = release ? Object.keys(release.environments) : [];
   const deliveryRun = { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal };

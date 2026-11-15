@@ -124,7 +124,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
 | `orbit verify [run-id]` | see below |
 | `orbit repair <run-id \| description \| ->` | `--foreground` or `--detach`, `--mode <mode>`, `--policy <path>`; `-` reads the description from stdin |
-| `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w` |
+| `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w`; `--orbit-version <version>`: only runs that version started (`unknown` for runs from before the version was recorded) |
 | `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
 | `orbit policy show <run-id>` | none |
@@ -334,7 +334,17 @@ change, say) are listed once under that reason.
 ### stats and gc
 
 `orbit stats` prints success rate, cost, token and cache use, repair loops and
-time to green for this repository, read-only. `orbit gc` deletes the run
+time to green for this repository, read-only. It also says why runs ended: a
+count per failure class (`failure_classes` in `--json`), and pass rate and
+spend per accepted task per Orbit version (`by_version`). Every run that ends
+stores one class from the list in `schemas/failure-class.schema.json`
+(`environment`, `check-misconfigured`, `gate-deadlock`, `scope`, `budget`,
+`turn-cap`, `model`, `review-dispute`, `credentials`, `cancelled`), a second
+one when it had two causes, and the Orbit version that started it; a run that
+succeeded has no class. The rules are in
+[decision 0018](decisions/0018-run-end-record.md). `orbit report` and `orbit
+timeline` show the same fields for one run. Runs that ended before Orbit
+recorded them show no class and version `unknown`. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
 `retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
 Database rows stay and `BLOCKED` runs are never touched. A run whose worktrees

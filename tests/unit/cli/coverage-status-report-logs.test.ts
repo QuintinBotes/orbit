@@ -299,6 +299,27 @@ describe('orbit report', () => {
     expect(rebuilt.interim).toBe(false);
   });
 
+  it('adds the failure class and the Orbit version to the JSON of a report saved before they were recorded, and leaves a newer one as saved (issue #167)', async () => {
+    const l = lab();
+    const run = l.newRun();
+    l.moveTo(run.id, ['PREFLIGHT', 'BLOCKED']);
+    const runDir = dirname(run.policyPath);
+    // A run that ended before the migration: its row has no class and no version, and its saved report has neither field.
+    l.db().run('UPDATE runs SET failure_class = NULL, failure_secondary = NULL, orbit_version = NULL WHERE id = ?', run.id);
+    writeFileSync(join(runDir, 'final.md'), '# Orbit run: BLOCKED\n');
+    writeFileSync(join(runDir, 'final.json'), `${JSON.stringify({ schema: 'orbit.final/1', run_id: run.id, outcome: 'BLOCKED' }, null, 2)}\n`);
+    expect(JSON.parse((await l.cli(['report', run.id, '--json'])).out)).toEqual({ schema: 'orbit.final/1', run_id: run.id, outcome: 'BLOCKED', failure_class: null, failure_secondary: null, orbit_version: 'unknown' });
+    // The saved text is printed as it was saved; --interim rebuilds it from the row.
+    expect((await l.cli(['report', run.id])).out).toBe('# Orbit run: BLOCKED\n');
+    const rebuilt = (await l.cli(['report', run.id, '--interim'])).out;
+    expect(rebuilt).toContain('Failure class: none');
+    expect(rebuilt).toContain('Orbit version: unknown');
+    // A report that already carries them is printed as it was saved.
+    const saved = `${JSON.stringify({ schema: 'orbit.final/1', run_id: run.id, outcome: 'BLOCKED', failure_class: 'environment', failure_secondary: null, orbit_version: '0.4.0' })}\n`;
+    writeFileSync(join(runDir, 'final.json'), saved);
+    expect((await l.cli(['report', run.id, '--json'])).out).toBe(saved);
+  });
+
   it('says a running report is paused when it is, and still builds one when the policy snapshot no longer verifies', async () => {
     const l = lab();
     const run = l.newRun();

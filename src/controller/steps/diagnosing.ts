@@ -127,7 +127,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
         if (timeouts && raisesTimeout(brief.scoped_fix)) throw new OrbitError('MALFORMED_OUTPUT', `the scoped fix raises a timeout ("${brief.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
         return { out, brief: timeouts ? withTimeoutHypothesis(brief, timeouts) : brief };
       },
-      exhausted: () => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`),
+      exhausted: () => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: 'model' }),
     });
     if (!got.ok) return got.step;
     const { out, brief } = got.value;
