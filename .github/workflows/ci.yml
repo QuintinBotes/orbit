@@ -74,18 +74,6 @@ jobs:
           sudo rm -rf "$root"/sdk/11.*
           dotnet --version
 
-      # TEMPORARY diagnostic for #179: removed before merge.
-      - name: Diagnostic (temporary)
-        if: runner.os == 'Linux'
-        run: |
-          readlink -f "$(command -v mkdir)"; mkdir --version | head -1
-          echo "TMPDIR=${TMPDIR:-<unset>} RUNNER_TEMP=$RUNNER_TEMP"
-          sudo aa-status 2>/dev/null | grep -i -E 'bwrap|unpriv|userns' || echo "no bwrap/userns profile loaded"
-          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.apparmor_restrict_unprivileged_unconfined kernel.unprivileged_userns_apparmor_policy || true
-          bwrap --version
-          d="$(mktemp -d)"; (mkdir /sys/orbit-diag 2>&1; echo "mkdir on a read-only mount exit=$?") || true; rmdir "$d"
-          ORBIT_DIAG=1 npx vitest run tests/integration/evidence/zz-diag.int.test.ts --silent=false || true
-
       - name: Playwright's Chromium
         run: npx playwright install --with-deps chromium
 
