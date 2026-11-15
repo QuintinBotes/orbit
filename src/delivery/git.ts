@@ -415,3 +415,31 @@ export async function fetchBranchContaining(o: RemoteOptions & { branch: string;
 export async function hasCommit(repoRoot: string, commit: string, opts: GitOptions = {}): Promise<boolean> {
   return isObjectId(commit) && (await objectExists(repoRoot, `${commit}^{commit}`, opts));
 }
+
+/**
+ * Bring the checked-out base branch up to the remote's tip before the queue starts an issue (docs/decisions/0020-
+ * backlog-queue.md): a run starts from the commit checked out, so each issue then starts from the base as it stands
+ * after the last delivery. The tip is fetched into a private ref and the branch only ever fast-forwards; a checkout on
+ * another branch, or a base with commits the remote does not have, is refused. Repository hooks do not run.
+ */
+export async function fastForwardBase(o: RemoteOptions & { branch: string }): Promise<{ from: string; to: string }> {
+  assertRemote(o.remote);
+  if (o.branch.startsWith('-') || REF_FORBIDDEN.test(o.branch)) throw new OrbitError('CONFIG_INVALID', `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
+  const head = (await git(o.repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'], o)).stdout.trim();
+  if (head !== o.branch) {
+    throw new OrbitError('POLICY_DENIED', `the queue runs every issue from ${o.branch}, but this checkout is on ${head ? `branch ${head}` : 'a detached HEAD'}: switch to it with "git switch ${o.branch}"`, { definitive: true });
+  }
+  const ref = 'refs/orbit/queue/base';
+  const { env, pre } = remoteEnvAndArgs(o);
+  const fetched = await git(o.repoRoot, [...pre, 'fetch', '--no-tags', '--no-write-fetch-head', '--', o.remote, `+${branchRef(o.branch)}:${ref}`], { ...o, env });
+  if (fetched.exitCode !== 0) throw classifyRemoteFailure(`git fetch of ${o.branch} from ${o.remote}`, fetched);
+  const tip = (await git(o.repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], o)).stdout.trim();
+  const from = (await git(o.repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], o)).stdout.trim();
+  if (!isObjectId(tip) || !isObjectId(from)) throw new OrbitError('GIT_FAILED', `could not resolve ${o.branch} here and at ${o.remote}`);
+  if (tip === from) return { from, to: tip };
+  const merged = await git(o.repoRoot, ['-c', 'core.hooksPath=/dev/null', 'merge', '--ff-only', '--quiet', tip], o);
+  if (merged.exitCode !== 0) {
+    throw new OrbitError('POLICY_DENIED', `${o.branch} cannot fast-forward to ${o.remote}/${o.branch} (${tip.slice(0, 12)}): it has commits the remote does not have, or local changes in the way. Push or reset ${o.branch}, then start the queue again: ${redact(merged.stderr.trim()).slice(0, 300)}`, { definitive: true });
+  }
+  return { from, to: tip };
+}

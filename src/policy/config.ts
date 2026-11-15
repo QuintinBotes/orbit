@@ -91,6 +91,8 @@ export interface ConfigOptions {
   source?: string;
   /** Mode from the command line; validated exactly as if the file had said it. */
   mode?: RunMode;
+  /** repository.base_branch from the command line (`orbit queue run --base`); validated exactly as if the file had said it. */
+  baseBranch?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +398,13 @@ export function raiseFailBefore(config: OrbitConfig, mode: FailBeforeMode): Orbi
   return deepFreeze({ ...config, verification: { ...config.verification, fail_before: mode } });
 }
 
+/** The policy with `scheduler.hard_limits.model_cost_usd` lowered to `usd` when that is lower (never raised): what is left of a queue's budget. */
+export function capModelCost(config: OrbitConfig, usd: number): OrbitConfig {
+  const cap = Math.max(0.01, Math.min(config.scheduler.hard_limits.model_cost_usd, usd));
+  if (cap === config.scheduler.hard_limits.model_cost_usd) return config;
+  return deepFreeze({ ...config, scheduler: { ...config.scheduler, hard_limits: { ...config.scheduler.hard_limits, model_cost_usd: cap } } });
+}
+
 export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): IsolationLimits {
   // A snapshot written before a limit existed reads that limit with its default.
   return { ...defaultIsolationLimits(), ...(config.isolation.limits ?? {}) };
@@ -492,10 +501,12 @@ export function validateConfig(raw: unknown, opts: ConfigOptions = {}): OrbitCon
   findDangerousKeys(raw, '', problems);
   if (problems.length > 0) throw invalid(source, problems);
   if (raw.version === undefined) problems.push('version: required (use "version: 1")');
+  // Before the merge, so the release profile's default branches and every rule see the branch the command line names.
+  const input: Record<string, unknown> = opts.baseBranch === undefined ? raw : { ...raw, repository: { ...(isPlainObject(raw.repository) ? raw.repository : {}), base_branch: opts.baseBranch } };
 
-  const fileMode = raw.mode;
+  const fileMode = input.mode;
   const mode: RunMode = opts.mode ?? (typeof fileMode === 'string' && (RUN_MODES as readonly string[]).includes(fileMode) ? (fileMode as RunMode) : DEFAULT_MODE);
-  const merged = mergeWithDefaults(raw, mode, problems);
+  const merged = mergeWithDefaults(input, mode, problems);
   // The merge kept the file's mode (or the default); a command-line mode replaces it.
   if (opts.mode !== undefined) merged.mode = opts.mode;
 

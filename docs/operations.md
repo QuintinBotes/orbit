@@ -77,6 +77,52 @@ directory. `orbit run --issue` and `orbit spec check` read the issue through
 `gh` with your own login or `GH_TOKEN`; the service reads and comments with
 `GH_TOKEN` only.
 
+### Working a backlog
+
+`orbit queue run` works a backlog of issues in dependency order, one issue at a
+time, each as `orbit run --issue <n> --foreground` would run it (ADR 0020).
+`orbit queue list` shows what it would do and writes nothing:
+
+```bash
+orbit queue list --parent 165 --base next
+orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minutes 240
+```
+
+- The backlog is the sub-issues of `--parent`, in the parent's order, or
+  without it every open issue carrying the label, oldest first. That order is
+  the priority.
+- The frontier is the open issues labelled `ready-for-agent` (`--label`), not
+  labelled `ready-for-human` (`--human-label`), with no open blocking issue in
+  GitHub's issue dependencies, and with no unfinished or delivered run of
+  their own (a pull request closed without merging gives an issue back). It is
+  read from GitHub again before every issue. Every other open
+  issue is listed with the reason it waits; issues that block one another are
+  reported as a cycle and none of them runs.
+- Before each issue the checkout, which must be on the base branch (`--base`,
+  default `repository.base_branch`) with a clean tree, is fast-forwarded to the
+  remote's base branch, so each issue starts after the last merge. Every pull
+  request targets that branch.
+- A dependant starts only once its blocker is closed. GitHub closes an issue
+  from `Closes #n` only for the default branch; for another base the queue
+  closes an issue itself, with a comment, once its pull request has merged.
+  Merging stays with a person (or with a `release` run that may merge). When
+  only issues waiting on a merge are left, the queue looks every minute for up
+  to `--wait-minutes` (default 60; 0 stops at once).
+- An issue gets up to `--attempts` runs (default 2); a run waiting on an answer
+  is not tried again. An issue whose runs did not deliver, or whose body fails
+  `orbit spec check`, is labelled `ready-for-human` with one comment that says
+  why, and its dependants wait.
+- The queue stops when the frontier is empty, at `--max-issues`, at
+  `--budget-usd` (each run is capped at what is left), after two issues in a
+  row end with a person, or on Ctrl-C (the run is paused). It prints what it
+  did and what is left, and keeps the same in `.orbit/queue/<id>.json`: per
+  issue the outcome, pull request and every attempt. Exit 0, 10 when an issue
+  went to a person, 20 when interrupted.
+
+The queue reads and writes issues (a label, a comment, a close) through `gh`
+with `GH_TOKEN` or your own login; a delivering mode needs `GH_TOKEN` for the
+runs, as `orbit run` does.
+
 A foreground run exits with a code that names the state it ended in: 0
 `SUCCEEDED`, 10 `BLOCKED`, 11 `EXHAUSTED`, 12 `IMPOSSIBLE`, 13 `CANCELLED`, 20
 paused. `orbit help exit-codes` prints the whole table.
@@ -153,6 +199,8 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit init` | none |
 | `orbit run` | `--goal <text>` (or `-` for stdin) or `--issue <number \| #number \| owner/repo#number \| url>` (see [Running an issue](#running-an-issue)), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
 | `orbit spec check <file \| issue>` | `--policy <path>` (read only to find the repository of an issue), `--json` |
+| `orbit queue list` | `--parent <issue>`, `--label <name>`, `--human-label <name>`, `--base <branch>`, `--policy <path>`, `--json` (see [Working a backlog](#working-a-backlog)) |
+| `orbit queue run` | the options of `queue list`, and `--mode <mode>`, `--max-issues <n>`, `--budget-usd <usd>`, `--attempts <n>` (default 2), `--wait-minutes <n>` (default 60) |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
