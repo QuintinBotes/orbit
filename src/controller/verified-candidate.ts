@@ -115,8 +115,8 @@ export function offerAdvice(vc: VerifiedCandidate): string {
 }
 
 /**
- * The pull request body the delivery command names: the objective, the criteria and checks the candidate's evidence
- * covered, and every open finding with its status. Redacted as Orbit's own pull request body is.
+ * The pull request body the delivery command names: the objective, why the run stopped, the checks the candidate passed,
+ * and every open finding with its status. Redacted as Orbit's own pull request body is.
  */
 export function writeOfferBody(runDir: string, runId: string, vc: VerifiedCandidate, contract: Pick<GoalContract, 'objective'> | null, stopped: string): void {
   const lines = [
