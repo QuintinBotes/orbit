@@ -50,7 +50,9 @@ repository:
 ```
 
 Orbit only pushes branches with the prefix, and the prefix may not match the
-base branch.
+base branch. `orbit queue run --base <branch>` sets `base_branch` for the runs
+it starts, validated as if this file said it
+([operations](operations.md#working-a-backlog)).
 
 ## scope
 

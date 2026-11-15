@@ -14,6 +14,7 @@ import { json, line } from '../io.ts';
 import { admitRun } from '../admission.ts';
 import { loadCommandPolicy } from '../policy-file.ts';
 import { driveForeground } from './drive.ts';
+import type { OrbitDb } from '../../storage/db.ts';
 import { join } from 'node:path';
 import { isOrbitError } from '../../core/errors.ts';
 import { orbitDir } from '../../controller/start.ts';
@@ -75,12 +76,7 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
   // The issue is read once, here, and judged before any state exists or any model is called: a closed, locked or
   // blocked issue, a pull request, another repository's issue and a body that is not a spec are each refused in one line.
   let issue: IssueGoal | null = null;
-  if (issueRef !== null) {
-    issue = await intakeIssue({ ref: issueRef, reader: await issueReader(ctx, repo, config), now: ctx.clock.now() });
-    goal = issueGoalText(issue);
-    // A bug runs as a repair: its new test must fail on the base revision. Like --fail-before, this only raises the policy.
-    if (issue.kind === 'bug') config = raiseFailBefore(config, 'required') ?? config;
-  }
+  if (issueRef !== null) ({ issue, goal, config } = await issueRunInput(ctx, repo, config, issueRef));
 
   // Whether a service will pick the run up decides who drives it, and that decides what admission can judge.
   // Reading it must not create the state database: a refused run leaves no state behind.
@@ -99,17 +95,7 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
 
   const db = openState(repo, { create: true });
   try {
-    // shortcut: simultaneous submissions can race; move this check into run creation if atomic refusal is needed.
-    const existing = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => r.goal === goal);
-    if (existing) throw new OrbitError('POLICY_DENIED', `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
-    if (issue) {
-      // One unfinished run per issue, whatever its body says now: an edit must not start a second run beside the first.
-      const taken = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => {
-        const g = readIssueGoal(join(orbitDir(repo), 'runs', r.id));
-        return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
-      });
-      if (taken) throw new OrbitError('POLICY_DENIED', `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
-    }
+    refuseUnfinished(db, repo, goal, issue);
     // The policy is frozen (snapshot, hash, read-only) before the run row that names it exists.
     const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...(environment !== undefined ? { environment } : {}), ...(issue ? { issue } : {}) });
     const from = issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {};
@@ -134,4 +120,30 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Read the issue once and judge it before any state exists or any model is called (intake/issue.ts): a closed, locked
+ * or blocked issue, a pull request, another repository's issue and a body that is not a spec are each refused in one
+ * line (POLICY_DENIED). Returns the frozen issue goal, the run's goal text and the policy the run starts with.
+ */
+export async function issueRunInput(ctx: CliContext, repo: string, config: OrbitConfig, ref: IssueRef): Promise<{ issue: IssueGoal; goal: string; config: OrbitConfig }> {
+  const issue = await intakeIssue({ ref, reader: await issueReader(ctx, repo, config), now: ctx.clock.now() });
+  // A bug runs as a repair: its new test must fail on the base revision. Like --fail-before, this only raises the policy.
+  return { issue, goal: issueGoalText(issue), config: issue.kind === 'bug' ? (raiseFailBefore(config, 'required') ?? config) : config };
+}
+
+/** A goal, or an issue, that an unfinished run already has is refused (#139): it would start a second run beside the first. */
+export function refuseUnfinished(db: OrbitDb, repo: string, goal: string, issue: Pick<IssueGoal, 'repo' | 'number'> | null): void {
+  // shortcut: simultaneous submissions can race; move this check into run creation if atomic refusal is needed.
+  const unfinished = listRuns(db, { states: NON_TERMINAL, limit: -1 });
+  const existing = unfinished.find((r) => r.goal === goal);
+  if (existing) throw new OrbitError('POLICY_DENIED', `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
+  if (!issue) return;
+  // One unfinished run per issue, whatever its body says now: an edit must not start a second run beside the first.
+  const taken = unfinished.find((r) => {
+    const g = readIssueGoal(join(orbitDir(repo), 'runs', r.id));
+    return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
+  });
+  if (taken) throw new OrbitError('POLICY_DENIED', `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
 }

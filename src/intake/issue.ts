@@ -186,8 +186,9 @@ export async function intakeIssue(input: IntakeInput): Promise<IssueGoal> {
     throw refusal(`issue ${name} is blocked by ${blockers.length === 1 ? 'an open issue' : 'open issues'}: ${names.join(', ')}${blockers.length > names.length ? ', ...' : ''}`, { blocked_by: blockers });
   }
   const body = issue.body;
-  if (body.trim() === '') throw refusal(`issue ${name} has an empty body: there is no spec to run`);
-  if (body.length > ISSUE_BODY_MAX_CHARS) throw refusal(`the body of issue ${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
+  // The refusals a person fixes by editing the issue say so (`edit_issue`): the queue hands those issues to a person.
+  if (body.trim() === '') throw refusal(`issue ${name} has an empty body: there is no spec to run`, { edit_issue: true });
+  if (body.length > ISSUE_BODY_MAX_CHARS) throw refusal(`the body of issue ${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`, { edit_issue: true });
 
   const base = {
     schema: 'orbit.issue-goal/1' as const,
@@ -222,7 +223,7 @@ export async function intakeIssue(input: IntakeInput): Promise<IssueGoal> {
   }
   const n = check.problems.length;
   const lead = isBug ? `issue ${name} is labelled bug but has no reproduction section (a heading such as "Steps to reproduce"), and its body is not a spec` : `issue ${name} is not a spec Orbit can run`;
-  throw refusal(`${lead}: ${n} problem${n === 1 ? '' : 's'}. ${check.problems[0]}${n > 1 ? ` (and ${n - 1} more)` : ''}`, { problems: check.problems });
+  throw refusal(`${lead}: ${n} problem${n === 1 ? '' : 's'}. ${check.problems[0]}${n > 1 ? ` (and ${n - 1} more)` : ''}`, { problems: check.problems, edit_issue: true });
 }
 
 // ---------------------------------------------------------------------------

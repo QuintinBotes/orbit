@@ -1796,13 +1796,13 @@ var require_parse = __commonJS({
         consume(token.value);
       };
       const negate = () => {
-        let count4 = 1;
+        let count5 = 1;
         while (peek() === "!" && (peek(2) !== "(" || peek(3) === "?")) {
           advance();
           state.start++;
-          count4++;
+          count5++;
         }
-        if (count4 % 2 === 0) {
+        if (count5 % 2 === 0) {
           return false;
         }
         state.negated = true;
@@ -3518,11 +3518,11 @@ function sequence(inner) {
     const a = Number(num7[1]);
     const b = Number(num7[2]);
     const step2 = Math.abs(Number(num7[3] ?? 1)) || 1;
-    const count4 = Math.floor(Math.abs(b - a) / step2) + 1;
-    if (count4 > MAX_BRACE_RESULTS) return Array.from({ length: MAX_BRACE_RESULTS + 1 }, () => "");
+    const count5 = Math.floor(Math.abs(b - a) / step2) + 1;
+    if (count5 > MAX_BRACE_RESULTS) return Array.from({ length: MAX_BRACE_RESULTS + 1 }, () => "");
     const width = /^-?0\d/.test(num7[1]) || /^-?0\d/.test(num7[2]) ? Math.max(num7[1].length, num7[2].length) : 0;
     const out = [];
-    for (let k = 0, v = a; k < count4; k++, v += a <= b ? step2 : -step2) {
+    for (let k = 0, v = a; k < count5; k++, v += a <= b ? step2 : -step2) {
       const digits = String(Math.abs(v)).padStart(width - (v < 0 ? 1 : 0), "0");
       out.push(v < 0 ? `-${digits}` : digits);
     }
@@ -6551,8 +6551,8 @@ var init_Node = __esm({
         };
         const res = toJS(this, "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count: count4, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count4);
+          for (const { count: count5, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count5);
         return typeof reviver === "function" ? applyReviver(reviver, { "": res }, "", res) : res;
       }
     };
@@ -6566,13 +6566,13 @@ function getAliasCount(doc, node, anchors) {
     const anchor = anchors && source && anchors.get(source);
     return anchor ? anchor.count * anchor.aliasCount : 0;
   } else if (isCollection(node)) {
-    let count4 = 0;
+    let count5 = 0;
     for (const item of node.items) {
       const c = getAliasCount(doc, item, anchors);
-      if (c > count4)
-        count4 = c;
+      if (c > count5)
+        count5 = c;
     }
-    return count4;
+    return count5;
   } else if (isPair(node)) {
     const kc = getAliasCount(doc, node.key, anchors);
     const vc = getAliasCount(doc, node.value, anchors);
@@ -9533,8 +9533,8 @@ var init_Document = __esm({
         };
         const res = toJS(this.contents, jsonArg ?? "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count: count4, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count4);
+          for (const { count: count5, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count5);
         return typeof reviver === "function" ? applyReviver(reviver, { "": res }, "", res) : res;
       }
       /**
@@ -9605,12 +9605,12 @@ var init_errors2 = __esm({
         lineStr = prev + lineStr;
       }
       if (/[^ ]/.test(lineStr)) {
-        let count4 = 1;
+        let count5 = 1;
         const end = error.linePos[1];
         if (end?.line === line3 && end.col > col) {
-          count4 = Math.max(1, Math.min(end.col - col, 80 - ci));
+          count5 = Math.max(1, Math.min(end.col - col, 80 - ci));
         }
-        const pointer = " ".repeat(ci) + "^".repeat(count4);
+        const pointer = " ".repeat(ci) + "^".repeat(count5);
         error.message += `:
 
 ${lineStr}
@@ -15025,20 +15025,20 @@ var require_resolve = __commonJS({
       return false;
     }
     function countKeys(schema4) {
-      let count4 = 0;
+      let count5 = 0;
       for (const key2 in schema4) {
         if (key2 === "$ref")
           return Infinity;
-        count4++;
+        count5++;
         if (SIMPLE_INLINED.has(key2))
           continue;
         if (typeof schema4[key2] == "object") {
-          (0, util_1.eachItem)(schema4[key2], (sch) => count4 += countKeys(sch));
+          (0, util_1.eachItem)(schema4[key2], (sch) => count5 += countKeys(sch));
         }
-        if (count4 === Infinity)
+        if (count5 === Infinity)
           return Infinity;
       }
-      return count4;
+      return count5;
     }
     function getFullPath(resolver, id = "", normalize4) {
       if (normalize4 !== false)
@@ -18520,8 +18520,8 @@ var require_contains = __commonJS({
         cxt.result(valid, () => cxt.reset());
         function validateItemsWithCount() {
           const schValid = gen.name("_valid");
-          const count4 = gen.let("count", 0);
-          validateItems(schValid, () => gen.if(schValid, () => checkLimits(count4)));
+          const count5 = gen.let("count", 0);
+          validateItems(schValid, () => gen.if(schValid, () => checkLimits(count5)));
         }
         function validateItems(_valid, block2) {
           gen.forRange("i", 0, len, (i) => {
@@ -18534,16 +18534,16 @@ var require_contains = __commonJS({
             block2();
           });
         }
-        function checkLimits(count4) {
-          gen.code((0, codegen_1._)`${count4}++`);
+        function checkLimits(count5) {
+          gen.code((0, codegen_1._)`${count5}++`);
           if (max === void 0) {
-            gen.if((0, codegen_1._)`${count4} >= ${min}`, () => gen.assign(valid, true).break());
+            gen.if((0, codegen_1._)`${count5} >= ${min}`, () => gen.assign(valid, true).break());
           } else {
-            gen.if((0, codegen_1._)`${count4} > ${max}`, () => gen.assign(valid, false).break());
+            gen.if((0, codegen_1._)`${count5} > ${max}`, () => gen.assign(valid, false).break());
             if (min === 1)
               gen.assign(valid, true);
             else
-              gen.if((0, codegen_1._)`${count4} >= ${min}`, () => gen.assign(valid, true));
+              gen.if((0, codegen_1._)`${count5} >= ${min}`, () => gen.assign(valid, true));
           }
         }
       }
@@ -21774,6 +21774,11 @@ function raiseFailBefore(config, mode) {
   if (FAIL_BEFORE_MODES.indexOf(mode) < FAIL_BEFORE_MODES.indexOf(current)) return null;
   return deepFreeze2({ ...config, verification: { ...config.verification, fail_before: mode } });
 }
+function capModelCost(config, usd4) {
+  const cap = Math.max(0.01, Math.min(config.scheduler.hard_limits.model_cost_usd, usd4));
+  if (cap === config.scheduler.hard_limits.model_cost_usd) return config;
+  return deepFreeze2({ ...config, scheduler: { ...config.scheduler, hard_limits: { ...config.scheduler.hard_limits, model_cost_usd: cap } } });
+}
 function isolationLimits(config) {
   return { ...defaultIsolationLimits(), ...config.isolation.limits ?? {} };
 }
@@ -21835,9 +21840,10 @@ function validateConfig(raw, opts = {}) {
   findDangerousKeys(raw, "", problems);
   if (problems.length > 0) throw invalid(source, problems);
   if (raw.version === void 0) problems.push('version: required (use "version: 1")');
-  const fileMode = raw.mode;
+  const input = opts.baseBranch === void 0 ? raw : { ...raw, repository: { ...isPlainObject(raw.repository) ? raw.repository : {}, base_branch: opts.baseBranch } };
+  const fileMode = input.mode;
   const mode = opts.mode ?? (typeof fileMode === "string" && RUN_MODES.includes(fileMode) ? fileMode : DEFAULT_MODE);
-  const merged = mergeWithDefaults(raw, mode, problems);
+  const merged = mergeWithDefaults(input, mode, problems);
   if (opts.mode !== void 0) merged.mode = opts.mode;
   const validate3 = schemaValidator();
   const shapeOk = validate3(merged);
@@ -29758,16 +29764,16 @@ function estimateCost(usage, pricing, opts = {}) {
     return { costUsd: null, costSource: "unavailable", missing: ["tokens"], assumptions: [] };
   }
   const missing = [];
-  const count4 = (name) => {
+  const count5 = (name) => {
     const v = usage[name];
     if (isCount(v)) return v;
     missing.push(name);
     return 0;
   };
-  const input = count4("inputTokens");
-  const output = count4("outputTokens");
-  const cacheRead = count4("cacheReadTokens");
-  const cacheWrite = count4("cacheWriteTokens");
+  const input = count5("inputTokens");
+  const output = count5("outputTokens");
+  const cacheRead = count5("cacheReadTokens");
+  const cacheWrite = count5("cacheWriteTokens");
   const ttl = opts.cacheWriteTtl ?? "1h";
   const uncached = opts.inputIncludesCacheRead ? Math.max(0, input - cacheRead) : input;
   const writeRate = ttl === "5m" ? pricing.cache_write_5m : pricing.cache_write_1h;
@@ -33702,6 +33708,27 @@ async function fetchBranchContaining(o) {
 async function hasCommit(repoRoot, commit, opts = {}) {
   return isObjectId(commit) && await objectExists(repoRoot, `${commit}^{commit}`, opts);
 }
+async function fastForwardBase(o) {
+  assertRemote(o.remote);
+  if (o.branch.startsWith("-") || REF_FORBIDDEN2.test(o.branch)) throw new OrbitError("CONFIG_INVALID", `not a valid branch name: ${JSON.stringify(o.branch)}`, { definitive: true });
+  const head = (await git(o.repoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"], o)).stdout.trim();
+  if (head !== o.branch) {
+    throw new OrbitError("POLICY_DENIED", `the queue runs every issue from ${o.branch}, but this checkout is on ${head ? `branch ${head}` : "a detached HEAD"}: switch to it with "git switch ${o.branch}"`, { definitive: true });
+  }
+  const ref3 = "refs/orbit/queue/base";
+  const { env, pre } = remoteEnvAndArgs(o);
+  const fetched = await git(o.repoRoot, [...pre, "fetch", "--no-tags", "--no-write-fetch-head", "--", o.remote, `+${branchRef(o.branch)}:${ref3}`], { ...o, env });
+  if (fetched.exitCode !== 0) throw classifyRemoteFailure(`git fetch of ${o.branch} from ${o.remote}`, fetched);
+  const tip = (await git(o.repoRoot, ["rev-parse", "--verify", "--quiet", `${ref3}^{commit}`], o)).stdout.trim();
+  const from = (await git(o.repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], o)).stdout.trim();
+  if (!isObjectId(tip) || !isObjectId(from)) throw new OrbitError("GIT_FAILED", `could not resolve ${o.branch} here and at ${o.remote}`);
+  if (tip === from) return { from, to: tip };
+  const merged = await git(o.repoRoot, ["-c", "core.hooksPath=/dev/null", "merge", "--ff-only", "--quiet", tip], o);
+  if (merged.exitCode !== 0) {
+    throw new OrbitError("POLICY_DENIED", `${o.branch} cannot fast-forward to ${o.remote}/${o.branch} (${tip.slice(0, 12)}): it has commits the remote does not have, or local changes in the way. Push or reset ${o.branch}, then start the queue again: ${redact(merged.stderr.trim()).slice(0, 300)}`, { definitive: true });
+  }
+  return { from, to: tip };
+}
 var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
 var init_git = __esm({
   "src/delivery/git.ts"() {
@@ -33719,6 +33746,10 @@ var init_git = __esm({
 // src/intake/github.ts
 import { existsSync as existsSync19, readFileSync as readFileSync15 } from "node:fs";
 import { join as join20 } from "node:path";
+function hasLabel(issue, label) {
+  const want = label.trim().toLowerCase();
+  return issue.labels.some((l) => l.trim().toLowerCase() === want);
+}
 function malformed2(what, detail) {
   return new OrbitError("MALFORMED_OUTPUT", `gh api ${what}: ${detail}`);
 }
@@ -33735,11 +33766,19 @@ function repoOfUrl(url) {
   return m && REPO.test(m[1]) ? m[1] : null;
 }
 function parseIssue(text2, repo) {
-  const v = parseJson2("issue", text2);
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed2("issue", "expected an object");
+  return issueOf("issue", parseJson2("issue", text2), repo);
+}
+function parseIssueList(text2, repo) {
+  const v = parseJson2("issues", text2);
+  if (!Array.isArray(v)) throw malformed2("issues", "expected an array");
+  const mine = v.filter((x) => (repoOfUrl(x?.repository_url) ?? repo).toLowerCase() === repo.toLowerCase());
+  return { issues: mine.map((x) => issueOf("issues", x, repo)), count: v.length };
+}
+function issueOf(what, v, repo) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw malformed2(what, "expected an object");
   const o = v;
-  if (typeof o.number !== "number" || !Number.isInteger(o.number) || o.number <= 0) throw malformed2("issue", "no issue number");
-  if (o.state !== "open" && o.state !== "closed") throw malformed2("issue", "no state");
+  if (typeof o.number !== "number" || !Number.isInteger(o.number) || o.number <= 0) throw malformed2(what, "no issue number");
+  if (o.state !== "open" && o.state !== "closed") throw malformed2(what, "no state");
   const labels2 = Array.isArray(o.labels) ? o.labels.flatMap((l) => typeof l === "string" ? [l] : l && typeof l === "object" && typeof l.name === "string" ? [l.name] : []) : [];
   return {
     repo,
@@ -33769,6 +33808,13 @@ function assertIssueNumber(n2) {
 }
 async function issueReaderFor(repoRoot, config, env, opts = {}) {
   if (config.delivery.provider === "fake") return new FakeIssueReader({ statePath: join20(repoRoot, ".orbit", FAKE_ISSUES_FILE) });
+  return new GhIssueReader({ repo: await githubRepoOf(repoRoot, config), env, cwd: repoRoot, requireScopedToken: opts.scoped === true });
+}
+async function issueTrackerFor(repoRoot, config, env) {
+  if (config.delivery.provider === "fake") return new FakeIssueReader({ statePath: join20(repoRoot, ".orbit", FAKE_ISSUES_FILE) });
+  return new GhIssueTracker({ repo: await githubRepoOf(repoRoot, config), env, cwd: repoRoot });
+}
+async function githubRepoOf(repoRoot, config) {
   const remote = config.repository.remote;
   let url;
   try {
@@ -33778,9 +33824,9 @@ async function issueReaderFor(repoRoot, config, env, opts = {}) {
   }
   const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
   if (!m) throw new OrbitError("CONFIG_INVALID", `remote "${remote}" is not a github.com repository, so there is no issue tracker Orbit can read`, { definitive: true });
-  return new GhIssueReader({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot, requireScopedToken: opts.scoped === true });
+  return `${m[1]}/${m[2]}`;
 }
-var REPO, ACCEPT, BLOCKERS_PER_PAGE, GhIssueReader, FAKE_ISSUES_FILE, FAKE_REPO, FakeIssueReader;
+var REPO, ACCEPT, BLOCKERS_PER_PAGE, ISSUES_PER_PAGE, ISSUE_PAGES, GhIssueReader, GhIssueTracker, FAKE_ISSUES_FILE, FAKE_REPO, FakeIssueReader;
 var init_github2 = __esm({
   "src/intake/github.ts"() {
     "use strict";
@@ -33793,6 +33839,8 @@ var init_github2 = __esm({
     REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
     ACCEPT = ["-H", "Accept: application/vnd.github+json"];
     BLOCKERS_PER_PAGE = 100;
+    ISSUES_PER_PAGE = 100;
+    ISSUE_PAGES = 10;
     GhIssueReader = class {
       repo;
       opts;
@@ -33818,12 +33866,16 @@ var init_github2 = __esm({
       }
       /** A read: `gh api <path>` with no method, field or input flag is a GET. */
       async get(what, path) {
+        return this.call(what, [path]);
+      }
+      /** `gh api` with these arguments; the body, when there is one, goes on stdin. */
+      async call(what, args, input) {
         if ((this.opts.requireScopedToken ?? false) && !this.baseEnv.GH_TOKEN) {
           throw new OrbitError("AUTH_MISSING", "no GH_TOKEN in the controller environment; reading the issue needs a token scoped to the repository", { definitive: true });
         }
         let res;
         try {
-          res = await this.runner([this.opts.ghPath ?? "gh", "api", ...ACCEPT, path], { env: this.env(), ...this.opts.cwd ? { cwd: this.opts.cwd } : {}, timeoutMs: this.opts.timeoutMs ?? 3e4 });
+          res = await this.runner([this.opts.ghPath ?? "gh", "api", ...ACCEPT, ...args], { env: this.env(), ...this.opts.cwd ? { cwd: this.opts.cwd } : {}, ...input !== void 0 ? { input } : {}, timeoutMs: this.opts.timeoutMs ?? 3e4 });
         } catch (err) {
           if (isOrbitError(err, "NOT_FOUND") && err.details?.errno === "ENOENT") {
             throw new OrbitError("PROVIDER_UNAVAILABLE", 'the GitHub CLI (gh) was not found on PATH; install it (https://cli.github.com) and run "gh auth login" to read issues', { definitive: true });
@@ -33840,9 +33892,45 @@ ${res.stdout}`) };
         const issue = await this.get("issue", `repos/${this.repo}/issues/${number}`);
         if (!issue.ok) throw issue.error;
         const info = parseIssue(issue.text, this.repo);
+        return { ...info, blockedBy: await this.blockedBy(number) };
+      }
+      async blockedBy(number) {
         const blockers = await this.get("blocked_by", `repos/${this.repo}/issues/${number}/dependencies/blocked_by?per_page=${BLOCKERS_PER_PAGE}`);
         if (!blockers.ok && blockers.error.code !== "NOT_FOUND") throw blockers.error;
-        return { ...info, blockedBy: blockers.ok ? parseBlockedBy(blockers.text, this.repo) : [] };
+        return blockers.ok ? parseBlockedBy(blockers.text, this.repo) : [];
+      }
+      async listIssues(query) {
+        if (query.parent !== null) assertIssueNumber(query.parent);
+        const found = [];
+        for (let page = 1; page <= ISSUE_PAGES; page++) {
+          const path = query.parent !== null ? `repos/${this.repo}/issues/${query.parent}/sub_issues?per_page=${ISSUES_PER_PAGE}&page=${page}` : `repos/${this.repo}/issues?${new URLSearchParams({ state: "open", labels: query.label, sort: "created", direction: "asc", per_page: String(ISSUES_PER_PAGE), page: String(page) }).toString()}`;
+          const r = await this.get(query.parent !== null ? "sub_issues" : "issues", path);
+          if (!r.ok) throw r.error;
+          const batch = parseIssueList(r.text, this.repo);
+          found.push(...batch.issues);
+          if (batch.count < ISSUES_PER_PAGE) break;
+        }
+        const out = [];
+        for (const i of found) out.push({ ...i, blockedBy: i.open && !i.isPullRequest && hasLabel(i, query.label) ? await this.blockedBy(i.number) : [] });
+        return out;
+      }
+    };
+    GhIssueTracker = class extends GhIssueReader {
+      async write(what, method, path, body) {
+        const r = await this.call(what, ["-X", method, path, "--input", "-"], JSON.stringify(body));
+        if (!r.ok) throw r.error;
+      }
+      async addLabel(number, label) {
+        assertIssueNumber(number);
+        await this.write("add label", "POST", `repos/${this.repo}/issues/${number}/labels`, { labels: [label] });
+      }
+      async comment(number, body) {
+        assertIssueNumber(number);
+        await this.write("comment", "POST", `repos/${this.repo}/issues/${number}/comments`, { body });
+      }
+      async close(number) {
+        assertIssueNumber(number);
+        await this.write("close issue", "PATCH", `repos/${this.repo}/issues/${number}`, { state: "closed", state_reason: "completed" });
       }
     };
     FAKE_ISSUES_FILE = "fake-github-issues.json";
@@ -33855,9 +33943,9 @@ ${res.stdout}`) };
         this.repo = opts.repo ?? FAKE_REPO;
       }
       read() {
-        if (!existsSync19(this.statePath)) return { issues: [], reads: [] };
+        if (!existsSync19(this.statePath)) return { issues: [], reads: [], comments: [], writes: [] };
         const s = JSON.parse(readFileSync15(this.statePath, "utf8"));
-        return { issues: s.issues ?? [], reads: s.reads ?? [], failNext: s.failNext ?? null };
+        return { issues: s.issues ?? [], reads: s.reads ?? [], failNext: s.failNext ?? null, comments: s.comments ?? [], writes: s.writes ?? [] };
       }
       write(s) {
         atomicWriteJson(this.statePath, s);
@@ -33876,6 +33964,54 @@ ${res.stdout}`) };
       }
       get reads() {
         return this.read().reads;
+      }
+      /** The issue as the fake holds it now, or undefined. */
+      issue(number) {
+        return this.read().issues.find((i) => i.number === number);
+      }
+      /** Every comment Orbit wrote on the issue, oldest first. */
+      comments(number) {
+        return (this.read().comments ?? []).filter((c) => c.number === number).map((c) => c.body);
+      }
+      get writes() {
+        return this.read().writes ?? [];
+      }
+      async listIssues(query) {
+        if (query.parent !== null) assertIssueNumber(query.parent);
+        const s = this.read();
+        const numbers = query.parent !== null ? s.issues.find((i) => i.number === query.parent)?.subIssues ?? [] : s.issues.filter((i) => (i.open ?? true) && !i.isPullRequest && hasLabel({ labels: i.labels ?? [] }, query.label)).map((i) => i.number).sort((a, b) => a - b);
+        const out = [];
+        for (const n2 of numbers) {
+          if (!s.issues.some((i) => i.number === n2)) continue;
+          const info = await this.getIssue(n2);
+          out.push(info.open && !info.isPullRequest && hasLabel(info, query.label) ? info : { ...info, blockedBy: [] });
+        }
+        return out;
+      }
+      change(number, write2, fn) {
+        assertIssueNumber(number);
+        const s = this.read();
+        const i = s.issues.find((x) => x.number === number);
+        if (!i) throw new OrbitError("NOT_FOUND", `gh api ${write2} failed (exit 1): HTTP 404: Not Found (repos/${this.repo}/issues/${number})`, { definitive: true });
+        fn(i, s);
+        s.writes = [...s.writes ?? [], write2];
+        this.write(s);
+      }
+      async addLabel(number, label) {
+        this.change(number, `label #${number} ${label}`, (i) => {
+          if (!hasLabel({ labels: i.labels ?? [] }, label)) i.labels = [...i.labels ?? [], label];
+        });
+      }
+      async comment(number, body) {
+        this.change(number, `comment #${number}`, (_i, s) => {
+          s.comments = [...s.comments ?? [], { number, body }];
+        });
+      }
+      async close(number) {
+        this.change(number, `close #${number}`, (i) => {
+          i.open = false;
+          i.stateReason = "completed";
+        });
       }
       async getIssue(number) {
         assertIssueNumber(number);
@@ -34174,8 +34310,8 @@ async function intakeIssue(input) {
     throw refusal(`issue ${name} is blocked by ${blockers.length === 1 ? "an open issue" : "open issues"}: ${names.join(", ")}${blockers.length > names.length ? ", ..." : ""}`, { blocked_by: blockers });
   }
   const body = issue.body;
-  if (body.trim() === "") throw refusal(`issue ${name} has an empty body: there is no spec to run`);
-  if (body.length > ISSUE_BODY_MAX_CHARS) throw refusal(`the body of issue ${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
+  if (body.trim() === "") throw refusal(`issue ${name} has an empty body: there is no spec to run`, { edit_issue: true });
+  if (body.length > ISSUE_BODY_MAX_CHARS) throw refusal(`the body of issue ${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`, { edit_issue: true });
   const base = {
     schema: "orbit.issue-goal/1",
     repo: issue.repo,
@@ -34208,7 +34344,7 @@ async function intakeIssue(input) {
   }
   const n2 = check.problems.length;
   const lead = isBug ? `issue ${name} is labelled bug but has no reproduction section (a heading such as "Steps to reproduce"), and its body is not a spec` : `issue ${name} is not a spec Orbit can run`;
-  throw refusal(`${lead}: ${n2} problem${n2 === 1 ? "" : "s"}. ${check.problems[0]}${n2 > 1 ? ` (and ${n2 - 1} more)` : ""}`, { problems: check.problems });
+  throw refusal(`${lead}: ${n2} problem${n2 === 1 ? "" : "s"}. ${check.problems[0]}${n2 > 1 ? ` (and ${n2 - 1} more)` : ""}`, { problems: check.problems, edit_issue: true });
 }
 function issueGoalText(goal) {
   return `${goal.kind === "bug" ? "Fix the bug reported in" : "Implement the spec in"} GitHub issue ${ref(goal.repo, goal.number)} (body sha256 ${goal.body_sha256.slice(0, 16)})`;
@@ -34615,14 +34751,14 @@ function wholeCandidate(diff) {
   const header2 = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(raw[at]);
   if (header2 === null) return null;
   const start = Number(header2[1]);
-  const count4 = header2[2] === void 0 ? 1 : Number(header2[2]);
-  if (count4 > 0 && start !== 1) return null;
+  const count5 = header2[2] === void 0 ? 1 : Number(header2[2]);
+  if (count5 > 0 && start !== 1) return null;
   const out = [];
   for (const line3 of raw.slice(at + 1)) {
     if (line3.startsWith("+") || line3.startsWith(" ")) out.push({ text: line3.slice(1), added: line3.startsWith("+") });
     else if (!line3.startsWith("-") && !line3.startsWith("\\")) return null;
   }
-  return out.length === count4 ? out : null;
+  return out.length === count5 ? out : null;
 }
 function offCfg(attribute2) {
   return /^#!?\[\s*cfg\s*\(/.test(attribute2) && !/^#!?\[\s*cfg\s*\(\s*test\s*\)\s*\]$/.test(attribute2);
@@ -63858,7 +63994,7 @@ async function admitAndStart(ctx, n2, all, waiting, opts) {
   const plan = schedulerFor(ctx).plan([...own, ...pending], { admit: budgetAdmission(ctx.ledger), parallelism: ctx.snapshot.config.agents.default_parallelism });
   const admitted = plan.start.filter((s) => pending.some((p) => p.id === s.id));
   const machine = admitted.length > 0 ? machineAdmission(ctx, running.map((r) => r.unit), admitted) : null;
-  let count4 = 0;
+  let count5 = 0;
   let unfunded = false;
   const total = sessionSpendCap(ctx, opts.route.model, "implementer");
   const share = total.capUsd === null ? null : Math.floor(total.capUsd / waiting.length * 100) / 100;
@@ -63876,12 +64012,12 @@ async function admitAndStart(ctx, n2, all, waiting, opts) {
     const dir = unitWorktree(ctx, n2, u);
     if (!existsSync44(dir)) await materializeCandidate(ctx.run.repoRoot, ctx.run.baseRevision, dir, { readOnly: false });
     await ensureWorker(ctx, request(ctx, n2, u, all, opts));
-    count4++;
+    count5++;
   }
   const deferred = plan.deferred.filter((d) => pending.some((p) => p.id === d.id)).map((d) => d.reason);
   const reasons = [...deferred, ...machine ? [...machine.deferred.values()] : [], ...unfunded ? ["no model budget left for another session"] : []];
   const budget = unfunded || deferred.some((r) => /^not admitted by budget/.test(r));
-  return { kind: "started", count: count4, why: reasons[0] ?? "not admitted", budget };
+  return { kind: "started", count: count5, why: reasons[0] ?? "not admitted", budget };
 }
 async function integrate(ctx, n2, u, w) {
   const repoRoot = ctx.run.repoRoot;
@@ -66802,20 +66938,22 @@ function formatDeliverySummary(runId, contract, report2) {
 }
 async function githubClient(ctx) {
   if (ctx.deps.github) return ctx.deps.github(ctx);
-  const config = ctx.snapshot.config;
+  return githubClientForConfig(ctx.run.repoRoot, ctx.snapshot.config, ctx.deps.hostEnv ?? process.env);
+}
+async function githubClientForConfig(repoRoot, config, env, opts = {}) {
   const remote = config.repository.remote;
   if (config.delivery.provider === "fake") {
-    const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
+    const url = await resolveRemoteUrl(repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join69(ctx.run.repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join69(repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
-  return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
+  return githubClientFor(repoRoot, remote, env, opts);
 }
-async function githubClientFor(repoRoot, remote, env = process.env) {
+async function githubClientFor(repoRoot, remote, env = process.env, opts = {}) {
   const url = await resolveRemoteUrl(repoRoot, remote);
   const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
   if (!m) throw new OrbitError("CONFIG_INVALID", `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
-  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot, ...opts.requireScopedToken !== void 0 ? { requireScopedToken: opts.requireScopedToken } : {} });
 }
 var DELIVERY_FILE, RELEASE_FILE, RELEASE_WAIT_EVENT;
 var init_delivering = __esm({
@@ -69856,12 +69994,12 @@ function dotnetPackagesCheck(input) {
   if (!mac) return [];
   const { install, evidence } = mac;
   const cache2 = join80(toolchainCacheRoot(input.orbitHome, repoKeyFor(repo)), "nuget");
-  const count4 = cachedPackages(cache2);
-  const empty = count4 === null || count4 === 0;
+  const count5 = cachedPackages(cache2);
+  const empty = count5 === null || count5 === 0;
   const restores = install !== null && restoresPackages(install);
   const floating = floatingVersions(repo, files);
   const capped = (lines) => lines.length > MAX_SHOWN ? [...lines.slice(0, MAX_SHOWN), `and ${lines.length - MAX_SHOWN} more`] : [...lines];
-  const state = count4 === null ? "not created yet" : count4 === 0 ? "empty" : `holds ${count4} ${count4 === 1 ? "package" : "packages"}`;
+  const state = count5 === null ? "not created yet" : count5 === 0 ? "empty" : `holds ${count5} ${count5 === 1 ? "package" : "packages"}`;
   const failing = [
     ...restores && empty ? ["this repository's NuGet cache is empty"] : [],
     ...install !== null && restoresOf(install).projects && floating.length > 0 ? ["a package version floats, which every restore looks up at nuget.org"] : []
@@ -69879,7 +70017,7 @@ function dotnetPackagesCheck(input) {
   const stuck = filled && floating.length > 0;
   const failed = failing.length > 0 || restoring.length > 0;
   const status2 = failed ? "fail" : empty || stuck ? "warn" : "pass";
-  const packages = `${count4} ${count4 === 1 ? "package" : "packages"}`;
+  const packages = `${count5} ${count5 === 1 ? "package" : "packages"}`;
   const summary = failing.length > 0 ? `dependencies.install_command restores NuGet packages, which ${TRUST_REASON}, and ${failing.join(", and ")}: the dependency install would fail` : restoring.length > 0 ? `${many ? "checks" : "check"} ${restoring.join(", ")} ${many ? "restore" : "restores"} NuGet packages, which ${TRUST_REASON}, and this repository's NuGet cache is empty: the ${many ? "checks" : "check"} would fail at the baseline` : stuck ? `this repository's NuGet cache holds ${packages}, but a package version floats, which every restore looks up at nuget.org, cache or not` : filled ? `this repository's NuGet cache holds ${packages}, restored outside the sandbox: ${noInstall === null ? "the dependency install and the checks restore from it" : "the checks that restore read it"} with nothing to download` : `this repository's NuGet packages ${TRUST_REASON}: fill its NuGet cache outside the sandbox`;
   const extra = status2 === "pass" ? [...noInstall === null ? [] : [noInstall], ...audit ? ["restores still wait for the vulnerability audit to stop failing them, as checks.dotnet-audit says"] : [], `when the packages change, fill it again outside the sandbox: dotnet restore from the repository with NUGET_PACKAGES set to that cache (${NUGET_DOCS})`] : [];
   const fix = status2 === "pass" ? null : filled ? `pin each package version the details name, or restore with a lock file (RestorePackagesWithLockFile), so that ${thenRestore} offline from the filled cache (${NUGET_DOCS})` : `run once in a terminal, outside the sandbox, and again whenever the packages change: ${fillCommand(repo, cache2, files, install, evidence)}; ${thenRestore} offline from that cache ${until.length > 0 ? `once ${until.join(", and once ")} (${[noInstall, NUGET_DOCS].filter((x) => x !== null).join("; ")})` : `(${[noInstall, "Orbit turns NuGet's vulnerability audit off in the sandbox, where it cannot reach nuget.org", NUGET_DOCS].filter((x) => x !== null).join("; ")})`}`;
@@ -73859,11 +73997,7 @@ async function runCommand(args, ctx) {
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
   let issue = null;
-  if (issueRef !== null) {
-    issue = await intakeIssue({ ref: issueRef, reader: await issueReader(ctx, repo, config), now: ctx.clock.now() });
-    goal = issueGoalText(issue);
-    if (issue.kind === "bug") config = raiseFailBefore(config, "required") ?? config;
-  }
+  if (issueRef !== null) ({ issue, goal, config } = await issueRunInput(ctx, repo, config, issueRef));
   let service = null;
   if (existsSync69(stateDbPath(repo))) {
     const probe2 = openState(repo);
@@ -73877,15 +74011,7 @@ async function runCommand(args, ctx) {
   await admitRun(ctx, { repo, config, foreground });
   const db = openState(repo, { create: true });
   try {
-    const existing = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => r.goal === goal);
-    if (existing) throw new OrbitError("POLICY_DENIED", `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
-    if (issue) {
-      const taken = listRuns(db, { states: NON_TERMINAL, limit: -1 }).find((r) => {
-        const g = readIssueGoal(join89(orbitDir(repo), "runs", r.id));
-        return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
-      });
-      if (taken) throw new OrbitError("POLICY_DENIED", `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
-    }
+    refuseUnfinished(db, repo, goal, issue);
     const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...environment !== void 0 ? { environment } : {}, ...issue ? { issue } : {} });
     const from = issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {};
     const fromLine = issue ? `goal: issue ${issue.repo}#${issue.number} as it was at ${issue.updated_at || "an unknown time"} (${issue.kind === "bug" ? "a bug with a reproduction, run as a repair" : `${issue.scenarios.length} acceptance scenario${issue.scenarios.length === 1 ? "" : "s"}`}; body sha256 ${issue.body_sha256.slice(0, 16)}). Later edits of the issue do not change this run.` : null;
@@ -73910,6 +74036,21 @@ async function runCommand(args, ctx) {
   } finally {
     db.close();
   }
+}
+async function issueRunInput(ctx, repo, config, ref3) {
+  const issue = await intakeIssue({ ref: ref3, reader: await issueReader(ctx, repo, config), now: ctx.clock.now() });
+  return { issue, goal: issueGoalText(issue), config: issue.kind === "bug" ? raiseFailBefore(config, "required") ?? config : config };
+}
+function refuseUnfinished(db, repo, goal, issue) {
+  const unfinished = listRuns(db, { states: NON_TERMINAL, limit: -1 });
+  const existing = unfinished.find((r) => r.goal === goal);
+  if (existing) throw new OrbitError("POLICY_DENIED", `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
+  if (!issue) return;
+  const taken = unfinished.find((r) => {
+    const g = readIssueGoal(join89(orbitDir(repo), "runs", r.id));
+    return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
+  });
+  if (taken) throw new OrbitError("POLICY_DENIED", `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
 }
 var RUN_OPTIONS, RUN_USAGE;
 var init_run = __esm({
@@ -74062,6 +74203,534 @@ var init_repair2 = __esm({
   }
 });
 
+// src/intake/backlog.ts
+function blockingCycles(issues) {
+  const open2 = new Map(issues.filter((i) => i.open).map((i) => [i.number, i]));
+  const edges = (n2) => (open2.get(n2)?.blockedBy ?? []).filter((b) => b.open && open2.has(b.number)).map((b) => b.number);
+  let next = 0;
+  const index = /* @__PURE__ */ new Map();
+  const low = /* @__PURE__ */ new Map();
+  const onStack = /* @__PURE__ */ new Set();
+  const stack = [];
+  const out = [];
+  for (const root of open2.keys()) {
+    if (index.has(root)) continue;
+    const work = [{ n: root, i: 0 }];
+    index.set(root, next);
+    low.set(root, next++);
+    stack.push(root);
+    onStack.add(root);
+    while (work.length > 0) {
+      const top = work[work.length - 1];
+      const succ = edges(top.n);
+      if (top.i < succ.length) {
+        const m = succ[top.i++];
+        if (!index.has(m)) {
+          index.set(m, next);
+          low.set(m, next++);
+          stack.push(m);
+          onStack.add(m);
+          work.push({ n: m, i: 0 });
+        } else if (onStack.has(m)) low.set(top.n, Math.min(low.get(top.n), index.get(m)));
+        continue;
+      }
+      work.pop();
+      if (work.length > 0) {
+        const parent = work[work.length - 1].n;
+        low.set(parent, Math.min(low.get(parent), low.get(top.n)));
+      }
+      if (low.get(top.n) === index.get(top.n)) {
+        const component = [];
+        for (; ; ) {
+          const m = stack.pop();
+          onStack.delete(m);
+          component.push(m);
+          if (m === top.n) break;
+        }
+        if (component.length > 1 || edges(top.n).includes(top.n)) out.push(component.sort((a, b) => a - b));
+      }
+    }
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
+function describeCycle(cycle) {
+  return cycle.length === 1 ? `#${cycle[0]} blocks itself` : `${cycle.map((n2) => `#${n2}`).join(", ")} block one another`;
+}
+function planBacklog(backlog, opts) {
+  const byNumber = new Map(backlog.map((i) => [i.number, i]));
+  const candidate = (i) => i.open && !i.isPullRequest && hasLabel(i, opts.label) && !hasLabel(i, opts.humanLabel);
+  const cycles = blockingCycles(backlog.filter(candidate));
+  const inCycle = /* @__PURE__ */ new Map();
+  for (const c of cycles) for (const n2 of c) inCycle.set(n2, c);
+  const plan = { frontier: [], held: [], ignored: [], cycles };
+  const why = (n2) => {
+    const b = byNumber.get(n2);
+    if (!b) return `#${n2} (open)`;
+    if (hasLabel(b, opts.humanLabel)) return `#${n2} (needs a person: labelled ${opts.humanLabel})`;
+    const owned = opts.owned.get(n2);
+    if (owned) return `#${n2} (${owned})`;
+    if (!hasLabel(b, opts.label)) return `#${n2} (open, not labelled ${opts.label})`;
+    if (b.blockedBy.some((x) => x.open)) return `#${n2} (itself blocked)`;
+    return `#${n2} (open)`;
+  };
+  for (const i of backlog) {
+    if (!i.open || i.isPullRequest) continue;
+    if (!hasLabel(i, opts.label)) {
+      plan.ignored.push({ number: i.number, title: i.title, reason: `not labelled ${opts.label}` });
+      continue;
+    }
+    if (hasLabel(i, opts.humanLabel)) {
+      plan.ignored.push({ number: i.number, title: i.title, reason: `labelled ${opts.humanLabel}: a person decides` });
+      continue;
+    }
+    const blockers = i.blockedBy.filter((b) => b.open);
+    const blockedBy = blockers.map((b) => b.number);
+    const owned = opts.owned.get(i.number);
+    const cycle = inCycle.get(i.number);
+    if (owned) plan.held.push({ number: i.number, title: i.title, reason: owned, blockedBy });
+    else if (cycle) plan.held.push({ number: i.number, title: i.title, reason: `in a dependency cycle (${describeCycle(cycle)}); none of them runs until a person breaks it`, blockedBy });
+    else if (blockers.length > 0) plan.held.push({ number: i.number, title: i.title, reason: `blocked by ${blockers.map((b) => b.repo.toLowerCase() === i.repo.toLowerCase() ? why(b.number) : `${b.repo}#${b.number} (open)`).join(", ")}`, blockedBy });
+    else plan.frontier.push({ number: i.number, title: i.title });
+  }
+  return plan;
+}
+var init_backlog = __esm({
+  "src/intake/backlog.ts"() {
+    "use strict";
+    init_github2();
+  }
+});
+
+// src/cli/commands/queue.ts
+import { existsSync as existsSync70 } from "node:fs";
+import { join as join90 } from "node:path";
+function labelOption(args, name, fallback, usage) {
+  const v = (args.str(name) ?? fallback).trim();
+  if (!LABEL3.test(v)) throw new UsageError(`--${name} must be a label name of 1 to 50 characters without commas, got ${JSON.stringify(v.slice(0, 60))}`, usage);
+  return v;
+}
+async function openQueue(args, ctx, usage, mode) {
+  const label = labelOption(args, "label", DEFAULT_LABEL, usage);
+  const humanLabel = labelOption(args, "human-label", DEFAULT_HUMAN_LABEL, usage);
+  if (label.toLowerCase() === humanLabel.toLowerCase()) throw new UsageError("--label and --human-label must differ", usage);
+  let parent = null;
+  const p = args.str("parent");
+  if (p !== void 0) {
+    try {
+      parent = parseIssueRef(p);
+    } catch (err) {
+      throw new UsageError(`--parent: ${isOrbitError(err) ? err.message : String(err)}`, usage);
+    }
+  }
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const base = args.str("base");
+  const config = loadCommandPolicy(repo, ctx.cwd, args.str("policy"), { ...mode ? { mode } : {}, ...base !== void 0 ? { baseBranch: base } : {} });
+  const tracker = await issueTrackerFor(repo, config, ctx.env);
+  if (parent?.repo && parent.repo.toLowerCase() !== tracker.repo.toLowerCase()) {
+    throw new OrbitError("POLICY_DENIED", `issue ${parent.repo}#${parent.number} is not in this checkout's repository (${tracker.repo}); the queue works only issues of the repository it works in`, { definitive: true });
+  }
+  return { repo, config, tracker, query: { parent: parent?.number ?? null, label }, humanLabel, base: config.repository.base_branch };
+}
+function runDirOf(repo, id) {
+  return join90(orbitDir(repo), "runs", id);
+}
+function deliveryOf(runDir2) {
+  const d = readJsonIfExists(join90(runDir2, DELIVERY_FILE));
+  const n2 = d?.pr?.number;
+  return {
+    branch: typeof d?.branch === "string" ? d.branch : null,
+    pr: typeof n2 === "number" && Number.isInteger(n2) && n2 > 0 ? { number: n2, url: typeof d?.pr?.url === "string" && d.pr.url !== "" ? d.pr.url : null } : null
+  };
+}
+function histories(repo, issueRepo) {
+  const out = /* @__PURE__ */ new Map();
+  if (!existsSync70(stateDbPath(repo))) return out;
+  const db = openState(repo);
+  try {
+    for (const r of listRuns(db, { limit: -1 })) {
+      const goal = readIssueGoal(runDirOf(repo, r.id));
+      if (!goal || goal.repo.toLowerCase() !== issueRepo.toLowerCase()) continue;
+      const h = out.get(goal.number) ?? { unfinished: null, delivered: null };
+      if (!isTerminal(r.state)) h.unfinished ??= r;
+      else if (r.state === "SUCCEEDED" && !h.delivered) {
+        const d = deliveryOf(runDirOf(repo, r.id));
+        h.delivered = { run: r, branch: d.branch ?? r.branch, pr: d.pr };
+      }
+      out.set(goal.number, h);
+    }
+  } finally {
+    db.close();
+  }
+  return out;
+}
+function closingComment(pr, base) {
+  return [
+    `Pull request #${pr} was merged into \`${base}\`, so Orbit's queue closes this issue. GitHub closes an issue from a pull request's "Closes #n" only when it merges into the default branch.`,
+    "",
+    "Issues this one blocked can now be taken."
+  ].join("\n");
+}
+async function look(q, client, settle3) {
+  const backlog = await q.tracker.listIssues(q.query);
+  const history = histories(q.repo, q.tracker.repo);
+  const owned = /* @__PURE__ */ new Map();
+  const waiting = /* @__PURE__ */ new Set();
+  const closed = [];
+  for (const i of backlog) {
+    if (!i.open || i.isPullRequest || !hasLabel(i, q.query.label) || hasLabel(i, q.humanLabel)) continue;
+    const h = history.get(i.number);
+    if (h?.unfinished) {
+      owned.set(i.number, `run ${h.unfinished.id} (${h.unfinished.state}) was started from it and is unfinished: continue it with orbit resume ${h.unfinished.id}, or cancel it with orbit cancel ${h.unfinished.id}`);
+      continue;
+    }
+    const d = h?.delivered;
+    if (!d) continue;
+    if (!d.pr) {
+      owned.set(i.number, `delivered by run ${d.run.id} as ${d.branch ? `branch ${d.branch}` : "a local branch"}; waits for a person to merge it and close the issue`);
+      waiting.add(i.number);
+      continue;
+    }
+    let state = null;
+    let unread = "";
+    try {
+      const m = await (await client()).getMergeState(d.pr.number);
+      state = { state: m.state, base: m.baseRefName };
+    } catch (err) {
+      unread = redact(err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 200);
+    }
+    if (state?.state === "MERGED" && state.base === q.base) {
+      if (settle3) {
+        await q.tracker.comment(i.number, closingComment(d.pr.number, q.base));
+        await q.tracker.close(i.number);
+        closed.push({ number: i.number, pr: d.pr.number });
+      } else owned.set(i.number, `pull request #${d.pr.number} has merged into ${q.base}; "orbit queue run" closes the issue`);
+    } else if (state?.state === "MERGED") owned.set(i.number, `delivered: pull request #${d.pr.number} was merged into ${state.base}, not ${q.base}; a person closes the issue`);
+    else if (state?.state === "CLOSED") continue;
+    else {
+      owned.set(i.number, state ? `delivered: pull request #${d.pr.number} waits to be merged into ${q.base}` : `delivered: pull request #${d.pr.number}, whose state could not be read (${unread})`);
+      waiting.add(i.number);
+    }
+  }
+  const done = new Set(closed.map((c) => c.number));
+  const view = backlog.map((i) => done.has(i.number) ? { ...i, open: false } : { ...i, blockedBy: i.blockedBy.map((b) => b.repo.toLowerCase() === i.repo.toLowerCase() && done.has(b.number) ? { ...b, open: false } : b) });
+  return { plan: planBacklog(view, { label: q.query.label, humanLabel: q.humanLabel, owned }), waiting, closed };
+}
+function awaitedMerges(l) {
+  const wanted = /* @__PURE__ */ new Set();
+  for (const h of l.plan.held) for (const b of h.blockedBy) if (l.waiting.has(b)) wanted.add(b);
+  return [...wanted].sort((a, b) => a - b);
+}
+function describePlan(l, q) {
+  const lines = [];
+  const name = (n2, title) => `#${n2} ${flat(title).slice(0, 80)}`;
+  lines.push(l.plan.frontier.length === 0 ? "frontier: none" : `frontier (${l.plan.frontier.length}, in priority order):`);
+  for (const f of l.plan.frontier) lines.push(`  ${name(f.number, f.title)}`);
+  if (l.plan.held.length > 0) {
+    lines.push("held:");
+    for (const h of l.plan.held) lines.push(`  ${name(h.number, h.title)}: ${h.reason}`);
+  }
+  for (const c of l.plan.cycles) lines.push(`cycle: ${describeCycle(c)}; none of them runs`);
+  if (l.plan.ignored.length > 0) {
+    lines.push("not taken:");
+    for (const i of l.plan.ignored) lines.push(`  ${name(i.number, i.title)}: ${i.reason}`);
+  }
+  if (l.plan.frontier.length === 0 && l.plan.held.length === 0 && l.plan.ignored.length === 0) lines.push(`no open issue ${q.query.parent !== null ? `under #${q.query.parent} ` : ""}carries the label ${q.query.label}`);
+  return lines;
+}
+function planJson(l) {
+  return { frontier: l.plan.frontier, held: l.plan.held, cycles: l.plan.cycles, ignored: l.plan.ignored, waiting_for_merge: [...l.waiting].sort((a, b) => a - b) };
+}
+async function queueListCommand(args, ctx) {
+  args.expect(0);
+  const q = await openQueue(args, ctx, QUEUE_LIST_USAGE);
+  const l = await look(q, lazyClient(q, ctx), false);
+  if (args.bool("json")) json(ctx.io, { repo: q.tracker.repo, base: q.base, parent: q.query.parent, label: q.query.label, human_label: q.humanLabel, ...planJson(l) });
+  else for (const s of describePlan(l, q)) line(ctx.io, s);
+  return EXIT.OK;
+}
+function lazyClient(q, ctx) {
+  let c = null;
+  return () => c ??= githubClientForConfig(q.repo, q.config, ctx.env, { requireScopedToken: false });
+}
+function count3(n2, one, many = `${one}s`) {
+  return `${n2} ${n2 === 1 ? one : many}`;
+}
+function personComment(entry, q, problems) {
+  const lines = [`Orbit's queue hands this issue to a person and labelled it \`${q.humanLabel}\`; it will not take it again while that label is on.`, ""];
+  if (entry.attempts.length === 0) {
+    lines.push("The body is not a spec a run can start from:", "", ...problems.slice(0, 10).map((p) => `- ${flat(p).slice(0, 300)}`));
+    if (problems.length > 10) lines.push(`- and ${problems.length - 10} more`);
+    lines.push("", `Fix the body (\`orbit spec check ${entry.number}\` says what is missing), then remove the label.`);
+    return lines.join("\n");
+  }
+  lines.push(`${count3(entry.attempts.length, "run")} ended without a delivered change:`, "");
+  for (const a of entry.attempts) lines.push(`- Run \`${a.run_id}\`: ${a.state}, failure class ${a.failure_class}${a.cost_usd !== null ? `, spend $${a.cost_usd.toFixed(4)}` : ""}`);
+  const last = entry.attempts[entry.attempts.length - 1];
+  if (last.open_questions > 0) lines.push("", `The last run waits on an answer from a person: \`orbit questions ${last.run_id}\`.`);
+  lines.push("", `The reports are on the machine that ran them: \`orbit report ${last.run_id}\`.`);
+  return lines.join("\n");
+}
+async function queueRunCommand(args, ctx) {
+  const usage = QUEUE_RUN_USAGE;
+  args.expect(0);
+  const mode = args.oneOf("mode", RUN_MODES);
+  const maxIssues = args.int("max-issues");
+  if (maxIssues === 0) throw new UsageError("--max-issues must be at least 1", usage);
+  const budget = args.num("budget-usd");
+  if (budget === 0) throw new UsageError("--budget-usd must be more than 0", usage);
+  const attempts = args.int("attempts") ?? DEFAULT_ATTEMPTS2;
+  if (attempts < 1 || attempts > 5) throw new UsageError("--attempts must be from 1 to 5", usage);
+  const waitMs = (args.num("wait-minutes") ?? DEFAULT_WAIT_MINUTES) * 6e4;
+  const asJson = args.bool("json");
+  const q = await openQueue(args, ctx, usage, mode);
+  const client = lazyClient(q, ctx);
+  const wait = ctx.seams.queueWait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const record = {
+    schema: "orbit.queue/1",
+    id: newRunId(ctx.clock.now()).replace(/^orb-/, "queue-"),
+    repo: q.tracker.repo,
+    base: q.base,
+    parent: q.query.parent,
+    label: q.query.label,
+    human_label: q.humanLabel,
+    mode: q.config.mode,
+    started_at: ctx.clock.now(),
+    ended_at: null,
+    stop: null,
+    spent_usd: 0,
+    issues: [],
+    closed: [],
+    remaining: null
+  };
+  const recordPath = join90(orbitDir(q.repo), QUEUE_DIR, `${record.id}.json`);
+  const save = () => atomicWriteJson(recordPath, record);
+  const say = (event, text2, data = {}) => {
+    if (asJson) ctx.io.out(`${JSON.stringify({ type: "queue", event, ...data })}
+`);
+    else line(ctx.io, text2);
+  };
+  say("started", `queue ${record.id}: ${q.query.parent !== null ? `sub-issues of #${q.query.parent}` : `open issues`} labelled ${q.query.label} in ${q.tracker.repo}, one at a time from ${q.base} (${q.config.mode})`, { id: record.id, repo: q.tracker.repo, base: q.base, mode: q.config.mode });
+  let streak = 0;
+  let waited = 0;
+  const tried = /* @__PURE__ */ new Set();
+  try {
+    for (; ; ) {
+      if (maxIssues !== void 0 && record.issues.length >= maxIssues) {
+        record.stop = { kind: "max-issues", reason: `--max-issues ${maxIssues} reached` };
+        break;
+      }
+      if (budget !== void 0 && record.spent_usd >= budget) {
+        record.stop = { kind: "budget", reason: `the budget of $${budget} is spent ($${record.spent_usd.toFixed(4)})` };
+        break;
+      }
+      const l = await look(q, client, true);
+      for (const c of l.closed) {
+        record.closed.push(c);
+        say("closed", `#${c.number}: pull request #${c.pr} merged into ${q.base}; closed the issue`, c);
+      }
+      if (l.closed.length > 0) save();
+      const next = l.plan.frontier.find((f) => !tried.has(f.number));
+      if (!next) {
+        const awaited = awaitedMerges(l);
+        if (awaited.length > 0 && waited < waitMs) {
+          if (waited === 0) say("waiting", `waiting for ${awaited.map((n2) => `#${n2}`).join(", ")} to merge into ${q.base}: issues blocked by ${awaited.length === 1 ? "it" : "them"} come next (up to ${Math.round(waitMs / 6e4)} min)`, { waiting_for: awaited });
+          await wait(POLL_MS);
+          waited += POLL_MS;
+          continue;
+        }
+        record.stop = awaited.length > 0 ? { kind: "waited", reason: `waited ${Math.round(waitMs / 6e4)} min for ${awaited.map((n2) => `#${n2}`).join(", ")} to merge into ${q.base}` } : { kind: "empty", reason: "the frontier is empty" };
+        break;
+      }
+      waited = 0;
+      tried.add(next.number);
+      await fastForwardBase({ repoRoot: q.repo, remote: q.config.repository.remote, branch: q.base, env: gitEnv({}, ctx.env) });
+      say("issue", `#${next.number} ${flat(next.title).slice(0, 80)}: taken from the frontier`, { number: next.number });
+      const entry = await workIssue(ctx, q, record, next, { attempts, budget, asJson, say });
+      record.issues.push(entry);
+      record.spent_usd += entry.attempts.reduce((s, a) => s + (a.cost_usd ?? 0), 0);
+      save();
+      say("issue.end", `#${entry.number}: ${outcomeWord(entry)}${entry.reason ? ` (${entry.reason})` : ""}`, { number: entry.number, outcome: entry.outcome, pull_request: entry.pull_request, attempts: entry.attempts.length });
+      if (entry.outcome === "budget") {
+        record.stop = { kind: "budget", reason: entry.reason };
+        break;
+      }
+      if (entry.outcome === "interrupted") {
+        record.stop = { kind: "interrupted", reason: `interrupted during #${entry.number}; its run is paused` };
+        break;
+      }
+      if (entry.outcome === "person") streak++;
+      else if (entry.outcome === "delivered") streak = 0;
+      if (streak >= PERSON_STREAK_STOP) {
+        record.stop = { kind: "person-streak", reason: `${PERSON_STREAK_STOP} issues in a row ended with a person (${record.issues.filter((i) => i.outcome === "person").slice(-PERSON_STREAK_STOP).map((i) => `#${i.number}`).join(", ")}); look at them before the queue goes on` };
+        break;
+      }
+    }
+  } catch (err) {
+    record.stop = { kind: "error", reason: redact(isOrbitError(err) ? err.message : err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 500) };
+    record.ended_at = ctx.clock.now();
+    save();
+    throw err;
+  }
+  record.ended_at = ctx.clock.now();
+  let left = null;
+  try {
+    left = await look(q, client, false);
+    record.remaining = planJson(left);
+  } catch {
+    record.remaining = null;
+  }
+  save();
+  if (asJson) ctx.io.out(`${JSON.stringify({ type: "queue", event: "stopped", record_path: recordPath, ...record })}
+`);
+  else {
+    line(ctx.io, `queue stopped: ${record.stop.reason}`);
+    if (record.issues.length > 0) {
+      ctx.io.out(
+        table(
+          record.issues.map((i) => [`#${i.number}`, outcomeWord(i), i.pull_request ? `#${i.pull_request.number}` : "-", String(i.attempts.length), i.attempts.map((a) => `${a.run_id} ${a.state}`).join(", ") || "-"]),
+          ["issue", "outcome", "pull request", "attempts", "runs"]
+        )
+      );
+    }
+    if (left) for (const s of describePlan(left, q)) line(ctx.io, s);
+    line(ctx.io, `spent: $${record.spent_usd.toFixed(4)}; record: ${recordPath}`);
+  }
+  if (record.stop?.kind === "interrupted") return EXIT.PAUSED;
+  return record.issues.some((i) => i.outcome === "person") ? EXIT.BLOCKED : EXIT.OK;
+}
+function outcomeWord(i) {
+  switch (i.outcome) {
+    case "delivered":
+      return i.pull_request ? `delivered, pull request #${i.pull_request.number}` : `delivered${i.branch ? ` as branch ${i.branch}` : ""}`;
+    case "person":
+      return "handed to a person";
+    case "skipped":
+      return "skipped";
+    case "budget":
+      return "stopped by the budget";
+    case "interrupted":
+      return "interrupted";
+  }
+}
+async function workIssue(ctx, q, record, issue, o) {
+  const entry = { number: issue.number, title: flat(issue.title).slice(0, 150), outcome: "person", reason: "", pull_request: null, branch: null, attempts: [], warnings: [] };
+  let problems = [];
+  for (let n2 = 1; n2 <= o.attempts; n2++) {
+    let input;
+    try {
+      input = await issueRunInput(ctx, q.repo, q.config, { repo: null, number: issue.number });
+    } catch (err) {
+      if (!isOrbitError(err, "POLICY_DENIED")) throw err;
+      if (err.details?.edit_issue === true) {
+        problems = Array.isArray(err.details.problems) ? err.details.problems.map(String) : [err.message];
+        entry.reason = err.message;
+        break;
+      }
+      return { ...entry, outcome: "skipped", reason: err.message };
+    }
+    const spent = record.spent_usd + entry.attempts.reduce((s, a) => s + (a.cost_usd ?? 0), 0);
+    if (o.budget !== void 0 && spent >= o.budget) return { ...entry, outcome: "budget", reason: `the budget of $${o.budget} is spent ($${spent.toFixed(4)}) before attempt ${n2} of #${issue.number}` };
+    const config = o.budget !== void 0 ? capModelCost(input.config, o.budget - spent) : input.config;
+    const capped = config.scheduler.hard_limits.model_cost_usd < input.config.scheduler.hard_limits.model_cost_usd;
+    await admitRun(ctx, { repo: q.repo, config, foreground: true });
+    const db = openState(q.repo, { create: true });
+    try {
+      try {
+        refuseUnfinished(db, q.repo, input.goal, input.issue);
+      } catch (err) {
+        if (!isOrbitError(err, "POLICY_DENIED")) throw err;
+        return { ...entry, outcome: "skipped", reason: err.message };
+      }
+      const run = startRun({ db, repoRoot: q.repo, goal: input.goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, issue: input.issue });
+      o.say("run", `#${issue.number}: attempt ${n2} of ${o.attempts}, run ${run.id}`, { number: issue.number, attempt: n2, run_id: run.id });
+      const result2 = await driveForeground(ctx, { repoRoot: q.repo, config, db, runId: run.id, fromStart: true, json: o.asJson });
+      const runDir2 = runDirOf(q.repo, run.id);
+      const report2 = readJsonIfExists(join90(runDir2, "final.json"));
+      const cost = report2?.budget?.cost_usd;
+      const open2 = listQuestions(db, run.id, { status: "open" }).length;
+      entry.attempts.push({ run_id: run.id, state: result2.run.state, failure_class: failureClass(result2.run), open_questions: open2, cost_usd: typeof cost === "number" && Number.isFinite(cost) ? cost : null });
+      if (result2.interrupted) return { ...entry, outcome: "interrupted", reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
+      if (result2.run.state === "EXHAUSTED" && capped) {
+        return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
+      }
+      if (result2.run.state === "SUCCEEDED") {
+        const d = deliveryOf(runDir2);
+        return { ...entry, outcome: "delivered", reason: "", pull_request: d.pr, branch: d.branch ?? result2.run.branch };
+      }
+      if (open2 > 0) break;
+    } finally {
+      db.close();
+    }
+  }
+  if (entry.attempts.length > 0) entry.reason = `${count3(entry.attempts.length, "run")} ended without a delivered change: ${entry.attempts.map((a) => `${a.run_id} ${a.state} (${a.failure_class})`).join(", ")}`;
+  for (const [what, act2] of [
+    ["label", () => q.tracker.addLabel(issue.number, q.humanLabel)],
+    ["comment", () => q.tracker.comment(issue.number, personComment(entry, q, problems))]
+  ]) {
+    try {
+      await act2();
+    } catch (err) {
+      entry.warnings.push(`could not ${what === "label" ? `label the issue ${q.humanLabel}` : "comment on the issue"}: ${redact(err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").slice(0, 200)}`);
+    }
+  }
+  return entry;
+}
+var DEFAULT_LABEL, DEFAULT_HUMAN_LABEL, DEFAULT_ATTEMPTS2, DEFAULT_WAIT_MINUTES, POLL_MS, PERSON_STREAK_STOP, QUEUE_DIR, SELECT_OPTIONS, QUEUE_LIST_USAGE, QUEUE_LIST_OPTIONS, QUEUE_RUN_USAGE, QUEUE_RUN_OPTIONS, LABEL3;
+var init_queue = __esm({
+  "src/cli/commands/queue.ts"() {
+    "use strict";
+    init_policy();
+    init_controller();
+    init_start();
+    init_run_store();
+    init_states();
+    init_delivering();
+    init_errors();
+    init_fsx();
+    init_ids();
+    init_redact();
+    init_git();
+    init_backlog();
+    init_comment();
+    init_github2();
+    init_issue();
+    init_store4();
+    init_context();
+    init_admission();
+    init_exit();
+    init_io();
+    init_policy_file();
+    init_drive();
+    init_run();
+    DEFAULT_LABEL = "ready-for-agent";
+    DEFAULT_HUMAN_LABEL = "ready-for-human";
+    DEFAULT_ATTEMPTS2 = 2;
+    DEFAULT_WAIT_MINUTES = 60;
+    POLL_MS = 6e4;
+    PERSON_STREAK_STOP = 2;
+    QUEUE_DIR = "queue";
+    SELECT_OPTIONS = {
+      parent: { type: "string", description: "work the sub-issues of this issue, in its order (default: every open issue carrying the label, oldest first)", valueName: "issue" },
+      label: { type: "string", description: `the label an issue must carry to be taken (default: ${DEFAULT_LABEL})`, valueName: "name" },
+      "human-label": { type: "string", description: `the label that hands an issue to a person: never taken, and added to an issue whose runs did not deliver (default: ${DEFAULT_HUMAN_LABEL})`, valueName: "name" },
+      base: { type: "string", description: "the branch every issue runs from and every pull request targets (default: repository.base_branch); validated as if the policy file said it", valueName: "branch" },
+      policy: { type: "string", description: "policy file (default: .orbit/config.yaml)", valueName: "path" }
+    };
+    QUEUE_LIST_USAGE = "orbit queue list [--parent <issue>] [--label <name>] [--human-label <name>] [--base <branch>] [--policy <path>] [--json]";
+    QUEUE_LIST_OPTIONS = SELECT_OPTIONS;
+    QUEUE_RUN_USAGE = "orbit queue run [--parent <issue>] [--label <name>] [--base <branch>] [--mode <mode>] [--max-issues <n>] [--budget-usd <usd>] [--attempts <n>] [--wait-minutes <n>] [--policy <path>] [--json]";
+    QUEUE_RUN_OPTIONS = {
+      ...SELECT_OPTIONS,
+      mode: { type: "string", description: "supervised, autonomous, autonomous-delivery or release, for every run; validated as if the policy file said it", valueName: "mode" },
+      "max-issues": { type: "string", description: "stop after this many issues (default: no limit)", valueName: "n" },
+      "budget-usd": { type: "string", description: "stop once the runs have spent this much; each run is capped at what is left (default: no limit beyond each run's own)", valueName: "usd" },
+      attempts: { type: "string", description: `runs per issue before it is handed to a person (default: ${DEFAULT_ATTEMPTS2}); a run waiting on an answer is not retried`, valueName: "n" },
+      "wait-minutes": { type: "string", description: `how long to wait for delivered pull requests to merge when only their dependants are left (default: ${DEFAULT_WAIT_MINUTES}; 0 stops at once)`, valueName: "n" }
+    };
+    LABEL3 = /^[^\s,\x00-\x1f\x7f][^,\x00-\x1f\x7f]{0,49}$/;
+  }
+});
+
 // src/observability/metrics.ts
 function metricsFor(db, window = {}) {
   const from = window.from ?? null;
@@ -74097,9 +74766,9 @@ function metricsFor(db, window = {}) {
   const spend = spendPerAccepted(db, where2, params, accepted.length, missing);
   const tokens3 = tokenUsage(db, inWindow, params, missing);
   const overhead = concurrencyOverhead(db, inWindow, params, missing);
-  const evidenceInvalidated = count3(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'evidence.invalidated' AND ${inWindow}`, params);
-  const reviewsInvalidated = count3(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'review.invalidated' AND ${inWindow}`, params);
-  const deliveriesRefused = count3(
+  const evidenceInvalidated = count4(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'evidence.invalidated' AND ${inWindow}`, params);
+  const reviewsInvalidated = count4(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'review.invalidated' AND ${inWindow}`, params);
+  const deliveriesRefused = count4(
     db,
     `SELECT COUNT(*) AS n FROM events WHERE type = 'action.failed' AND ${inWindow}
         AND (json_extract(data_json, '$.error') LIKE '%delivery refused%' OR json_extract(data_json, '$.error') LIKE '%release refused%' OR json_extract(data_json, '$.error') LIKE '%stale%')`,
@@ -74174,8 +74843,8 @@ function byVersion(db, runs) {
     }
     const classes = {};
     for (const c of FAILURE_CLASSES) {
-      const count4 = rows.filter((r) => isEnded(r) && r.failure_class === c).length;
-      if (count4 > 0) classes[c] = count4;
+      const count5 = rows.filter((r) => isEnded(r) && r.failure_class === c).length;
+      if (count5 > 0) classes[c] = count5;
     }
     const spendUsd = roundUsd(spend);
     return {
@@ -74194,7 +74863,7 @@ function byVersion(db, runs) {
 function rate(numerator, denominator) {
   return { numerator, denominator, rate: denominator > 0 ? Math.round(numerator / denominator * 1e4) / 1e4 : null };
 }
-function count3(db, sql, params) {
+function count4(db, sql, params) {
   return Number(db.get(sql, ...params)?.n ?? 0);
 }
 function distribution(values) {
@@ -74328,7 +74997,7 @@ function tokenUsage(db, inWindow, params, missing) {
     records: rows.length,
     records_without_tokens: without,
     by_model: [...groups.values()].map((g) => ({ provider: g.provider, model: g.model, records: g.records, ...tokens2(g.acc) })),
-    output_budget_overruns: count3(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'usage.output-budget-exceeded' AND ${inWindow}`, params)
+    output_budget_overruns: count4(db, `SELECT COUNT(*) AS n FROM events WHERE type = 'usage.output-budget-exceeded' AND ${inWindow}`, params)
   };
 }
 function newAcc() {
@@ -74484,7 +75153,7 @@ var init_stats = __esm({
 });
 
 // src/cli/commands/status.ts
-import { existsSync as existsSync70 } from "node:fs";
+import { existsSync as existsSync71 } from "node:fs";
 function finished(state) {
   return state !== "BLOCKED" && isTerminal(state);
 }
@@ -74596,7 +75265,7 @@ function renderRunStatus(s, now) {
 async function statusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   const [id] = args.expect(0, 1);
-  if (id === void 0 && !existsSync70(stateDbPath(repo)) && initialised(repo)) {
+  if (id === void 0 && !existsSync71(stateDbPath(repo)) && initialised(repo)) {
     if (args.bool("json")) json(ctx.io, { runs: [], controllers: [] });
     else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
     return EXIT.OK;
@@ -75188,7 +75857,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname43, isAbsolute as isAbsolute31, join as join90, relative as relative12 } from "node:path";
+import { dirname as dirname43, isAbsolute as isAbsolute31, join as join91, relative as relative12 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -75239,7 +75908,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join90(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join91(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -75264,7 +75933,7 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname43(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute31(given) ? given : join90(runDir2, given);
+    const p = isAbsolute31(given) ? given : join91(runDir2, given);
     const r = relative12(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
@@ -75519,6 +76188,7 @@ var init_cli = __esm({
     init_service2();
     init_repair2();
     init_spec2();
+    init_queue();
     init_stats();
     init_status();
     init_timeline2();
@@ -75528,6 +76198,8 @@ var init_cli = __esm({
       { name: "init", summary: "write .orbit/config.yaml from the starter template and keep runtime state out of git status", usage: "orbit init", run: initCommand },
       { name: "run", summary: "start a run from a goal or a GitHub issue: freeze the policy, then drive it here or hand it to the service", usage: RUN_USAGE, options: RUN_OPTIONS, run: runCommand },
       { name: "spec check", summary: "check that a Markdown file or an issue is a spec a run can start from (deterministic; no model call)", usage: SPEC_CHECK_USAGE, options: SPEC_CHECK_OPTIONS, run: specCheckCommand },
+      { name: "queue list", summary: "the frontier of a backlog of GitHub issues (open, labelled ready-for-agent, unblocked) and what holds every other issue", usage: QUEUE_LIST_USAGE, options: QUEUE_LIST_OPTIONS, run: queueListCommand },
+      { name: "queue run", summary: "work the frontier one issue at a time, each from the current base branch, until it is empty or a stop rule ends the queue", usage: QUEUE_RUN_USAGE, options: QUEUE_RUN_OPTIONS, run: queueRunCommand },
       { name: "status", summary: "state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)", usage: "orbit status [run-id] [--all] [--json]", options: STATUS_OPTIONS, run: statusCommand },
       { name: "timeline", summary: "what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost", usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
       { name: "logs", summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: "orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]", options: LOGS_OPTIONS, run: logsCommand },
