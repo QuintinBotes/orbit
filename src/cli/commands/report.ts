@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import type { OrbitDb } from '../../storage/db.ts';
 import { buildFinalReport, renderMarkdown } from '../../controller/index.ts';
 import { isTerminal } from '../../controller/states.ts';
+import { orbitVersionOf, type RunRecord } from '../../controller/run-store.ts';
 import { verifySnapshot } from '../../policy/snapshot.ts';
 import { KnowledgeStore } from '../../knowledge/store.ts';
 import type { Args, OptionSpec } from '../args.ts';
@@ -32,7 +33,7 @@ export async function reportCommand(args: Args, ctx: CliContext): Promise<number
     const asJson = args.bool('json');
     if (isTerminal(run.state) && !args.bool('interim') && existsSync(finalMd)) {
       if (asJson) {
-        if (existsSync(finalJson)) ctx.io.out(readFileSync(finalJson, 'utf8'));
+        if (existsSync(finalJson)) ctx.io.out(withRunEnd(readFileSync(finalJson, 'utf8'), run));
         else json(ctx.io, buildFinalReport(db, run, { runDir, clock: ctx.clock, snapshot: snapshotOrNull(run.policyPath, run.policyHash) }));
       } else ctx.io.out(readFileSync(finalMd, 'utf8'));
       return EXIT.OK;
@@ -50,6 +51,20 @@ export async function reportCommand(args: Args, ctx: CliContext): Promise<number
     ctx.io.out(renderMarkdown(report));
     return EXIT.OK;
   });
+}
+
+/**
+ * A saved final.json as it is, or, for one saved before Orbit recorded the failure class and the Orbit version, with
+ * those fields from the run's row (no class and version `unknown` for a run that ended before the migration).
+ */
+function withRunEnd(saved: string, run: RunRecord): string {
+  try {
+    const report = JSON.parse(saved) as Record<string, unknown>;
+    if (typeof report !== 'object' || report === null || 'orbit_version' in report) return saved;
+    return `${JSON.stringify({ ...report, failure_class: run.failureClass, failure_secondary: run.failureSecondary, orbit_version: orbitVersionOf(run) }, null, 2)}\n`;
+  } catch {
+    return saved;
+  }
 }
 
 function snapshotOrNull(path: string, hash: string) {

@@ -38,7 +38,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
 
   const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
   recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate: ${intake.reasons.join('; ')}`, { outcome: { gate: intake } });
+  if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate: ${intake.reasons.join('; ')}`, { outcome: { gate: intake }, cause: 'environment' });
 
   const env = await checkEnvironment(ctx);
   recordGate(ctx, env.gate);

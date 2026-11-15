@@ -354,6 +354,17 @@ Muse as an independent reviewer (issue #108, ADR 0017; the claims of the issue, 
 | I108.12 | Tests for config, selection and the adapter against `tests/fakes/fake-muse.mjs`: success, invalid schema output, hang until the cap, non-zero exit, attempted write denied | `tests/fakes/fake-muse.mjs`, `src/adapters/fake.ts:FAKE_SCRIPTS` | U/policy/provider-tier.test.ts, U/adapters/muse.test.ts, U/review/select.test.ts, U/isolation/profiles.test.ts, I/adapters/muse-fake.test.ts | done |
 | I108.13 | Docs: verified interface reference, configuration, spec section 12, an ADR, traceability, CHANGELOG; `plugin/dist/orbit.mjs` rebuilt | `docs/interfaces/muse.md`, `docs/configuration.md`, `docs/spec.md`, `docs/decisions/0017-muse-reviewer.md`, this table, `CHANGELOG.md` | `npm run check:dist` (CI) | done |
 
+Why a run ended and which Orbit version started it (issue #167, ADR 0018; the requirements of the spec, numbered as there):
+
+| ID | Requirement | Implementation | Tests | Status |
+|---|---|---|---|---|
+| I167.FR1 | Every terminal run stores one `failure_class` from the fixed list, or none | `controller/run-store.ts:transition`, `storage/schema.ts` (migration 7) | U/controller/run-end-record.test.ts "every way a run ends records why", I/controller/run-end-record.test.ts | done |
+| I167.FR2 | The class comes from deterministic rules over recorded evidence, with no model call | `controller/failure-class.ts:classifyRunEnd` | U/controller/failure-class.test.ts (the table of issues #130 to #158, "is deterministic") | done |
+| I167.FR3 | Every run stores the Orbit version that started it | `controller/run-store.ts:createRun` | U/controller/run-end-record.test.ts "the Orbit version that started a run" | done |
+| I167.FR4 | `orbit stats`, `orbit report` and `orbit timeline --json` show both fields | `observability/metrics.ts`, `cli/commands/stats.ts`, `controller/report.ts`, `observability/timeline.ts` | U/observability/run-end-metrics.test.ts, U/controller/run-end-record.test.ts "the report and the timeline show both", U/cli/coverage-status-report-logs.test.ts | done |
+| I167.FR5 | The list of classes is published in `schemas/` | `schemas/failure-class.schema.json` | U/controller/failure-class.test.ts "the published list" | done |
+| I167.SC2 | Fewer than 5% of failed lab runs fall in `model` | measured by `orbit stats` on real runs | none: a measurement over real runs, not a test | open |
+
 ## 13. UI testing
 
 | ID | Requirement | Implementation | Tests | Status |

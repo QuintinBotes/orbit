@@ -81,8 +81,10 @@ describe('orbit stats', () => {
 
 function metrics(over: Partial<Metrics> = {}): Metrics {
   return {
-    window: { from: null, to: null },
+    window: { from: null, to: null, orbit_version: null },
     runs: { total: 4, finished: 3, accepted: 2, by_state: { SUCCEEDED: 2, BLOCKED: 1, CREATED: 1 } },
+    failure_classes: { ended: 0, by_class: {}, secondary: {}, without_class: 0, unclassified: 0 },
+    by_version: [],
     verified_pass_rate: { numerator: 2, denominator: 3, rate: 2 / 3, evidence_reports: { numerator: 5, denominator: 6, rate: 5 / 6 } },
     false_pass_rate: { numerator: 1, denominator: 4, rate: 0.25 },
     escalation_quality: { numerator: 1, denominator: 2, rate: 0.5, escalations: 3, fixed: 1, not_fixed: 1, pending: 1, unmeasured: 0, other_escalations: 0 },
@@ -113,7 +115,7 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
 
 describe('renderStats', () => {
   it('prints the headline, one row per metric, the per-model table and the closing note', () => {
-    const out = renderStats(metrics({ window: { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 1, 1) } }));
+    const out = renderStats(metrics({ window: { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 1, 1), orbit_version: null } }));
     expect(out.split('\n')[0]).toBe('Orbit stats for 4 run(s) created from 2026-01-01T00:00:00.000Z to 2026-02-01T00:00:00.000Z (3 finished, 2 accepted)');
     expect(out).toMatch(/verified pass rate\s+66\.7%\s+2 accepted of 3 finished runs; evidence PASS 5 of 6\n/);
     expect(out).toMatch(/false-pass rate\s+25\.0%\s+1 of 4 reviewed PASS candidates refused by review\n/);

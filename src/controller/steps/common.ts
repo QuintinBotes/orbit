@@ -15,6 +15,7 @@ import { heartbeatController } from '../../storage/controllers.ts';
 import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from '../../recovery/credentials.ts';
 import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
+import type { FailureClass } from '../failure-class.ts';
 import type { BudgetPhase } from '../../scheduling/types.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { frozenPolicyForceHelps } from '../resume.ts';
@@ -43,12 +44,14 @@ export const DONE: StepResult = { progressed: true, done: true };
 export interface MoveOptions {
   patch?: TransitionRequest['patch'];
   data?: unknown;
+  /** For a move that ends the run: see TransitionRequest.cause. */
+  cause?: FailureClass;
 }
 
 /** One transition, with the lease and an optimistic check that the run is still where this step found it. */
 export function move(ctx: RunContext, to: RunState, reason: string, opts: MoveOptions = {}): StepResult {
   const from = ctx.run.state;
-  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...(opts.patch ? { patch: opts.patch } : {}), ...(opts.data === undefined ? {} : { data: opts.data }) }, ctx.clock);
+  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...(opts.patch ? { patch: opts.patch } : {}), ...(opts.data === undefined ? {} : { data: opts.data }), ...(opts.cause ? { cause: opts.cause } : {}) }, ctx.clock);
   heartbeatController(ctx.db, ctx.ownerId, ctx.clock, { progress: true });
   ctx.log.info('transition', { from, to, reason: reason.slice(0, 300) });
   return isTerminal(to) ? DONE : MOVED;
@@ -84,8 +87,11 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * exhaustion stops workers and preserves artifacts), then the transition,
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
+ *
+ * The transition records why the run ended as a failure class, from the outcome and data given here and the run's
+ * events (failure-class.ts). `cause` names the class for an end those records carry no marker for.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
   let advice = '';
   if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
@@ -108,7 +114,7 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   // A cancelled run asks nothing more: its questions are withdrawn, so status does not list them as open.
   if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
-  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
+  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data, ...(opts.cause ? { cause: opts.cause } : {}) });
   // SUCCEEDED and CANCELLED release their checkouts: the result lives in the branch and the candidate refs. EXHAUSTED and
   // IMPOSSIBLE keep theirs, on record, for the person who continues by hand; orbit gc removes them after retention.
   // BLOCKED keeps its too: a person resumes from it. Settled before the report is written: a release saves an unsaved
@@ -391,7 +397,7 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
     if (decision.action === 'stop' && (decision.limit === 'infrastructure_retries' || decision.limit === 'wall')) {
       return finishRun(ctx, 'EXHAUSTED', `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { data: { counter: decision.limit === 'wall' ? 'wall_ms' : 'infrastructure_retries' } });
     }
-    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`);
+    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { cause: 'environment' });
   }
   const record: RetryRecord = { what: failed.what, base: failed.base, purpose: failed.purpose, status: failed.status, retry: prior.length + 1, delay_ms: decision.delayMs, ceiling_ms: decision.ceilingMs, retry_after_ms: classification.retryAfterMs, not_before: ctx.clock.now() + decision.delayMs };
   // The retry is charged with its record: a crash between the two can neither charge it twice nor lose the wait.

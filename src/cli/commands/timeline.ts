@@ -31,7 +31,9 @@ export function renderEntry(e: TimelineEntry): string {
 
 export function renderHeader(t: Timeline): string {
   const lines = [`run ${t.run.id}  ${t.run.state}`, `goal:      ${flat(t.run.goal)}`];
+  lines.push(`orbit:     ${t.run.orbit_version}`);
   if (t.run.outcome_reason) lines.push(`outcome:   ${flat(t.run.outcome_reason)}`);
+  if (t.run.failure_class) lines.push(`class:     ${t.run.failure_class}${t.run.failure_secondary ? ` (secondary: ${t.run.failure_secondary})` : ''}`);
   return `${lines.join('\n')}\n`;
 }
 

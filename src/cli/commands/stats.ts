@@ -1,19 +1,24 @@
 /**
  * `orbit stats`: the spec section 16 metrics for the runs in this repository,
  * optionally limited to a time window (--since, --until, by run creation
- * time). Read-only; --json prints exactly what metricsFor computed.
+ * time) and to the runs one Orbit version started (--orbit-version). It also
+ * says why runs ended, per failure class, and compares versions. Read-only;
+ * --json prints exactly what metricsFor computed.
  */
 import { metricsFor, type Metrics } from '../../observability/metrics.ts';
+import { FAILURE_CLASSES } from '../../controller/failure-class.ts';
+import { isOrbitVersion } from '../../controller/run-store.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { resolveRepo, withState, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, table } from '../io.ts';
 
-export const STATS_USAGE = 'orbit stats [--since <when>] [--until <when>] [--json]';
+export const STATS_USAGE = 'orbit stats [--since <when>] [--until <when>] [--orbit-version <version>] [--json]';
 
 export const STATS_OPTIONS: OptionSpec = {
   since: { type: 'string', valueName: 'when', description: 'only runs created at or after this time: an ISO date or time, or a span back from now such as 90m, 24h, 7d, 2w' },
   until: { type: 'string', valueName: 'when', description: 'only runs created before this time (same forms as --since)' },
+  'orbit-version': { type: 'string', valueName: 'version', description: 'only runs this Orbit version started, such as 0.4.0; unknown for runs from before the version was recorded' },
 };
 
 const SPAN_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
@@ -37,8 +42,10 @@ export async function statsCommand(args: Args, ctx: CliContext): Promise<number>
   const from = sinceText === undefined ? null : parseWhen(sinceText, now, 'since');
   const to = untilText === undefined ? null : parseWhen(untilText, now, 'until');
   if (from !== null && to !== null && from >= to) throw new UsageError('--since must be earlier than --until', STATS_USAGE);
+  const orbitVersion = args.str('orbit-version')?.trim();
+  if (orbitVersion !== undefined && !isOrbitVersion(orbitVersion)) throw new UsageError(`--orbit-version must be a version such as 0.4.0, or unknown, got ${JSON.stringify(orbitVersion)}`, STATS_USAGE);
   const repo = await resolveRepo(ctx, args.str('repo'));
-  const m = await withState(repo, (db) => metricsFor(db, { from, to }));
+  const m = await withState(repo, (db) => metricsFor(db, { from, to, orbitVersion: orbitVersion ?? null }));
   if (args.bool('json')) {
     json(ctx.io, m);
     return EXIT.OK;
@@ -73,7 +80,19 @@ export function renderStats(m: Metrics): string {
     ['UI defects found', String(m.ui_defects.discovered), `in ${m.ui_defects.runs_with_ui_defects} run(s)`],
   ];
   const span = `${m.window.from === null ? 'the beginning' : new Date(m.window.from).toISOString()} to ${m.window.to === null ? 'now' : new Date(m.window.to).toISOString()}`;
-  const out = [`Orbit stats for ${m.runs.total} run(s) created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted)`, '', table(rows, ['METRIC', 'VALUE', 'DETAIL']).trimEnd()];
+  const started = m.window.orbit_version === null ? '' : ` started by Orbit ${m.window.orbit_version},`;
+  const out = [`Orbit stats for ${m.runs.total} run(s)${started} created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted)`, '', table(rows, ['METRIC', 'VALUE', 'DETAIL']).trimEnd()];
+  // Why runs ended: one line per class that has a run, as its first or its second cause, then the runs with none.
+  const fc = m.failure_classes;
+  const classRows = FAILURE_CLASSES.filter((c) => (fc.by_class[c] ?? 0) > 0 || (fc.secondary[c] ?? 0) > 0).map((c) => [c, String(fc.by_class[c] ?? 0), String(fc.secondary[c] ?? 0)]);
+  if (fc.ended > 0) {
+    classRows.push(['(none)', String(fc.without_class), '']);
+    if (fc.unclassified > 0) classRows.push(['(not recorded)', String(fc.unclassified), '']);
+    out.push('', table(classRows, ['FAILURE CLASS', 'RUNS', 'SECONDARY']).trimEnd());
+  }
+  if (m.by_version.length > 0) {
+    out.push('', table(m.by_version.map((v) => [v.orbit_version, String(v.runs), pct(v.pass_rate), usd(v.per_accepted_usd), `${v.accepted} accepted of ${v.finished} finished, ${usd(v.spend_usd)} spent${v.cost_complete ? '' : ' (partial)'}`]), ['ORBIT VERSION', 'RUNS', 'PASS RATE', 'SPEND PER ACCEPTED', 'DETAIL']).trimEnd());
+  }
   if (m.token_usage.by_model.length > 0) {
     out.push('', table(m.token_usage.by_model.map((b) => [b.model ?? '(unknown model)', b.provider, String(b.records), n(b.input), n(b.output), pct(b.cache_hit_ratio)]), ['MODEL', 'PROVIDER', 'RECORDS', 'INPUT', 'OUTPUT', 'CACHE HIT']).trimEnd());
   }
