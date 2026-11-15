@@ -418,4 +418,15 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE runs ADD COLUMN failure_secondary TEXT;
   ALTER TABLE runs ADD COLUMN orbit_version TEXT;
   `,
+  /* 8: what a route outcome was recorded for (issue #168): the role, the effort, the difficulty class, and the attempt it settles */ `
+  ALTER TABLE route_outcomes ADD COLUMN role TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN effort TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN difficulty TEXT;
+  -- The attempt the outcome settles (its candidate id) and the record that settled it (an evidence report or a review
+  -- gate). One outcome per attempt of a run: a step retried after a crash finds the row and writes nothing.
+  ALTER TABLE route_outcomes ADD COLUMN attempt_key TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN evidence_ref TEXT;
+  CREATE UNIQUE INDEX route_outcomes_attempt ON route_outcomes(run_id, attempt_key) WHERE attempt_key IS NOT NULL;
+  CREATE INDEX route_outcomes_class ON route_outcomes(work_kind, difficulty, ts);
+  `,
 ];

@@ -364,6 +364,11 @@ Why a run ended and which Orbit version started it (issue #167, ADR 0018; the re
 | I167.FR4 | `orbit stats`, `orbit report` and `orbit timeline --json` show both fields | `observability/metrics.ts`, `cli/commands/stats.ts`, `controller/report.ts`, `observability/timeline.ts` | U/observability/run-end-metrics.test.ts, U/controller/run-end-record.test.ts "the report and the timeline show both", U/cli/coverage-status-report-logs.test.ts | done |
 | I167.FR5 | The list of classes is published in `schemas/` | `schemas/failure-class.schema.json` | U/controller/failure-class.test.ts "the published list" | done |
 | I167.SC2 | Fewer than 5% of failed lab runs fall in `model` | measured by `orbit stats` on real runs | none: a measurement over real runs, not a test | open |
+| I168.FR1 | Each attempt whose evidence settles records one route outcome with role, provider, model, effort, task class, result and cost | `controller/route-outcome.ts:settleRouteOutcome`, `controller/steps/verifying.ts`, `controller/steps/reviewing.ts`, `storage/schema.ts` (migration 8) | A/routing-learns.test.ts "SC-001", U/controller/route-learning.test.ts "settleRouteOutcome" | done |
+| I168.FR2 | Outcomes caused by environment or gate failures are excluded | `controller/steps/verifying.ts:act`, `routing/usage.ts:ROUTE_OUTCOME_NOT_THE_ROUTES` | I/controller/environment-failure.test.ts, U/routing/learning.test.ts "FR-002", U/observability/metrics.test.ts "FR-002" | done |
+| I168.FR3 | Calibration needs a configurable minimum sample (default 20) and records why it displaced the table | `routing/router.ts:calibrate`, `policy/config.ts:routingLearning` | U/routing/learning.test.ts "scenario 1", "scenario 2", "fewer outcomes than the minimum sample", U/controller/route-learning.test.ts | done |
+| I168.FR4 | `orbit stats` shows pass rate and cost per accepted task for each route | `observability/metrics.ts:routeMetrics`, `cli/commands/stats.ts` | U/observability/metrics.test.ts "routes (issue #168)", U/cli/coverage-stats.test.ts | done |
+| I168.FR5 | `docs/learning.md` describes only what the code does | `docs/learning.md` | none: a document | done |
 
 ## 13. UI testing
 

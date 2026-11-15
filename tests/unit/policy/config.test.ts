@@ -6,7 +6,7 @@ import { parse } from 'yaml';
 import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import schema from '../../../schemas/config.schema.json' with { type: 'json' };
-import { checkCategory, defaultCheck, defaultConfig, isolationLimits, loadConfig, modelPermitted, parseConfig, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
+import { checkCategory, defaultCheck, defaultConfig, isolationLimits, loadConfig, modelPermitted, parseConfig, routingLearning, sastCheckIds, validateConfig } from '../../../src/policy/config.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
 
 const TEMPLATE = readFileSync(new URL('../../../templates/config.yaml', import.meta.url), 'utf8');
@@ -410,6 +410,36 @@ describe('semantic rule failures', () => {
     const quiet: string[] = [];
     applySemanticRules([broken], config, false, quiet);
     expect(quiet).toEqual([]);
+  });
+});
+
+describe('routing.learning (issue #168)', () => {
+  it('defaults to on, twenty outcomes, an 80% pass rate and a 90 day window, and a partial block overrides only what it names', () => {
+    expect(parseConfig('version: 1\n').routing.learning).toEqual({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
+    const off = parseConfig('version: 1\nrouting: {learning: {enabled: false, min_samples: 50}}\n');
+    expect(off.routing.learning).toEqual({ enabled: false, min_samples: 50, min_pass_rate: 0.8, window_days: 90 });
+    expect(routingLearning(off)).toEqual({ enabled: false, min_samples: 50, min_pass_rate: 0.8, window_days: 90 });
+  });
+
+  it('refuses values that would make a decision from nothing, and unknown keys', () => {
+    const problems = (yaml: string): string => {
+      try {
+        parseConfig(yaml);
+      } catch (err) {
+        return String((err as Error).message);
+      }
+      return '';
+    };
+    expect(problems('version: 1\nrouting: {learning: {min_samples: 0}}\n')).toMatch(/routing\.learning\.min_samples: must be >= 1/);
+    expect(problems('version: 1\nrouting: {learning: {min_pass_rate: 1.5}}\n')).toMatch(/routing\.learning\.min_pass_rate: must be <= 1/);
+    expect(problems('version: 1\nrouting: {learning: {window_days: 0}}\n')).toMatch(/routing\.learning\.window_days: must be >= 1/);
+    expect(problems('version: 1\nrouting: {learning: {explore: true}}\n')).toMatch(/routing\.learning: unknown key "explore"/);
+  });
+
+  it('a policy snapshot written before the section existed reads the defaults, and a damaged value falls back to its default', () => {
+    expect(routingLearning({ routing: {} })).toEqual({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
+    expect(routingLearning({ routing: { learning: { min_samples: Number.NaN, min_pass_rate: -1, window_days: 0, enabled: 'no' as never } } })).toEqual({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
+    expect(routingLearning({ routing: { learning: { min_samples: 7.9 } } }).min_samples).toBe(7);
   });
 });
 

@@ -52,6 +52,12 @@ function stat(workKind: WorkKind, m: ModelEntry, verified: number, failed: numbe
   return { workKind, provider: m.provider, modelId: m.modelId, samples: judged, verified, failed, rejected: 0, errors: 0, successRate: judged ? verified / judged : null, meanCostUsd, costSamples, meanTokens: null };
 }
 
+/** These scenarios measure a route with ten outcomes: the minimum sample they rely on is stated, not the default of twenty (issue #168). */
+const fewSamples = (): ReturnType<typeof policy> => {
+  const p = policy();
+  return { ...p, routing: { ...p.routing, learning: { min_samples: 5 } } };
+};
+
 const haiku = model('h-1', 'haiku', { k: 0.3 });
 const sonnet = model('s-1', 'sonnet', { k: 1 });
 const opus = model('o-1', 'opus', { k: 2 });
@@ -248,7 +254,7 @@ describe('Fable gate', () => {
 
   it('admits Fable when its measured cost per verified task is no worse than the opus-class one', () => {
     const outcomes = [stat('long-horizon', fable, 9, 1, 0.2), stat('long-horizon', opus, 5, 5, 3)];
-    const d = route({ workKind: 'long-horizon', signals: signals(), registry: fake([opus, fable]), policy: policy(), outcomes });
+    const d = route({ workKind: 'long-horizon', signals: signals(), registry: fake([opus, fable]), policy: fewSamples(), outcomes });
     expect(d.model).toBe('f-1');
     expect(d.reason).toMatch(/measured outcomes give f-1/);
   });
@@ -263,7 +269,7 @@ describe('Fable gate', () => {
 describe('measured outcomes', () => {
   it('moves to a clearly cheaper higher tier and says it was measured outcomes', () => {
     const outcomes = [stat('routine-code', sonnet, 5, 5, 6), stat('routine-code', opus, 10, 0, 0.5)];
-    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: policy(), outcomes });
+    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: fewSamples(), outcomes });
     expect(d.model).toBe('o-1');
     expect(d.justification.signals.map((s) => s.signal)).toEqual(['measured-outcomes']);
     expect(d.escalated_from).toBeUndefined();
@@ -272,7 +278,7 @@ describe('measured outcomes', () => {
 
   it('picks the cheapest of several cheaper neighbours', () => {
     const outcomes = [stat('routine-code', sonnet, 5, 5, 6), stat('routine-code', haiku, 10, 0, 0.2), stat('routine-code', opus, 10, 0, 0.5)];
-    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: policy(), outcomes });
+    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: fewSamples(), outcomes });
     expect(d.model).toBe('h-1');
     expect(d.reason).toMatch(/calibrated by measured outcomes/);
     // A cheaper lower tier is not an escalation, so no outcome signal is recorded.
@@ -281,7 +287,7 @@ describe('measured outcomes', () => {
 
   it('keeps the first cheaper neighbour when a later one is not cheaper still', () => {
     const outcomes = [stat('routine-code', sonnet, 5, 5, 6), stat('routine-code', haiku, 10, 0, 0.2), stat('routine-code', opus, 10, 0, 0.9)];
-    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: policy(), outcomes });
+    const d = route({ workKind: 'routine-code', signals: signals(), registry: fake([haiku, sonnet, opus]), policy: fewSamples(), outcomes });
     expect(d.model).toBe('h-1');
   });
 
@@ -300,7 +306,7 @@ describe('measured outcomes', () => {
 
   it('screenshots move up when measured accuracy is poor and a higher tier exists', () => {
     const outcomes = [stat('screenshot', haiku, 1, 9, 0.1)];
-    const d = route({ workKind: 'screenshot', signals: signals(), registry: fake([haiku, sonnet]), policy: policy(), outcomes });
+    const d = route({ workKind: 'screenshot', signals: signals(), registry: fake([haiku, sonnet]), policy: fewSamples(), outcomes });
     expect(d.model).toBe('s-1');
     expect(d.justification.signals[0]?.signal).toBe('measured-accuracy');
     expect(d.alternatives_considered.find((a) => a.model === 'h-1')?.rejected_because).toBe('measured accuracy below the floor');

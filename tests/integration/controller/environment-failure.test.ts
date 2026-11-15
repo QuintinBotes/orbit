@@ -92,6 +92,8 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(final).not.toMatch(/[\u2013\u2014]/);
     const [ev] = listEvidenceReports(l.db(), run.id);
     expect(ev?.verdict).toBe('FAIL');
+    // Issue #168: a failure the environment caused says nothing about the model, so the attempt records no route outcome.
+    expect(l.db().all('SELECT outcome FROM route_outcomes WHERE run_id = ?', run.id)).toEqual([]);
   }, 180_000);
 
   it('a plain pre-existing code failure, with no environment signal, still enters the repair loop', async () => {
@@ -109,6 +111,13 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(path).toContain('DIAGNOSING');
     expect(listDecisions(l.db(), run.id, { kind: 'verification.environment-failure' })).toEqual([]);
     expect(runState(l, run.id).outcomeReason ?? '').not.toMatch(/environment cause/);
+    // Issue #168: a check that ran on the candidate and failed, with no environment signal, settles the attempt against
+    // its route: one outcome per attempt whose candidate failed, with the route the attempt was given.
+    const outcomes = l.db().all<{ outcome: string; role: string; provider: string; model_id: string; work_kind: string; attempt_key: string; evidence_ref: string }>('SELECT outcome, role, provider, model_id, work_kind, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', run.id);
+    const failed = listEvidenceReports(l.db(), run.id).filter((r) => r.verdict === 'FAIL');
+    expect(outcomes.length).toBeGreaterThan(0);
+    expect(outcomes.map((o) => [o.attempt_key, o.evidence_ref])).toEqual(failed.map((r) => [r.candidateId, r.id]));
+    for (const o of outcomes) expect(o).toMatchObject({ outcome: 'failed', role: 'implementer', provider: 'claude', work_kind: 'routine-code' });
   }, 240_000);
 
   it('approving the baseline exception named in the reason lets the resumed run carry on: the excepted check is accepted, nothing is repaired', async () => {

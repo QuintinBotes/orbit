@@ -38,7 +38,7 @@ import { marksCharges } from '../scheduling/accounting.ts';
 import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, providerFamily } from '../policy/config.ts';
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, providerFamily, routingLearning } from '../policy/config.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -1095,9 +1095,13 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
   }
   const config = ctx.snapshot.config;
   try {
-    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes: routeStats(ctx.db, { workKind }) });
+    // Measured outcomes of the same task class (work kind and difficulty) inside the learning window; none at all when
+    // routing.learning.enabled is false, so the table and the priors decide alone (issue #168).
+    const learning = routingLearning(config);
+    const outcomes = learning.enabled ? routeStats(ctx.db, { workKind, difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 86_400_000 }) : [];
+    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
     const rec = toDecisionRecord(decision);
-    recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose } }, ctx.clock);
+    recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose, ...(learning.enabled ? {} : { learning_disabled: 'routing.learning.enabled is false: measured outcomes were not read' }) } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId };
   } catch (err) {
     if (!isOrbitError(err, 'PROVIDER_UNAVAILABLE')) throw err;

@@ -271,8 +271,20 @@ export interface RouteOutcomeInput {
   provider: string;
   modelId: string;
   outcome: RouteOutcome;
+  /** null or absent when the cost of the attempt is not fully known: an unknown cost is never recorded as zero. */
   costUsd?: number | null;
   tokens?: number | null;
+  role?: string | null;
+  effort?: string | null;
+  /** The run's difficulty class: with the work kind, the task class routing compares outcomes within. */
+  difficulty?: string | null;
+  /**
+   * What the outcome settles, unique within the run (the candidate id of an implementation attempt). With a key, a
+   * second outcome for the same attempt is not written and the first one's id is returned.
+   */
+  attemptKey?: string | null;
+  /** The record that settled it (an evidence report id, a review gate). */
+  evidenceRef?: string | null;
 }
 
 export function recordRouteOutcome(db: OrbitDb, input: RouteOutcomeInput, clock: Clock): number {
@@ -280,28 +292,59 @@ export function recordRouteOutcome(db: OrbitDb, input: RouteOutcomeInput, clock:
   if (!(ROUTE_OUTCOMES as readonly string[]).includes(input.outcome)) throw new OrbitError('SCHEMA_INVALID', `unknown route outcome ${input.outcome}`);
   if (!input.provider || !input.modelId) throw new OrbitError('SCHEMA_INVALID', 'route outcome needs a provider and a model');
   const ts = clock.now();
-  return db.tx(
-    () =>
-      db.run(
-        'INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        input.runId,
-        input.workKind,
-        input.provider,
-        input.modelId,
-        input.outcome,
-        count(input.costUsd),
-        count(input.tokens),
-        ts,
-      ).lastInsertRowid,
-  );
+  const key = input.attemptKey ?? null;
+  return db.tx(() => {
+    if (key !== null) {
+      const prior = db.get<{ id: number }>('SELECT id FROM route_outcomes WHERE run_id = ? AND attempt_key = ?', input.runId, key);
+      if (prior) return prior.id;
+    }
+    return db.run(
+      'INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty, attempt_key, evidence_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      input.runId,
+      input.workKind,
+      input.provider,
+      input.modelId,
+      input.outcome,
+      count(input.costUsd),
+      count(input.tokens),
+      ts,
+      input.role ?? null,
+      input.effort ?? null,
+      input.difficulty ?? null,
+      key,
+      input.evidenceRef ?? null,
+    ).lastInsertRowid;
+  });
 }
 
-export function routeStats(db: OrbitDb, filter: { workKind?: WorkKind; provider?: string; modelId?: string; sinceMs?: number } = {}): RouteStat[] {
-  const where: string[] = [];
+/**
+ * Outcomes recorded against a route in a run that then ended for a cause that was not the model's (issue #168, FR-002):
+ * the run's failure class (issue #167) is `environment` or `check-misconfigured`, so a check that failed or a review
+ * that refused in that run measured the machine or the check, not the route. The class is known only when the run
+ * ends, after the outcome was written, so the rows stay and every reader leaves them out of the judged outcomes.
+ */
+export const ROUTE_OUTCOME_NOT_THE_ROUTES = "(outcome IN ('failed', 'rejected') AND run_id IN (SELECT id FROM runs WHERE failure_class IN ('environment', 'check-misconfigured')))";
+
+export interface RouteStatsFilter {
+  workKind?: WorkKind;
+  provider?: string;
+  modelId?: string;
+  /** Only outcomes recorded at or after this time (epoch ms). */
+  sinceMs?: number;
+  /** Only outcomes recorded under this difficulty class; outcomes recorded without one are left out. */
+  difficulty?: string;
+}
+
+export function routeStats(db: OrbitDb, filter: RouteStatsFilter = {}): RouteStat[] {
+  const where: string[] = [`NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}`];
   const params: (string | number)[] = [];
   if (filter.workKind) {
     where.push('work_kind = ?');
     params.push(filter.workKind);
+  }
+  if (filter.difficulty) {
+    where.push('difficulty = ?');
+    params.push(filter.difficulty);
   }
   if (filter.provider) {
     where.push('provider = ?');
@@ -327,13 +370,17 @@ export function routeStats(db: OrbitDb, filter: { workKind?: WorkKind; provider?
     mean_cost: number | null;
     cost_samples: number;
     mean_tokens: number | null;
+    runs: number;
+    first_ts: number | null;
+    last_ts: number | null;
   }>(
     `SELECT work_kind, provider, model_id, COUNT(*) AS samples,
             SUM(CASE WHEN outcome = 'verified' THEN 1 ELSE 0 END) AS verified,
             SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
             SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
-            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
+            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens,
+            COUNT(DISTINCT run_id) AS runs, MIN(ts) AS first_ts, MAX(ts) AS last_ts
        FROM route_outcomes ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       GROUP BY work_kind, provider, model_id
       ORDER BY work_kind, provider, model_id`,
@@ -354,6 +401,10 @@ export function routeStats(db: OrbitDb, filter: { workKind?: WorkKind; provider?
       meanCostUsd: r.mean_cost === null ? null : roundUsd(r.mean_cost),
       costSamples: r.cost_samples,
       meanTokens: r.mean_tokens === null ? null : Math.round(r.mean_tokens),
+      ...(filter.difficulty ? { difficulty: filter.difficulty } : {}),
+      runs: r.runs,
+      firstTs: r.first_ts,
+      lastTs: r.last_ts,
     };
   });
 }

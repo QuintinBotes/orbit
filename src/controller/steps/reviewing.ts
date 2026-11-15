@@ -48,6 +48,7 @@ import { listAmendments, listLedger, listQuestions } from '../../inquisition/sto
 import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions, independentReviewGate } from '../gates.ts';
+import { settleRouteOutcome } from '../route-outcome.ts';
 import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, MOVED, move, note, policySummary, progress, safePoint, WAIT, type StepResult } from './common.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
@@ -463,6 +464,8 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
     }
     progress(ctx, 'review.approved', { candidate_id: cand.id, tree_hash: cand.treeHash });
+    // The attempt's evidence is settled: verified, and review cleared the tree (issue #168).
+    settleRouteOutcome(ctx, cand, { outcome: 'verified', evidenceRef: `review-gate:${cand.treeHash}` });
     const waiting = await blockOnOpenQuestions(ctx, 'delivery');
     if (waiting) return waiting;
     return move(ctx, 'DELIVERING', gate.details.independent ? `independent review cleared tree ${cand.treeHash}` : `review cleared tree ${cand.treeHash}, but it was ${gate.notes[0]}`);
@@ -510,6 +513,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     // brings back the same review, the same findings and the same brief, so another attempt would change nothing.
     const stalled = stalledReviewRepair(ctx, cand, repairable);
     if (stalled) {
+      settleRouteOutcome(ctx, cand, { outcome: 'rejected', evidenceRef: `review-gate:${cand.treeHash}` });
       const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
       // An unanswered material question may be why nothing changed: a person's answer, not another attempt, moves it.
       const blocked = await blockOnOpenQuestions(ctx, 'another review repair', { detail: `non-progress: ${stalled.reason}.`, outcome });
@@ -1272,6 +1276,8 @@ async function routeToRepair(
   const ledger = ctx.ledger!;
   const contract = assertContract(ctx);
   const outcome = { open_findings: openFindings(toRepair) };
+  // Review refused the verified candidate: the attempt's evidence is settled, whether or not a repair can still go (issue #168).
+  settleRouteOutcome(ctx, cand, { outcome: 'rejected', evidenceRef: `review-gate:${cand.treeHash}` });
   // Every repair needs another review of the repaired tree: without a round left, the findings stay open.
   const rounds = ledger.state('review_rounds');
   if (rounds.used >= rounds.allowance) {

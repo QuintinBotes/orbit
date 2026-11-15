@@ -38,18 +38,82 @@ Lesson statuses:
 Confidence is `low`, `medium` or `high`, and support and contradiction are
 reported as counts, not probabilities.
 
-Two other things adapt over time. Calibration adjusts routing, starting
-allowances and difficulty classes from measured outcomes, always inside the
-policy's hard caps. Overlays (below) are per-role prompt additions distilled
-from lessons that keep proving themselves.
+Two other things adapt over time. Routing reads the measured outcomes of
+earlier implementation attempts (next section). Overlays (below) are per-role
+prompt additions distilled from lessons that keep proving themselves. Starting
+allowances and difficulty classes are not adjusted from outcomes: they come
+from the policy and from the planner's assessment of each run.
 
 Set `knowledge.enabled: false` to turn the layer off. A worker prompt gets at
 most `knowledge.max_advisory_tokens` (default 800) of advisory text.
+
+## Routing from measured outcomes
+
+Every implementation attempt whose evidence settles records one row in the
+state database's `route_outcomes` table: the role, provider, model and effort
+the attempt was routed to, its task class (the work kind and the run's
+difficulty class), the result and the cost.
+
+| Result | When it is recorded |
+|---|---|
+| `failed` | a trusted check ran on the attempt's candidate to its end and failed |
+| `rejected` | verification passed and review sent the candidate back to repair |
+| `verified` | verification passed and review cleared the tree |
+
+Nothing is recorded when the result says nothing about the model: an attempt
+that never became a candidate (the provider was unavailable, the session was
+lost or refused), a failure the environment caused, a check that timed out or
+could not run, a refusal by a gate that ran no check (scope, size, the static
+security gate), or a run that stopped before its candidate was judged. A cost
+is recorded only when every session of the attempt reported one; otherwise it
+is stored as unknown, never as zero. Each attempt is recorded once.
+
+A run can find out only later that a failing check was broken or that the
+machine was at fault. When a run ends with the failure class `environment` or
+`check-misconfigured`, the `failed` and `rejected` outcomes it recorded are
+not read by routing, and `orbit stats` counts them as not judged.
+
+When a new attempt is routed, Orbit reads the outcomes of the same task class
+from the last `routing.learning.window_days` days (default 90). The routing
+table still gives the starting model. A model one tier cheaper displaces it
+only when all of these hold:
+
+- it has at least `routing.learning.min_samples` judged outcomes in that class
+  and window (default 20);
+- its measured pass rate, verified over verified plus failed plus rejected, is
+  at least `routing.learning.min_pass_rate` (default 0.8);
+- its expected cost per verified task is more than 10% below that of the
+  table's choice. Without a measured cost the model's list price is used, and
+  a model with neither is never chosen for being cheaper.
+
+When that model's measured pass rate falls below the threshold, the table's
+choice is used again. Failures older than the window are no longer read, so a
+model is not held back forever; it is used again once it has enough outcomes
+above the threshold, which it only collects from runs that route to it (an
+entry in `routing.overrides`, for example), since Orbit does not try a cheaper
+model on its own. A tier above the table's choice displaces it only when both
+are measured and it is clearly cheaper per verified task, and never Fable.
+
+What this cannot do: choose a model outside `routing.allowed_models`, override
+an entry in `routing.overrides`, or change a route while repeated failures are
+escalating it. The same recorded outcomes always give the same route; ties go
+to the lower expected cost, then the lower tier, then the model id.
+
+Each route decision that read outcomes records what it read under `learning`:
+the table's choice, the counts, the pass rate, the window and one sentence
+saying why the table's choice was displaced or kept. `orbit status <run>`
+shows that sentence for the run's newest implementation attempt on a
+`routing:` line. `orbit stats` lists every
+route with its pass rate and its cost per accepted task (the cost of all its
+attempts, failed ones included, over its verified ones; a dash when a cost is
+unknown). Set `routing.learning.enabled: false` to switch this off: outcomes
+are still recorded, and routing reads none of them.
 
 ## Where it is stored
 
 | Data | Location |
 |---|---|
+| Route outcomes | `<repo>/.orbit/state.sqlite`, table `route_outcomes` |
 | Repository lessons | `<repo>/.orbit/knowledge.sqlite` (SQLite with FTS5; kept out of `git status` by `orbit init`) |
 | Repository overlays | `<repo>/.orbit/knowledge/` |
 | Global lessons and overlays | `~/.orbit/knowledge.sqlite` and `~/.orbit/knowledge/` |

@@ -387,6 +387,17 @@
             "curator": { "type": "integer", "minimum": 100, "maximum": 200000 },
             "explorer": { "type": "integer", "minimum": 100, "maximum": 200000 }
           }
+        },
+        "learning": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "min_samples", "min_pass_rate", "window_days"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "min_samples": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "min_pass_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+            "window_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
+          }
         }
       }
     },

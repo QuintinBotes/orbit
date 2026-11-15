@@ -384,6 +384,14 @@ routing:
     inquisitor: 6000
     curator: 8000
     explorer: 6000
+  # Measured outcomes of earlier attempts may move a kind of work to a cheaper
+  # model that has proved itself, among the allowed_models only and never
+  # against an entry in overrides. enabled: false keeps the routing table.
+  learning:
+    enabled: true
+    min_samples: 20        # judged outcomes of one model in one task class before they count
+    min_pass_rate: 0.8     # the measured pass rate a model needs to displace the table's choice
+    window_days: 90        # older outcomes are not read
 
 retention:
   keep_runs_days: 30
