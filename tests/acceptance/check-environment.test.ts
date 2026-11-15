@@ -5,8 +5,8 @@
  * dependencies, so the worker's own check runs were denied installs).
  *
  * User Story 2 ("an environment fault is never briefed as a code defect") and FR-003 follow: a check that dies on a
- * missing module or a missing toolchain is recorded as an environment failure, and no implementer session is started
- * to repair it.
+ * missing module in a checkout nothing was installed in, or on a missing toolchain, is recorded as an environment
+ * failure, and no session is started for it. A missing module in a provisioned checkout stays the code's.
  *
  * The lab repository gets a check that really imports an installed package, so a checkout without the
  * install fails it with node's own ERR_MODULE_NOT_FOUND, not with a line a test printed.
@@ -17,11 +17,12 @@ import { join } from 'node:path';
 import { defaultCheck } from '../../src/policy/config.ts';
 import type { OrbitConfig } from '../../src/policy/types.ts';
 import { listCandidates, listCheckRuns, listEvidenceReports } from '../../src/evidence/store.ts';
+import { listQuestions } from '../../src/inquisition/store.ts';
 import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { drive, git, makeLab, READY, startLabRun, writeScenario, type Lab } from './helpers/lab.ts';
 import { diagnosis, GOAL, GOOD_IMPLEMENTATION, implementer, scenario, SRC_TEXT, TEST_TEXT } from './helpers/scenarios.ts';
-import { assertNoVerifiedCandidateExhausted, assertRunInvariants, transitions } from './helpers/invariants.ts';
+import { assertRunInvariants, transitions } from './helpers/invariants.ts';
 
 const labs: Lab[] = [];
 afterEach(() => labs.splice(0).forEach((l) => l.close()));
@@ -83,7 +84,6 @@ describe.skipIf(!READY)('acceptance: checks run in a checkout prepared like the 
     expect(listCheckRuns(db, { runId: run.id, candidateId: cand!.id, checkId: 'dist-check' }).map((r) => r.status)).toEqual(['PASSED']);
     expect(listEvidenceReports(db, run.id).at(-1)!.report.verdict).toBe('PASS');
     expect(checkLogs(l, run.id)).not.toMatch(/ERR_MODULE_NOT_FOUND|Cannot find (?:package|module)/);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 240_000);
 
@@ -105,7 +105,6 @@ describe.skipIf(!READY)('acceptance: checks run in a checkout prepared like the 
     if (existsSync(done.worktreePath!)) expect(existsSync(join(done.worktreePath!, 'node_modules', 'typescript'))).toBe(true);
     const [cand] = listCandidates(db, run.id);
     expect(git(l.repo, 'ls-tree', '-r', '--name-only', cand!.commitSha).split('\n').filter((p) => p.startsWith('node_modules'))).toEqual([]);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 180_000);
 });
@@ -140,42 +139,50 @@ describe.skipIf(!READY)('acceptance: an environment fault is never briefed as a 
     // No attempt was started, and no model was asked anything.
     expect(listWorkers(db, { runId: run.id })).toEqual([]);
     expect(listCandidates(db, run.id)).toEqual([]);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 180_000);
 
-  it('User Story 2: a check that dies with ERR_MODULE_NOT_FOUND on a candidate that did not bring it is an environment failure, and no implementer session is started for it', async () => {
+  it('User Story 2: a missing module on a candidate whose checkout was provisioned is the change\'s until shown otherwise, whatever file imported it', async () => {
     const l = lab({
       files: { 'scripts/needs-dep.mjs': NEEDS_DEP },
       tweak: (c) =>
         withChecks(c, {
-          // The injected fault: the installed dependencies vanish from the candidate's checkout before dist-check runs.
+          // The package is gone when dist-check runs, though the install passed in this checkout and the importing file
+          // is not the change's. That is also what a change looks like that imports a package it never added from
+          // compiled output or through a tool's plugin, so it is not read as the environment's.
           'clean-cache': ['sh', '-c', 'case "$PWD" in */check-*) rm -f node_modules ;; esac'],
           'dist-check': ['node', 'scripts/needs-dep.mjs'],
         }),
     });
-    // A second implementer and a diagnosis are scripted, so a run that briefed the fault as a defect would use them.
-    writeScenario(l, scenario({ implementer: [GOOD_IMPLEMENTATION(), implementer([])], verifier: [diagnosis({ evidence: 'dist-check: Cannot find package typescript', hypothesis: 'the bundle is stale', experiment: 'rebuild', expected: 'dist-check passes', fix: 'rebuild the bundle' })] }));
+    writeScenario(l, scenario({ implementer: [GOOD_IMPLEMENTATION(), implementer([])], verifier: [diagnosis({ evidence: 'dist-check: Cannot find package typescript', hypothesis: 'the change removed a package dist-check imports', experiment: 'node scripts/needs-dep.mjs', expected: 'ERR_MODULE_NOT_FOUND', fix: 'restore the import' })] }));
     const run = startLabRun(l, GOAL);
     const done = await drive(l, run.id);
     const db = l.db();
 
-    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    expect(done.outcomeReason).toContain('Check dist-check could not execute on candidate 1, and the output shows an environment cause, not a defect in the change');
-    expect(done.outcomeReason).toContain('the package "typescript" the check imports is not installed where the check runs');
-    expect(done.outcomeReason).toContain('No repair attempt was spent');
-    expect(decisionChecks(l, run.id, 'verification.environment-failure').map((c) => [c.check_id, c.signals])).toEqual([['dist-check', ['module-not-found']]]);
-    // The one session that wrote the candidate; none for the fault, and no diagnosis of it.
-    expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(1);
-    expect(listWorkers(db, { runId: run.id, role: 'verifier' })).toHaveLength(0);
-    const path = transitions(db, run.id);
-    expect(path).not.toContain('DIAGNOSING');
-    expect(path).not.toContain('REPAIRING');
-    // The candidate is not marked defective: no failure of it was diagnosed, and it is kept.
-    expect(listCandidates(db, run.id)).toHaveLength(1);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
+    expect(listDecisions(db, run.id, { kind: 'verification.environment-failure' })).toEqual([]);
+    expect(transitions(db, run.id)).toContain('DIAGNOSING');
+    expect(listWorkers(db, { runId: run.id, role: 'verifier' }).length).toBeGreaterThanOrEqual(1);
+    expect(done.state, done.outcomeReason ?? '').not.toBe('SUCCEEDED');
     assertRunInvariants(l, run.id);
-  }, 180_000);
+  }, 240_000);
+
+  it('a base revision whose own code imports a package it does not declare, with the install passed, is a pre-existing failure that keeps its baseline-exception question', async () => {
+    const l = lab({
+      files: { 'scripts/undeclared.mjs': "import 'a-package-nothing-declares';\n" },
+      tweak: (c) => withChecks(c, { 'dist-check': ['node', 'scripts/undeclared.mjs'] }),
+    });
+    writeScenario(l, scenario({ implementer: [GOOD_IMPLEMENTATION()] }));
+    const run = startLabRun(l, GOAL);
+    await drive(l, run.id);
+    const db = l.db();
+
+    // Not blocked at PREFLIGHT with install advice: the install ran, so this is the repository's code, and a person may accept it.
+    expect(listDecisions(db, run.id, { kind: 'baseline.environment-failure' })).toEqual([]);
+    expect(transitions(db, run.id).slice(0, 2)).toEqual(['PREFLIGHT', 'CONTRACTING']);
+    const question = listQuestions(db, run.id).find((q) => /dist-check/.test(q.question));
+    expect(question, 'the baseline-exception question for dist-check').toBeDefined();
+    assertRunInvariants(l, run.id);
+  }, 240_000);
 
   it('User Story 2, the other side: a missing module the change itself brought stays a defect and is repaired', async () => {
     const l = lab({
@@ -199,7 +206,6 @@ describe.skipIf(!READY)('acceptance: an environment fault is never briefed as a 
     expect(listDecisions(db, run.id, { kind: 'verification.environment-failure' })).toEqual([]);
     expect(transitions(db, run.id)).toContain('DIAGNOSING');
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 240_000);
 
@@ -215,7 +221,6 @@ describe.skipIf(!READY)('acceptance: an environment fault is never briefed as a 
     expect(done.outcomeReason).toContain('the program "cargo-is-not-installed-here" was not found where the check runs (exit 127)');
     expect(decisionChecks(l, run.id, 'baseline.environment-failure').map((c) => [c.check_id, c.signals])).toEqual([['rust-build', ['program-not-found']]]);
     expect(listWorkers(db, { runId: run.id })).toEqual([]);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 180_000);
 });

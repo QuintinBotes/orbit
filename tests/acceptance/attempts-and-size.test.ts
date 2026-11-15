@@ -15,7 +15,7 @@ import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { drive, makeLab, READY, startLabRun, writeScenario, type Lab } from './helpers/lab.ts';
 import { GOAL, implementer, planner, REGRESSION_DIAGNOSIS, scenario, SRC_FIX_REGRESSION, SRC_REGRESSION, SRC_TEXT, TEST_TEXT } from './helpers/scenarios.ts';
-import { assertNoVerifiedCandidateExhausted, assertRunInvariants, transitions } from './helpers/invariants.ts';
+import { assertRunInvariants, transitions } from './helpers/invariants.ts';
 
 const labs: Lab[] = [];
 afterEach(() => labs.splice(0).forEach((l) => l.close()));
@@ -47,7 +47,6 @@ describe.skipIf(!READY)('acceptance: attempts are not spent on what no repair ca
     const probes = buildTimeline(db, getRun(db, run.id)).entries.filter((e) => e.kind.startsWith('check.fail-before-probe-')).map((e) => e.text);
     expect(probes.some((t) => /^fail-before probe of unit started on tree [0-9a-f]{12} \(attempt 1\)$/.test(t))).toBe(true);
     expect(probes.some((t) => /^fail-before probe of unit FAILED \(exit 1\) on tree [0-9a-f]{12} \(attempt 1\)$/.test(t))).toBe(true);
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 240_000);
 
@@ -82,7 +81,6 @@ describe.skipIf(!READY)('acceptance: attempts are not spent on what no repair ca
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
     expect(new Set(listCandidates(db, run.id).map((c) => c.treeHash)).size).toBe(1);
     expect(transitions(db, run.id).at(-1)).toBe('BLOCKED');
-    assertNoVerifiedCandidateExhausted(l.db(), run.id);
     assertRunInvariants(l, run.id);
   }, 240_000);
 });

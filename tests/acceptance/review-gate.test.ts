@@ -13,7 +13,7 @@ import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { drive, makeLab, READY, startLabRun, writeScenario, type Lab } from './helpers/lab.ts';
 import { APPROVE, GOAL, GOOD_IMPLEMENTATION, implementer, NOT_FOUND_TEXT, review, scenario, type Edit } from './helpers/scenarios.ts';
-import { assertNoVerifiedCandidateExhausted, assertRunInvariants, transitions } from './helpers/invariants.ts';
+import { assertRunInvariants, transitions } from './helpers/invariants.ts';
 
 const labs: Lab[] = [];
 afterEach(() => labs.splice(0).forEach((l) => l.close()));
@@ -87,7 +87,6 @@ describe.skipIf(!READY)('acceptance: the review gate always has a way forward (i
     expect(listReviews(db, run.id, { includeInvalidated: true }).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'APPROVE']);
     expect(listFindings(db, run.id).map((f) => [f.externalId, f.severity])).toEqual([['COR-1', 'low']]);
     expect(l.github().state.prs).toHaveLength(1);
-    assertNoVerifiedCandidateExhausted(db, run.id);
     assertRunInvariants(l, run.id);
   }, 240_000);
 
@@ -130,9 +129,8 @@ describe.skipIf(!READY)('acceptance: the review gate always has a way forward (i
     // The verified candidate is kept for a person; nothing was delivered on an unapproved tree.
     expect(listCandidates(db, run.id)).toHaveLength(2);
     expect(l.github().state.prs).toEqual([]);
-    // Issue #166, SC-003 does not hold here yet (assertNoVerifiedCandidateExhausted would fail): whether such a finding
-    // is validated once against the candidate or dropped (User Story 3, scenario 2) waits for a maintainer decision
-    // (issues #144 and #156).
-    assertRunInvariants(l, run.id);
+    // Issue #166, SC-003, a known expected failure: the run ends EXHAUSTED holding verified candidate 2. The decided
+    // behaviour is BLOCKED naming the candidate (issue #169), and User Story 3, scenario 2 follows this pull request.
+    assertRunInvariants(l, run.id, { knownExhaustedWithVerifiedCandidate: '#169' });
   }, 300_000);
 });

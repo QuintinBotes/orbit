@@ -157,10 +157,7 @@ export function assertLeases(db: OrbitDb, runId: string): void {
 /**
  * Issue #166, SC-003: no lab scenario ends EXHAUSTED while holding a candidate that passed verification. The latest
  * candidate is the one the run holds; its newest evidence that still stands is what verification said of it.
- *
- * Not part of assertRunInvariants: three scenarios end that way by today's rules, each on a review finding nothing
- * settled (scenario 16, scenario 19's blocking finding, issue #156's replay). What such a run should end as is open
- * (issues #156 and #169), so the scenarios of issue #166 call this themselves.
+ * Part of assertRunInvariants, so every scenario is held to it.
  */
 export function assertNoVerifiedCandidateExhausted(db: OrbitDb, runId: string): void {
   if (getRun(db, runId).state !== 'EXHAUSTED') return;
@@ -170,8 +167,30 @@ export function assertNoVerifiedCandidateExhausted(db: OrbitDb, runId: string): 
   expect(ev?.verdict, `the run ended EXHAUSTED holding candidate ${held.seq}, which passed verification (${ev?.id})`).not.toBe('PASS');
 }
 
-export function assertRunInvariants(lab: Lab, runId: string): void {
+/** Whether the run ended EXHAUSTED while its latest candidate's standing evidence is PASS. */
+export function exhaustedHoldingVerifiedCandidate(db: OrbitDb, runId: string): boolean {
+  if (getRun(db, runId).state !== 'EXHAUSTED') return false;
+  const held = listCandidates(db, runId).at(-1);
+  if (!held) return false;
+  return listEvidenceReports(db, runId).filter((e) => e.treeHash === held.treeHash && e.invalidatedAt === null).at(-1)?.verdict === 'PASS';
+}
+
+export interface InvariantOptions {
+  /**
+   * A known expected failure of SC-003, named by the issue that fixes it: the scenario ends EXHAUSTED holding a
+   * verified candidate today, where the decided behaviour is BLOCKED naming the candidate (issue #169). With this set
+   * the scenario must still end that way, so it fails when #169 lands and the marker has to go.
+   */
+  knownExhaustedWithVerifiedCandidate?: '#169';
+}
+
+export function assertRunInvariants(lab: Lab, runId: string, opts: InvariantOptions = {}): void {
   const db = lab.db();
+  if (opts.knownExhaustedWithVerifiedCandidate) {
+    expect(exhaustedHoldingVerifiedCandidate(db, runId), `SC-003 is a known expected failure here until issue ${opts.knownExhaustedWithVerifiedCandidate}; the run no longer ends EXHAUSTED holding a verified candidate, so remove the marker`).toBe(true);
+  } else {
+    assertNoVerifiedCandidateExhausted(db, runId);
+  }
   assertTransitionsDurable(db, runId);
   assertLeases(db, runId);
   assertPolicyFrozen(db, runId);

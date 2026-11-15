@@ -77,10 +77,10 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 |---|---|---|
 | 1.1 A check that imports an installed dependency runs with it present | `check-environment.test.ts` | issue #133, issue #158 |
 | 1.2 A baseline where every check fails for one environmental reason blocks and names it | `check-environment.test.ts` | User Story 1, scenario 2 (issue #141) |
-| 2.1 A missing module or toolchain is an environment failure; no implementer session starts for it | `check-environment.test.ts` | User Story 2 (three tests: a missing module on a candidate, a module the change itself brought, a missing toolchain) |
+| 2.1 A missing module or toolchain is an environment failure; no implementer session starts for it | `check-environment.test.ts` | User Story 1, scenario 2 (a missing module where nothing was installed: no session starts); User Story 2 (a missing toolchain; a missing module in a provisioned checkout stays the change's, two tests); a base revision that imports an undeclared package keeps its baseline exception |
 | 3.1 Advisory-only findings with no approval: the run repairs | `review-gate.test.ts` | issue #130 |
-| 3.2 A high finding unvalidated across two verified candidates | `review-gate.test.ts` | issue #156 (the run stops and names the finding; validating it once or dropping it waits for a maintainer decision) |
-| SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, called by the scenarios of issues #130, #132, #133, #144, #157 and of User Stories 1 and 2. It does not hold for scenario 16, scenario 19 (the blocking finding) and issue #156, which end EXHAUSTED on a review finding nothing settled; what such a run ends as is open (issues #156, #169) |
+| 3.2 A high finding unvalidated across two verified candidates | `review-gate.test.ts` | issue #156 (the run stops and names the finding; the decided behaviour, one fresh independent review told the finding, follows in its own pull request) |
+| SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Three are known expected failures until issue #169 (such a run ends BLOCKED naming the candidate): scenario 16, scenario 19 (the blocking finding) and issue #156. Each is marked where it calls `assertRunInvariants`, and the marker fails once the run no longer ends that way |
 
 ### Safe stops (spec section 2)
 
