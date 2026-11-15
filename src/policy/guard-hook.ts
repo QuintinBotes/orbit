@@ -29,6 +29,8 @@ export interface GuardOptions {
   /** Absolute root of the worker's worktree; every edit must resolve inside it. */
   worktreeRoot: string;
   home?: string;
+  /** The worker's private temp directory, the one part of the workers' temp root it may read. */
+  workerTmpDir?: string;
 }
 
 export interface GuardResult {
@@ -40,6 +42,7 @@ export interface GuardResult {
 export const ENV_POLICY_PATH = 'ORBIT_POLICY_PATH';
 export const ENV_POLICY_HASH = 'ORBIT_POLICY_HASH';
 export const ENV_WORKTREE = 'ORBIT_WORKTREE';
+export const ENV_WORKER_TMPDIR = 'ORBIT_WORKER_TMPDIR';
 
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
 
@@ -76,7 +79,8 @@ export function runGuardHook(stdin: string, env: Record<string, string | undefin
     if (!snapshotPath) throw new GuardInputError(`${ENV_POLICY_PATH} is not set`);
     if (!expectedHash) throw new GuardInputError(`${ENV_POLICY_HASH} is not set`);
     if (!worktreeRoot) throw new GuardInputError(`${ENV_WORKTREE} is not set`);
-    return handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}) });
+    const workerTmpDir = env[ENV_WORKER_TMPDIR];
+    return handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}), ...(workerTmpDir ? { workerTmpDir } : {}) });
   } catch (err) {
     return failClosed(err);
   }
@@ -139,7 +143,7 @@ function parseInput(text: string): HookInput {
 /** null: a tool this hook has no rule for, so it stays out of the decision. */
 function decide(snapshot: PolicySnapshot, input: HookInput, opts: GuardOptions): AuthorizationDecision | null {
   const ti = input.tool_input;
-  const ctx = { worktreeRoot: opts.worktreeRoot, ...(input.cwd ? { cwd: input.cwd } : {}), ...(opts.home ? { home: opts.home } : {}) };
+  const ctx = { worktreeRoot: opts.worktreeRoot, ...(input.cwd ? { cwd: input.cwd } : {}), ...(opts.home ? { home: opts.home } : {}), ...(opts.workerTmpDir ? { workerTmpDir: opts.workerTmpDir } : {}) };
   switch (input.tool_name) {
     case 'Edit':
     case 'Write': {

@@ -7,8 +7,10 @@
  * Rules, in the order they are applied:
  *   edit        actions.edit; canonical path inside the worktree; protected
  *               paths always win; then scope.allowed_paths; default deny.
- *   read        denied only for credential files (built-in credential globs
- *               anywhere, well-known credential locations under $HOME).
+ *   read        denied for credential files (built-in credential globs
+ *               anywhere, well-known credential locations under $HOME) and
+ *               for the workers' temp root outside this worker's own
+ *               directory there.
  *   action      actions.<name> must be true AND the mode must permit it
  *               (delivery actions need autonomous-delivery or release; merge
  *               and deploy_production need release).
@@ -25,13 +27,13 @@
  * Any internal error yields a deny: this function never fails open.
  */
 import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, posix, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import picomatch from 'picomatch';
 import type { AuthorizationDecision, Operation, OrbitConfig, PolicySnapshot } from './types.ts';
 import { BUILTIN_PROTECTED_PATHS, HOME_CREDENTIAL_PATHS, credentialGlobsOf } from './builtin.ts';
 import { compileGlobs, globBases, hasGlobChars, stripDotSlash, type PathMatcher } from './globs.ts';
-import { canonicalize, isCaseInsensitiveFs, relativeInside, resolveDetailed, toPosix } from './paths.ts';
+import { canonicalize, isCaseInsensitiveFs, orbitTmpRoot, relativeInside, resolveDetailed, toPosix } from './paths.ts';
 import { hostAllowed, normalizeHost } from './hosts.ts';
 import { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCommandInfo, type BashRead, type BashWrite } from './bash.ts';
 import { DELIVERY_ACTIONS, DELIVERY_MODES, RELEASE_ACTIONS } from './config.ts';
@@ -43,6 +45,8 @@ export interface AuthorizeContext {
   cwd?: string;
   /** Home directory for credential locations and `~`. Defaults to os.homedir(). */
   home?: string;
+  /** This worker's private temp directory, the one part of orbitTmpRoot() it may read; without it, none may be read. */
+  workerTmpDir?: string;
 }
 
 export function authorize(snapshot: PolicySnapshot, op: Operation, ctx: AuthorizeContext = {}): AuthorizationDecision {
@@ -158,7 +162,20 @@ function authorizeRead(c: Compiled, path: unknown, ctx: AuthorizeContext): Autho
     const underHome = homeRelative(home, p);
     if (underHome !== null && c.homeCredential(underHome)) return deny('read.credential', `${path} is a credential location`);
   }
+  if (otherWorkerTmp(canonical, ctx.workerTmpDir)) return deny('read.worker-tmp', `${path} is in the workers' temp root but not in this worker's own temp directory`);
   return allow('read.allowed', 'not a credential file');
+}
+
+/**
+ * Whether a canonical path is in the workers' temp root but not in `own`. Claude Code's sandbox read-denies the root for
+ * Bash only, and the file tools' permission rules cannot say "the root but for my own directory", so this rule is the
+ * one that keeps a worker's Read out of another worker's temp files.
+ */
+function otherWorkerTmp(canonical: string, own: string | undefined): boolean {
+  const root = canonicalize(orbitTmpRoot());
+  const ci = isCaseInsensitiveFs(dirname(root));
+  if (relativeInside(root, canonical, ci) === null) return false;
+  return own === undefined || relativeInside(canonicalize(own), canonical, ci) === null;
 }
 
 /** The worktree-relative spellings of an absolute path (through the root as written and as resolved); empty when it is outside. */
@@ -304,7 +321,7 @@ function authorizeBash(config: OrbitConfig, c: Compiled, command: unknown, ctx: 
   }
   // Advisory layer: the OS read-deny list is the real control (ADR 0005), this makes the denial immediate and explained.
   for (const r of cls.reads) {
-    const d = judgeRead(c, r, root, ctx.home ?? homedir());
+    const d = judgeRead(c, r, root, ctx.home ?? homedir(), ctx.workerTmpDir);
     if (d) return d;
   }
   return allow('bash.allowed', `${cls.category}: nothing statically denied (advisory; the OS sandbox and diff inspection still apply)`);
@@ -369,8 +386,8 @@ function tempRoots(): string[] {
   return tempRootsCache;
 }
 
-/** A static read of a credential path (built-in credential globs, well-known credential locations under home). */
-function judgeRead(c: Compiled, r: BashRead, root: string, home: string): AuthorizationDecision | null {
+/** A static read of a credential path (built-in credential globs, well-known credential locations under home), or of another worker's temp directory. */
+function judgeRead(c: Compiled, r: BashRead, root: string, home: string, workerTmpDir: string | undefined): AuthorizationDecision | null {
   const denied = (shown: string): AuthorizationDecision => deny('bash.credential-read', `${r.via} reads ${shown}, which holds credentials`);
   if (r.abs === null) {
     // Only known at run time: the literal text (a variable in front of `.env`) is all there is to check.
@@ -380,7 +397,8 @@ function judgeRead(c: Compiled, r: BashRead, root: string, home: string): Author
   if (targets === null) return deny('bash.glob-too-broad', `${r.via} ${r.path} matches too many files to inspect`);
   if (r.glob && (c.credential(stripRoot(toPosix(r.abs))) || insideWorktree(root, r.abs).some((rel) => c.credential(rel)))) return denied(r.path);
   for (const t of targets) {
-    const d = authorizeRead(c, t, { worktreeRoot: root, home });
+    const d = authorizeRead(c, t, { worktreeRoot: root, home, ...(workerTmpDir ? { workerTmpDir } : {}) });
+    if (d.rule === 'read.worker-tmp') return deny('bash.worker-tmp-read', `${r.via} reads ${r.glob ? t : r.path}, which is in another worker's temp directory`);
     if (!d.allowed) return denied(r.glob ? t : r.path);
   }
   return null;
