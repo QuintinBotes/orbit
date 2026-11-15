@@ -30,7 +30,7 @@ import { BASELINE_FILE, type BaselineReport } from '../evidence/baseline.ts';
 import { directInvocation, programExecutionDir, startedProgram, startedPrograms } from '../evidence/check-command.ts';
 import { classifyDeniedFolderProgram, classifyMisconfigured, classifyProgramNotFound, type MisconfiguredCheck } from '../evidence/check-misconfigured.ts';
 import { dotnetFormatFix, FORMAT_OUTSIDE_REASON, formatLoadsProject, formatOutsideFix, nodeDenialFix, sdkFormatsInProcess } from '../evidence/dotnet-format.ts';
-import { classifyCouldNotRun, classifyEnvironmentFailure, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
+import { classifyCouldNotRun, classifyEnvironmentFailure, classifyModuleNotFound, classifyNotExecuted, type EnvironmentFailure, type EnvironmentSignal } from '../evidence/environment-failure.ts';
 import { gitEnv } from '../evidence/git.ts';
 import type { JudgedCheck } from '../evidence/msbuild.ts';
 import { listCheckRuns, type CandidateRecord, type CheckRunRecord } from '../evidence/store.ts';
@@ -38,6 +38,7 @@ import type { EvidenceReport } from '../evidence/types.ts';
 import { baselineQuestionId } from '../inquisition/baseline-exception.ts';
 import { repositoryDenials } from '../isolation/profiles.ts';
 import { canonicalPath, isExecutableFile, isWithin } from '../isolation/util.ts';
+import { isDependencyFilePath } from '../policy/scope.ts';
 import type { CheckDefinition } from '../policy/types.ts';
 import { UI_RESULT_FILE } from '../ui/runner.ts';
 import type { UiNotExecuted } from '../ui/types.ts';
@@ -463,6 +464,12 @@ function environmentFixes(failures: readonly FailureWithCommand[], platform: Nod
     fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(', ')} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
     change(named, command);
   }
+  // A package no install put in the checkout: the install is Orbit's, from an npm lockfile or dependencies.install_command.
+  const modules = has('module-not-found');
+  if (modules.length > 0) {
+    const names = [...new Set(modules.flatMap((f) => (f.module !== undefined ? [f.module] : [])))];
+    fixes.push(`${names.length > 0 ? `${names.map((n) => `"${n}"`).join(', ')} ${names.length > 1 ? 'are' : 'is'}` : 'a package is'} not installed in the checkout the check ran in, and no change to the code installs a package: Orbit installs dependencies in every checkout from an npm lockfile or with dependencies.install_command, so read that install's log (orbit-install, beside the check's) for why the package is missing; where no install ran, set dependencies.install_command in .orbit/config.yaml to the command that installs the repository's dependencies and start a new run (docs/troubleshooting.md, "A check cannot find a package")`);
+  }
   const missing = has('program-not-found').filter((f) => !located.includes(f));
   if (missing.length > 0) {
     const keys = missing.map((f) => command(f.checkId)).join(', ');
@@ -528,7 +535,9 @@ export function baselineEnvironmentFailures(ctx: RunContext, report: BaselineRep
     const found =
       classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ??
       classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ??
-      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report.baseRevision)) : null);
+      (def && def.kind === 'command' ? (classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report.baseRevision)) : null) ??
+      // A package the check imports that no install put in the base revision's checkout (issue #166): no change touched it yet.
+      ((row ? row.status : entry?.status) === 'FAILED' ? classifyModuleNotFound({ checkId: failure.checkId, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     const located = def && def.kind === 'command' ? deniedProgramOf(ctx, found, def, report.baseRevision) : null;
@@ -1036,7 +1045,8 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
     const found =
       classifyNotExecuted({ checkId: result.id, output, startFailure }) ??
       // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-      (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [checkout, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])], baseSignals: baseSignals(result.id) }) : null);
+      (row.status === 'FAILED' ? classifyCouldNotRun({ checkId: result.id, output, insideRoots: [checkout, row.cwd, ...(row.logPath ? [dirname(row.logPath)] : [])], baseSignals: baseSignals(result.id) }) : null) ??
+      (row.status === 'FAILED' ? candidateModuleNotFound(result.id, output, { candidate: cand, roots: [checkout, row.cwd], baseline: baseline ?? null, baseRevision: ctx.run.baseRevision, baseSignals: baseSignals(result.id) }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkout);
     out.push({ ...found, ...commandOf(ctx, result.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...(row.logPath ? { logPath: row.logPath } : {}) });
@@ -1055,6 +1065,38 @@ export function checksNotExecutedFor(ctx: RunContext, cand: CandidateRecord, rep
     }
   }
   return out;
+}
+
+/**
+ * A candidate's check that died importing a package that is not installed in its checkout (classifyModuleNotFound),
+ * when the records show the change did not bring that about (issue #166, User Story 2; the reports are issues #133 and
+ * #158). The text alone cannot show it, since a change can import a package nothing declares, so it counts only when:
+ *
+ * - the same check showed the same signal on the base revision; or
+ * - all of: the baseline of this base revision is complete and the check passed there, so the package resolved for
+ *   the same check before the change; the file that imported it is not one the change touches (a file under a
+ *   node_modules folder or outside the checkout never is; an importer the runtime did not name is not shown to be);
+ *   and the change touches no lockfile or dependency manifest, so it did not change what the install provides.
+ *
+ * Anything else stays the change's and goes to repair.
+ */
+function candidateModuleNotFound(checkId: string, output: string, input: { candidate: CandidateRecord; roots: readonly string[]; baseline: BaselineReport | null; baseRevision: string | null; baseSignals: readonly EnvironmentSignal[] }): EnvironmentFailure | null {
+  const found = classifyModuleNotFound({ checkId, output });
+  if (!found) return null;
+  if (input.baseSignals.includes('module-not-found')) return found;
+  const { baseline, candidate } = input;
+  if (!baseline || baseline.baseRevision !== input.baseRevision || !baseline.complete || !Array.isArray(baseline.checks)) return null;
+  if (!baseline.checks.some((c) => c.checkId === checkId && c.status === 'PASSED') || baseline.failures.some((f) => f.checkId === checkId)) return null;
+  const stat = candidate.diffStat;
+  if (!stat || stat.truncated || stat.paths.some(isDependencyFilePath)) return null;
+  const importer = found.importer;
+  if (importer === undefined || !isAbsolute(importer)) return null;
+  if (!importer.split('/').includes('node_modules')) {
+    // The checkout as given and as resolved: a runtime names a file by its real path.
+    const spellings = input.roots.flatMap((r) => [r, canonicalPath(r)]);
+    if (spellings.some((root) => isWithin(importer, root) && stat.paths.includes(relative(root, importer)))) return null;
+  }
+  return found;
 }
 
 /** What the UI run recorded as never having got as far as running; empty for a result that is missing or unreadable. */

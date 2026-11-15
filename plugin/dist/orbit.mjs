@@ -33727,6 +33727,9 @@ async function dependencyManifestChanges(repoRoot, base, cand, changes) {
   }
   return out;
 }
+function isDependencyFilePath(path) {
+  return isLockfilePath(path) || manifestKind(posix4.basename(path)) !== null;
+}
 function manifestKind(name) {
   if (name === "package.json") return "package.json";
   if (name === "composer.json") return "composer.json";
@@ -37518,7 +37521,7 @@ function classifyCouldNotRun(input) {
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   };
   for (const pipe of pipes) show(pipe.line, 0);
-  for (const raw of all) {
+  for (const [index, raw] of all.entries()) {
     const line3 = raw.trim();
     const deny2 = SEATBELT_DENY.exec(line3);
     const denial = DENIAL.exec(line3);
@@ -37527,12 +37530,13 @@ function classifyCouldNotRun(input) {
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line3) : null;
     const tls = NUGET_TLS_DENIAL.exec(line3);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line3) : null;
-    const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const subject = OS_ERROR.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).length === 0 ? chainHead(all, index) : null;
+    const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside) || subject !== null && (subject.match(ABSOLUTE_PATH) ?? []).every(outside);
     const readOnlyWithoutPath = () => input.pathlessReadOnly === true && READ_ONLY2.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).length === 0;
     const candidates = [];
     if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute14(deny2[2]) && outside(deny2[2]))) candidates.push({ signal: "sandbox-violation", at: deny2.index });
-    if (denial && FS_CALL.test(line3) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: "filesystem-denied", at: denial.index });
-    if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3)) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
+    if (denial && (FS_CALL.test(line3) || subject !== null) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: "filesystem-denied", at: denial.index });
+    if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3) || subject !== null) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
     if (network) candidates.push({ signal: "network-denied", at: network.index });
     if (nuget) candidates.push({ signal: "nuget-http-denied", at: nuget.index });
     if (tls) candidates.push({ signal: "nuget-tls-denied", at: tls.index });
@@ -37545,17 +37549,57 @@ function classifyCouldNotRun(input) {
       const first = text2.split("\n", MAX_SCANNED_LINES2).find((l) => MSBUILD_INTERNAL_FAILURE.test(l));
       if (first !== void 0) show(first.replace(/\r$/, "").trim(), 0);
     }
+    if (subject !== null && (found.signal === "filesystem-denied" || found.signal === "permission-denied")) show(subject, 0);
     show(line3, found.at);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => s === "pipe-denied" ? pipeCause(pipes) : CAUSES[s]).join("; "), lines };
 }
-var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
+function chainHead(lines, at) {
+  let causedBy = false;
+  for (let i = at - 1; i >= 0 && i >= at - CHAIN_LINES; i--) {
+    const line3 = lines[i].trim();
+    if (line3 === "") continue;
+    if (/^Caused by:$/i.test(line3)) {
+      causedBy = true;
+      continue;
+    }
+    if (!causedBy) return null;
+    if ((line3.match(ABSOLUTE_PATH) ?? []).length > 0) return line3;
+  }
+  return null;
+}
+function classifyModuleNotFound(input) {
+  const text2 = stripAnsi(input.output);
+  if (showsCodeFailure(text2)) return null;
+  const lines = text2.split("\n", MAX_SCANNED_LINES2).map((raw) => raw.replace(/\r$/, "").trim());
+  for (const [i, line3] of lines.entries()) {
+    const esm = ESM_PACKAGE_NOT_FOUND.exec(line3);
+    const cjs = esm ? null : CJS_MODULE_NOT_FOUND.exec(line3);
+    const specifier = esm?.[1] ?? cjs?.[1];
+    if (specifier === void 0) continue;
+    const name = PACKAGE_SPECIFIER.exec(specifier)?.[1];
+    if (name === void 0) continue;
+    let importer = esm?.[2];
+    if (cjs && /^Require stack:$/.test(lines[i + 1] ?? "")) importer = REQUIRE_STACK_ENTRY.exec(lines[i + 2] ?? "")?.[1];
+    return {
+      checkId: input.checkId,
+      fingerprint: null,
+      signals: ["module-not-found"],
+      cause: `the package "${name}" the check imports is not installed where the check runs`,
+      lines: [excerpt(line3, esm?.index ?? cjs?.index ?? 0)],
+      module: name,
+      ...importer !== void 0 ? { importer } : {}
+    };
+  }
+  return null;
+}
+var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, OS_ERROR, CHAIN_LINES, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED, ESM_PACKAGE_NOT_FOUND, CJS_MODULE_NOT_FOUND, REQUIRE_STACK_ENTRY, PACKAGE_SPECIFIER;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
     init_fingerprint();
-    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "program-denied", "pipe-denied"]);
+    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "program-denied", "pipe-denied", "module-not-found"]);
     MAX_EVIDENCE_LINES = 3;
     MAX_LINE_CHARS = 200;
     MAX_SCANNED_LINES2 = 2e5;
@@ -37580,7 +37624,8 @@ var init_environment_failure = __esm({
       "nuget-tls-denied": "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
       "program-not-found": "a program the check runs was not found where it runs (exit 127)",
       "program-denied": 'the sandbox or the operating system refused to start a program the check runs (exit 126, "operation not permitted")',
-      "pipe-denied": "the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing"
+      "pipe-denied": "the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing",
+      "module-not-found": "a package the check imports is not installed where the check runs"
     };
     BUILD_HOST_CAUSE = "the sandbox refused the build host dotnet format loads the project with the named pipe it binds under /tmp, so nothing was formatted";
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
@@ -37595,10 +37640,12 @@ var init_environment_failure = __esm({
     READ_ONLY2 = /\bEROFS\b|read-only file system/i;
     PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
     SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
-    NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
+    NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'|\bERR_PNPM_FETCH_403\b/i;
     NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.Net\.CookieContainer' threw an exception\b/;
     NUGET_TLS_DENIAL = /\berror NU1301:\s+The SSL connection could not be established\b/;
     DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
+    OS_ERROR = /\((?:os error|errno) \d+\)\s*$/i;
+    CHAIN_LINES = 6;
     SOCKET_DENIAL = /\bSocketException \((?:1|13)\): (?:Permission denied|Operation not permitted)\b|\b(?:bind|listen|connect)\b.*(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted)|(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted).*\b(?:bind|listen|connect)\b/i;
     MSBUILD_INTERNAL_FAILURE = /\bMSBUILD : error MSB1025\b/;
     TOOL_CRASH = [MSBUILD_INTERNAL_FAILURE, /^\s*at (?:Microsoft\.Build|Microsoft\.DotNet|NuGet|Microsoft\.CodeAnalysis|Microsoft\.TestPlatform|Microsoft\.VisualStudio\.TestPlatform\.(?:CommandLine|CrossPlatEngine|Client|Common|CommunicationUtilities))\./m];
@@ -37658,6 +37705,10 @@ var init_environment_failure = __esm({
     BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessManager\b/;
     BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
     UNHANDLED = /^Unhandled exception[.:]\s/;
+    ESM_PACKAGE_NOT_FOUND = /\bCannot find package '([^']+)' imported from (\S.*?)\s*$/;
+    CJS_MODULE_NOT_FOUND = /\bCannot find module '([^']+)'\s*$/;
+    REQUIRE_STACK_ENTRY = /^-\s+(\S.*)$/;
+    PACKAGE_SPECIFIER = /^((?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*)(?:\/.*)?$/i;
   }
 });
 
@@ -44994,10 +45045,12 @@ function workerActivity(opts, w, now) {
   return t !== null && t <= now ? t : null;
 }
 function checkActivity(db, run, now) {
+  const ended = db.get("SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?", run.id)?.t ?? null;
+  const last = ended !== null && ended <= now ? [ended] : [];
   const open2 = db.all("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
-  if (open2.length === 0) return [];
+  if (open2.length === 0) return last;
   const dirs = findCheckDirs(dirname23(run.policyPath));
-  return open2.map((c) => {
+  return [...last, ...open2.map((c) => {
     const found = dirs.get(c.id);
     if (!found) return null;
     try {
@@ -45006,7 +45059,7 @@ function checkActivity(db, run, now) {
     } catch {
       return null;
     }
-  });
+  })];
 }
 function probeActivity(db, run, now) {
   const open2 = db.all("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
@@ -59113,6 +59166,11 @@ function environmentFixes(failures, platform3) {
     fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(", ")} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
     change(named2, command);
   }
+  const modules = has2("module-not-found");
+  if (modules.length > 0) {
+    const names = [...new Set(modules.flatMap((f) => f.module !== void 0 ? [f.module] : []))];
+    fixes.push(`${names.length > 0 ? `${names.map((n2) => `"${n2}"`).join(", ")} ${names.length > 1 ? "are" : "is"}` : "a package is"} not installed in the checkout the check ran in, and no change to the code installs a package: Orbit installs dependencies in every checkout from an npm lockfile or with dependencies.install_command, so read that install's log (orbit-install, beside the check's) for why the package is missing; where no install ran, set dependencies.install_command in .orbit/config.yaml to the command that installs the repository's dependencies and start a new run (docs/troubleshooting.md, "A check cannot find a package")`);
+  }
   const missing = has2("program-not-found").filter((f) => !located.includes(f));
   if (missing.length > 0) {
     const keys = missing.map((f) => command(f.checkId)).join(", ");
@@ -59144,7 +59202,8 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
     const entry = report2.checks.find((c) => c.checkId === failure.checkId);
     const exitCode = row ? row.exitCode : entry?.exitCode ?? null;
     const startFailure = row?.status === "ERROR" || entry?.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null);
+    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null) ?? // A package the check imports that no install put in the base revision's checkout (issue #166): no change touched it yet.
+    ((row ? row.status : entry?.status) === "FAILED" ? classifyModuleNotFound({ checkId: failure.checkId, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     const located = def && def.kind === "command" ? deniedProgramOf(ctx, found, def, report2.baseRevision) : null;
@@ -59460,7 +59519,7 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
     const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null);
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null) ?? (row.status === "FAILED" ? candidateModuleNotFound(result2.id, output, { candidate: cand, roots: [checkout, row.cwd], baseline: baseline ?? null, baseRevision: ctx.run.baseRevision, baseSignals: baseSignals(result2.id) }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkout);
     out.push({ ...found, ...commandOf(ctx, result2.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
@@ -59478,6 +59537,23 @@ function checksNotExecutedFor(ctx, cand, report2) {
     }
   }
   return out;
+}
+function candidateModuleNotFound(checkId, output, input) {
+  const found = classifyModuleNotFound({ checkId, output });
+  if (!found) return null;
+  if (input.baseSignals.includes("module-not-found")) return found;
+  const { baseline, candidate } = input;
+  if (!baseline || baseline.baseRevision !== input.baseRevision || !baseline.complete || !Array.isArray(baseline.checks)) return null;
+  if (!baseline.checks.some((c) => c.checkId === checkId && c.status === "PASSED") || baseline.failures.some((f) => f.checkId === checkId)) return null;
+  const stat = candidate.diffStat;
+  if (!stat || stat.truncated || stat.paths.some(isDependencyFilePath)) return null;
+  const importer = found.importer;
+  if (importer === void 0 || !isAbsolute23(importer)) return null;
+  if (!importer.split("/").includes("node_modules")) {
+    const spellings = input.roots.flatMap((r) => [r, canonicalPath(r)]);
+    if (spellings.some((root) => isWithin(importer, root) && stat.paths.includes(relative9(root, importer)))) return null;
+  }
+  return found;
 }
 function uiNotExecuted(resultPath) {
   const text2 = readCapped2(resultPath);
@@ -59507,6 +59583,7 @@ var init_environment_block = __esm({
     init_baseline_exception();
     init_profiles();
     init_util();
+    init_scope();
     init_runner2();
     init_context2();
     init_resume();

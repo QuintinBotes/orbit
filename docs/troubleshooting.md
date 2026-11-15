@@ -163,6 +163,18 @@ of these settings is the fix, `orbit doctor` prints the same note.
   command's own exit 97 does not). Anything else stays a journey failure.
   `orbit doctor` (`ui.browser-isolation`) launches Playwright's real headless
   Chromium binary through the preload, with no repository code, to check this.
+- **A check cannot find a package.** The run blocks with "the package "x" the
+  check imports is not installed where the check runs" and node's own line
+  (`Cannot find package 'x' imported from ...`), at PREFLIGHT when the base
+  revision's check died that way, or after verification with "could not execute
+  on candidate N" when the check passed on the base revision and the change
+  touched neither the importing file nor a lockfile or dependency manifest. No
+  attempt is spent on it: no change to the code installs a package. Orbit
+  installs dependencies in every checkout from an npm lockfile or with
+  `dependencies.install_command`; the install's log (`orbit-install`) is beside
+  the check's. Where nothing installs them, set `dependencies.install_command`
+  and start a new run. A missing package the change itself imports, or one
+  reported by a test runner as a failing test, goes to repair as before.
 - **A check cannot run in the sandbox.** The run blocks at PREFLIGHT with "Check X
   could not run on the base revision ..., and the output shows an environment
   cause, not a pre-existing failure", the first error line, the log and a fix
