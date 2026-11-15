@@ -235,12 +235,18 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): nu
   return t !== null && t <= now ? t : null;
 }
 
-/** When each check of the run that is still PLANNED or RUNNING last wrote its output. A hung check is bounded by its own timeout_seconds. */
+/**
+ * When each check of the run that is still PLANNED or RUNNING last wrote its output, and when the run's latest check
+ * ended: between two checks of a long baseline none is open, and the one that just ended is the evidence of life.
+ * A hung check is bounded by its own timeout_seconds.
+ */
 function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+  const ended = db.get<{ t: number | null }>('SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?', run.id)?.t ?? null;
+  const last = ended !== null && ended <= now ? [ended] : [];
   const open = db.all<{ id: string }>("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
-  if (open.length === 0) return [];
+  if (open.length === 0) return last;
   const dirs = findCheckDirs(dirname(run.policyPath));
-  return open.map((c) => {
+  return [...last, ...open.map((c) => {
     const found = dirs.get(c.id);
     if (!found) return null;
     try {
@@ -249,7 +255,7 @@ function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null
     } catch {
       return null;
     }
-  });
+  })];
 }
 
 /** When each fail-before probe of the run that is still PLANNED or RUNNING last wrote its output, or started when it has written none yet. */
