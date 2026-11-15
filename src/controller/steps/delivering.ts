@@ -31,6 +31,7 @@ import { blockOnUndecidedLedger } from '../undecided-ledger.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
+import { readIssueGoal } from '../../intake/issue.ts';
 
 export const DELIVERY_FILE = 'delivery.json';
 
@@ -248,7 +249,10 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
 
 function deliverySummary(ctx: RunContext): string {
   const ev = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id) : null;
-  return formatDeliverySummary(ctx.run.id, assertContract(ctx), ev?.report ?? null);
+  const summary = formatDeliverySummary(ctx.run.id, assertContract(ctx), ev?.report ?? null);
+  // A run started from an issue says so first, in the words GitHub reads to close the issue when the pull request merges.
+  const issue = readIssueGoal(ctx.runDir);
+  return issue ? `Closes #${issue.number}\n\n${summary}` : summary;
 }
 
 /**

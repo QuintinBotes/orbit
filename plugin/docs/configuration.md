@@ -1500,7 +1500,7 @@ addendum](decisions/0014-fail-before.md)).
 notifications:
   desktop: true               # Linux notify-send only; skipped on macOS (use the webhook)
   webhook: null               # or { url_env: ORBIT_WEBHOOK_URL }
-  github_comment: false       # comment on the run's pull request, else on remote_answers.issue
+  github_comment: false       # comment on the run's pull request, else on remote_answers.issue; and on the issue a run was started from
   remote_answers:
     enabled: false            # accept "/orbit answer <question-id> <choice>" comments
     issue: null               # an issue linked to every run started under this policy
@@ -1517,7 +1517,10 @@ a credential variable (`GH_TOKEN` and the like) is refused. The webhook must be
 `network.allowed_hosts`, and redirects are not followed. The body is JSON with
 a Slack-compatible `text` field and the payload under `orbit`. Comments and
 remote answers go through `GH_TOKEN`; with `delivery.provider: fake` they use
-`.orbit/fake-github-threads.json` instead. A run keeps the settings it started
+`.orbit/fake-github-threads.json` instead. A run started with
+`orbit run --issue` also posts its outcome on that issue when it ends, only
+with `github_comment: true`
+([operations](operations.md#running-an-issue)). A run keeps the settings it started
 with, like the rest of its policy; a run whose frozen policy no longer verifies
 notifies on the desktop only (Linux; nothing on macOS).
 

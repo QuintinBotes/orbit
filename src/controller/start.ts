@@ -21,6 +21,7 @@ import { ModelRegistry } from '../routing/registry.ts';
 import { sharedCatalogPath } from '../routing/shared-catalog.ts';
 import type { ControllerDeps } from './context.ts';
 import { createRun, type RunRecord } from './run-store.ts';
+import { writeIssueGoal, type IssueGoal } from '../intake/issue.ts';
 
 export function orbitDir(repoRoot: string): string {
   return join(repoRoot, '.orbit');
@@ -52,6 +53,8 @@ export interface StartRunInput {
   actor?: string;
   /** The release environment this run deploys to (a key of `release.environments`); checked by the intake gate. */
   environment?: string | null;
+  /** The issue the run was started from, already read and checked (intake/issue.ts); frozen with the run. */
+  issue?: IssueGoal | null;
 }
 
 export function startRun(input: StartRunInput): RunRecord {
@@ -60,7 +63,15 @@ export function startRun(input: StartRunInput): RunRecord {
   const id = input.runId ?? newRunId(clock.now());
   const runDir = join(orbitDir(repoRoot), 'runs', id);
   const snap = snapshotPolicy(input.config, { runId: id, repoRoot, runDir, clock });
-  return createRun(input.db, { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...(input.environment ? { environment: input.environment } : {}) }, clock, input.actor ?? 'cli');
+  // The issue goal is frozen beside the policy, before the run row exists: the run never reads the issue's body again.
+  const issue = input.issue ?? null;
+  if (issue) writeIssueGoal(runDir, issue);
+  return createRun(
+    input.db,
+    { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...(input.environment ? { environment: input.environment } : {}), ...(issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {}) },
+    clock,
+    input.actor ?? 'cli',
+  );
 }
 
 export interface DefaultDepsInput {

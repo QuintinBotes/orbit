@@ -13,6 +13,7 @@ import { hostAllowed } from '../policy/hosts.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 import { commentBody, payloadText, payloadTitle, type NotificationPayload } from './payload.ts';
 import { FakeThreadClient, GhThreadClient, type ThreadClient } from './threads.ts';
+import type { IssueReader } from '../intake/github.ts';
 
 export type ChannelName = 'desktop' | 'webhook' | 'github_comment';
 export const CHANNELS: readonly ChannelName[] = ['desktop', 'webhook', 'github_comment'];
@@ -43,6 +44,8 @@ export interface NotifyDeps {
   fetch: NotifyFetch;
   /** The comment client for a repository under a policy. */
   threads: (repoRoot: string, config: OrbitConfig) => Promise<ThreadClient>;
+  /** Reads the issue a run was started from once more when the run ends, to say whether it was edited; default: gh with GH_TOKEN. */
+  issues?: (repoRoot: string, config: OrbitConfig) => Promise<IssueReader>;
 }
 
 export const DESKTOP_TIMEOUT_MS = 10_000;

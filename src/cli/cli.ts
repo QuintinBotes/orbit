@@ -37,9 +37,10 @@ import { NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE, notifyTestCommand } from './com
 import { policyShowCommand } from './commands/policy.ts';
 import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
-import { RUN_OPTIONS, runCommand } from './commands/run.ts';
+import { RUN_OPTIONS, RUN_USAGE, runCommand } from './commands/run.ts';
 import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
 import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
+import { SPEC_CHECK_OPTIONS, SPEC_CHECK_USAGE, specCheckCommand } from './commands/spec.ts';
 import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
 import { TIMELINE_OPTIONS, TIMELINE_USAGE, timelineCommand } from './commands/timeline.ts';
@@ -57,7 +58,8 @@ export interface CommandDef {
 export const COMMANDS: readonly CommandDef[] = [
   { name: 'doctor', summary: 'check every capability a run depends on, with the exact missing piece for each failure', usage: 'orbit doctor [--policy <path>] [--probe] [--verbose] [--json]', options: DOCTOR_OPTIONS, run: doctorCommand },
   { name: 'init', summary: 'write .orbit/config.yaml from the starter template and keep runtime state out of git status', usage: 'orbit init', run: initCommand },
-  { name: 'run', summary: 'start a run: freeze the policy, then drive it here or hand it to the service', usage: 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--fail-before <mode>] [--policy <path>] [--foreground | --detach]', options: RUN_OPTIONS, run: runCommand },
+  { name: 'run', summary: 'start a run from a goal or a GitHub issue: freeze the policy, then drive it here or hand it to the service', usage: RUN_USAGE, options: RUN_OPTIONS, run: runCommand },
+  { name: 'spec check', summary: 'check that a Markdown file or an issue is a spec a run can start from (deterministic; no model call)', usage: SPEC_CHECK_USAGE, options: SPEC_CHECK_OPTIONS, run: specCheckCommand },
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },
   { name: 'timeline', summary: 'what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost', usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
   { name: 'logs', summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },

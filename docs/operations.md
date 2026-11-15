@@ -37,6 +37,45 @@ created and no model is called in that case; the message names the fix, and
 `orbit doctor` shows the same problems. A detached run is judged by the service's
 environment, not yours, so only the first two checks apply to it.
 
+### Running an issue
+
+`orbit run --issue 42` starts a run from an issue of this checkout's GitHub
+repository instead of a typed goal (ADR 0019). The body must be a spec in the
+Spec Kit spec template's format; `orbit spec check 42` (or `orbit spec check
+spec.md` for a file) says whether it is, without calling a model:
+
+- the headings User Scenarios & Testing, Requirements and Success Criteria;
+- for every user story a `(Priority: P1)`, `**Why this priority**:`,
+  `**Independent Test**:` and at least one Given/When/Then line;
+- requirement and criterion ids of the forms `FR-###` and `SC-###`;
+- no `[NEEDS CLARIFICATION ...]` marker.
+
+Each problem is one line that names the story, id or marker; the exit code is
+4. An issue labelled `bug` with a reproduction section ("Steps to reproduce",
+"Reproduction") needs no spec: it runs as a repair whose new test must fail on
+the base revision.
+
+A closed or locked issue, a pull request, an issue of another repository, an
+issue with an open blocking issue, and a body that is empty, over 16 000
+characters or not a spec are refused before a run exists or a model is called.
+The contract keeps one mandatory criterion per acceptance scenario, in the
+issue's wording, and records the issue number and the hash of its body. The
+run keeps the body it started with: later edits change nothing, and a second
+run of the same issue is refused while one is unfinished. A section headed
+"Implementation notes" goes to the planner as hints, apart from the spec. The
+issue text is untrusted: it describes the work and cannot change the policy,
+the checks, the scope or the budgets.
+
+The pull request of a delivered run starts with `Closes #<n>`. With
+`notifications.github_comment: true` the issue gets one comment when the run
+ends, in any terminal state: outcome, failure class, pull request, evidence
+report, spend and the status of each criterion and check, and a line saying so
+if the issue was edited during the run. With it off (the default) nothing is
+written to the issue and the same text is in `issue-comment.md` in the run
+directory. `orbit run --issue` and `orbit spec check` read the issue through
+`gh` with your own login or `GH_TOKEN`; the service reads and comments with
+`GH_TOKEN` only.
+
 A foreground run exits with a code that names the state it ended in: 0
 `SUCCEEDED`, 10 `BLOCKED`, 11 `EXHAUSTED`, 12 `IMPOSSIBLE`, 13 `CANCELLED`, 20
 paused. `orbit help exit-codes` prints the whole table.
@@ -111,7 +150,8 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 |---|---|
 | `orbit doctor` | `--probe` makes live requests (a few cents) |
 | `orbit init` | none |
-| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
+| `orbit run` | `--goal <text>` (or `-` for stdin) or `--issue <number \| #number \| owner/repo#number \| url>` (see [Running an issue](#running-an-issue)), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
+| `orbit spec check <file \| issue>` | `--policy <path>` (read only to find the repository of an issue), `--json` |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
