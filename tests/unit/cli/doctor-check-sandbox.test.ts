@@ -119,6 +119,14 @@ describe('checkSandboxCheck', () => {
     expect(silent.details).toEqual(['lint: "acme-lint --version" timed out in the sandbox, with no sandbox denial in its output']);
   });
 
+  it('counts a read-only file system refusal that names no path: the probe may write everything of its own (uutils mkdir on Ubuntu 26.04)', async () => {
+    const w = world(['acme-tool']);
+    const launch: ProbeLaunch = async () => ({ exitCode: 1, output: 'mkdir: Read-only file system\n' });
+    const c = await checkSandboxCheck({ config: config([{ id: 'build', command: ['acme-tool'], mandatory: true }]), repo: w.repo, provider: srtLike().provider, available: true, env: w.env, homeDir: w.home, launch });
+    expect(c.status).toBe('fail');
+    expect(c.details).toEqual([`build: "acme-tool --version" was refused in the sandbox: the sandbox or the operating system refused a filesystem operation outside the check's checkout (EPERM, "operation not permitted", or EROFS, "read-only file system") ("mkdir: Read-only file system")`]);
+  });
+
   it('starts nothing of the repository, nothing it cannot find, and no shell builtin', async () => {
     const w = world([]);
     const seen: string[][] = [];

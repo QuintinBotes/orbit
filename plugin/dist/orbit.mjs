@@ -37281,9 +37281,10 @@ function classifyCouldNotRun(input) {
     const tls = NUGET_TLS_DENIAL.exec(line3);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line3) : null;
     const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const readOnlyWithoutPath = () => input.pathlessReadOnly === true && READ_ONLY2.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).length === 0;
     const candidates = [];
     if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute14(deny2[2]) && outside(deny2[2]))) candidates.push({ signal: "sandbox-violation", at: deny2.index });
-    if (denial && FS_CALL.test(line3) && pathOutside()) candidates.push({ signal: "filesystem-denied", at: denial.index });
+    if (denial && FS_CALL.test(line3) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: "filesystem-denied", at: denial.index });
     if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3)) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
     if (network) candidates.push({ signal: "network-denied", at: network.index });
     if (nuget) candidates.push({ signal: "nuget-http-denied", at: nuget.index });
@@ -37302,7 +37303,7 @@ function classifyCouldNotRun(input) {
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => s === "pipe-denied" ? pipeCause(pipes) : CAUSES[s]).join("; "), lines };
 }
-var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
+var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
@@ -37344,6 +37345,7 @@ var init_environment_failure = __esm({
     FS_CALL = /\b(?:mkdir|mkdtemp|mkstemp|open|openat|creat|rename|unlink|rmdir|chmod|chown|lchown|symlink|link|copyfile|clonefile|scandir|opendir|access|stat|lstat|utimes?|truncate|shm_open|sem_open|realpath|readlink|mkfifo|bind|connect|touch|cp|mv|rm|ln|PermissionError|IOException|errno)\b/i;
     LISTEN_CALL = /\blisten\b/i;
     DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
+    READ_ONLY2 = /\bEROFS\b|read-only file system/i;
     PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
     SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
     NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
@@ -68934,7 +68936,9 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
       const cause = `${nodes.reason}, and the build failed (${ended}) with no record of which node was refused`;
       return { kind: "refused", detail: `"${shown3}" was refused in the sandbox: ${cause}`, failure: { checkId: check.id, fingerprint: null, signals: ["sandbox-violation"], cause, lines: [oneLine(output, 160)] }, msbuild: nodeFix };
     }
-    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []] }) ?? classifyProgramNotFound({ checkId: check.id, command: [exe, ...args], shell: false, exitCode: r.exitCode, output });
+    const failure = classifyNotExecuted({ checkId: check.id, output }) ?? // Everything the probe may write is its own scratch, so a read-only file system refusal that names no path
+    // (uutils `mkdir` on Ubuntu 26.04: "mkdir: Read-only file system") was outside it as well.
+    classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...tmp ? [tmp] : []], pathlessReadOnly: true }) ?? classifyProgramNotFound({ checkId: check.id, command: [exe, ...args], shell: false, exitCode: r.exitCode, output });
     if (failure) return { kind: "refused", failure, detail: `"${shown3}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ""}` };
     if (project) {
       const cause = `the generated project did not build (${ended})`;

@@ -53,6 +53,26 @@ jobs:
           sudo apt-get install -y -qq bubblewrap socat ripgrep
           # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bubblewrap needs them.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Ubuntu 26.04 also confines bubblewrap itself (the bwrap-userns-restrict profile), so the user namespace
+          # Claude Code's sandbox makes inside it may not write /proc/self/setgroups ("apply-seccomp: ... nested userns
+          # is capability-restricted"). Unload that profile and the policy behind it; a no-op on images without them.
+          for p in bwrap-userns-restrict unprivileged_userns; do
+            if [ -f /etc/apparmor.d/$p ]; then sudo ln -sf /etc/apparmor.d/$p /etc/apparmor.d/disable/ && sudo apparmor_parser -R /etc/apparmor.d/$p || true; fi
+          done
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_apparmor_policy=0 || true
+
+      # The runner images of 11 November 2026 added .NET SDK 11.0.100, which builds through the MSBuild server by default.
+      # The check sandbox refuses the server's named pipe under /tmp, so every .NET check under srt fails there. Until
+      # Orbit handles SDK 11, the tests run on the newest earlier SDK the image has, as they did before that image.
+      - name: Keep .NET on the newest SDK before 11 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          command -v dotnet >/dev/null || exit 0
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          dotnet --list-sdks
+          sudo rm -rf "$root"/sdk/11.*
+          dotnet --version
 
       - name: Playwright's Chromium
         run: npx playwright install --with-deps chromium

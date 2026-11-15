@@ -242,7 +242,9 @@ async function probe(input: CheckSandboxInput & { provider: IsolationProvider },
     // The sandbox refusing to start the executable itself (exit 126, "Operation not permitted") is a denial too.
     const failure =
       classifyNotExecuted({ checkId: check.id, output }) ??
-      classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...(tmp ? [tmp] : [])] }) ??
+      // Everything the probe may write is its own scratch, so a read-only file system refusal that names no path
+      // (uutils `mkdir` on Ubuntu 26.04: "mkdir: Read-only file system") was outside it as well.
+      classifyCouldNotRun({ checkId: check.id, output, insideRoots: [scratch, ...(tmp ? [tmp] : [])], pathlessReadOnly: true }) ??
       classifyProgramNotFound({ checkId: check.id, command: [exe, ...args], shell: false, exitCode: r.exitCode, output });
     if (failure) return { kind: 'refused', failure, detail: `"${shown}" was refused in the sandbox: ${failure.cause}${failure.lines[0] ? ` (${JSON.stringify(failure.lines[0])})` : ''}` };
     // A generated project builds offline from the toolchain alone, so its failure is the sandbox's or the installation's.
