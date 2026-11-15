@@ -548,25 +548,37 @@ the repository: a missing target or the code's failure, as before. A test file
 that cannot import is reported by its runner as a failing test, and stays the
 code's.
 
-The text shows that the package is absent, not whose doing that is: a change
-can import a package nothing declares, which is why #137 did not classify from
-the text. So the signal is base-gated like the others this decision added, and
-counts:
+The text shows that the package is absent, not whose doing that is: the
+repository's own code can import a package nothing declares, on the base
+revision or in a change, which is why #137 did not classify from the text. So
+the signal is base-gated like the others this decision added, and it counts
+only when the records show the checkout was not provisioned:
 
-- on the base revision, which no change has touched: the run ends `BLOCKED` at
-  PREFLIGHT, naming the package and `dependencies.install_command`;
-- on a candidate, when the same check showed it on the base revision, or when
-  the records show the change did not bring it: the baseline of this base
-  revision is complete and the check passed there; the file that imported the
-  package is not one the change touches (a file under `node_modules`, or
-  outside the checkout, never is; an importer the runtime did not name is not
-  shown to be); and the change touches no lockfile or dependency manifest. The
-  run then ends `BLOCKED` with `verification.environment-failure`, and no
-  diagnosis or repair is started.
+- on the base revision, when no dependency install ran and passed in its
+  checkout (the baseline's `install` is skipped or failed): the run ends
+  `BLOCKED` at PREFLIGHT, naming the package and
+  `dependencies.install_command`. Where the install passed and the package is
+  still missing, the base revision's own code imports what it does not declare:
+  a pre-existing failure, which keeps its baseline-exception question;
+- on a candidate, when the same check showed the same missing module on the
+  base revision, or when the check passed on the base revision in a checkout
+  where the install ran and passed and no install passed in the checkout the
+  candidate's check ran in. The run then ends `BLOCKED` with
+  `verification.environment-failure`, and no diagnosis or repair is started.
 
-Anything else goes to repair, as before. Only node's two loaders are read.
-Python's `ModuleNotFoundError: No module named 'x'` is left out: it does not
-tell a package from a module of the repository.
+Anything else goes to repair: a check that passed on the base revision in a
+checkout prepared the same way and now misses a module is the change's until
+shown otherwise. The file that imported the package is not read as evidence. A
+review of the first version of this addendum found it was: a file under
+`node_modules`, or a checkout file the change does not list, counted as "not
+the change's", though a change that configures a tool plugin it never added, or
+whose source compiles to untracked output, produces exactly those importers.
+
+Only node's two loaders are read, and only a bare name or a scoped name: an
+unscoped name with a subpath (`src/x`), `~/x` and `@/x` read like a bundler's
+or a tsconfig's path alias, which the text cannot tell from a package. Python's
+`ModuleNotFoundError: No module named 'x'` is left out: it does not tell a
+package from a module of the repository.
 
 Two refusals of a dependency fetch are read as well, both as signals that
 already existed. cargo prints the path it was refused at the head of its error

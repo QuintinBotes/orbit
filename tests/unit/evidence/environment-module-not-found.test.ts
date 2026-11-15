@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_GATED_SIGNALS, classifyCouldNotRun, classifyModuleNotFound } from '../../../src/evidence/environment-failure.ts';
+import { classifyCandidateModuleNotFound, classifyCouldNotRun, classifyModuleNotFound } from '../../../src/evidence/environment-failure.ts';
 import { classifyProgramNotFound } from '../../../src/evidence/check-misconfigured.ts';
 
 // Issue #166, FR-003: the environment-failure classifier covers a missing module, a missing toolchain and a package
@@ -52,10 +52,18 @@ describe('classifyModuleNotFound: a package the check imports is not installed w
     expect(classifyModuleNotFound({ checkId: 'dist-check', output: CJS_PACKAGE })).toMatchObject({ signals: ['module-not-found'], module: 'esbuild', importer: `${CHECKOUT}/scripts/build.cjs` });
   });
 
-  it('names a scoped package and a subpath by the package', () => {
+  it('names a scoped package, with or without a subpath, by the package', () => {
     const output = `Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@acme/tool' imported from ${CHECKOUT}/scripts/build.mjs\n`;
     expect(classifyModuleNotFound({ checkId: 'build', output })).toMatchObject({ module: '@acme/tool' });
-    expect(classifyModuleNotFound({ checkId: 'build', output: "Error: Cannot find module 'yaml/util'\nRequire stack:\n- /x/run.cjs\n" })).toMatchObject({ module: 'yaml', importer: '/x/run.cjs' });
+    expect(classifyModuleNotFound({ checkId: 'build', output: "Error: Cannot find module '@acme/tool/util'\nRequire stack:\n- /x/run.cjs\n" })).toMatchObject({ module: '@acme/tool', importer: '/x/run.cjs' });
+  });
+
+  // A bundler or tsconfig alias reads like a package to the loader that was not told about it: src/x, ~/x, @/x.
+  it('does not take a path alias for a package', () => {
+    for (const specifier of ['src/x', 'lib/util/format', '~/x', '~x', '@/x', '@/components/button']) {
+      expect(classifyModuleNotFound({ checkId: 'build', output: `Error: Cannot find module '${specifier}'\nRequire stack:\n- /x/run.cjs\n` }), specifier).toBeNull();
+      expect(classifyModuleNotFound({ checkId: 'build', output: `Error [ERR_MODULE_NOT_FOUND]: Cannot find package '${specifier}' imported from /x/run.mjs\n` }), specifier).toBeNull();
+    }
   });
 
   it('leaves a missing file of the repository to the code: only a package name is the environment\'s', () => {
@@ -80,8 +88,48 @@ describe('classifyModuleNotFound: a package the check imports is not installed w
     expect(classifyModuleNotFound({ checkId: 'build', output: '' })).toBeNull();
   });
 
-  it('counts on a candidate only with the base revision or the caller\'s own evidence: the signal is base-gated', () => {
-    expect(BASE_GATED_SIGNALS.has('module-not-found')).toBe(true);
+});
+
+describe('classifyCandidateModuleNotFound: on a candidate a missing package is the change\'s until shown otherwise', () => {
+  const PASSED_AND_INSTALLED = { passed: true, installed: true };
+  const input = (over: Partial<Parameters<typeof classifyCandidateModuleNotFound>[0]> = {}): Parameters<typeof classifyCandidateModuleNotFound>[0] => ({ checkId: 'dist-check', output: ESM_PACKAGE, baseSignals: [], base: PASSED_AND_INSTALLED, installed: false, ...over });
+
+  it('is an environment failure when the base revision passed with its install and no install passed in the candidate\'s checkout', () => {
+    expect(classifyCandidateModuleNotFound(input())).toMatchObject({ signals: ['module-not-found'], module: 'esbuild' });
+  });
+
+  it('is an environment failure when the same check showed the same missing module on the base revision', () => {
+    expect(classifyCandidateModuleNotFound(input({ baseSignals: ['module-not-found'], base: null, installed: true }))).toMatchObject({ signals: ['module-not-found'] });
+    // Another environment signal of the base revision says nothing about a module.
+    expect(classifyCandidateModuleNotFound(input({ baseSignals: ['network-denied'], installed: true }))).toBeNull();
+  });
+
+  // The two shapes a review found the first rule let through: with the checkout provisioned, neither shows the environment.
+  it('stays the change\'s when the install passed in its checkout and the importer is a file under node_modules (a tool plugin the change configured)', () => {
+    const output = `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'eslint-plugin-acme' imported from ${CHECKOUT}/node_modules/eslint/lib/config.js\n`;
+    expect(classifyModuleNotFound({ checkId: 'lint', output })).not.toBeNull();
+    expect(classifyCandidateModuleNotFound(input({ checkId: 'lint', output, installed: true }))).toBeNull();
+  });
+
+  it('stays the change\'s when the install passed in its checkout and the importer is a file the change does not list (untracked output compiled from changed source)', () => {
+    const output = `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'left-pad' imported from ${CHECKOUT}/dist/main.js\n`;
+    expect(classifyModuleNotFound({ checkId: 'build', output })).not.toBeNull();
+    expect(classifyCandidateModuleNotFound(input({ checkId: 'build', output, installed: true }))).toBeNull();
+  });
+
+  // Each gate on its own: the classification holds only with all of them.
+  it.each([
+    ['no complete baseline of the candidate\'s base revision', { base: null }],
+    ['the check did not pass on the base revision', { base: { passed: false, installed: true } }],
+    ['no install ran or passed on the base revision, so the base check never needed one', { base: { passed: true, installed: false } }],
+    ['an install passed in the candidate\'s checkout', { installed: true }],
+  ] as const)('goes to repair when %s', (_why, over) => {
+    expect(classifyCandidateModuleNotFound(input(over))).toBeNull();
+  });
+
+  it('is nothing without node\'s report of a missing package, whatever the records say', () => {
+    expect(classifyCandidateModuleNotFound(input({ output: 'Error: boom\n' }))).toBeNull();
+    expect(classifyCandidateModuleNotFound(input({ output: `${ESM_PACKAGE}\nnot ok 1 - tests/build.test.mjs\n` }))).toBeNull();
   });
 });
 

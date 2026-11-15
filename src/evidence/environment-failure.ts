@@ -60,8 +60,8 @@ export type EnvironmentSignal =
  * failure for the repair loop. `pipe-denied` is gated although the runner writes the note it is read from: the note
  * relays MSBuild's crash report from the check's own temp directory, about a node the repository's projects or tests
  * made MSBuild start, and it is the same refusal `socket-denied` reads from `dotnet test`'s MSB1025, so both get one rule.
- * `module-not-found` is gated too: a change can import a package nothing declares. Its caller may count it on other
- * evidence that the change did not bring it (controller/environment-block.ts candidateModuleNotFound).
+ * `module-not-found` is gated too: a change can import a package nothing declares. It also counts when the records
+ * show the candidate's checkout was not provisioned (classifyCandidateModuleNotFound).
  */
 export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'program-denied', 'pipe-denied', 'module-not-found']);
 
@@ -620,8 +620,12 @@ const ESM_PACKAGE_NOT_FOUND = /\bCannot find package '([^']+)' imported from (\S
 // node's CommonJS loader: "Error: Cannot find module 'esbuild'", then "Require stack:" and "- /x/scripts/build.cjs".
 const CJS_MODULE_NOT_FOUND = /\bCannot find module '([^']+)'\s*$/;
 const REQUIRE_STACK_ENTRY = /^-\s+(\S.*)$/;
-/** A package specifier: a name, or a scope and a name, then any subpath. A path, a URL or a `#` import is not one. */
-const PACKAGE_SPECIFIER = /^((?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*)(?:\/.*)?$/i;
+/**
+ * A package specifier: a bare name, or a scope and a name with any subpath. A path, a URL or a `#` import is not one,
+ * and neither is what reads like a path alias of a bundler or a tsconfig, which the loader was never told about:
+ * `~/x`, `@/x`, and an unscoped name with a subpath (`src/x`), which the text cannot tell from a package's subpath.
+ */
+const PACKAGE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/[a-z0-9][\w.~-]*)(?:\/.*)?$|^([a-z0-9][\w.~-]*)$/i;
 
 /**
  * The environment cause of a check that died because a package it imports is not installed where it runs, or null
@@ -635,11 +639,11 @@ const PACKAGE_SPECIFIER = /^((?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*)(?:\/.*)
  * - and no sign that the repository's code was compiled or tested and failed (showsCodeFailure): a test file that
  *   cannot import is reported by its runner as a failing test, and stays the code's.
  *
- * That shows the package is absent, not whose doing that is: a change can import a package nothing declares. So the
- * signal is one of BASE_GATED_SIGNALS. PREFLIGHT counts it on the base revision, which no change has touched; on a
- * candidate the caller counts it only with evidence that the change did not bring it (the check passed on the base
- * revision, the importing file is not the change's, and the change touches no dependency manifest:
- * controller/environment-block.ts candidateModuleNotFound).
+ * That shows the package is absent, not whose doing that is: the repository's own code can import a package nothing
+ * declares, on the base revision or in a change. So the signal is one of BASE_GATED_SIGNALS, and each caller needs
+ * the records to show that the checkout was not provisioned: PREFLIGHT counts it only when no dependency install ran
+ * and passed in the base revision's checkout (controller/environment-block.ts), a candidate through
+ * classifyCandidateModuleNotFound.
  */
 export function classifyModuleNotFound(input: ModuleNotFoundInput): EnvironmentFailure | null {
   const text = stripAnsi(input.output);
@@ -650,7 +654,8 @@ export function classifyModuleNotFound(input: ModuleNotFoundInput): EnvironmentF
     const cjs = esm ? null : CJS_MODULE_NOT_FOUND.exec(line);
     const specifier = esm?.[1] ?? cjs?.[1];
     if (specifier === undefined) continue;
-    const name = PACKAGE_SPECIFIER.exec(specifier)?.[1];
+    const named = PACKAGE_SPECIFIER.exec(specifier);
+    const name = named?.[1] ?? named?.[2];
     if (name === undefined) continue;
     let importer = esm?.[2];
     if (cjs && /^Require stack:$/.test(lines[i + 1] ?? '')) importer = REQUIRE_STACK_ENTRY.exec(lines[i + 2] ?? '')?.[1];
@@ -665,4 +670,37 @@ export function classifyModuleNotFound(input: ModuleNotFoundInput): EnvironmentF
     };
   }
   return null;
+}
+
+export interface CandidateModuleNotFoundInput extends ModuleNotFoundInput {
+  /** The environment signals the same check showed on the base revision (its baseline failure's classification). */
+  baseSignals: readonly EnvironmentSignal[];
+  /**
+   * The same check on the base revision, from a complete baseline of the candidate's base revision: whether it passed
+   * there, and whether a dependency install ran and passed in that checkout. Null when there is no such baseline.
+   */
+  base: { passed: boolean; installed: boolean } | null;
+  /** Whether a dependency install passed in the checkout the candidate's check ran in. */
+  installed: boolean;
+}
+
+/**
+ * A candidate's check that died importing a package that is not installed in its checkout (classifyModuleNotFound),
+ * when the records show the environment and not the change (issue #166, User Story 2). A check that passed on the base
+ * revision in a checkout prepared the same way and now misses a module is the change's until shown otherwise: a change
+ * can import a package it never added, from its own file, from output compiled from it, or through a tool it
+ * configured, whose importer is then a file under node_modules. So the importer is not read. It counts only when:
+ *
+ * - the same check showed the same missing module on the base revision; or
+ * - the candidate's checkout was demonstrably not provisioned: the check passed on the base revision in a checkout
+ *   where the dependency install ran and passed, and no install passed in the checkout the candidate's check ran in.
+ *
+ * Anything else goes to repair.
+ */
+export function classifyCandidateModuleNotFound(input: CandidateModuleNotFoundInput): EnvironmentFailure | null {
+  const found = classifyModuleNotFound({ checkId: input.checkId, output: input.output });
+  if (!found) return null;
+  if (input.baseSignals.includes('module-not-found')) return found;
+  if (input.base === null || !input.base.passed || !input.base.installed || input.installed) return null;
+  return found;
 }

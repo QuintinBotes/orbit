@@ -265,11 +265,6 @@ async function dependencyManifestChanges(repoRoot: string, base: string, cand: s
   return out;
 }
 
-/** Whether `path` is a file that declares or pins dependencies: a lockfile, or a manifest the scope inspection reads (dependency_manifest_changed). */
-export function isDependencyFilePath(path: string): boolean {
-  return isLockfilePath(path) || manifestKind(posix.basename(path)) !== null;
-}
-
 type ManifestKind = 'package.json' | 'composer.json' | 'deno.json' | 'toml' | 'whole';
 
 function manifestKind(name: string): ManifestKind | null {

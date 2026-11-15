@@ -33727,9 +33727,6 @@ async function dependencyManifestChanges(repoRoot, base, cand, changes) {
   }
   return out;
 }
-function isDependencyFilePath(path) {
-  return isLockfilePath(path) || manifestKind(posix4.basename(path)) !== null;
-}
 function manifestKind(name) {
   if (name === "package.json") return "package.json";
   if (name === "composer.json") return "composer.json";
@@ -37578,7 +37575,8 @@ function classifyModuleNotFound(input) {
     const cjs = esm ? null : CJS_MODULE_NOT_FOUND.exec(line3);
     const specifier = esm?.[1] ?? cjs?.[1];
     if (specifier === void 0) continue;
-    const name = PACKAGE_SPECIFIER.exec(specifier)?.[1];
+    const named2 = PACKAGE_SPECIFIER.exec(specifier);
+    const name = named2?.[1] ?? named2?.[2];
     if (name === void 0) continue;
     let importer = esm?.[2];
     if (cjs && /^Require stack:$/.test(lines[i + 1] ?? "")) importer = REQUIRE_STACK_ENTRY.exec(lines[i + 2] ?? "")?.[1];
@@ -37593,6 +37591,13 @@ function classifyModuleNotFound(input) {
     };
   }
   return null;
+}
+function classifyCandidateModuleNotFound(input) {
+  const found = classifyModuleNotFound({ checkId: input.checkId, output: input.output });
+  if (!found) return null;
+  if (input.baseSignals.includes("module-not-found")) return found;
+  if (input.base === null || !input.base.passed || !input.base.installed || input.installed) return null;
+  return found;
 }
 var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, OS_ERROR, CHAIN_LINES, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED, ESM_PACKAGE_NOT_FOUND, CJS_MODULE_NOT_FOUND, REQUIRE_STACK_ENTRY, PACKAGE_SPECIFIER;
 var init_environment_failure = __esm({
@@ -37708,7 +37713,7 @@ var init_environment_failure = __esm({
     ESM_PACKAGE_NOT_FOUND = /\bCannot find package '([^']+)' imported from (\S.*?)\s*$/;
     CJS_MODULE_NOT_FOUND = /\bCannot find module '([^']+)'\s*$/;
     REQUIRE_STACK_ENTRY = /^-\s+(\S.*)$/;
-    PACKAGE_SPECIFIER = /^((?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*)(?:\/.*)?$/i;
+    PACKAGE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/[a-z0-9][\w.~-]*)(?:\/.*)?$|^([a-z0-9][\w.~-]*)$/i;
   }
 });
 
@@ -59202,8 +59207,10 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
     const entry = report2.checks.find((c) => c.checkId === failure.checkId);
     const exitCode = row ? row.exitCode : entry?.exitCode ?? null;
     const startFailure = row?.status === "ERROR" || entry?.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null) ?? // A package the check imports that no install put in the base revision's checkout (issue #166): no change touched it yet.
-    ((row ? row.status : entry?.status) === "FAILED" ? classifyModuleNotFound({ checkId: failure.checkId, output }) : null);
+    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null) ?? // A package the check imports, in a checkout no dependency install ran and passed in (issue #166). Where the install
+    // passed and the package is still missing, the base revision's own code imports what it does not declare: a
+    // pre-existing failure, which keeps its baseline-exception question.
+    ((row ? row.status : entry?.status) === "FAILED" && (report2.install?.skipped !== false || report2.install.ok !== true) ? classifyModuleNotFound({ checkId: failure.checkId, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     const located = def && def.kind === "command" ? deniedProgramOf(ctx, found, def, report2.baseRevision) : null;
@@ -59512,6 +59519,9 @@ function checksNotExecutedFor(ctx, cand, report2) {
     return f?.classification === "environment" ? f.signals ?? [] : [];
   };
   const checkout = join56(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const complete2 = baseline && baseline.baseRevision === ctx.run.baseRevision && baseline.complete === true && Array.isArray(baseline.checks) ? baseline : null;
+  const baseCheck2 = (checkId) => complete2 ? { passed: complete2.checks.some((c) => c.checkId === checkId && c.status === "PASSED") && !baseFailures.some((f) => f.checkId === checkId), installed: complete2.install?.skipped === false && complete2.install.ok === true } : null;
+  const installedIn = (cwd) => listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: INSTALL_CHECK_ID }).some((r) => r.status === "PASSED" && r.cwd === cwd);
   for (const result2 of report2.checks) {
     if (!mandatory.has(result2.id) || result2.status !== "FAILED" && result2.status !== "ERROR") continue;
     const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: result2.id, rootsOnly: true }).at(-1);
@@ -59519,7 +59529,8 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
     const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null) ?? (row.status === "FAILED" ? candidateModuleNotFound(result2.id, output, { candidate: cand, roots: [checkout, row.cwd], baseline: baseline ?? null, baseRevision: ctx.run.baseRevision, baseSignals: baseSignals(result2.id) }) : null);
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null) ?? // A package that is not installed in the checkout: the change's, unless the records show the checkout was not provisioned (issue #166).
+    (row.status === "FAILED" ? classifyCandidateModuleNotFound({ checkId: result2.id, output, baseSignals: baseSignals(result2.id), base: baseCheck2(result2.id), installed: installedIn(row.cwd) }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkout);
     out.push({ ...found, ...commandOf(ctx, result2.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
@@ -59537,23 +59548,6 @@ function checksNotExecutedFor(ctx, cand, report2) {
     }
   }
   return out;
-}
-function candidateModuleNotFound(checkId, output, input) {
-  const found = classifyModuleNotFound({ checkId, output });
-  if (!found) return null;
-  if (input.baseSignals.includes("module-not-found")) return found;
-  const { baseline, candidate } = input;
-  if (!baseline || baseline.baseRevision !== input.baseRevision || !baseline.complete || !Array.isArray(baseline.checks)) return null;
-  if (!baseline.checks.some((c) => c.checkId === checkId && c.status === "PASSED") || baseline.failures.some((f) => f.checkId === checkId)) return null;
-  const stat = candidate.diffStat;
-  if (!stat || stat.truncated || stat.paths.some(isDependencyFilePath)) return null;
-  const importer = found.importer;
-  if (importer === void 0 || !isAbsolute23(importer)) return null;
-  if (!importer.split("/").includes("node_modules")) {
-    const spellings = input.roots.flatMap((r) => [r, canonicalPath(r)]);
-    if (spellings.some((root) => isWithin(importer, root) && stat.paths.includes(relative9(root, importer)))) return null;
-  }
-  return found;
 }
 function uiNotExecuted(resultPath) {
   const text2 = readCapped2(resultPath);
@@ -59579,11 +59573,11 @@ var init_environment_block = __esm({
     init_dotnet_format();
     init_environment_failure();
     init_git();
+    init_runner();
     init_store();
     init_baseline_exception();
     init_profiles();
     init_util();
-    init_scope();
     init_runner2();
     init_context2();
     init_resume();
