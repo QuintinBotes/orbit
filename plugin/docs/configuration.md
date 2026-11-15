@@ -232,6 +232,16 @@ the repository use (`proxy.golang.org`, `sum.golang.org`; `index.crates.io`,
 the Gradle portal; `api.nuget.org`). It is the only step that may write the
 repository's toolchain caches; see [Toolchain caches](#toolchain-caches-and-build-state).
 
+The same install runs at PREFLIGHT in the implementer's worktree, so workers
+can run the checks there; workers cannot install packages themselves. It is
+not evidence for any candidate, and a failure there is a decision in the
+report, never a block. It runs only when `git status` shows the worktree
+clean, and what it leaves that git does not ignore (including output hidden by
+an edited `.gitignore`, which is restored) is removed, so it cannot enter a
+candidate: ignore the install's output (`node_modules/`, `.venv/`) in a
+committed `.gitignore` for workers to get it. Parallel work units' worktrees
+get no install.
+
 `dependencies.audit` is the vulnerability and license policy of the baseline
 and dependency gates (npm lockfiles). When enabled, `npm audit --json
 --package-lock-only` runs inside isolation (registry network only, no
