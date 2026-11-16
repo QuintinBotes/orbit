@@ -333,7 +333,8 @@ change, say) are listed once under that reason.
 
 ### stats and gc
 
-`orbit stats` prints success rate, cost, token and cache use, repair loops and
+`orbit stats` prints success rate, cost, token and cache use, the pass rate and
+cost per accepted task of each route, repair loops and
 time to green for this repository, read-only. It also says why runs ended: a
 count per failure class (`failure_classes` in `--json`), and pass rate and
 spend per accepted task per Orbit version (`by_version`). Every run that ends

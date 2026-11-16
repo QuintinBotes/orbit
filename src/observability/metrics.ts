@@ -3,7 +3,9 @@
  * created inside a time window: verified pass rate, false-pass rate from
  * subsequent review, escalation quality, duplicate failures, time-to-green,
  * spend per accepted task, token and cache usage, concurrency overhead,
- * stale-evidence prevention and UI defects discovered.
+ * stale-evidence prevention and UI defects discovered, and for each route (a
+ * model doing one kind of work at one difficulty class) its measured pass rate
+ * and cost per accepted task, from the route outcomes of those runs.
  *
  * Rules that hold everywhere:
  *  - A rate with an empty denominator is null, never zero.
@@ -17,6 +19,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import { inputIncludesCacheRead } from '../routing/pricing.ts';
 import { roundUsd } from '../routing/pricing.ts';
 import { FAILURE_CLASSES, isFailureClass } from '../controller/failure-class.ts';
+import { ROUTE_OUTCOME_NOT_THE_ROUTES } from '../routing/usage.ts';
 import { UNKNOWN_ORBIT_VERSION } from '../controller/run-store.ts';
 
 export interface MetricsWindow {
@@ -122,8 +125,43 @@ export interface Metrics {
   };
   stale_evidence_prevented: { evidence_invalidated: number; reviews_invalidated: number; deliveries_refused: number; total: number };
   ui_defects: { discovered: number; runs_with_ui_defects: number };
+  /** One entry per route with a recorded outcome, in a stable order (issue #168). */
+  routes: RouteMetric[];
   /** Measurements these records could not provide, in words. */
   missing: string[];
+}
+
+/**
+ * The measured outcomes of one route: the attempts of one role on one model, for one kind of work at one difficulty
+ * class. These are the rows routing.learning reads; `orbit stats` shows them so a displaced route can be checked.
+ */
+export interface RouteMetric {
+  work_kind: string;
+  /** null for outcomes recorded without a difficulty class. */
+  difficulty: string | null;
+  role: string | null;
+  provider: string;
+  model: string;
+  /** Efforts the outcomes ran at, in order. */
+  efforts: string[];
+  outcomes: number;
+  runs: number;
+  verified: number;
+  failed: number;
+  rejected: number;
+  /** Outcomes not judged on the work itself: error, cancelled, and a failure or refusal in a run that ended for an environment or misconfigured-check cause. Never part of the pass rate. */
+  excluded: number;
+  /** verified over verified + failed + rejected; null with no judged outcome. */
+  pass_rate: Rate;
+  /** Sum of the known costs of every outcome of the route, failed attempts included. */
+  cost_usd: number;
+  /** Outcomes whose cost is not known. They are not counted as zero: with any, there is no cost per accepted task. */
+  unmeasured_outcomes: number;
+  cost_complete: boolean;
+  /** cost_usd over verified; null with no verified outcome or an unmeasured one. */
+  cost_per_accepted_usd: number | null;
+  first_ts: number;
+  last_ts: number;
 }
 
 export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
@@ -200,6 +238,7 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
     concurrency_overhead: overhead,
     stale_evidence_prevented: { evidence_invalidated: evidenceInvalidated, reviews_invalidated: reviewsInvalidated, deliveries_refused: deliveriesRefused, total: evidenceInvalidated + reviewsInvalidated + deliveriesRefused },
     ui_defects: { discovered: ui.discovered, runs_with_ui_defects: ui.runs },
+    routes: routeMetrics(db, inWindow, params, missing),
     missing,
   };
 }
@@ -284,6 +323,65 @@ function byVersion(db: OrbitDb, runs: RunRow[]): VersionMetrics[] {
         failure_classes: classes,
       };
     });
+}
+
+function routeMetrics(db: OrbitDb, inWindow: string, params: Param[], missing: string[]): RouteMetric[] {
+  const rows = db.all<{
+    work_kind: string;
+    difficulty: string | null;
+    role: string | null;
+    provider: string;
+    model_id: string;
+    efforts: string | null;
+    outcomes: number;
+    runs: number;
+    verified: number;
+    failed: number;
+    rejected: number;
+    excluded: number;
+    cost: number | null;
+    cost_samples: number;
+    first_ts: number;
+    last_ts: number;
+  }>(
+    `SELECT work_kind, difficulty, role, provider, model_id, GROUP_CONCAT(DISTINCT effort) AS efforts, COUNT(*) AS outcomes, COUNT(DISTINCT run_id) AS runs,
+            COALESCE(SUM(outcome = 'verified'), 0) AS verified, COALESCE(SUM(outcome = 'failed' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS failed,
+            COALESCE(SUM(outcome = 'rejected' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS rejected,
+            COALESCE(SUM(outcome NOT IN ('verified', 'failed', 'rejected') OR ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS excluded,
+            SUM(cost_usd) AS cost, COUNT(cost_usd) AS cost_samples, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+       FROM route_outcomes WHERE ${inWindow}
+      GROUP BY work_kind, difficulty, role, provider, model_id
+      ORDER BY work_kind, difficulty, role, provider, model_id`,
+    ...params,
+  );
+  const out = rows.map((r): RouteMetric => {
+    const unmeasured = r.outcomes - r.cost_samples;
+    const cost = roundUsd(r.cost ?? 0);
+    return {
+      work_kind: r.work_kind,
+      difficulty: r.difficulty,
+      role: r.role,
+      provider: r.provider,
+      model: r.model_id,
+      efforts: (r.efforts ?? '').split(',').filter(Boolean).sort(),
+      outcomes: r.outcomes,
+      runs: r.runs,
+      verified: r.verified,
+      failed: r.failed,
+      rejected: r.rejected,
+      excluded: r.excluded,
+      pass_rate: rate(r.verified, r.verified + r.failed + r.rejected),
+      cost_usd: cost,
+      unmeasured_outcomes: unmeasured,
+      cost_complete: unmeasured === 0,
+      cost_per_accepted_usd: r.verified > 0 && unmeasured === 0 ? roundUsd(cost / r.verified) : null,
+      first_ts: r.first_ts,
+      last_ts: r.last_ts,
+    };
+  });
+  const partial = out.filter((r) => !r.cost_complete);
+  if (partial.length > 0) missing.push(`cost is unknown for ${partial.reduce((a, r) => a + r.unmeasured_outcomes, 0)} route outcome(s) on ${partial.length} route(s); those routes have no cost per accepted task`);
+  return out;
 }
 
 function rate(numerator: number, denominator: number): Rate {

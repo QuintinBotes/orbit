@@ -66,6 +66,11 @@ export interface RunStatus {
   /** What the cost budget charged and what that adds to the reported spend; before the budget exists, the spend not yet charged. */
   spend?: SpendBreakdown;
   workers: { active: WorkerSummary[]; counts: Record<string, number> };
+  /**
+   * Present when the newest implementation route of the run read measured outcomes (routing.learning): the model it
+   * went to, whether those outcomes displaced the routing table's choice, and the recorded reason.
+   */
+  routing?: { purpose: string; provider: string; model: string; displaced_table: boolean; table_model: string; reason: string };
   questions: { open: { id: string; question: string; material: boolean; affected: string[] }[]; answered: number };
 }
 
@@ -152,11 +157,25 @@ export function buildRunStatus(ctx: Pick<CliContext, 'clock'>, db: OrbitDb, run:
     budgets,
     spend: spendBreakdown(db, run.id),
     workers: { active: workers.filter((w) => w.state === 'PLANNED' || w.state === 'RUNNING').map(workerSummary), counts },
+    ...learnedRoute(db, run.id),
     questions: {
       open: questions.filter((q) => q.status === 'open').map((q) => ({ id: q.id, question: q.question, material: q.material, affected: q.affected })),
       answered: questions.filter((q) => q.status === 'answered').length,
     },
   };
+}
+
+/** The newest implementation route decision of the run, when it read measured outcomes. */
+function learnedRoute(db: OrbitDb, runId: string): Pick<RunStatus, 'routing'> {
+  const row = db.get<{ data_json: string | null }>("SELECT data_json FROM decisions WHERE run_id = ? AND kind = 'route' AND json_extract(data_json, '$.purpose') LIKE 'implement:%' ORDER BY created_at DESC, rowid DESC LIMIT 1", runId);
+  if (!row?.data_json) return {};
+  try {
+    const d = JSON.parse(row.data_json) as { purpose?: string; provider?: string; model?: string; learning?: { applied?: boolean; reason?: string; table_choice?: { model?: string } } };
+    if (!d.learning || typeof d.learning.reason !== 'string' || !d.provider || !d.model) return {};
+    return { routing: { purpose: d.purpose ?? 'implement', provider: d.provider, model: d.model, displaced_table: d.learning.applied === true, table_model: d.learning.table_choice?.model ?? d.model, reason: d.learning.reason } };
+  } catch {
+    return {};
+  }
 }
 
 function fmtCounter(c: CounterState): string {
@@ -194,6 +213,10 @@ export function renderRunStatus(s: RunStatus, now: number): string {
   const counts = Object.entries(s.workers.counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ');
   out.push(`workers:   ${s.workers.active.length} active${counts ? ` (all: ${counts})` : ''}`);
   for (const w of s.workers.active) out.push(`  ${w.id}  ${w.role}  ${w.provider}/${w.model ?? 'default'}  ${w.state}${w.spawned_at ? `  started ${ago(now, w.spawned_at)}` : ''}`);
+  if (s.routing) {
+    out.push(`routing:   ${s.routing.purpose} -> ${s.routing.provider}/${s.routing.model}${s.routing.displaced_table ? ` instead of ${s.routing.table_model} from the routing table` : ' (the routing table\'s choice)'}: ${flat(s.routing.reason)}`);
+    out.push('  measured outcomes per route: orbit stats; switch off with routing.learning.enabled: false');
+  }
   out.push(`questions: ${s.questions.open.length} open, ${s.questions.answered} answered`);
   for (const q of s.questions.open) out.push(`  ${q.id}${q.material ? '  [material]' : ''}  ${flat(q.question)}`);
   if (s.questions.open.length > 0) out.push(`  answer with: orbit decide ${s.id} <question-id> <answer>`);

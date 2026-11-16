@@ -6,6 +6,7 @@
  * the snapshot.
  */
 import type { ReviewFallback } from './review.ts';
+import type { RoutingLearning } from '../routing/types.ts';
 
 export type { ReviewFallback } from './review.ts';
 
@@ -352,6 +353,8 @@ export interface OrbitConfig {
     overrides: Record<string, string>;
     /** Output token budget per role. Parsed configs always carry it; optional in the type so older snapshots still read. */
     output_budgets?: Record<BudgetRole, number>;
+    /** When measured route outcomes may displace the table's choice. Parsed configs always carry it; older snapshots read the defaults. */
+    learning?: Partial<RoutingLearning>;
   };
   /** Severity and exception rules for the static security gate. Parsed configs always carry it. */
   static_security?: StaticSecurityConfig;
