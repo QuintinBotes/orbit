@@ -20,6 +20,7 @@ import type { EvidenceReport } from '../../evidence/types.ts';
 import { listReviews } from '../../review/store.ts';
 import type { ReviewRecord } from '../../review/types.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
+import type { OrbitConfig } from '../../policy/types.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
 import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
@@ -281,21 +282,28 @@ export function formatDeliverySummary(
 /** The run's GitHub client: the configured fake for tests and demos, else the gh CLI with a scoped token. */
 export async function githubClient(ctx: RunContext): Promise<GitHubClient> {
   if (ctx.deps.github) return ctx.deps.github(ctx);
-  const config = ctx.snapshot.config;
+  return githubClientForConfig(ctx.run.repoRoot, ctx.snapshot.config, ctx.deps.hostEnv ?? process.env);
+}
+
+/**
+ * The pull request client a policy selects: the file-backed fake for the fake delivery provider, else gh for the
+ * remote's repository. `requireScopedToken: false` lets a command a person types read with their own gh login.
+ */
+export async function githubClientForConfig(repoRoot: string, config: Pick<OrbitConfig, 'delivery' | 'repository'>, env: Readonly<Record<string, string | undefined>>, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const remote = config.repository.remote;
   if (config.delivery.provider === 'fake') {
-    const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
+    const url = await resolveRemoteUrl(repoRoot, remote).catch(() => null);
     // A local bare remote lets the fake report real PR heads, as the hosted service would.
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : undefined;
-    return new FakeGitHub({ statePath: join(ctx.run.repoRoot, '.orbit', 'fake-github.json'), ...(local ? { remoteGitDir: local } : {}) });
+    return new FakeGitHub({ statePath: join(repoRoot, '.orbit', 'fake-github.json'), ...(local ? { remoteGitDir: local } : {}) });
   }
-  return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
+  return githubClientFor(repoRoot, remote, env, opts);
 }
 
 /** A gh CLI client for the repository's remote (OWNER/REPO from its push URL). */
-export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env): Promise<GitHubClient> {
+export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const url = await resolveRemoteUrl(repoRoot, remote);
   const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
   if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
-  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
 }

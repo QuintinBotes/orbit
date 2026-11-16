@@ -56,6 +56,8 @@ export interface CliSeams {
   notify?: Partial<NotifyDeps>;
   /** Reads the issue `orbit run --issue` and `orbit spec check` name; tests inject a fake. */
   issues?: (repoRoot: string, config: OrbitConfig) => Promise<IssueReader>;
+  /** How `orbit queue run` waits between looks at pull requests it waits on to merge; tests merge them here instead of sleeping. */
+  queueWait?: (ms: number) => Promise<void>;
 }
 
 export interface CliContext {

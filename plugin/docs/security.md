@@ -130,6 +130,15 @@ settings, including sandbox approval for writers and experiment workers.
   cannot change the policy, checks, scope or budgets. The comment Orbit posts
   back holds controller records only: no issue text, model prose, paths or
   logs.
+- `orbit queue run` (ADR 0020) runs each issue through the same intake. It
+  writes to issues of the backlog it was pointed at, and only three things: the
+  `ready-for-human` label and one comment of run records when an issue's runs
+  did not deliver (or the spec check's problems, which quote the issue), and a
+  comment and close when the issue's own pull request merged into the base
+  branch. Labels and dependencies decide what it takes; issue text never does.
+  It reads and writes with `GH_TOKEN` or the `gh` login of the person who
+  starts it, and moves the checked-out base branch only by fast-forward, with
+  repository hooks off.
 - Logs, reports and artifacts are redacted before storage or before they are
   sent to a provider. `retention.redact_patterns` adds your own patterns.
 - The secret scan uses gitleaks with Orbit's own configuration and
