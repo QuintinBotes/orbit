@@ -397,15 +397,16 @@ describe.skipIf(!canStripTypes)('controller: parallel review units', () => {
     expect(providerPurposes(reviewers), sessions(reviewers)).toEqual(FRESH_FAILED_THEN_SUBSTITUTE_UNITS);
   }, 120_000);
 
-  it('stopping a sibling exhausts model cost at the default cap: the reviewer failure is still recorded and reported, and the run ends EXHAUSTED', async () => {
+  it('stopping a sibling exhausts model cost at the default cap: the reviewer failure is still recorded and reported, and the run stops (BLOCKED, offering the verified candidate: #169)', async () => {
     const l = twoReviewers();
     writeScenario(l, baseScenario({ planner: [PLANNER], implementer: [implementMul('*')], 'reviewer@security': [{ outcome: 'no_result' }, { outcome: 'no_result' }, APPROVE], 'reviewer@ui': [{ ...APPROVE, sleepMs: 30_000 }, APPROVE] }));
     const run = startLabRun(l);
     await drive(l, run.id, ROOMY);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toMatch(/^cost_usd exhausted at the hard cap \$30/);
+    expect(done.failureClass).toBe('budget');
     const reason = `failed: exited 1 without turn.completed or turn.failed after 2 attempt(s)`;
     expect(grants(l, run.id).map((g) => [g.provider, g.reason])).toEqual([['codex', reason]]);
     expect(events(l, run.id, 'workers.reviewer-failed-cancelled')).toHaveLength(1);

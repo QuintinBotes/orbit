@@ -61,6 +61,8 @@ export function makeLab(opts: { mode?: Parameters<typeof defaultConfig>[0]; twea
   const remote = join(dir, 'remote.git');
   mkdirSync(work);
   git(dir, ['init', '--bare', '-b', 'main', remote]);
+  // Receive hooks must come from the remote itself, not a developer's global core.hooksPath (#183).
+  git(dir, ['-C', remote, 'config', 'core.hooksPath', join(remote, 'hooks')]);
   git(work, ['init', '-b', 'main']);
   git(work, ['config', 'user.name', 'Orbit Controller']);
   git(work, ['config', 'user.email', 'controller@example.com']);

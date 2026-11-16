@@ -47,7 +47,10 @@ then last-progress time, spend against budget, and any pending questions with
 their ids. With a run id, add a short account of the timeline: what was tried,
 what failed and why, where it escalated, and what it cost. BLOCKED means a decision or credential is needed: say which, and
 point to `/orbit:inquisition --run <run-id>` for questions or `/orbit:resume
-<run-id>` once the blocker is cleared. When the stage line says a new run is
+<run-id>` once the blocker is cleared. When the stage line says the run holds a
+verified candidate, it stopped on a limit after a candidate passed verification:
+do not point to resume; say that a person delivers the candidate or discards it,
+with the commands the reason gives. When the stage line says a new run is
 needed (a frozen-policy or check-definition block, or an environment block with no
 baseline exception to approve), do not point to resume: say that and suggest
 cancelling the run and starting a new one after the fix the reason names. A run

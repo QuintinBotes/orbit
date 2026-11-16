@@ -50,6 +50,14 @@ passes only when the runtime meets each one.
 | 19 | Security findings follow severity/exception policy | `review-and-security.test.ts` | scenario 19: ... waived with its recorded reason; ... blocks completion; ... reported as advisory |
 | 20 | Cancellation remains effective after restart | `restart-and-delivery.test.ts` | scenario 20: a cancellation recorded with `orbit cancel` while the controller is dead ... |
 
+### A verified candidate is always offered (issue #169)
+
+| Scenario | File | Test |
+|---|---|---|
+| 1. A run whose candidate passed verification stops on a limit: it ends `BLOCKED` and the report gives the candidate commit, the checks it passed and the open findings | `verified-candidate.test.ts` | scenario 1: a run whose candidate passed verification and that stops on its review round cap ends BLOCKED ... |
+| 2. The delivery command the report gives delivers that candidate as a draft pull request listing the open findings | `verified-candidate.test.ts` | scenario 2: the delivery command the report gives pushes that exact candidate ... (the push runs; the lab has no `gh`, so the pull request body is read) |
+| Edge case: several passing candidates, the newest is offered (the #156 replay, SC-001) | `verified-candidate.test.ts` | edge case, several passing candidates: ... |
+
 ### Reported issues (issue #166, FR-002)
 
 One scenario per issue fixed for #166. Each fails on the sources as they were before the issue's fix and passes after.
@@ -80,7 +88,7 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | 2.1 A missing module or toolchain is an environment failure; no implementer session starts for it | `check-environment.test.ts` | User Story 1, scenario 2 (a missing module where nothing was installed: no session starts); User Story 2 (a missing toolchain; a missing module in a provisioned checkout stays the change's, two tests); a base revision that imports an undeclared package keeps its baseline exception |
 | 3.1 Advisory-only findings with no approval: the run repairs | `review-gate.test.ts` | issue #130 |
 | 3.2 A high finding unvalidated across two verified candidates | `review-gate.test.ts` | issue #156 (the run stops and names the finding; the decided behaviour, one fresh independent review told the finding, follows in its own pull request) |
-| SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Three are known expected failures until issue #169 (such a run ends BLOCKED naming the candidate): scenario 16, scenario 19 (the blocking finding) and issue #156. Each is marked where it calls `assertRunInvariants`, and the marker fails once the run no longer ends that way |
+| SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Since issue #169 such a run ends BLOCKED naming the candidate, so scenario 16, scenario 19 (the blocking finding) and issue #156, once known expected failures, pass it |
 
 ### Safe stops (spec section 2)
 

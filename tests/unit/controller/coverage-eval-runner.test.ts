@@ -204,6 +204,16 @@ describe('measureRun and liveWindow', () => {
     expect(w).toMatchObject({ verified_pass_rate: 0, false_pass_rate: 0 });
     expect(liveWindow(lab.db, lab.clock.now() + 1_000_000)).toBeNull();
   });
+
+  it('a run that ran out holding a verified candidate settled as an EXHAUSTED one did; any other block has not (#169)', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    lab.db.run("UPDATE runs SET state = 'BLOCKED', outcome_json = ? WHERE id = ?", JSON.stringify({ state: 'BLOCKED', decided: 'EXHAUSTED', verified_candidate: { seq: 1 } }), lab.runId);
+    createRun(lab.db, { id: 'orb-2', repoRoot: lab.repo, goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, lab.clock);
+    lab.db.run("UPDATE runs SET state = 'BLOCKED', outcome_json = ? WHERE id = 'orb-2'", JSON.stringify({ state: 'BLOCKED', questions: ['q-1'] }));
+    createRun(lab.db, { id: 'orb-3', repoRoot: lab.repo, goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, lab.clock);
+    lab.db.run("UPDATE runs SET state = 'BLOCKED', outcome_json = '{not json' WHERE id = 'orb-3'");
+    expect(liveWindow(lab.db, 0)).toMatchObject({ tasks: 1, verified_pass_rate: 0 });
+  });
 });
 
 describe('ReplayEvalRunner.runCase', () => {

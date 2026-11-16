@@ -53,6 +53,7 @@ import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
 import { getRun, orbitVersionOf, type RunRecord } from './run-store.ts';
 import { newRunNeeded } from './resume.ts';
 import { createdBranch } from './run-refs.ts';
+import { heldVerifiedCandidate, offerSection, type VerifiedCandidate } from './verified-candidate.ts';
 import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
@@ -143,6 +144,12 @@ export interface FinalReport {
    * edits that could not be pinned). Absent when nothing was released or retained, and in reports written before it existed.
    */
   worktrees?: { preserved: { worktree: string; ref: string }[]; retained: { worktree: string; path: string; why: string }[] };
+  /**
+   * The candidate that passed verification and was not delivered, which a run that ran out offers to a person (issue
+   * #169): its commit and ref, the checks it passed, its open findings, and the commands that deliver or discard it.
+   * Present only while the run is BLOCKED holding one.
+   */
+  verified_candidate?: VerifiedCandidate;
   next_action: string;
   generated_at: number;
 }
@@ -308,6 +315,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const worktrees = worktreesOf(db, run.id);
   // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
   const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
+  const offered = heldVerifiedCandidate(run);
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -352,6 +360,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
     ...(worktrees ? { worktrees } : {}),
+    ...(offered ? { verified_candidate: offered } : {}),
     next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees, run.state === 'SUCCEEDED' ? candidateRefName : null)}`,
     generated_at: opts.clock.now(),
   };
@@ -527,8 +536,9 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
           : `Inspect ${candidate}${ref !== null ? ` (git log ${ref})` : ''} and merge it yourself if you accept it.`;
     case 'BLOCKED': {
       const why = run.outcomeReason ?? 'The run is blocked.';
-      // A frozen-policy block already names the way forward (a new run), and most others already name the resume command.
-      if (outcomeHas(run, 'frozen_policy')) return why;
+      // A frozen-policy block already names the way forward (a new run), a run that holds a verified candidate how to
+      // deliver or discard it (issue #169), and most others already name the resume command.
+      if (outcomeHas(run, 'frozen_policy') || heldVerifiedCandidate(run) !== null) return why;
       // A reason recorded without a closing full stop still reads as its own sentence.
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       // Where a resume cannot clear the block, the reason either says a new run already (an environment block) or is told so (issue #33).
@@ -589,6 +599,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Outcome', '', `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ''}`, '');
   // A report saved before these fields existed has neither: it says so instead of printing "undefined".
   out.push(`Failure class: ${r.failure_class ?? 'none'}${r.failure_class && r.failure_secondary ? ` (secondary: ${r.failure_secondary})` : ''}`, '', `Orbit version: ${r.orbit_version ?? 'unknown'}`, '');
+  if (r.verified_candidate) out.push('## Verified candidate', '', ...offerSection(r.verified_candidate), '');
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
   out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');

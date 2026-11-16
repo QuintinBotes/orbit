@@ -34,6 +34,8 @@ export interface MetricsWindow {
 /** Run states a run does not leave without a person (BLOCKED) or at all. */
 const FINISHED_STATES = ['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE', 'BLOCKED'] as const;
 const TERMINAL = ['SUCCEEDED', 'BLOCKED', 'EXHAUSTED', 'IMPOSSIBLE', 'CANCELLED'] as const;
+/** A run that ran out holding a verified candidate ends BLOCKED and records it in its outcome (controller/verified-candidate.ts). */
+const VERIFIED_UNDELIVERED = "CASE WHEN state = 'BLOCKED' AND outcome_json IS NOT NULL AND json_valid(outcome_json) THEN COALESCE(json_type(outcome_json, '$.verified_candidate') = 'object', 0) ELSE 0 END";
 /** Failure sources that describe the candidate, not the base or a rerun that passed. */
 const CANDIDATE_FAILURE_SOURCES = ['check', 'worker', 'ci'] as const;
 
@@ -79,7 +81,11 @@ export interface VersionMetrics {
 
 export interface Metrics {
   window: { from: number | null; to: number | null; orbit_version: string | null };
-  runs: { total: number; finished: number; accepted: number; by_state: Record<string, number> };
+  /**
+   * `verified_undelivered`: BLOCKED runs that ran out while holding a candidate that passed verification, which a person
+   * may still deliver (issue #169). They are counted among the finished runs and in their failure class too.
+   */
+  runs: { total: number; finished: number; accepted: number; verified_undelivered: number; by_state: Record<string, number> };
   /**
    * Why runs ended (schemas/failure-class.schema.json): ended runs per class, every class listed, and how often each
    * was a run's second cause. `without_class` are the runs that succeeded; `unclassified` are runs that ended any
@@ -174,7 +180,7 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
   const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where})`;
   const missing: string[] = [];
 
-  const runRows = db.all<RunRow>(`SELECT id, state, created_at, started_at, failure_class, failure_secondary, COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') AS orbit_version FROM runs WHERE ${where} ORDER BY created_at`, ...params);
+  const runRows = db.all<RunRow>(`SELECT id, state, created_at, started_at, failure_class, failure_secondary, COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') AS orbit_version, ${VERIFIED_UNDELIVERED} AS verified FROM runs WHERE ${where} ORDER BY created_at`, ...params);
   const byState: Record<string, number> = {};
   for (const r of runRows) byState[r.state] = (byState[r.state] ?? 0) + 1;
   const finished = runRows.filter((r) => (FINISHED_STATES as readonly string[]).includes(r.state));
@@ -225,7 +231,7 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
 
   return {
     window: { from, to, orbit_version: orbitVersion },
-    runs: { total: runRows.length, finished: finished.length, accepted: accepted.length, by_state: byState },
+    runs: { total: runRows.length, finished: finished.length, accepted: accepted.length, verified_undelivered: runRows.filter((r) => r.verified === 1).length, by_state: byState },
     failure_classes: classes,
     by_version: versions,
     verified_pass_rate: { ...rate(accepted.length, finished.length), evidence_reports: rate(evidence.pass, evidence.total) },
@@ -254,6 +260,8 @@ interface RunRow {
   failure_class: string | null;
   failure_secondary: string | null;
   orbit_version: string;
+  /** 1 for a BLOCKED run that ran out holding a verified candidate (issue #169), else 0. */
+  verified: number;
 }
 
 const isEnded = (r: RunRow): boolean => (TERMINAL as readonly string[]).includes(r.state);

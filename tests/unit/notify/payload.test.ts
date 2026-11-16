@@ -65,6 +65,13 @@ describe('notification payload (ADR 0008)', () => {
     expect(at('{not json')).toBe(`Resolve the block, then run orbit resume ${RUN.id}.`);
   });
 
+  it('issue #169: a run that stopped holding a verified candidate is told to deliver or discard it, not to resume', () => {
+    const outcomeJson = JSON.stringify({ state: 'BLOCKED', decided: 'EXHAUSTED', verified_candidate: { seq: 2, commit: 'c'.repeat(40), deliver_command: 'git push ...', discard_command: `orbit cancel ${RUN.id}` } });
+    const next = buildPayload({ kind: 'run.ended', run: { ...RUN, state: 'BLOCKED', outcomeJson }, questionIds: [], pullRequest: null, remote: null, refs: REFS }).next_action;
+    expect(next).toBe(`Read orbit report ${RUN.id}: candidate 2 passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${RUN.id}.`);
+    expect(next).not.toMatch(/orbit resume/);
+  });
+
   it('a question notification names how to answer, remotely too when remote answers are on', () => {
     const p = buildPayload({ kind: 'question.open', run: { ...RUN, state: 'BLOCKED' }, questionIds: ['q-1', 'q-2'], pullRequest: 3, remote: { where: 'pull request #3' }, refs: REFS });
     expect(p.kind).toBe('question.open');

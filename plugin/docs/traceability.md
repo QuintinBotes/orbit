@@ -370,6 +370,17 @@ Why a run ended and which Orbit version started it (issue #167, ADR 0018; the re
 | I168.FR4 | `orbit stats` shows pass rate and cost per accepted task for each route | `observability/metrics.ts:routeMetrics`, `cli/commands/stats.ts` | U/observability/metrics.test.ts "routes (issue #168)", U/cli/coverage-stats.test.ts | done |
 | I168.FR5 | `docs/learning.md` describes only what the code does | `docs/learning.md` | none: a document | done |
 
+A verified candidate is always offered, even when the run stops (issue #169; by the owner's decision a run that would end `EXHAUSTED` holding a verified candidate ends `BLOCKED`, not in a new state):
+
+| ID | Requirement | Implementation | Tests | Status |
+|---|---|---|---|---|
+| I169.FR1 | "Stopped with a verified candidate" is told apart from "exhausted with nothing" | `controller/steps/common.ts:finishRun`, `controller/verified-candidate.ts:findVerifiedCandidate` (outcome `decided: EXHAUSTED`, `verified_candidate`) | U/controller/verified-candidate.test.ts; A/verified-candidate.test.ts "scenario 1" | done (as `BLOCKED`) |
+| I169.FR2 | The report lists the candidate commit, the checks it passed and each open finding with its status | `controller/report.ts` ("Verified candidate", `verified_candidate`), `cli/commands/status.ts`, `cli/commands/drive.ts`, `notify/payload.ts` | U/controller/verified-candidate.test.ts; U/cli/new-run-advice.test.ts; U/notify/payload.test.ts; A/verified-candidate.test.ts "scenario 1" | done |
+| I169.FR3 | A command delivers the candidate as a draft pull request on a person's request | `verified_candidate.deliver_command` (`git push` and `gh pr create --draft` with `.orbit/runs/<run-id>/verified-candidate.md`), run by the person | A/verified-candidate.test.ts "scenario 2" (the push and the body; the lab has no `gh`) | partial: a command the person runs, not an Orbit command; a candidate that no longer applies to the base branch is not detected before the push |
+| I169.FR4 | Statistics count these runs separately from failures | `observability/metrics.ts` (`runs.verified_undelivered`), `cli/commands/stats.ts`; the class is the `EXHAUSTED` one (`controller/failure-class.ts`, ADR 0018 addendum) | U/observability/run-end-metrics.test.ts; U/controller/failure-class.test.ts "issue #169" | done |
+| I169.SC1 | The #144 and #156 lab scenarios end in the new state | as FR1 | A/verified-candidate.test.ts "edge case, several passing candidates" (the #156 replay) | partial: the #144 replay is in the acceptance suite of issue #166, not yet on this branch |
+| I169.SC2 | No lab scenario with a passing candidate reports "no delivery" | as FR1 and FR2 | A/verified-candidate.test.ts | done for the scenarios on this branch |
+
 ## 13. UI testing
 
 | ID | Requirement | Implementation | Tests | Status |
