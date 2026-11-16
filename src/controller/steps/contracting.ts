@@ -25,6 +25,7 @@ import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, t
 import { blockOnMissingTargets, missingTargetsNotExpectedToFlip, settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
+import { alignPlanToIssue, contractSource, ISSUE_BODY_MAX_CHARS, issuePlannerTask, issuePromptBlocks, readIssueGoal, unansweredIssueCriteria } from '../../intake/issue.ts';
 
 export const PLANNER_FILE = 'planner.json';
 
@@ -33,6 +34,7 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
   if (stop) return stop;
   // Back from INQUISITION or BLOCKED with a contract already settled: only the intake gate remains.
   if (ctx.contract) return accept(ctx, ctx.contract, null);
+  const issue = readIssueGoal(ctx.runDir);
 
   const route = routeFor(ctx, 'plan', 'routine-code', { difficulty: 'medium', attempt: 1, repeatedFingerprints: 0 });
   const got = await obtain<PlannerOutput>(ctx, {
@@ -49,15 +51,23 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
       readOnly: true,
       prompt: (workerId) => plannerPrompt(ctx, workerId),
     }),
-    accept: (r) => validateModelOutput('planner', r.structured),
+    accept: (r) => {
+      const out = validateModelOutput('planner', r.structured);
+      // A plan that leaves a scenario of the issue without a criterion and a check is regenerated like any malformed one.
+      const unanswered = issue ? unansweredIssueCriteria(out, issue) : [];
+      if (unanswered.length > 0) throw new OrbitError('MALFORMED_OUTPUT', `the plan has no criterion with a trusted check for ${unanswered.join(', ')}: the issue's ${issue!.kind === 'bug' ? 'reproduction needs one under that key' : 'acceptance scenarios each need one under their key'}`);
+      return out;
+    },
   });
   if (!got.ok) return got.step;
-  const plan = got.value;
+  // A run started from an issue keeps one criterion per acceptance scenario, worded by the issue: the planner's
+  // criteria are brought in line before anything is stored, so the plan, the contract and the reports agree.
+  const plan = issue ? alignPlanToIssue(got.value, issue) : got.value;
   atomicWriteJson(join(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
 
   let drafted: ReturnType<typeof draftContract>;
   try {
-    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? '', taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment });
+    drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? '', taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment, source: issue ? contractSource(issue) : null });
   } catch (err) {
     if (!(err instanceof OrbitError) || err.code !== 'CONTRACT_INVALID') throw err;
     return finishRun(ctx, 'BLOCKED', `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
@@ -111,6 +121,7 @@ function worktreeOf(ctx: RunContext): string {
 }
 
 function plannerPrompt(ctx: RunContext, workerId: string): string {
+  const issue = readIssueGoal(ctx.runDir);
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? ' (mandatory)' : ''}`);
   // P18 for a missing target rests on the contract naming the check (steps/baseline-questions.ts): the planner is told
   // which checks those are, by id only, and what naming one means.
@@ -134,7 +145,8 @@ function plannerPrompt(ctx: RunContext, workerId: string): string {
         ]
       : []),
     '',
-    `Goal (from the user): ${ctx.run.goal}`,
+    // An issue's text is never written into the task: it follows as marked, untrusted blocks.
+    ...(issue ? issuePlannerTask(issue) : [`Goal (from the user): ${ctx.run.goal}`]),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'planner',
@@ -142,6 +154,8 @@ function plannerPrompt(ctx: RunContext, workerId: string): string {
     contract: null,
     policySummary: policySummary(ctx, { readOnly: true }),
     candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
+    // The whole spec in one block: intake refused a body longer than the block may be, so it is never cut here.
+    ...(issue ? { untrusted: issuePromptBlocks(issue), maxBlockChars: ISSUE_BODY_MAX_CHARS + 400 } : {}),
     advisoryBlock: advisoryBlockFor(ctx, { role: 'planner', workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] }),
   });
 }

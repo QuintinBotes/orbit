@@ -123,6 +123,13 @@ settings, including sandbox approval for writers and experiment workers.
   requests and CI. Remote answers and `notifications.github_comment` read
   comments and collaborator permissions, and post comments, through the same
   token.
+- An issue a run is started from (`orbit run --issue`, ADR 0019) is untrusted
+  text. It is read once with a GET, checked without a model, and frozen with
+  the run. The planner sees it in a marked block that says it is data; only
+  its acceptance scenarios enter the contract, each as one capped line. It
+  cannot change the policy, checks, scope or budgets. The comment Orbit posts
+  back holds controller records only: no issue text, model prose, paths or
+  logs.
 - Logs, reports and artifacts are redacted before storage or before they are
   sent to a provider. `retention.redact_patterns` adds your own patterns.
 - The secret scan uses gitleaks with Orbit's own configuration and

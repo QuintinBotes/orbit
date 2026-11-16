@@ -131,6 +131,8 @@ export interface NewRun {
   environment?: string | null;
   /** The Orbit version that starts the run; this build's unless the caller names another. */
   orbitVersion?: string;
+  /** The issue the run was started from: recorded in the creation event (the issue goal itself is issue.json in the run directory). */
+  issue?: { repo: string; number: number; kind: string; body_sha256: string; updated_at: string } | null;
 }
 
 /** How a run with no recorded Orbit version is shown and asked for (`orbit stats --orbit-version unknown`). */
@@ -169,7 +171,7 @@ export function createRun(db: OrbitDb, input: NewRun, clock: Clock, actor = 'cli
     );
     // The accounting the run is charged by for its whole life (RUN_ACCOUNTING_VERSION): a run created before 0.3.1 names
     // none and keeps the rules of the version that started it when a later one resumes it.
-    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}), accounting: RUN_ACCOUNTING_VERSION, orbit_version: orbitVersion }, now, null, 'CREATED');
+    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}), ...(input.issue ? { issue: input.issue } : {}), accounting: RUN_ACCOUNTING_VERSION, orbit_version: orbitVersion }, now, null, 'CREATED');
     return getRun(db, input.id);
   });
 }

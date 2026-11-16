@@ -230,7 +230,8 @@ fix the config, cancel the run and start a new one
 |---|---|
 | `orbit doctor [--policy <path>] [--probe] [--verbose]` | Check every capability a run depends on, including an alternative policy before using it. `--probe` makes live requests; `--verbose` includes passing checks and full sandbox and plugin detail. |
 | `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares. |
-| `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). |
+| `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). `--issue <number \| url>` starts it from a GitHub issue instead: a spec that passes `orbit spec check`, or an issue labelled `bug` with a reproduction section. |
+| `orbit spec check <file \| issue>` | Check that a Markdown file or an issue is a spec a run can start from. Deterministic; no model call. Exit 4 with one line per problem. |
 | `orbit status [run-id]` | State, stage, attempts, budgets, workers, questions, heartbeat. |
 | `orbit timeline <run-id>` | What happened in a run, one readable line per step in order, with local time: state changes and their reasons, routing and escalation with the evidence, each attempt and candidate with its verification verdict, check results, review outcome and reviewer, questions asked and answered, delivery actions, and the cost so far (measured against charged). `--follow` streams a running run, `--last <n>` cuts it, `--all` adds housekeeping, and `--json` emits one JSON object per event with its event name. |
 | `orbit logs <run-id>` | The raw controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). For a readable history use `orbit timeline`. |

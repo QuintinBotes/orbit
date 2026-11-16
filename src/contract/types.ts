@@ -68,6 +68,11 @@ export interface GoalContract {
      */
     environment?: string;
   };
+  /**
+   * Where the goal came from, when not from a typed goal: the issue, with the hash of the body the run was started
+   * with and the time of the issue's last update then. A record only: it grants nothing and names no command.
+   */
+  source?: { kind: 'github-issue'; repo: string; number: number; body_sha256: string; updated_at: string };
   /** Filled at run start from the policy snapshot. */
   policy_hash: string;
   baseline_revision: string;
