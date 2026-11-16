@@ -236,7 +236,7 @@ fix the config, cancel the run and start a new one
 | `orbit logs <run-id>` | The raw controller and worker logs, redacted (`--follow`, `--lines`, `--controller`, `--workers`, `--worker`). For a readable history use `orbit timeline`. |
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |
 | `orbit repair <run-id \| description \| ->` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--detach`, `--mode`, `--policy`). `-` reads the description from stdin. |
-| `orbit stats` | Success rate, cost, repair loops, time to green and why runs ended, per failure class and per Orbit version, for this repository (`--since`, `--until`, `--orbit-version`). |
+| `orbit stats` | Success rate, cost, repair loops, time to green, the pass rate and cost per accepted task of each route, and why runs ended, per failure class and per Orbit version, for this repository (`--since`, `--until`, `--orbit-version`). |
 | `orbit gc` | Apply artifact retention to finished runs (`--keep-days`, `--dry-run`). |
 | `orbit pause <run-id>` | Pause durably. |
 | `orbit resume <run-id>` | Unpause, or continue a blocked run. Needs a controller: with a service it leaves the run to it; with none it refuses (changing nothing) unless you pass `--foreground`, or `--detach` to release it to a service you start later (`--force`). On a terminal with no service it drives the run itself. |

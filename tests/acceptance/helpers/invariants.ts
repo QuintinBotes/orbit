@@ -154,8 +154,22 @@ export function assertLeases(db: OrbitDb, runId: string): void {
   expect(n).toBeLessThanOrEqual(1);
 }
 
+/**
+ * Issue #166, SC-003: no lab scenario ends EXHAUSTED while holding a candidate that passed verification. The latest
+ * candidate is the one the run holds; its newest evidence that still stands is what verification said of it.
+ * Part of assertRunInvariants, so every scenario is held to it.
+ */
+export function assertNoVerifiedCandidateExhausted(db: OrbitDb, runId: string): void {
+  if (getRun(db, runId).state !== 'EXHAUSTED') return;
+  const held = listCandidates(db, runId).at(-1);
+  if (!held) return;
+  const ev = listEvidenceReports(db, runId).filter((e) => e.treeHash === held.treeHash && e.invalidatedAt === null).at(-1);
+  expect(ev?.verdict, `the run ended EXHAUSTED holding candidate ${held.seq}, which passed verification (${ev?.id})`).not.toBe('PASS');
+}
+
 export function assertRunInvariants(lab: Lab, runId: string): void {
   const db = lab.db();
+  assertNoVerifiedCandidateExhausted(db, runId);
   assertTransitionsDurable(db, runId);
   assertLeases(db, runId);
   assertPolicyFrozen(db, runId);

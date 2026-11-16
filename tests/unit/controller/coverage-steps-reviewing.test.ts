@@ -13,6 +13,7 @@ import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { newRunNeeded } from '../../../src/controller/resume.ts';
 import { REVIEW_REPAIR_EVENT, cancelObsoleteWork, implementerProvider, prepareReview, reviewFocuses, reviewingStep } from '../../../src/controller/steps/reviewing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
+import { implementRouteDecisionId } from '../../../src/controller/route-outcome.ts';
 import { defaultUi } from '../../../src/policy/config.ts';
 import { addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
@@ -74,6 +75,12 @@ async function setup(o: Setup = {}) {
   addEvidence(lab, cand);
   return { cand, reviewer, repo };
 }
+
+/** The route attempt n was given, as routeFor records it (issue #168). */
+function routed(n: number): void {
+  recordDecision(lab.db, lab.ctx().runDir, { id: implementRouteDecisionId(lab.runId, n), runId: lab.runId, kind: 'route', summary: `implement:${n}`, data: { purpose: `implement:${n}`, provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', work_kind: 'routine-code' } }, lab.clock);
+}
+const routeOutcomes = () => lab.db.all<{ attempt_key: string; outcome: string; evidence_ref: string }>('SELECT attempt_key, outcome, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', lab.runId);
 
 const run = () => reviewingStep(lab.ctx());
 const state = () => getRun(lab.db, lab.runId).state;
@@ -407,10 +414,29 @@ describe('a review that is already recorded', () => {
     expect(['BLOCKED', 'REPAIRING', 'INQUISITION']).toContain(state());
   });
 
+  it('issue #168: review clearing the tree settles the attempt as verified', async () => {
+    const { cand } = await setup();
+    routed(1);
+    record(cand, 'APPROVE');
+    await run();
+    expect(state()).toBe('DELIVERING');
+    expect(routeOutcomes()).toEqual([{ attempt_key: 'attempt:1', outcome: 'verified', evidence_ref: `review-gate:${cand.treeHash}` }]);
+  });
+
+  it('issue #168: review sending the verified candidate to repair settles the attempt as rejected', async () => {
+    const { cand } = await setup();
+    routed(1);
+    record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    expect(routeOutcomes()).toEqual([{ attempt_key: 'attempt:1', outcome: 'rejected', evidence_ref: `review-gate:${cand.treeHash}` }]);
+  });
+
   // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
   it('a carried finding going to repair again after a repair whose implementer named no test for it ends as non-progress, not with another brief (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand, repo } = await setup();
     const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    routed(1);
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
     await run();
     expect(state()).toBe('REPAIRING');
@@ -420,6 +446,7 @@ describe('a review that is already recorded', () => {
       const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: n, workerId: null });
       lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: n }));
       lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: c.id }));
+      routed(n);
       addEvidence(lab, c);
       const w = planWorker(lab.db, { id: `wrk-impl-${n}`, runId: lab.runId, role: 'implementer', provider: 'claude', attempt: n, workerDir: join(lab.base, `wi${n}`), cwd: lab.repo }, lab.clock, OWNER);
       markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
@@ -445,6 +472,12 @@ describe('a review that is already recorded', () => {
     expect(reason).toMatch(/^non-progress: the review repair brief of attempt 3 was sent TEST-1, and no implementer report since names a test for it \(the implementer of attempt 3 ended FAILED \(max_turns\) without a report\)/);
     expect(reason).toMatch(/open findings: TEST-1 \(review \d+\) \(high\)/);
     expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!).open_findings.map((f: { external_id: string }) => f.external_id)).toEqual(['TEST-1']);
+    // Issue #168: every attempt review refused is settled as rejected, the last one on the non-progress path too.
+    expect(routeOutcomes().map((r) => [r.attempt_key, r.outcome])).toEqual([
+      ['attempt:1', 'rejected'],
+      ['attempt:2', 'rejected'],
+      ['attempt:3', 'rejected'],
+    ]);
   });
 
   it('an external id two briefed findings share does not count as naming either of them (#156)', async () => {

@@ -354,7 +354,8 @@ change, say) are listed once under that reason.
 
 ### stats and gc
 
-`orbit stats` prints success rate, cost, token and cache use, repair loops and
+`orbit stats` prints success rate, cost, token and cache use, the pass rate and
+cost per accepted task of each route, repair loops and
 time to green for this repository, read-only. It also says why runs ended: a
 count per failure class (`failure_classes` in `--json`), and pass rate and
 spend per accepted task per Orbit version (`by_version`). Every run that ends
@@ -815,8 +816,9 @@ tick. `orbit status` shows the heartbeat age and the last-progress time per run.
 
 The watchdog tells a stalled run from a busy one using last-progress time,
 worker log activity, the output of the run's running checks and fail-before
-probes (a probe that has written nothing yet counts from its start), step age
-and controller heartbeats. A check that hangs is still bounded by its own
+probes (a probe that has written nothing yet counts from its start), the time
+its latest check ended (between two checks of a long baseline none is running),
+step age and controller heartbeats. A check that hangs is still bounded by its own
 `timeout_seconds`. Each fail-before probe attempt also has started and finished
 lines on the timeline, so a long VERIFYING step shows what is running. Defaults: a run with
 no progress for 10 minutes is reported as stalled; a controller heartbeat older

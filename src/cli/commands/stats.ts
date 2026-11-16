@@ -96,6 +96,24 @@ export function renderStats(m: Metrics): string {
   if (m.token_usage.by_model.length > 0) {
     out.push('', table(m.token_usage.by_model.map((b) => [b.model ?? '(unknown model)', b.provider, String(b.records), n(b.input), n(b.output), pct(b.cache_hit_ratio)]), ['MODEL', 'PROVIDER', 'RECORDS', 'INPUT', 'OUTPUT', 'CACHE HIT']).trimEnd());
   }
+  if (m.routes.length > 0) {
+    out.push(
+      '',
+      'Routes (settled implementation attempts; routing.learning reads these):',
+      table(
+        m.routes.map((r) => [
+          `${r.work_kind}${r.difficulty ? ` (${r.difficulty})` : ''}`,
+          `${r.provider}/${r.model}`,
+          r.role ?? '-',
+          pct(r.pass_rate.rate),
+          `${r.pass_rate.numerator} of ${r.pass_rate.denominator}${r.excluded > 0 ? `, ${r.excluded} not judged` : ''}`,
+          usd(r.cost_per_accepted_usd),
+          r.cost_complete ? `${usd(r.cost_usd)} over ${r.outcomes} attempt(s)` : `cost unknown for ${r.unmeasured_outcomes} of ${r.outcomes} attempt(s)`,
+        ]),
+        ['TASK CLASS', 'ROUTE', 'ROLE', 'PASS RATE', 'VERIFIED', 'COST PER ACCEPTED', 'COST'],
+      ).trimEnd(),
+    );
+  }
   if (m.missing.length > 0) out.push('', 'Not measured:', ...m.missing.map((x) => `  - ${x}`));
   out.push('', 'A dash means no data in the window, not zero.');
   return `${out.join('\n')}\n`;

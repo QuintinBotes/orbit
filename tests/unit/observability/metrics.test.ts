@@ -281,6 +281,74 @@ describe('stale-evidence prevention and UI defects', () => {
   });
 });
 
+describe('routes (issue #168)', () => {
+  function outcome(s: Seed, runId: string, p: { model?: string; difficulty?: string | null; outcome: string; cost?: number | null; effort?: string; role?: string | null; ts?: number; evidenceRef?: string }): void {
+    s.db.run(
+      "INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty, evidence_ref) VALUES (?, 'routine-code', 'claude', ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+      runId, p.model ?? 'claude-haiku-4-5-20251001', p.outcome, p.cost === undefined ? 0.1 : p.cost, p.ts ?? T0, p.role === undefined ? 'implementer' : p.role, p.effort ?? 'medium', p.difficulty === undefined ? 'simple' : p.difficulty, p.evidenceRef ?? null,
+    );
+  }
+
+  it('gives each route its pass rate and its cost per accepted task, failed attempts included in the cost', () => {
+    const s = new Seed();
+    s.run('r1', 'SUCCEEDED');
+    s.run('r2', 'EXHAUSTED');
+    outcome(s, 'r1', { outcome: 'failed', cost: 0.3 });
+    outcome(s, 'r1', { outcome: 'verified', cost: 0.2, effort: 'high' });
+    outcome(s, 'r2', { outcome: 'rejected', cost: 0.5 });
+    outcome(s, 'r2', { outcome: 'verified', cost: 0.2 });
+    // Not judged on the work: counted, kept out of the rate.
+    outcome(s, 'r2', { outcome: 'error', cost: 0.1 });
+    outcome(s, 'r1', { model: 'claude-sonnet-5-5', outcome: 'verified', cost: 1.5, difficulty: 'complex' });
+    const m = metricsFor(s.db);
+    expect(m.routes).toEqual([
+      expect.objectContaining({ work_kind: 'routine-code', difficulty: 'complex', model: 'claude-sonnet-5-5', outcomes: 1, pass_rate: { numerator: 1, denominator: 1, rate: 1 }, cost_per_accepted_usd: 1.5 }),
+      {
+        work_kind: 'routine-code', difficulty: 'simple', role: 'implementer', provider: 'claude', model: 'claude-haiku-4-5-20251001', efforts: ['high', 'medium'],
+        outcomes: 5, runs: 2, verified: 2, failed: 1, rejected: 1, excluded: 1, pass_rate: { numerator: 2, denominator: 4, rate: 0.5 },
+        cost_usd: 1.3, unmeasured_outcomes: 0, cost_complete: true, cost_per_accepted_usd: 0.65, first_ts: T0, last_ts: T0,
+      },
+    ]);
+  });
+
+  it('FR-002: the failure a run ended on for an environment cause is counted as not judged; its earlier failure and its rejection count', () => {
+    const s = new Seed();
+    s.run('r1', 'SUCCEEDED');
+    s.run('r2', 'BLOCKED');
+    s.db.run("UPDATE runs SET failure_class = 'environment', outcome_json = ? WHERE id = 'r2'", JSON.stringify({ report_id: 'ev-last' }));
+    outcome(s, 'r1', { outcome: 'verified' });
+    outcome(s, 'r2', { outcome: 'failed', evidenceRef: 'ev-first' });
+    outcome(s, 'r2', { outcome: 'rejected', evidenceRef: 'review-gate:t' });
+    outcome(s, 'r2', { outcome: 'failed', evidenceRef: 'ev-last' });
+    expect(metricsFor(s.db).routes[0]).toMatchObject({ outcomes: 4, verified: 1, failed: 1, rejected: 1, excluded: 1, pass_rate: { numerator: 1, denominator: 3, rate: 0.3333 } });
+  });
+
+  it('an unknown cost is not a zero cost: the route has no cost per accepted task, and it is listed as missing', () => {
+    const s = new Seed();
+    s.run('r1', 'SUCCEEDED');
+    outcome(s, 'r1', { outcome: 'verified', cost: 0.2 });
+    outcome(s, 'r1', { outcome: 'verified', cost: null });
+    const m = metricsFor(s.db);
+    expect(m.routes[0]).toMatchObject({ verified: 2, cost_usd: 0.2, unmeasured_outcomes: 1, cost_complete: false, cost_per_accepted_usd: null });
+    expect(m.missing).toContain('cost is unknown for 1 route outcome(s) on 1 route(s); those routes have no cost per accepted task');
+  });
+
+  it('has null rates without a judged or a verified outcome, counts only runs in the window, and reads rows written before the new columns', () => {
+    const s = new Seed();
+    s.run('old', 'SUCCEEDED', T0 - 10 * 86_400_000);
+    s.run('r1', 'BLOCKED');
+    outcome(s, 'old', { outcome: 'verified' });
+    outcome(s, 'r1', { outcome: 'cancelled', difficulty: null, role: null });
+    outcome(s, 'r1', { model: 'claude-sonnet-5-5', outcome: 'failed' });
+    const m = metricsFor(s.db, { from: T0 - 1000 });
+    expect(m.routes.map((r) => [r.model, r.difficulty, r.role, r.pass_rate.rate, r.cost_per_accepted_usd])).toEqual([
+      ['claude-haiku-4-5-20251001', null, null, null, null],
+      ['claude-sonnet-5-5', 'simple', 'implementer', 0, null],
+    ]);
+    expect(metricsFor(new Seed().db).routes).toEqual([]);
+  });
+});
+
 describe('orbit stats', () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -329,6 +397,25 @@ describe('orbit stats', () => {
     expect(text).toMatch(/spend per accepted task/);
     expect(text).toMatch(/Not measured:/);
     expect(text).toMatch(/A dash means no data in the window, not zero\./);
+    expect(text).not.toMatch(/Routes \(/);
+  });
+
+  it('shows the pass rate and the cost per accepted task of each route (issue #168, FR-004)', async () => {
+    const repo = repoWithState((s) => {
+      s.run('r1', 'SUCCEEDED', T0);
+      const add = (model: string, outcome: string, cost: number | null): void => {
+        s.db.run("INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty) VALUES ('r1', 'routine-code', 'claude', ?, ?, ?, NULL, ?, 'implementer', 'medium', 'simple')", model, outcome, cost, T0);
+      };
+      for (let i = 0; i < 3; i++) add('claude-haiku-4-5-20251001', 'verified', 0.1);
+      add('claude-haiku-4-5-20251001', 'failed', 0.1);
+      add('claude-sonnet-5-5', 'verified', null);
+    });
+    const j = JSON.parse((await stats(repo, ['--json'])).out) as { routes: { model: string; pass_rate: { rate: number }; cost_per_accepted_usd: number | null }[] };
+    expect(j.routes.map((r) => [r.model, r.pass_rate.rate, r.cost_per_accepted_usd])).toEqual([['claude-haiku-4-5-20251001', 0.75, 0.133333], ['claude-sonnet-5-5', 1, null]]);
+    const text = (await stats(repo, [])).out;
+    expect(text).toMatch(/Routes \(settled implementation attempts; routing\.learning reads these\):/);
+    expect(text).toMatch(/routine-code \(simple\)\s+claude\/claude-haiku-4-5-20251001\s+implementer\s+75\.0%\s+3 of 4\s+\$0\.1333\s+\$0\.4000 over 4 attempt\(s\)/);
+    expect(text).toMatch(/routine-code \(simple\)\s+claude\/claude-sonnet-5-5\s+implementer\s+100\.0%\s+1 of 1\s+-\s+cost unknown for 1 of 1 attempt\(s\)/);
   });
 
   it('refuses a bad window and a missing state database', async () => {

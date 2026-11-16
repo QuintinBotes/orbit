@@ -58,6 +58,38 @@ passes only when the runtime meets each one.
 | 2. The delivery command the report gives delivers that candidate as a draft pull request listing the open findings | `verified-candidate.test.ts` | scenario 2: the delivery command the report gives pushes that exact candidate ... (the push runs; the lab has no `gh`, so the pull request body is read) |
 | Edge case: several passing candidates, the newest is offered (the #156 replay, SC-001) | `verified-candidate.test.ts` | edge case, several passing candidates: ... |
 
+### Reported issues (issue #166, FR-002)
+
+One scenario per issue fixed for #166. Each fails on the sources as they were before the issue's fix and passes after.
+
+| Issue | File | Test |
+|---|---|---|
+| #130 | `review-gate.test.ts` | issue #130: a review that asks for repair through an advisory finding only is repaired ... |
+| #131 | `service-and-launcher.test.ts` | issue #131: a service installed from a session with its own provider config folders finds the same logins (darwin, linux) |
+| #132 | `check-environment.test.ts` | issue #132: the dependencies are installed in the implementer worktree before the worker starts ... |
+| #133, #158 | `check-environment.test.ts` | issue #133, issue #158: a check checkout that is made again gets its dependencies installed again ... |
+| #138 | `cli-admission.test.ts` | issue #138: init proposes checks from the manifests and says it did not read the CLAUDE.md ... |
+| #139 | `cli-admission.test.ts` | issue #139: submitting a goal an unfinished run already has is refused ... |
+| #140 | `worker-and-watchdog.test.ts` | issue #140: a Claude worker in the claude-sandbox tier gets Rust build state it may write ... |
+| #141 | `worker-and-watchdog.test.ts`, `check-environment.test.ts` | issue #141: a baseline whose check runs longer than the stall limit ...; User Story 1, scenario 2 |
+| #142 | `cli-admission.test.ts` | issue #142: doctor warns when a mandatory check runs a toolchain whose dependency cache is missing ... |
+| #143 | `service-and-launcher.test.ts` | issue #143: a newer Orbit does not migrate the state database under a controller that still holds a run lease |
+| #144 | `attempts-and-size.test.ts` | issue #144: a diagnosis after a session that ended at its turn cap is told so ... |
+| #154 | `service-and-launcher.test.ts` | issue #154: a development build does not take over the launcher ... |
+| #156 | `review-gate.test.ts` | issue #156: every finding of a REPAIR_REQUIRED review is briefed ... |
+| #157 | `attempts-and-size.test.ts` | issue #157: a size denial names the files that carry the lines ... |
+
+### User stories of issue #166
+
+| Story | File | Test |
+|---|---|---|
+| 1.1 A check that imports an installed dependency runs with it present | `check-environment.test.ts` | issue #133, issue #158 |
+| 1.2 A baseline where every check fails for one environmental reason blocks and names it | `check-environment.test.ts` | User Story 1, scenario 2 (issue #141) |
+| 2.1 A missing module or toolchain is an environment failure; no implementer session starts for it | `check-environment.test.ts` | User Story 1, scenario 2 (a missing module where nothing was installed: no session starts); User Story 2 (a missing toolchain; a missing module in a provisioned checkout stays the change's, two tests); a base revision that imports an undeclared package keeps its baseline exception |
+| 3.1 Advisory-only findings with no approval: the run repairs | `review-gate.test.ts` | issue #130 |
+| 3.2 A high finding unvalidated across two verified candidates | `review-gate.test.ts` | issue #156 (the run stops and names the finding; the decided behaviour, one fresh independent review told the finding, follows in its own pull request) |
+| SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Since issue #169 such a run ends BLOCKED naming the candidate, so scenario 16, scenario 19 (the blocking finding) and issue #156, once known expected failures, pass it |
+
 ### Safe stops (spec section 2)
 
 | Stop | File | Test |

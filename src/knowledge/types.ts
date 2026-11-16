@@ -4,7 +4,7 @@
  * Hosted model weights never change. Orbit improves by
  *   1. retrieving lessons learned from verified run evidence into worker
  *      context (advisory, untrusted data; never authority),
- *   2. calibrating routing, allowances and difficulty from measured outcomes,
+ *   2. calibrating routing from measured route outcomes (routing/router.ts, routing.learning),
  *   3. distilling repeatedly confirmed lessons into versioned per-role prompt
  *      overlays, adopted automatically only when replay evals improve without
  *      regression, and rolled back automatically when live metrics regress.
