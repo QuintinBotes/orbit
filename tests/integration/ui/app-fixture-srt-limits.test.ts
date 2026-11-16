@@ -22,11 +22,12 @@ import { defaultCheck, isolationLimits, parseConfig } from '../../../src/policy/
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
 import { startApp, stopApp } from '../../../src/ui/app-fixture.ts';
 import { freePort } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const DEMO = join(ROOT, 'examples/demo-app');
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 
 let base: string;
 beforeEach(() => {

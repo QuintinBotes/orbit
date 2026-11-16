@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { skipOrFailOnCi } from './skip.ts';
 
 /**
  * Why this process cannot learn other processes' identity (start time, state, process group, the process table), or
@@ -11,7 +12,7 @@ export const PS_REFUSED: string | null = (() => {
   return r.error || r.status !== 0 ? `ps cannot run here (${r.error?.message ?? `exit ${String(r.status)}`}), as under Orbit's check sandbox on macOS` : null;
 })();
 
-/** Skip the current test, saying why, where ps is refused: `beforeEach(skipWithoutPs)`, or a test's first line. */
+/** Skip the current test, saying why (under CI: fail it), where ps is refused: `beforeEach(skipWithoutPs)`, or a test's first line. */
 export function skipWithoutPs(ctx: { skip(condition: boolean, note?: string): void }): void {
-  ctx.skip(PS_REFUSED !== null, PS_REFUSED ?? undefined);
+  skipOrFailOnCi(ctx, PS_REFUSED);
 }

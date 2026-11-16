@@ -1,4 +1,5 @@
 import { ORBIT_ROOT, run } from '../../scripts/demo/lib/example.ts';
+import { skipOrFailOnCi } from './skip.ts';
 
 /**
  * Why Chromium cannot start here, or null when it can: one Playwright launch per test file, as the srt tests probe srt.
@@ -11,7 +12,7 @@ export const CHROMIUM_REFUSED: string | null = (() => {
   return r.ok ? null : `Chromium cannot start here (${r.out.trim().split('\n')[0] || 'its launch failed'}), as in a command check's sandbox on macOS`;
 })();
 
-/** Skip the current test, saying why, where Chromium cannot start: `beforeEach(skipWithoutChromium)`, or a test's first line. */
+/** Skip the current test, saying why (under CI: fail it), where Chromium cannot start: `beforeEach(skipWithoutChromium)`, or a test's first line. */
 export function skipWithoutChromium(ctx: { skip(condition: boolean, note?: string): void }): void {
-  ctx.skip(CHROMIUM_REFUSED !== null, CHROMIUM_REFUSED ?? undefined);
+  skipOrFailOnCi(ctx, CHROMIUM_REFUSED);
 }

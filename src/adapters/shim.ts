@@ -132,8 +132,7 @@ export interface ShimHost {
 }
 
 const DEFAULT_HOST: ShimHost = {
-  // Without ps (refused by a sandbox on macOS, #203) a process still knows it leads its group: one with its own id exists.
-  pgidOf: (pid) => readPgid(pid) ?? (pid === process.pid && groupExists(pid) ? pid : null),
+  pgidOf: (pid) => pgidOf(pid),
   signalGroup: (pgid, signal) => {
     process.kill(-pgid, signal);
   },
@@ -1135,7 +1134,16 @@ export function readPgid(pid: number, opts: { platform?: NodeJS.Platform; procDi
   }
 }
 
-/** Whether process group `pgid` exists, by signal 0 (no ps). A group whose id is this process's pid is one it made. */
+/**
+ * Process group of `pid` for the shim's own-group check: from ps or /proc (readPgid), and, where ps is refused (a sandbox
+ * on macOS, #203), for this process only: its own pid when a group with that id exists, which only it can have made.
+ * Null otherwise, and the shim then refuses to run, so it never signals a group it does not lead.
+ */
+export function pgidOf(pid: number, opts: { platform?: NodeJS.Platform; procDir?: string } = {}): number | null {
+  return readPgid(pid, opts) ?? (pid === process.pid && groupExists(pid) ? pid : null);
+}
+
+/** Whether process group `pgid` exists, by signal 0 (no ps). */
 function groupExists(pgid: number): boolean {
   try {
     process.kill(-pgid, 0);

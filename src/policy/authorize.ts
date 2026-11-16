@@ -33,7 +33,7 @@ import picomatch from 'picomatch';
 import type { AuthorizationDecision, Operation, OrbitConfig, PolicySnapshot } from './types.ts';
 import { BUILTIN_PROTECTED_PATHS, HOME_CREDENTIAL_PATHS, credentialGlobsOf } from './builtin.ts';
 import { compileGlobs, globBases, hasGlobChars, stripDotSlash, type PathMatcher } from './globs.ts';
-import { canonicalize, isCaseInsensitiveFs, orbitTmpRoot, relativeInside, resolveDetailed, toPosix } from './paths.ts';
+import { canonicalize, isCaseInsensitiveFs, orbitTmpRoots, relativeInside, resolveDetailed, toPosix } from './paths.ts';
 import { hostAllowed, normalizeHost } from './hosts.ts';
 import { BASH_CATEGORIES_BY_SEVERITY, classifyBash, type BashCommandInfo, type BashRead, type BashWrite } from './bash.ts';
 import { DELIVERY_ACTIONS, DELIVERY_MODES, RELEASE_ACTIONS } from './config.ts';
@@ -45,7 +45,7 @@ export interface AuthorizeContext {
   cwd?: string;
   /** Home directory for credential locations and `~`. Defaults to os.homedir(). */
   home?: string;
-  /** This worker's private temp directory, the one part of orbitTmpRoot() it may read; without it, none may be read. */
+  /** This worker's private temp directory, the one part of the temp roots it may read; without it, none may be read. */
   workerTmpDir?: string;
 }
 
@@ -172,11 +172,11 @@ function authorizeRead(c: Compiled, path: unknown, ctx: AuthorizeContext): Autho
  * one that keeps a worker's Read out of another worker's temp files.
  */
 function otherWorkerTmp(canonical: string, own: string | undefined): boolean {
-  // The root `own` was made in: inside the worker's sandbox TMPDIR is `own` itself, so orbitTmpRoot() would nest in it.
-  const root = canonicalize(own === undefined ? orbitTmpRoot() : dirname(own));
-  const ci = isCaseInsensitiveFs(dirname(root));
-  if (relativeInside(root, canonical, ci) === null) return false;
-  return own === undefined || relativeInside(canonicalize(own), canonical, ci) === null;
+  // Every root a process of this user may use, and the one `own` was made in: inside the worker's sandbox TMPDIR is
+  // `own` itself, so a root from this process's environment alone could nest in it.
+  const roots = [...orbitTmpRoots(), ...(own === undefined ? [] : [dirname(own)])].map(canonicalize);
+  if (!roots.some((root) => relativeInside(root, canonical, isCaseInsensitiveFs(dirname(root))) !== null)) return false;
+  return own === undefined || relativeInside(canonicalize(own), canonical, isCaseInsensitiveFs(dirname(own))) === null;
 }
 
 /** The worktree-relative spellings of an absolute path (through the root as written and as resolved); empty when it is outside. */

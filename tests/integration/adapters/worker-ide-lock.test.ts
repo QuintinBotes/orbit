@@ -11,6 +11,7 @@ import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, withHarnessLoopback, type Fixture } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Review of issue #31. A running IDE extension (VS Code, JetBrains) writes <config dir>/ide/<port>.lock, which holds the
@@ -32,7 +33,7 @@ const which = spawnSync('/bin/sh', ['-c', 'command -v claude'], { encoding: 'utf
 const CLAUDE = which.status === 0 ? which.stdout.trim() : null;
 const ORBIT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ORBIT_ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 const TOKEN = 'ide-lock-token-5f1c0e9a7b';
 
 let api: Awaited<ReturnType<typeof startFakeAnthropicApi>>;

@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -991,4 +992,44 @@ describe('runShim: a multi-line private key block in provider output is persiste
     expect(JSON.parse(out[1]!)).toEqual({ type: 'assistant', n: 2 });
     expect(out[2]).toBe('plain tail');
   });
+});
+
+// Review of #204: where ps is refused (#203), the shim learns that it leads its group by signal 0, and only then runs,
+// so the group it kills at the end is its own: its pgid is its pid. A process that does not lead its group gets null.
+describe.skipIf(!(process as unknown as { features?: { typescript?: unknown } }).features?.typescript)('the own-group check without ps', () => {
+  const SHIM = fileURLToPath(new URL('../../../src/adapters/shim.ts', import.meta.url));
+  /** Run `script` in a new node with no PATH (so no ps): as a group leader, or inside a group /bin/sh leads. */
+  function child(script: string, leads: boolean): Promise<{ out: string; code: number | null; signal: NodeJS.Signals | null }> {
+    const node = [NODE, '--experimental-strip-types', '--no-warnings', '-e', script];
+    const argv = leads ? node : ['/bin/sh', '-c', '"$@"; true', 'sh', ...node];
+    const c = spawn(argv[0]!, argv.slice(1), { detached: true, env: { PATH: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    c.stdout!.on('data', (d: Buffer) => (out += d.toString()));
+    return new Promise((resolve) => c.on('close', (code, signal) => resolve({ out: out.trim(), code, signal })));
+  }
+
+  it('answers its own pid only for a process that leads its group', async () => {
+    const script = `import(${JSON.stringify(SHIM)}).then((m) => console.log(JSON.stringify({ pid: process.pid, pgid: m.pgidOf(process.pid, { platform: 'darwin' }) })))`;
+    const leader = JSON.parse((await child(script, true)).out) as { pid: number; pgid: number | null };
+    expect(leader.pgid).toBe(leader.pid);
+    const member = JSON.parse((await child(script, false)).out) as { pid: number; pgid: number | null };
+    expect(member.pgid).toBeNull();
+  }, 30_000);
+
+  it.runIf(process.platform === 'darwin')('kills only the group it leads: a shim inside another group refuses to run', async () => {
+    const dir = tmp();
+    const run = (sub: string) =>
+      `import(${JSON.stringify(SHIM)}).then((m) => m.runShim({ workerDir: ${JSON.stringify(join(dir, sub))}, argv: [${JSON.stringify(NODE)}, '-e', 'process.exit(0)'], env: {}, cwd: ${JSON.stringify(dir)}, timeoutMs: 0, graceMs: 50 })).then(() => console.log('settled'), (e) => { console.log('refused: ' + e.message); process.exit(3); })`;
+    mkdirSync(join(dir, 'leader'));
+    mkdirSync(join(dir, 'member'));
+    // It cannot list its group, so once the exit is recorded it kills the group it leads, itself last.
+    const leader = await child(run('leader'), true);
+    expect(leader.signal).toBe('SIGKILL');
+    expect(readExitRecord(join(dir, 'leader'))).toMatchObject({ code: 0, escalation: [] });
+    // Inside a group /bin/sh leads, the shim refuses before it starts anything, and the shell lives to exit 0.
+    const member = await child(run('member'), false);
+    expect(member.out).toMatch(/^refused: the shim must lead its own process group/);
+    expect(member).toMatchObject({ code: 0, signal: null });
+    expect(readExitRecord(join(dir, 'member'))).toBeNull();
+  }, 30_000);
 });

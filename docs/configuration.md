@@ -971,13 +971,14 @@ check and every worker reads them and cannot write them. Build state is
 created for each check attempt and removed with it, so `cargo build` and
 `cargo test` in two checks each compile. A Claude worker builds in a directory
 of its own in its private temp directory under the temp root, which it may
-write in either worker tier. The temp root is `orbit-<uid>` in `$TMPDIR` when
-that directory is writable and the root there is at most 46 bytes long, so that
-socket paths below it stay under macOS's 104-byte limit; otherwise it is
-`/tmp/orbit-<uid>`. On a macOS host, whose `$TMPDIR` under `/var/folders` is
-too long, that is `/tmp/orbit-<uid>`; for Orbit run as a check (its own test
-suite), it is inside the check's private temp directory, the one temp location
-the check may write. Orbit makes a new one for every session of the
+write in either worker tier. The temp root is `/tmp/orbit-<uid>` for every
+Orbit process of a user, whatever its `$TMPDIR`, so a foreground run and the
+service agree on it. It is short so that socket paths below it stay under
+macOS's 104-byte limit. Only Orbit code running inside an Orbit check (its own
+test suite as a check) puts it in the check's private temp directory, the one
+temp location the check may write, when the root there is at most 46 bytes
+long. Read-denials and `orbit gc` cover `/tmp/orbit-<uid>` and `orbit-<uid>`
+in `$TMPDIR` both. Orbit makes a new one for every session of the
 worker and removes the earlier one, so a restarted worker compiles again. No
 check and no other Claude worker can read it: their sandboxed commands are
 read-denied the whole temp root (but for a worker's own directory), and the
@@ -1345,7 +1346,7 @@ never be applied.
 `keep_runs_days` is the artifact retention period. The retention pass
 (`orbit gc`; `pruneExpiredRuns` in `src/storage/retention.ts`) removes
 `.orbit/runs/<id>/`, the run's worktrees under `$ORBIT_HOME/worktrees/` and its
-workers' private temp directories under the temp root (usually `/tmp/orbit-<uid>`) for runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than
+workers' private temp directories under the temp roots (`/tmp/orbit-<uid>`, and `orbit-<uid>` in `$TMPDIR`) for runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than
 that many days ago. `orbit gc --keep-days 0` prunes every finished run now. The
 database rows stay and are marked with a `run.artifacts_pruned` event. A
 `BLOCKED` run is never pruned, and neither is a run whose controller still holds

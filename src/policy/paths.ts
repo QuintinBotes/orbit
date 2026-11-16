@@ -17,9 +17,9 @@
  * sandbox's and the diff inspection's problem, not this function's.
  */
 import { accessSync, constants, lstatSync, readlinkSync, realpathSync, existsSync, type Stats } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { isAbsolute, parse, sep, dirname, join, basename } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
+import { CHECK_TOKEN_ENV } from '../evidence/check-shim.ts';
 
 const MAX_SYMLINK_HOPS = 40;
 
@@ -136,25 +136,46 @@ const caseCache = new Map<string, boolean>();
 const MAX_ENV_TMP_ROOT = 46;
 
 /**
- * Root of every worker's private temp directory: orbit-<uid> in the environment's temp directory (`temp`, TMPDIR or
- * /tmp) when that is writable here and the root there is short, else /tmp/orbit-<uid>, the same shape Claude Code uses
- * for its own /tmp/claude-<uid>. It is short on purpose: Claude Code and srt create Unix sockets in temp directories,
- * and a socket path over 104 bytes (macOS) fails, so the macOS per-user TMPDIR (/var/folders/.../T) is too long and the
- * host keeps /tmp. Under an Orbit check or worker, TMPDIR is that sandbox's private directory, the only temp location it
- * may write, so Orbit code running there (Orbit's own test suite as a check) nests its root in it (#203). Only `temp`
- * is resolved (/tmp is a link on macOS): a link planted at the root itself must be seen by lstat, not followed (review
- * of #140).
+ * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same shape Claude Code uses for its own
+ * /tmp/claude-<uid>, so that every Orbit process of a user (a foreground run, the service, `orbit gc`) agrees on it
+ * whatever its TMPDIR. It is short on purpose: Claude Code and srt create Unix sockets in temp directories, and a socket
+ * path over 104 bytes (macOS) fails. Inside an Orbit check (CHECK_TOKEN_ENV set), whose sandbox may write only the
+ * check's own temp directory, Orbit code under test (Orbit's own suite as a check) nests its root there instead (#203).
+ * Only the temp directory is resolved (/tmp is a link on macOS): a link planted at the root itself must be seen by
+ * lstat, not followed (review of #140).
  */
-export function orbitTmpRoot(uid: number | undefined = process.getuid?.(), temp: string = tmpdir()): string {
-  const name = uid === undefined ? 'orbit' : `orbit-${uid}`;
+export function orbitTmpRoot(uid: number | undefined = process.getuid?.(), env: Readonly<Record<string, string | undefined>> = process.env): string {
+  return (env[CHECK_TOKEN_ENV] ? envTmpRoot(uid, env) : null) ?? fixedTmpRoot(uid);
+}
+
+/**
+ * Every root a process of this user may have used: /tmp/orbit-<uid>, and orbit-<uid> in this process's TMPDIR when it
+ * qualifies. Read-denials and `orbit gc` cover them all, so a process with another TMPDIR is covered too.
+ */
+export function orbitTmpRoots(uid: number | undefined = process.getuid?.(), env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+  const fixed = fixedTmpRoot(uid);
+  const nested = envTmpRoot(uid, env);
+  return nested === null || nested === fixed ? [fixed] : [fixed, nested];
+}
+
+function fixedTmpRoot(uid: number | undefined): string {
+  return join(canonicalize('/tmp'), tmpRootName(uid));
+}
+
+/** orbit-<uid> in TMPDIR when that directory is writable here and the root is at most MAX_ENV_TMP_ROOT bytes; else null. */
+function envTmpRoot(uid: number | undefined, env: Readonly<Record<string, string | undefined>>): string | null {
+  const temp = env.TMPDIR || '/tmp';
   try {
     accessSync(temp, constants.W_OK);
-    const root = join(canonicalize(temp), name);
-    if (Buffer.byteLength(root) <= MAX_ENV_TMP_ROOT) return root;
+    const root = join(canonicalize(temp), tmpRootName(uid));
+    return Buffer.byteLength(root) <= MAX_ENV_TMP_ROOT ? root : null;
   } catch {
-    // Missing, relative or not writable here: the fixed root.
+    return null; // missing, relative or not writable here
   }
-  return join(canonicalize('/tmp'), name);
+}
+
+function tmpRootName(uid: number | undefined): string {
+  return uid === undefined ? 'orbit' : `orbit-${uid}`;
 }
 
 /** Repository-relative POSIX path when `abs` is `root` or below it, else null. */

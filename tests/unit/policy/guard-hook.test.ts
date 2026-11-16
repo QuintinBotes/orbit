@@ -165,6 +165,27 @@ describe('reads in the workers\' temp root', () => {
     expect(denial(runGuardHook(input('Read', { file_path: join(other, 'x') }), env)).rule).toBe('read.worker-tmp');
   });
 
+  // Review of #204: a process with another TMPDIR may have made its workers' directories in another root.
+  it('denies a worker another temp root this user\'s Orbit may use, beside its own', () => {
+    let base: string;
+    try {
+      base = realpathSync(mkdtempSync('/tmp/o-'));
+    } catch {
+      base = realpathSync(mkdtempSync(join(tmpdir(), 'o-'))); // /tmp is not writable under Orbit's check sandbox
+    }
+    vi.stubEnv('ORBIT_CHECK_TOKEN', '');
+    vi.stubEnv('TMPDIR', base);
+    try {
+      // The worker's own directory is in /tmp/orbit-<uid>; another process of this user had TMPDIR=base.
+      const mine = { ...opts, workerTmpDir: join(realpathSync('/tmp'), `orbit-${uid}`, 'aaaaaaaaaaaa') };
+      const elsewhere = join(base, `orbit-${uid}`, 'bbbbbbbbbbbb', 'x');
+      expect(denial(handlePreToolUse(input('Read', { file_path: elsewhere }), mine)).rule).toBe('read.worker-tmp');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   // #203: in the worker's sandbox TMPDIR is its own directory, short enough for Orbit code there to nest a root in it.
   it('judges the root from the worker\'s own directory, whatever TMPDIR the hook runs with', () => {
     let base: string;

@@ -11,12 +11,13 @@ import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { FAKE_CLAUDE, IMPLEMENTER_OUTPUT, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 // The os-sandbox tier: the whole provider process inside srt. Skipped when
 // srt cannot run here (no binary, or an outer sandbox that forbids nesting).
 const ORBIT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ORBIT_ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 const which = spawnSync('/bin/sh', ['-c', 'command -v claude'], { encoding: 'utf8' });
 const CLAUDE = which.status === 0 ? which.stdout.trim() : null;
 

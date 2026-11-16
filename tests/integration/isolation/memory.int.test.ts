@@ -7,6 +7,7 @@ import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import type { IsolationLimits } from '../../../src/policy/types.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The memory watchdog (G24) on this host's real ps and node: it kills a
@@ -69,7 +70,7 @@ describe.skipIf(!ps)('memory watchdog with the host ps', () => {
 
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srtProbe = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await srtProbe.available();
+const status = requiredOnCi(await srtProbe.available());
 
 describe.skipIf(!status.ok || !ps)('memory watchdog under the real srt', () => {
   const t = status.ok ? tempRoot('orbit-memory-srt-') : { root: '/nonexistent-orbit-test', remove: () => {} };
