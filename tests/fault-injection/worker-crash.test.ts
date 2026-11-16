@@ -25,6 +25,14 @@ function crashingScenario(): object {
   });
 }
 
+function partialEditOnDisk(worktree: string): boolean {
+  try {
+    return readFileSync(join(worktree, 'apps/wip.mjs'), 'utf8') === WIP;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * `controller` is a controller that must die together with the worker: it is killed first, so it cannot notice
  * the dead worker and restart it in the window before the test would otherwise kill it. Without this, a slow
@@ -34,8 +42,10 @@ function crashingScenario(): object {
 async function killWorkerMidEdit(l: Lab, runId: string, controller?: ChildProcess): Promise<{ id: string; pid: number; pgid: number; worktree: string }> {
   const w = await waitFor(() => listWorkers(l.db(), { runId, role: 'implementer' }).find((x) => x.state === 'RUNNING' && x.pgid !== null), 30_000);
   const worktree = runState(l, runId).worktreePath!;
-  // Mid-edit: the first half of the change is on disk and the worker is still going.
-  await waitFor(() => existsSync(join(worktree, 'apps/wip.mjs')), 15_000);
+  // Mid-edit: the first half of the change is on disk and the worker is still going. The fake creates the file and
+  // then writes it, so the file existing is not enough: a kill between the two left it empty, and the delivered
+  // branch then held an empty file (seen once on CI).
+  await waitFor(() => partialEditOnDisk(worktree), 15_000);
   t.group(w.pgid);
   if (controller) {
     controller.kill('SIGKILL');

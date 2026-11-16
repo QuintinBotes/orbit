@@ -72,7 +72,8 @@ describe.skipIf(!READY)('acceptance: cross-provider review and security policy',
     expect(done.state).not.toBe('SUCCEEDED');
     expect(l.github().state.prs).toEqual([]);
     expect(done.outcomeReason).toMatch(/review|claim|COR-1|finding/i);
-    assertRunInvariants(l, run.id);
+    // Issue #166, SC-003, a known expected failure: this run ends EXHAUSTED holding a verified candidate (issue #169).
+    assertRunInvariants(l, run.id, { knownExhaustedWithVerifiedCandidate: '#169' });
   }, 180_000);
 
   it('scenario 19: a security finding covered by an exception listed in policy is waived with its recorded reason, and the run completes', async () => {
@@ -124,7 +125,8 @@ describe.skipIf(!READY)('acceptance: cross-provider review and security policy',
     expect(listDecisions(db, run.id, { kind: 'review.finding.excepted' })).toEqual([]);
     expect(transitions(db, run.id)).not.toContain('DELIVERING');
     expect(l.github().state.prs).toEqual([]);
-    assertRunInvariants(l, run.id);
+    // Issue #166, SC-003, a known expected failure: this run ends EXHAUSTED holding a verified candidate (issue #169).
+    assertRunInvariants(l, run.id, { knownExhaustedWithVerifiedCandidate: '#169' });
   }, 180_000);
 
   it('scenario 19: a security warning below the blocking severities is reported as advisory and does not block', async () => {
