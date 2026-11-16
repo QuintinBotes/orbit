@@ -1,6 +1,7 @@
 # 0015. A repair's test resolves a finding only when it discriminates
 
-Status: accepted (2026-10-13), amended the same day after an adversarial review of the first probe rule
+Status: accepted (2026-10-13), amended the same day after an adversarial review of the first probe rule, and on
+2026-11-16 (one re-review of a carried finding no probe settles, below)
 
 ## Context
 
@@ -95,3 +96,35 @@ finding that also holds an unnamed test which discriminates is credited with tha
   never resolves a finding; checks that discover their tests are unaffected.
 - Results are recorded like probe attempts (ADR 0014 section 2), never in `check_runs` or `failures`: one
   `review.repair-probe` decision per probe tree: the control tree's, the repaired tree's and each finding's.
+
+## Amendment (2026-11-16): one re-review of a carried finding no probe settles
+
+Some findings cannot be settled by the probe however good the repair is. "Add tests" is the common one: the test
+the repair adds passes before and after it, so it never discriminates. Such a finding stayed open on every later
+candidate. Item 6 sent it back to repair until the #162 non-progress stop ended the run, with a verified candidate
+and nothing that could close the finding (#156, #144 D3). The maintainer decided (2026-11-16):
+
+1. A blocking finding that was sent to repair from an earlier tree, is still open on the current candidate (which
+   passed verification) and is confirmed by no check, gets one fresh, independent re-review before it goes to repair
+   again. The re-reviewer is chosen by the run's reviewer rules, excluding the providers whose reviews raised the
+   finding when an independent reviewer other than them is eligible; otherwise the run's own reviewer re-reviews in a
+   fresh session. It is told the finding by id and gets the candidate's review packet (its diff and evidence). It
+   answers in the review output: the finding under the same id when the defect is still present, or APPROVE, with an
+   info finding under that id giving its evidence, when it is gone. The re-review costs a review round; with none
+   left there is none.
+2. Gone: the finding is dropped (status `rejected`), recorded with the re-reviewer's evidence and the re-review's id,
+   and the gate decides the tree without it. The re-reviewer's APPROVE counts like any approval of the tree; every
+   other finding of the tree's reviews still has to be closed on its own. A re-review's verdict is not read as a
+   disagreement with the other findings, which it did not judge.
+3. Still present: the finding's reason says so and it goes to repair as usual, within the review round and attempt
+   budgets (a re-review that confirms the finding is new information, so the #162 stop does not end the run on this
+   tree, and since it settled whether the finding holds, another review's approval of the tree does not send it to
+   the Inquisition as a disagreement). With no budget left the run stops naming the finding, and ends BLOCKED
+   offering the verified candidate (#193).
+4. At most one re-review per finding per run (`review.finding-rereview`, keyed by the finding's fingerprint), and none
+   for a finding a re-review raised. A finding carried again after the repair a re-review allowed goes where item 6
+   sends it, so the #162 stop applies again.
+
+This is the one place where something other than an exit status clears a blocking finding. It is bounded: one
+independent session per finding, which has the finding by id and the candidate's evidence, and whose APPROVE is still
+an APPROVE of the tree the gate and the completion gate require.

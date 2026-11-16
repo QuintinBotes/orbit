@@ -316,13 +316,13 @@ describe('a repair that named its validation test', () => {
     lab.db.run("UPDATE workers SET state = 'SUCCEEDED', result_json = ? WHERE id = ?", JSON.stringify({ structured: out }), w.id);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     record(c2, 'APPROVE', []);
-    // No check run at all: nothing is proven by the repair.
+    // No check run at all: nothing is proven by the repair, so the carried COR-1 gets its one re-review (ADR 0015, amended).
     await run();
-    expect(['DELIVERING', 'BLOCKED', 'REPAIRING']).toContain(state());
+    expect(['DELIVERING', 'BLOCKED', 'REPAIRING', 'REVIEWING']).toContain(state());
     lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, started_at) VALUES ('cr-2', ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', 'PASSED', 0, 1)", lab.runId, c2.id, c2.treeHash);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     await run();
-    expect(['DELIVERING', 'BLOCKED', 'REPAIRING']).toContain(state());
+    expect(['DELIVERING', 'BLOCKED', 'REPAIRING', 'REVIEWING']).toContain(state());
   });
 });
 

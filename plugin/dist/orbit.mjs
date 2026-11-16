@@ -65887,7 +65887,10 @@ async function reviewingStep(ctx) {
   const focuses = reviewFocuses(ctx, cand);
   const fresh = freshReviewOf(ctx, cand.treeHash);
   if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
-  if (uncoveredUnits(ctx, cand).length === 0) return resolveAndDecide(ctx, cand);
+  if (uncoveredUnits(ctx, cand).length === 0) {
+    const asked = askedReReview(ctx, cand, reReviewRecords(ctx));
+    return asked ? reReview(ctx, cand, asked) : resolveAndDecide(ctx, cand);
+  }
   const usable = await usableReviewer(ctx, cand);
   if (!usable.ok) return usable.step;
   const sel = usable.sel;
@@ -65952,7 +65955,7 @@ async function singleReview(ctx, cand, sel, opts) {
       cwd: checkout,
       readOnly: true,
       phase: "final",
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh, sel.provider)
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh, sel.provider, opts.reReview ?? null)
     }),
     accept: (r) => {
       try {
@@ -66189,9 +66192,12 @@ async function resolveAndDecide(ctx, cand) {
     const stop = await safePoint(ctx);
     if (stop) return stop;
   }
-  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
+  const reReviews = reReviewRecords(ctx);
+  const reReviewed = new Set(reReviews.map((r) => recordedFreshReview(ctx, r)?.id));
+  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews.filter((r) => !reReviewed.has(r.id)), snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
+  const stillPresent = settleReReviews(ctx, state, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -66237,7 +66243,9 @@ async function resolveAndDecide(ctx, cand) {
       });
       if (blocked) return blocked;
     }
-    const stalled = stalledReviewRepair(ctx, cand, repairable);
+    const reReview2 = await reReviewCarried(ctx, cand, repairable, state, reReviews);
+    if (reReview2) return reReview2;
+    const stalled = stalledReviewRepair(ctx, cand, repairable, stillPresent);
     if (stalled) {
       settleRouteOutcome(ctx, cand, { outcome: "rejected", evidenceRef: `review-gate:${cand.treeHash}` });
       const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
@@ -66385,6 +66393,75 @@ function describeFreshReview(ctx, rec2, resolution, state) {
     text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
   };
+}
+function reReviewRecords(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_KIND }).map((d) => d.data);
+}
+async function reReviewCarried(ctx, cand, going, state, recs) {
+  const asked = askedReReview(ctx, cand, recs);
+  if (asked) return reReview(ctx, cand, asked);
+  const rounds = ctx.ledger.state("review_rounds");
+  if (rounds.used >= rounds.allowance) return null;
+  const carried = new Set(reviewRepairs(ctx).filter((r) => r.tree_hash !== cand.treeHash).flatMap((r) => r.findings.map((f) => f.fingerprint)));
+  const all = [...state.findings, ...state.previousFindings];
+  const byReReview = new Set(recs.map((r) => recordedFreshReview(ctx, r)?.id));
+  const d = going.find((x) => x.blocking && x.status !== "accepted" && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint) && !all.some((f) => x.memberIds.includes(f.id) && byReReview.has(f.reviewId)));
+  if (!d) return null;
+  const raisedBy = [...new Set(all.filter((f) => d.memberIds.includes(f.id)).map((f) => f.provider))];
+  const failed = Object.fromEntries(activeReviewerFailures(ctx).map((f) => [f.provider, f.reason]));
+  for (const p of raisedBy) failed[p] ??= "it raised the finding under re-review";
+  const other = fallbackSelection(ctx, await checkEnvironment(ctx), failed);
+  const rec2 = {
+    fingerprint: d.fingerprint,
+    finding_id: d.findingId,
+    member_ids: d.memberIds,
+    external_id: d.externalId,
+    severity: d.severity,
+    claim: clipAtWord(d.claim, 500),
+    evidence: findingTexts(state).get(d.findingId)?.evidence ?? null,
+    raised_by: raisedBy,
+    tree_hash: cand.treeHash,
+    candidate_id: cand.id,
+    base: `review-finding:${cand.id}:${d.fingerprint}`,
+    reviewer: other.decision === "SELECT" && other.independent && other.needsApproval !== true ? other : null
+  };
+  const who = rec2.reviewer ? `reviewer ${reviewerLabel(rec2.reviewer)}, not ${raisedBy.join(", ")}, which raised it` : `no independent reviewer other than ${raisedBy.join(", ")} is eligible, so the run's reviewer re-reviews it in a fresh session`;
+  decide2(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it; ${who}`, data: rec2 });
+  return reReview(ctx, cand, rec2);
+}
+async function reReview(ctx, cand, rec2) {
+  const usable = rec2.reviewer && !activeReviewerFailures(ctx).some((f) => f.provider === rec2.reviewer.provider) ? { ok: true, sel: rec2.reviewer } : await usableReviewer(ctx, cand);
+  if (!usable.ok) return usable.step;
+  const pending = await singleReview(ctx, cand, usable.sel, { base: rec2.base, what: `the ${usable.sel.provider} re-reviewer of finding ${reReviewId(rec2)}`, fresh: null, reReview: rec2 });
+  return pending ?? resolveAndDecide(ctx, cand);
+}
+function settleReReviews(ctx, state, resolution, recs) {
+  const present = /* @__PURE__ */ new Set();
+  for (const rec2 of recs) {
+    const review = rec2.tree_hash === resolution.treeHash ? recordedFreshReview(ctx, rec2) : null;
+    if (!review) continue;
+    const own = state.findings.filter((f) => f.reviewId === review.id);
+    const same2 = own.filter((f) => f.externalId === reReviewId(rec2) || findingFingerprint(f) === rec2.fingerprint);
+    const gone = !same2.some((f) => f.severity !== "info") && (review.verdict === "APPROVE" || own.some((f) => f.severity !== "info"));
+    if (!gone) present.add(rec2.fingerprint);
+    const who = `re-review ${review.id} by ${review.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
+    const again = new Set(same2.map((f) => f.id));
+    for (const d of resolution.dispositions) {
+      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id) || again.has(id))) continue;
+      if (!UNRESOLVED_FINDING_STATUSES.includes(d.status)) continue;
+      if (!gone) {
+        d.disagreement = null;
+        d.reason += `; its one ${who} found it still present`;
+        continue;
+      }
+      d.status = "rejected";
+      d.blocking = false;
+      d.evidenceRefs = [...d.evidenceRefs, `review:${review.id}`];
+      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(same2[0]?.evidence ?? `it ${review.verdict === "APPROVE" ? "approved the tree" : "named only other findings"} and did not raise it again`, 300)}`;
+    }
+  }
+  refreshLists(resolution);
+  return present;
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -66665,6 +66742,10 @@ ${a.record.reason}`));
       d.reason = `the Inquisition (inquiry ${key2}) neither supported nor refuted it; a repair attempt runs its discriminating test: the reviewer's validation fails on this tree and is fixed, or passes and refutes it`;
     }
   }
+  refreshLists(resolution);
+  return undecided;
+}
+function refreshLists(resolution) {
   resolution.accepted = resolution.dispositions.filter((d) => d.status === "accepted");
   resolution.rejected = resolution.dispositions.filter((d) => d.status === "rejected");
   resolution.blocking = resolution.dispositions.filter((d) => d.blocking);
@@ -66676,7 +66757,6 @@ ${a.record.reason}`));
       c.blocking = d.blocking;
     }
   }
-  return undecided;
 }
 function markRepaired(resolution, repaired, repairedBy) {
   for (const d of resolution.dispositions) {
@@ -66697,7 +66777,7 @@ function blockedCriteriaIn(d, t, blocked) {
   const text2 = [d.claim, d.location ?? "", t?.evidence ?? "", t?.suggestedValidation ?? ""].join("\n");
   return blocked.filter((id) => namesId(text2, id));
 }
-function stalledReviewRepair(ctx, cand, going) {
+function stalledReviewRepair(ctx, cand, going, stillPresent) {
   const latest = currentAttempt(ctx);
   if (latest === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
   const resumedSince = (id) => ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, id) !== void 0;
@@ -66709,7 +66789,7 @@ function stalledReviewRepair(ctx, cand, going) {
   }
   const last = ctx.db.get("SELECT id, data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT);
   const prev = last?.data_json ? JSON.parse(last.data_json) : null;
-  if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id)) return null;
+  if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id) || going.some((d) => stillPresent.has(d.fingerprint))) return null;
   const asked = prev.findings.filter((f) => going.some((d) => d.fingerprint === f.fingerprint));
   const shared = (id) => prev.findings.filter((f) => f.external_id === id).length > 1;
   const namesUniquely = (text2, f) => namesId(text2, f.fingerprint) || typeof f.external_id === "string" && f.external_id.length > 0 && !shared(f.external_id) && namesId(text2, f.external_id);
@@ -66943,7 +67023,7 @@ function inspectionText(provider) {
   if (family === "muse") return "Inspect the checkout with your file reading and search tools; the session is read-only, so never try to write, install anything or reach the network.";
   return "Inspect the checkout with Read, Grep and Glob; you have no shell.";
 }
-function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, provider = null) {
+function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, provider = null, reReview2 = null) {
   const text2 = readText(join69(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
@@ -66952,9 +67032,12 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, p
     inspectionText(provider),
     ...focus === "general" ? [] : [FOCUS_TEXT[focus]],
     ...fresh ? freshReviewText(fresh) : [],
+    ...reReview2 ? reReviewText(reReview2) : [],
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`
   ].join("\n");
   const noted = fresh && fresh.noted.length > 0 ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
+  if (reReview2) noted.push({ label: "the finding under re-review", content: `${reReviewId(reReview2)} (${reReview2.severity}): ${reReview2.claim}${reReview2.evidence ? `
+Evidence given: ${reReview2.evidence}` : ""}` });
   return renderWorkerPrompt({
     role: "reviewer",
     task,
@@ -66984,6 +67067,14 @@ function freshReviewText(rec2) {
     `Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before (under advisory and off it is reported to the person). A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category ${EVIDENCE_CLASSIFICATION_CATEGORY}.`
   ];
 }
+function reReviewText(rec2) {
+  const id = reReviewId(rec2);
+  return [
+    `This is a re-review of one finding, ${id} (${rec2.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
+    "Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout.",
+    `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id} whose evidence names what in the candidate shows that it is gone.`
+  ];
+}
 async function prepareReview(ctx, cand, provider) {
   const reviewDir = join69(ctx.runDir, "reviews", String(cand.seq));
   const checkout = join69(runWorktreeRoot(ctx), `review-${cand.seq}`);
@@ -66991,7 +67082,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync49(checkout) || readdirSync14(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, reReviewId, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -67046,6 +67137,9 @@ var init_reviewing = __esm({
     };
     FRESH_REVIEW_KIND = "review.fresh";
     SHALLOW_REVIEW_EFFORT = "high";
+    REREVIEW_KIND = "review.finding-rereview";
+    reReviewId = (rec2) => rec2.external_id ?? "FINDING-1";
+    askedReReview = (ctx, cand, recs) => recs.find((r) => r.tree_hash === cand.treeHash && !recordedFreshReview(ctx, r));
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
     NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";

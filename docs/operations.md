@@ -174,6 +174,17 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit learn list` | `--status`, `--kind`, `--search <text>`, `--global`, `--limit <n>` (default 50); the other `learn` commands are in [the learning layer](learning.md) |
 | `orbit service install / uninstall / status / run` | `--entry <path>` on install |
 
+### doctor
+
+`orbit doctor` starts each check's executable and each toolchain inside the
+sandbox the check would get, in an empty scratch checkout, not the repository.
+It therefore cannot see a package manager the repository pins with
+`packageManager` in `package.json`: `pnpm --version` can pass there while the
+real check, which runs the pinned version, fails (#142). A run does not lose an
+attempt to that: a baseline whose checks all fail for one environment reason (a
+missing package, a refused package fetch) blocks at preflight and names that
+reason (#194).
+
 ### verify, repair, inquisition
 
 `orbit verify [run-id]` (default: the most recent run) re-runs the independent

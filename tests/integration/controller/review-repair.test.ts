@@ -152,18 +152,20 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(listProbeAttempts(l.db(), run.id).filter((a) => a.logPath?.includes('/repair-probe/')).map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'PASSED']);
   }, 120_000);
 
-  it('a finding the repair did not cover stays open and the run stops as non-progress, naming the open finding (BLOCKED, offering the verified candidate: #169)', async () => {
+  it('a finding the repair did not cover stays open, gets its one re-review, which finds it still present, and the run stops at the review_rounds cap naming it (BLOCKED, offering the verified candidate: #169)', async () => {
     const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 3) });
-    // The second attempt changes something, but names no test for the finding, so nothing closes it, and a third
-    // attempt with the same brief would end the same way (#156): the run stops with a review round left.
-    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])], reviewer: [REPAIR_REQUIRED, REPAIR_REQUIRED] }));
+    // The second attempt changes something, but names no test for the finding, so nothing closes it. Before a third
+    // attempt with the same brief (#156), the carried finding gets its one re-review (ADR 0015, amendment of 2026-11-16),
+    // the third review answer: still present. That spends the last review round, so no repair can be reviewed.
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])], reviewer: [REPAIR_REQUIRED, REPAIR_REQUIRED, REPAIR_REQUIRED] }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const done = runState(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    expect(done.outcomeReason).toMatch(/^non-progress: the review repair brief of attempt 2 was sent COR-1, and no implementer report since names a test for it: .*open findings: COR-1/);
-    expect(listDecisions(l.db(), run.id, { kind: 'repair.non-progress' })).toHaveLength(1);
+    expect(done.outcomeReason).toMatch(/^review_rounds hard cap reached \(3 of 3\) with 1 open finding\(s\): COR-1/);
+    expect(listDecisions(l.db(), run.id, { kind: 'review.finding-rereview' })).toHaveLength(1);
+    expect(listDecisions(l.db(), run.id, { kind: 'repair.non-progress' })).toHaveLength(0);
     const outcome = JSON.parse(done.outcomeJson!) as { open_findings: { external_id: string; status: string }[] };
     expect(outcome.open_findings.map((f) => f.external_id)).toContain('COR-1');
     expect(listFindings(l.db(), run.id).every((f) => f.status !== 'rejected' && f.status !== 'resolved')).toBe(true);

@@ -60,6 +60,16 @@ const TEST_2: IngestedFinding = { ...TEST_1, externalId: 'TEST-2', claim: 'mul a
 
 const revisionOf = (prompt: string): string => prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
 
+/**
+ * A carried finding no test settles gets one re-review (ADR 0015, amendment of 2026-11-16). Here it finds the defect still
+ * present, in its own words under the finding's id, so the finding goes back to repair as these tests expect, and the
+ * re-review's own wording (another fingerprint) leaves the tests each finding was judged by as they were.
+ */
+const reReviewed = (prompt: string): object | null => {
+  const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(prompt)?.[1];
+  return id ? { verdict: 'REPAIR_REQUIRED', candidate_revision: revisionOf(prompt), findings: [{ id, severity: 'high', category: 'correctness', location: 'apps/calc.mjs:2', claim: `${id} still holds on this tree`, evidence: 'mul still accepts it', suggested_validation: null }] } : null;
+};
+
 const ADD_TEST = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../../apps/calc.mjs';\ntest('add(2, 3) is 5', () => assert.equal(add(2, 3), 5));\n";
 /** The base revision: add and its test, run by `node --test`. */
 const BASE_FILES = { 'apps/calc.mjs': 'export const add = (a, b) => a + b;\n', 'tests/unit/add.test.mjs': ADD_TEST };
@@ -137,7 +147,7 @@ async function setup(o: Setup = {}) {
     },
   });
   if (o.unit?.hung) hangingClock(lab.clock, o.unit.hung);
-  const reviewer = scriptedAdapter(lab, ({ spec }: { spec: { prompt: string } }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [] }));
+  const reviewer = scriptedAdapter(lab, ({ spec }: { spec: { prompt: string } }) => okResult(reReviewed(spec.prompt) ?? { verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [] }));
   lab.deps.adapters = { claude: claude(), codex: reviewer };
   validateModels(lab);
   for (const e of lab.deps.registry.list()) if (e.provider === 'codex') lab.deps.registry.markAvailability(e.modelId, 'codex-cli', true, 'test');
@@ -206,7 +216,12 @@ function reportAs(repo: Repo, attempt: number, refs: { path: string; note: strin
   lab.db.run("UPDATE workers SET state = 'SUCCEEDED', result_json = ? WHERE id = ?", JSON.stringify({ structured: out }), w.id);
 }
 
-const run = () => reviewingStep(lab.ctx());
+/** One review step, then again while a reviewer session it started runs (a finding's one re-review), as the controller does. */
+const run = async () => {
+  let out = await reviewingStep(lab.ctx());
+  for (let i = 0; i < 8 && !out.done && state() === 'REVIEWING' && /is running$/.test(out.waiting ?? ''); i++) out = await reviewingStep(lab.ctx());
+  return out;
+};
 const state = () => getRun(lab.db, lab.runId).state;
 const blocking = (f: { resolutionJson: unknown }): unknown => (f.resolutionJson as { blocking?: unknown } | null)?.blocking;
 
@@ -343,6 +358,9 @@ describe('a test that does not tell the trees apart leaves the finding open and 
     expect(f.status).not.toBe('resolved');
     expect(blocking(f)).toBe(true);
     expect(f.resolution ?? '').not.toMatch(/new_test unit/);
+    // Carried to the repaired tree and settled by no test: its one re-review found it still present, then the repair.
+    expect(listDecisions(lab.db, lab.runId, { kind: 'review.finding-rereview' })).toHaveLength(1);
+    expect(f.resolution).toMatch(/its one re-review \S+ by codex of tree \w+ found it still present/);
     expect(state()).toBe('REPAIRING');
   };
 
@@ -560,7 +578,7 @@ describe('a reviewer who raises the finding again on a tree that has the repair 
     await run();
     const all = listFindings(lab.db, lab.runId).filter((x) => x.externalId === 'TEST-1');
     expect(all.map((x) => x.status).filter((s) => s === 'resolved')).toEqual([]);
-    expect(all.at(-1)!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
+    expect(all.find((x) => x.reviewId === 'rev-2')!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
     expect(probes()).toEqual([]);
     // TEST-1 would go to repair again after a repair that named no test for it: non-progress (#156), not attempt 4. The
     // candidates passed verification, so the run that ran out offers the newest of them (#169).
@@ -617,7 +635,8 @@ describe('a probe that cannot establish discrimination leaves the finding open, 
       const { finding } = await repairThenApprove({ source, before: slow });
       expect(finding.status).not.toBe('resolved');
       expect(finding.resolution).toContain('unit timed out on the probe tree');
-      expect(probes().map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'TIMEOUT']);
+      // A timeout decides nothing, so it is not reused: the pass after the finding's re-review came back runs the finding's tree again.
+      expect(probes().map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'TIMEOUT', 'TIMEOUT']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

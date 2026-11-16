@@ -92,6 +92,15 @@ async function settle(max = 12) {
   return out;
 }
 
+/** A reviewer that approves, except in a finding's one re-review (ADR 0015, amended), where it raises `f` again as it was. */
+function stillPresent(f: IngestedFinding): NonNullable<Setup['reviewer']> {
+  return ({ spec }) => {
+    const candidate_revision = spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
+    if (!spec.prompt.includes('This is a re-review of one finding')) return okResult({ verdict: 'APPROVE', candidate_revision, findings: [] });
+    return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [{ id: f.externalId, severity: f.severity, category: f.category, location: f.location, claim: f.claim, evidence: f.evidence, suggested_validation: f.suggestedValidation }] });
+  };
+}
+
 function record(cand: { id: string; treeHash: string }, verdict: 'APPROVE' | 'REPAIR_REQUIRED' | 'BLOCK', findings: IngestedFinding[] = [], provider = 'codex', id = `rev-${listReviews(lab.db, lab.runId, { includeInvalidated: true }).length + 1}`) {
   return recordReview(lab.db, { id, runId: lab.runId, candidateId: cand.id, treeHash: cand.treeHash, round: listReviews(lab.db, lab.runId, { includeInvalidated: true }).length + 1, provider, model: null, workerId: null, verdict, packetSha256: null, findings }, lab.clock);
 }
@@ -434,7 +443,8 @@ describe('a review that is already recorded', () => {
 
   // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
   it('a carried finding going to repair again after a repair whose implementer named no test for it ends as non-progress, not with another brief (BLOCKED, offering the verified candidate: #169)', async () => {
-    const { cand, repo } = await setup();
+    // Its one re-review (ADR 0015, amendment of 2026-11-16) finds it still present, as it was raised.
+    const { cand, repo } = await setup({ reviewer: stillPresent(finding('TEST-1')) });
     const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
     routed(1);
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
@@ -456,15 +466,19 @@ describe('a review that is already recorded', () => {
     };
     const usage = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
     const named = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
-    // The first repair names a test for TEST-1, so sending it again is not yet non-progress.
+    // The first repair names a test for TEST-1, so sending it again is not yet non-progress. Carried, and settled by no
+    // test, TEST-1 first gets its one re-review, which finds it still present: the repair goes on.
     await attempt(2, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: named, text: null, error: null, exitCode: 0, usage, durationMs: 1 } });
-    await run();
+    await settle();
     expect(state()).toBe('REPAIRING');
+    expect(decisions('review.finding-rereview')).toHaveLength(1);
     expect(existsSync(briefPath(lab.ctx(), 3))).toBe(true);
-    // The second ends at its turn cap without a report: it named no test, and TEST-1 would go to repair unchanged.
+    // The second ends at its turn cap without a report: it named no test, and TEST-1 would go to repair unchanged. It had
+    // its one re-review, so none is asked.
     await attempt(3, { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' });
     expect(await run()).toMatchObject({ done: true });
     expect(state()).toBe('BLOCKED');
+    expect(decisions('review.finding-rereview')).toHaveLength(1);
     expect(existsSync(briefPath(lab.ctx(), 4))).toBe(false);
     expect(lab.db.all('SELECT 1 FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT)).toHaveLength(2);
     expect(decisions('repair.non-progress')).toHaveLength(1);
@@ -487,6 +501,10 @@ describe('a review that is already recorded', () => {
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 })]);
     await run();
     expect(state()).toBe('REPAIRING');
+    // Every review round is spent, so neither finding gets its one re-review (ADR 0015, amended): the stop below is #156's.
+    const ledger = lab.ctx().ledger!;
+    const rounds = ledger.state('review_rounds');
+    ledger.consume('review_rounds', rounds.allowance - rounds.used);
     writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // 2\n');
     const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: 2, workerId: null });
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));

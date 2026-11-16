@@ -76,7 +76,7 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | #143 | `service-and-launcher.test.ts` | issue #143: a newer Orbit does not migrate the state database under a controller that still holds a run lease |
 | #144 | `attempts-and-size.test.ts` | issue #144: a diagnosis after a session that ended at its turn cap is told so ... |
 | #154 | `service-and-launcher.test.ts` | issue #154: a development build does not take over the launcher ... |
-| #156 | `review-gate.test.ts` | issue #156: every finding of a REPAIR_REQUIRED review is briefed ... |
+| #156 | `review-gate.test.ts` | issue #156, User Story 3.2: every finding of a REPAIR_REQUIRED review is briefed ... |
 | #157 | `attempts-and-size.test.ts` | issue #157: a size denial names the files that carry the lines ... |
 
 ### User stories of issue #166
@@ -87,7 +87,7 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | 1.2 A baseline where every check fails for one environmental reason blocks and names it | `check-environment.test.ts` | User Story 1, scenario 2 (issue #141) |
 | 2.1 A missing module or toolchain is an environment failure; no implementer session starts for it | `check-environment.test.ts` | User Story 1, scenario 2 (a missing module where nothing was installed: no session starts); User Story 2 (a missing toolchain; a missing module in a provisioned checkout stays the change's, two tests); a base revision that imports an undeclared package keeps its baseline exception |
 | 3.1 Advisory-only findings with no approval: the run repairs | `review-gate.test.ts` | issue #130 |
-| 3.2 A high finding unvalidated across two verified candidates | `review-gate.test.ts` | issue #156 (the run stops and names the finding; the decided behaviour, one fresh independent review told the finding, follows in its own pull request) |
+| 3.2 A high finding unvalidated across two verified candidates is validated once or dropped | `review-gate.test.ts` | three tests (ADR 0015, amendment of 2026-11-16): issue #156, User Story 3.2 (its one re-review finds it still present; no review round is left, so the run ends BLOCKED naming it and offering the candidate); User Story 3.2: ... its one re-review finds gone, is dropped ... and the run delivers; User Story 3.2: a finding gets one re-review per run ... |
 | SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Since issue #169 such a run ends BLOCKED naming the candidate, so scenario 16, scenario 19 (the blocking finding) and issue #156, once known expected failures, pass it |
 
 ### Safe stops (spec section 2)
