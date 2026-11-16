@@ -13,6 +13,7 @@ import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
 import { repoKeyFor } from '../../../src/storage/retention.ts';
 import { checkDef } from '../../unit/evidence/fixtures.ts';
 import { runnerEnv, type RunnerEnv } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Issue #10: a `dotnet build` check under Orbit's real srt check profile. Before the fix the SDK's first-run NuGet
@@ -21,7 +22,7 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
 const skip = !probe.ok ? `srt unavailable: ${probe.detail}` : dotnet === null ? 'dotnet is not installed' : null;
 

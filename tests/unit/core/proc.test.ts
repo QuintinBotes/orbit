@@ -3,9 +3,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { findProcesses, findProcessesWithEnv, isAlive, isGroupAlive, killGroup, normalizeStart, processInfo, processStartTime, terminateGroup } from '../../../src/core/proc.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const NODE = process.execPath;
 
@@ -46,6 +47,7 @@ afterEach(() => {
 });
 
 describe('processStartTime', () => {
+  beforeEach(skipWithoutPs);
   it('returns a stable, normalized start time for a live process', () => {
     const a = processStartTime(process.pid);
     expect(a).toBeTruthy();
@@ -79,6 +81,7 @@ describe('processStartTime', () => {
 });
 
 describe('isAlive', () => {
+  beforeEach(skipWithoutPs);
   it('is true for this process, with or without its recorded start time', () => {
     expect(isAlive(process.pid)).toBe(true);
     expect(isAlive(process.pid, processStartTime(process.pid))).toBe(true);
@@ -193,7 +196,8 @@ describe('terminateGroup', () => {
 });
 
 describe('adversarial review', () => {
-  it('refuses to signal the group this process belongs to even when it is not the group leader', async () => {
+  it('refuses to signal the group this process belongs to even when it is not the group leader', async (ctx) => {
+    skipWithoutPs(ctx);
     const fixture = fileURLToPath(new URL('./fixtures/own-group.ts', import.meta.url));
     // `; true` keeps the shell alive as the group leader instead of exec'ing node.
     const sh = spawn('sh', ['-c', `"${NODE}" "${fixture}" $$; true`], { detached: true, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -209,6 +213,7 @@ describe('adversarial review', () => {
 });
 
 describe('findProcesses', () => {
+  beforeEach(skipWithoutPs);
   it('finds a live process by a marker on its command line, and no longer once it has ended', async () => {
     const marker = `orbit-find-${process.pid}-${Date.now()}`;
     const has = (line: string): boolean => line.split(' ').includes(marker);
@@ -271,6 +276,7 @@ describe('findProcesses and findProcessesWithEnv on Linux (a /proc of the test\'
 });
 
 describe('findProcesses and findProcessesWithEnv on this host', () => {
+  beforeEach(skipWithoutPs);
   it('finds a live process by a non-ASCII argument, whatever the locale would make ps print', async () => {
     const marker = `/tmp/Código-${process.pid}-${Date.now()}/evidence/1/unit`;
     const child = spawn(NODE, ['-e', 'setInterval(() => {}, 1000)', '--', marker, 'c0ffee'], { detached: true, stdio: 'ignore', env: { PATH: process.env.PATH, LC_ALL: 'C' } });

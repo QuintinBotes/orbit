@@ -1,10 +1,14 @@
 import { existsSync } from 'node:fs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fingerprintOf, renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { toEvidenceUi } from '../../../src/ui/runner.ts';
 import { candidateAt, commitAll, freePort, harness, makeUiRepo, runUi, writeFile, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
+
+// Every test here drives Chromium.
+beforeEach(skipWithoutChromium);
 
 // Real fixture app, real Chromium, real git. Scenario 17: a UI defect is
 // reproduced, repaired and reverified.

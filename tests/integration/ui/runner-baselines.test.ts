@@ -5,6 +5,10 @@ import { renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { toEvidenceUi } from '../../../src/ui/runner.ts';
 import { QUARANTINED } from '../../support/quarantine.ts';
 import { candidateAt, commitAll, freePort, harness, makeUiRepo, resetTo, runUi, updateBaselines, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
+
+// Every test here drives Chromium.
+beforeEach(skipWithoutChromium);
 
 // Scenarios 17 and 18: accessibility fails only on NEW serious violations, and
 // a candidate that edits a stored baseline cannot pass on that edit.

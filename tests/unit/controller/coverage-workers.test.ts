@@ -32,6 +32,7 @@ import {
 } from '../../../src/controller/workers.ts';
 import { capturingLogger } from './coverage-log.ts';
 import { makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -216,7 +217,8 @@ describe('ensureWorker: starting can fail', () => {
     if (out.status === 'finished') expect(out.result.status).toBe('succeeded');
   });
 
-  it('a gone launch with no usable pid record is archived and started again exactly once', async () => {
+  it('a gone launch with no usable pid record is archived and started again exactly once', async (ctx) => {
+    skipWithoutPs(ctx);
     let starts = 0;
     const adapter = stub({
       startTask: async (spec) => {
@@ -238,7 +240,8 @@ describe('ensureWorker: starting can fail', () => {
     expect(readdirSync(dir)).not.toContain('launch.json');
   });
 
-  it('a start that fails after its shim was launched stops that shim before the worker is recorded FAILED', async () => {
+  it('a start that fails after its shim was launched stops that shim before the worker is recorded FAILED', async (ctx) => {
+    skipWithoutPs(ctx);
     const shim = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
     shim.unref();
     const procStart = processStartTime(shim.pid!);

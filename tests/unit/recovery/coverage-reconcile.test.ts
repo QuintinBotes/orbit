@@ -13,6 +13,7 @@ import { planCheckRun, markCheckRunning } from '../../../src/evidence/store.ts';
 import { shimPath, type ShimIntent } from '../../../src/evidence/check-shim.ts';
 import { reconcileOnStart, stopRowProcess, stopWorker, type ReconcileOptions } from '../../../src/recovery/reconcile.ts';
 import { counters, makeRun, setup } from './helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const DEAD = 2_000_000_000;
 const OWNER = 'ctl-1';
@@ -76,7 +77,8 @@ function reconcile(db: OrbitDb, clock: ReturnType<typeof setup>['clock'], extra:
 const eventTypes = (db: OrbitDb): string[] => db.all<{ type: string }>("SELECT type FROM events WHERE run_id = 'r1' ORDER BY id").map((r) => r.type);
 
 describe('reconcile: observing a worker directory', () => {
-  it('an unreadable launch.json counts as no launch: a PLANNED worker is unlaunched, a RUNNING one without a pid file is lost and restarted', async () => {
+  it('an unreadable launch.json counts as no launch: a PLANNED worker is unlaunched, a RUNNING one without a pid file is lost and restarted', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     counters(db, 'r1', { recovery_attempts: 3 });
@@ -96,7 +98,8 @@ describe('reconcile: observing a worker directory', () => {
     expect(existsSync(join(d2, 'attempts', '1', 'launch.json'))).toBe(true);
   });
 
-  it('a launch recorded moments ago is starting; one older than the grace with no pid.json is lost', async () => {
+  it('a launch recorded moments ago is starting; one older than the grace with no pid.json is lost', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     counters(db, 'r1', { recovery_attempts: 3 });
@@ -111,7 +114,8 @@ describe('reconcile: observing a worker directory', () => {
     expect(second.runs[0]!.workers[0]!.detail).toBe('a launch was recorded but the shim never wrote pid.json');
   });
 
-  it('a worker that never started in a run being cancelled is closed CANCELLED, not left PLANNED', async () => {
+  it('a worker that never started in a run being cancelled is closed CANCELLED, not left PLANNED', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     const d = wdir('w1');
@@ -355,7 +359,8 @@ describe('reconcile: lost workers and the recovery budget', () => {
     expect(getWorker(db, 'w1').state).toBe('RUNNING');
   });
 
-  it('stops the recorded process group of a worker whose files are gone, then restarts', async () => {
+  it('stops the recorded process group of a worker whose files are gone, then restarts', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     counters(db, 'r1', { recovery_attempts: 3 });
@@ -387,6 +392,7 @@ describe('reconcile: lost workers and the recovery budget', () => {
 });
 
 describe('stopRowProcess', () => {
+  beforeEach(skipWithoutPs);
   const row = (over: Record<string, unknown>) => ({ pid: null, pgid: null, procStart: null, ...over }) as never;
 
   it('a row with no pid names no process', async () => {
@@ -425,7 +431,8 @@ describe('stopRowProcess', () => {
 });
 
 describe('stopWorker', () => {
-  it('refuses to record a worker CANCELLED while its provider process survives the stop', async () => {
+  it('refuses to record a worker CANCELLED while its provider process survives the stop', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     const s = sleeper();
@@ -498,7 +505,8 @@ describe('reconcile: checks', () => {
     expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'not-started', closed: false, terminated: false });
   });
 
-  it('records a pid file whose token is not this check as not started', async () => {
+  it('records a pid file whose token is not this check as not started', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     const c = openCheck(db, clock, 'lint');
@@ -508,7 +516,8 @@ describe('reconcile: checks', () => {
     expect(rep.runs[0]!.checks[0]).toMatchObject({ observation: 'not-started' });
   });
 
-  it('does not signal a shim whose identity cannot be established when the run is over, and says so', async () => {
+  it('does not signal a shim whose identity cannot be established when the run is over, and says so', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     const c = openCheck(db, clock, 'lint');
@@ -523,7 +532,8 @@ describe('reconcile: checks', () => {
     expect(() => process.kill(s.pid, 0)).not.toThrow();
   });
 
-  it('closes an unfinished check of an ended run even when nothing of it ran', async () => {
+  it('closes an unfinished check of an ended run even when nothing of it ran', async (ctx) => {
+    skipWithoutPs(ctx);
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', OWNER);
     const c = openCheck(db, clock, 'lint');

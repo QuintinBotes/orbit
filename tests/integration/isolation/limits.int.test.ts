@@ -9,6 +9,7 @@ import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import type { IsolationLimits } from '../../../src/policy/types.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The ulimit wrapper on this host's real bash (macOS and Linux alike), and
@@ -57,7 +58,7 @@ describe.skipIf(!bash)('isolation.limits with the host bash', () => {
 
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srtProbe = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await srtProbe.available();
+const status = requiredOnCi(await srtProbe.available());
 
 describe.skipIf(!status.ok || !bash)('isolation.limits under the real srt', () => {
   const t = status.ok ? tempRoot('orbit-limits-srt-') : { root: '/nonexistent-orbit-test', remove: () => {} };

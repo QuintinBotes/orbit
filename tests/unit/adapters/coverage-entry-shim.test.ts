@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -35,6 +36,7 @@ import {
   type ShimOptions,
 } from '../../../src/adapters/shim.ts';
 import * as proc from '../../../src/core/proc.ts';
+import { PS_REFUSED, skipWithoutPs } from '../../support/ps.ts';
 
 vi.mock('../../../src/core/proc.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/core/proc.ts')>();
@@ -74,7 +76,7 @@ interface Rig {
   signals: string[];
   /** Signals the sweep sent to single processes, as [pid, signal]. */
   processSignals: Array<[number, string]>;
-  members: number[][];
+  members: (number[] | null)[];
   emitter: EventEmitter;
   host: ShimHost;
   /** True when the provider announces readiness with a line, so signals are held back until it does. */
@@ -121,7 +123,7 @@ function rig(
   const signals: string[] = [];
   const processSignals: Array<[number, string]> = [];
   const emitter = new EventEmitter();
-  const members: number[][] = [];
+  const members: (number[] | null)[] = [];
   const r: Rig = {
     dir,
     signals,
@@ -150,7 +152,7 @@ function rig(
       signalProcess: (pid, sig) => {
         processSignals.push([pid, sig]);
       },
-      groupMembers: () => members.shift() ?? [],
+      groupMembers: () => (members.length > 0 ? members.shift()! : []),
       processes: () => behaviour.processes?.(r) ?? null,
       onSignal: (sig, listener) => {
         emitter.on(sig, listener);
@@ -186,7 +188,8 @@ describe('runShim: a provider that runs to its end', () => {
     const pid = readPidRecord(r.dir)!;
     expect(pid).toMatchObject({ version: 1, shimPid: process.pid, pgid: process.pid, sessionId: 'sess-1' });
     expect(pid.childPid).toBeGreaterThan(0);
-    expect(pid.shimStart).not.toBeNull();
+    // Unknown where ps is refused (#203).
+    expect(pid.shimStart === null).toBe(PS_REFUSED !== null);
     expect(statSync(join(r.dir, PID_FILE)).mode & 0o777).toBe(0o600);
     expect(statSync(join(r.dir, EXIT_FILE)).mode & 0o777).toBe(0o600);
   });
@@ -487,7 +490,8 @@ describe('runShim: the real process-level defaults', () => {
 });
 
 describe('runShim: the default group listing', () => {
-  it('asks the real ps about the group when the provider ends, and signals only that group', async () => {
+  it('asks the real ps about the group when the provider ends, and signals only that group', async (ctx) => {
+    skipWithoutPs(ctx);
     const dir = tmp();
     const killed: Array<[number, string | number | undefined]> = [];
     vi.spyOn(process, 'on').mockImplementation((() => process) as typeof process.on);
@@ -654,6 +658,16 @@ describe('runShim: helpers the provider leaves behind', () => {
     expect(readExitRecord(r.dir)).toEqual(rec);
   });
 
+  // #203: a sandbox that refuses ps (Orbit's check sandbox on macOS) leaves the members unknown, never none.
+  it('kills the group once the exit is recorded when it cannot list the members, and records no escalation', async () => {
+    const r = rig({ deliver: false });
+    r.members.push(null);
+    const rec = await r.run({ clock: fakeClock(), argv: [NODE, '-e', 'process.exit(5)'] });
+    expect(rec).toMatchObject({ code: 5, signal: null, escalation: [] });
+    expect(r.signals).toEqual(['SIGKILL']);
+    expect(readExitRecord(r.dir)).toEqual(rec);
+  });
+
   it('does not wait when the only group member is the shim itself', async () => {
     const r = rig({ deliver: false });
     r.members.push([process.pid]);
@@ -724,7 +738,8 @@ describe('readFrom', () => {
 });
 
 describe('process group helpers', () => {
-  it('readPgid reads the group of a live process and null for one that does not exist', () => {
+  it('readPgid reads the group of a live process and null for one that does not exist', (ctx) => {
+    skipWithoutPs(ctx);
     expect(readPgid(process.pid)).toBeGreaterThan(0);
     expect(readPgid(2 ** 30)).toBeNull();
   });
@@ -747,10 +762,10 @@ describe('process group helpers', () => {
     expect(readPgid(process.pid, { platform: 'linux' })).toBe(process.platform === 'linux' ? readPgid(process.pid) : null);
   });
 
-  it('groupMembers lists exactly the processes of a group, and nothing for an unused group', async () => {
+  it.skipIf(PS_REFUSED !== null)('groupMembers lists exactly the processes of a group, and nothing for an unused group', async () => {
     const child = spawn(NODE, ['-e', 'setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore' });
     try {
-      await until(() => child.pid !== undefined && groupMembers(child.pid).length > 0);
+      await until(() => child.pid !== undefined && (groupMembers(child.pid)?.length ?? 0) > 0);
       expect(groupMembers(child.pid!)).toEqual([child.pid]);
       expect(groupMembers(2 ** 30)).toEqual([]);
     } finally {
@@ -758,12 +773,25 @@ describe('process group helpers', () => {
     }
   });
 
-  it('groupMembers and readPgid answer empty when ps cannot run', () => {
+  it('groupMembers reads the groups from /proc on Linux, with no ps', () => {
+    const proc = tmp();
+    const stat = (pid: number, pgrp: number) => `${pid} (n (x)) S 1 ${pgrp} ${pgrp} 0 -1\n`;
+    for (const [pid, pgrp] of [[10, 7], [11, 7], [12, 9]] as const) {
+      mkdirSync(join(proc, String(pid)));
+      writeFileSync(join(proc, String(pid), 'stat'), stat(pid, pgrp));
+    }
+    mkdirSync(join(proc, 'self'));
+    expect(groupMembers(7, { platform: 'linux', procDir: proc })?.sort()).toEqual([10, 11]);
+    expect(groupMembers(8, { platform: 'linux', procDir: proc })).toEqual([]);
+    expect(groupMembers(7, { platform: 'linux', procDir: join(proc, 'missing') })).toBeNull();
+  });
+
+  it('groupMembers answers unknown, never none, and readPgid null, when ps cannot run', () => {
     const saved = process.env.PATH;
     process.env.PATH = '';
     try {
-      expect(groupMembers(1)).toEqual([]);
       // The linux branch reads /proc and never runs ps, so ask for the ps branch explicitly.
+      expect(groupMembers(1, { platform: 'darwin' })).toBeNull();
       expect(readPgid(process.pid, { platform: 'darwin' })).toBeNull();
     } finally {
       process.env.PATH = saved;
@@ -964,4 +992,44 @@ describe('runShim: a multi-line private key block in provider output is persiste
     expect(JSON.parse(out[1]!)).toEqual({ type: 'assistant', n: 2 });
     expect(out[2]).toBe('plain tail');
   });
+});
+
+// Review of #204: where ps is refused (#203), the shim learns that it leads its group by signal 0, and only then runs,
+// so the group it kills at the end is its own: its pgid is its pid. A process that does not lead its group gets null.
+describe.skipIf(!(process as unknown as { features?: { typescript?: unknown } }).features?.typescript)('the own-group check without ps', () => {
+  const SHIM = fileURLToPath(new URL('../../../src/adapters/shim.ts', import.meta.url));
+  /** Run `script` in a new node with no PATH (so no ps): as a group leader, or inside a group /bin/sh leads. */
+  function child(script: string, leads: boolean): Promise<{ out: string; code: number | null; signal: NodeJS.Signals | null }> {
+    const node = [NODE, '--experimental-strip-types', '--no-warnings', '-e', script];
+    const argv = leads ? node : ['/bin/sh', '-c', '"$@"; true', 'sh', ...node];
+    const c = spawn(argv[0]!, argv.slice(1), { detached: true, env: { PATH: '' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    c.stdout!.on('data', (d: Buffer) => (out += d.toString()));
+    return new Promise((resolve) => c.on('close', (code, signal) => resolve({ out: out.trim(), code, signal })));
+  }
+
+  it('answers its own pid only for a process that leads its group', async () => {
+    const script = `import(${JSON.stringify(SHIM)}).then((m) => console.log(JSON.stringify({ pid: process.pid, pgid: m.pgidOf(process.pid, { platform: 'darwin' }) })))`;
+    const leader = JSON.parse((await child(script, true)).out) as { pid: number; pgid: number | null };
+    expect(leader.pgid).toBe(leader.pid);
+    const member = JSON.parse((await child(script, false)).out) as { pid: number; pgid: number | null };
+    expect(member.pgid).toBeNull();
+  }, 30_000);
+
+  it.runIf(process.platform === 'darwin')('kills only the group it leads: a shim inside another group refuses to run', async () => {
+    const dir = tmp();
+    const run = (sub: string) =>
+      `import(${JSON.stringify(SHIM)}).then((m) => m.runShim({ workerDir: ${JSON.stringify(join(dir, sub))}, argv: [${JSON.stringify(NODE)}, '-e', 'process.exit(0)'], env: {}, cwd: ${JSON.stringify(dir)}, timeoutMs: 0, graceMs: 50 })).then(() => console.log('settled'), (e) => { console.log('refused: ' + e.message); process.exit(3); })`;
+    mkdirSync(join(dir, 'leader'));
+    mkdirSync(join(dir, 'member'));
+    // It cannot list its group, so once the exit is recorded it kills the group it leads, itself last.
+    const leader = await child(run('leader'), true);
+    expect(leader.signal).toBe('SIGKILL');
+    expect(readExitRecord(join(dir, 'leader'))).toMatchObject({ code: 0, escalation: [] });
+    // Inside a group /bin/sh leads, the shim refuses before it starts anything, and the shell lives to exit 0.
+    const member = await child(run('member'), false);
+    expect(member.out).toMatch(/^refused: the shim must lead its own process group/);
+    expect(member).toMatchObject({ code: 0, signal: null });
+    expect(readExitRecord(join(dir, 'member'))).toBeNull();
+  }, 30_000);
 });

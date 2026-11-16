@@ -14,6 +14,7 @@ import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { snapshotFor, tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from '../isolation/run.ts';
 import { FAKE_CODEX, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, writeScenario, type Fixture } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The Codex reviewer in the os-sandbox tier, under the real srt: srt is the
@@ -24,7 +25,7 @@ import { FAKE_CODEX, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, write
  */
 const ORBIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ORBIT_ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 const hasGit = which('git', process.env.PATH) !== null;
 const curl = which('curl', process.env.PATH);
 // How each sandbox refuses a write into the read-only checkout: Seatbelt answers EPERM, bubblewrap's read-only bind mount answers EROFS.

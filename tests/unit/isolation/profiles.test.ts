@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isOrbitError } from '../../../src/core/errors.ts';
@@ -14,6 +14,8 @@ import {
   MUSE_PRIVATE_CONFIG_DIR,
   museReviewerProfile,
   orbitTmpRoot,
+  orbitTmpRoots,
+  credentialDenyPaths,
   prepareWorkerTmpDir,
   profileForCheck,
   otherClaudeLogins,
@@ -23,6 +25,7 @@ import {
   workerTmpDir,
 } from '../../../src/isolation/profiles.ts';
 import { buildSrtSettings } from '../../../src/isolation/sandbox-runtime.ts';
+import { CHECK_TOKEN_ENV } from '../../../src/evidence/check-shim.ts';
 import { canonicalPath, isWithin } from '../../../src/isolation/util.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { checkFor, snapshotFor, tempRoot } from './fixtures.ts';
@@ -31,6 +34,18 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
+
+/**
+ * A writable temp directory other than /tmp, short enough to hold a root: the check's own TMPDIR under Orbit's check
+ * sandbox, a new one in /tmp elsewhere.
+ */
+function shortTemp(): string {
+  const env = realpathSync(tmpdir());
+  if (env.length <= 38 && env !== realpathSync('/tmp')) return env;
+  const made = realpathSync(mkdtempSync('/tmp/o-'));
+  cleanups.push(() => rmSync(made, { recursive: true, force: true }));
+  return made;
+}
 
 /**
  * The layout Orbit uses: projects side by side, worktrees under ~/.orbit,
@@ -547,7 +562,7 @@ describe('provider directories and the worker tmp dir', () => {
   it('keeps worker temp directories short, stable and under a per-user root', () => {
     const l = layout();
     const uid = process.getuid!();
-    expect(orbitTmpRoot(uid)).toBe(canonicalPath(`/tmp/orbit-${uid}`));
+    expect(orbitTmpRoot(uid)).toMatch(new RegExp(`/orbit-${uid}$`));
     const dir = workerTmpDir(l.workerDir);
     expect(dir).toMatch(new RegExp(`^${orbitTmpRoot(uid)}/[0-9a-f]{12}$`));
     expect(workerTmpDir(l.workerDir)).toBe(dir);
@@ -584,19 +599,55 @@ describe('provider directories and the worker tmp dir', () => {
     expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE')).toBe(true);
   });
 
-  // Review of #140: only /tmp is resolved, so a link planted at /tmp/orbit-<uid> is seen and refused, never followed to a
-  // private directory of this user's that it points at.
+  // #203 and the review of #204: every Orbit process of a user (a foreground run with a short TMPDIR, the service with
+  // none) agrees on /tmp/orbit-<uid>. Only inside an Orbit check does the root nest in the check's short, writable TMPDIR.
+  it('keeps /tmp/orbit-<uid> whatever TMPDIR is, and nests the root in TMPDIR only inside an Orbit check', () => {
+    const l = layout();
+    const fixed = join(realpathSync('/tmp'), 'orbit-7');
+    const short = shortTemp();
+    cleanups.push(() => vi.unstubAllEnvs());
+    vi.stubEnv(CHECK_TOKEN_ENV, '');
+    vi.stubEnv('TMPDIR', short);
+    const foreground = orbitTmpRoot(7);
+    vi.stubEnv('TMPDIR', '');
+    expect([foreground, orbitTmpRoot(7)]).toEqual([fixed, fixed]);
+    const check = { TMPDIR: short, [CHECK_TOKEN_ENV]: 'token' };
+    expect(orbitTmpRoot(7, check)).toBe(join(short, 'orbit-7'));
+    const long = join(l.r, 'a'.repeat(50));
+    mkdirSync(long);
+    for (const temp of [long, join(l.r, 'missing'), 'relative']) expect(orbitTmpRoot(7, { ...check, TMPDIR: temp }), temp).toBe(fixed);
+    expect(workerTmpDir(l.workerDir, orbitTmpRoot(4_294_967_294, check)).length).toBeLessThan(60);
+    // Every root a process of this user may have used, for read-denials and gc.
+    expect(orbitTmpRoots(7, { TMPDIR: short })).toEqual([fixed, join(short, 'orbit-7')]);
+    expect(orbitTmpRoots(7, { TMPDIR: long })).toEqual([fixed]);
+  });
+
+  it('read-denies every temp root this user may have used, not only its own', () => {
+    const l = layout();
+    const uid = process.getuid!();
+    const short = shortTemp();
+    cleanups.push(() => vi.unstubAllEnvs());
+    vi.stubEnv(CHECK_TOKEN_ENV, '');
+    vi.stubEnv('TMPDIR', short);
+    const roots = [join(realpathSync('/tmp'), `orbit-${uid}`), join(short, `orbit-${uid}`)];
+    expect(credentialDenyPaths()).toEqual(expect.arrayContaining(roots));
+    expect(profileForCheck({ snapshot: snapshotFor({ repoRoot: l.repo }), check: checkFor(), worktree: l.worktree, homeDir: l.home }).denyReadPaths).toEqual(expect.arrayContaining(roots));
+  });
+
+  // Review of #140: only the temp directory is resolved, so a link planted at the root itself is seen and refused, never
+  // followed to a private directory of this user's that it points at.
   it('leaves a link planted at the default temp root unresolved, so preparing a worker refuses it', () => {
     const l = layout();
     const target = join(l.r, 'private-target');
     mkdirSync(target, { mode: 0o700 });
     chmodSync(target, 0o700);
-    const uid = 900_000_000 + (process.pid % 100_000);
-    const link = join(realpathSync('/tmp'), `orbit-${uid}`);
+    // Four digits: short enough to nest in a check's TMPDIR (#203), and no account of this machine's.
+    const uid = 9_000 + (process.pid % 1_000);
+    const link = orbitTmpRoot(uid);
     symlinkSync(target, link);
     try {
       expect(orbitTmpRoot(uid)).toBe(link);
-      expect(() => prepareWorkerTmpDir(l.workerDir, orbitTmpRoot(uid))).toThrow(/not a private directory/);
+      expect(() => prepareWorkerTmpDir(l.workerDir, link)).toThrow(/not a private directory/);
       expect(readdirSync(target)).toEqual([]);
     } finally {
       unlinkSync(link);

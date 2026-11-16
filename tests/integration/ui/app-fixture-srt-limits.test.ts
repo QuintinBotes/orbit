@@ -22,11 +22,12 @@ import { defaultCheck, isolationLimits, parseConfig } from '../../../src/policy/
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
 import { startApp, stopApp } from '../../../src/ui/app-fixture.ts';
 import { freePort } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const DEMO = join(ROOT, 'examples/demo-app');
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 
 let base: string;
 beforeEach(() => {
@@ -99,7 +100,7 @@ describe.skipIf(!srtStatus.ok || !LOOPBACK_SHARED)(srtStatus.ok ? 'the demo app 
 // What must stay true for the other srt paths: a worker shim hands its command a spill file it has already unlinked
 // and a prompt file opened for reading, and neither is affected by the deny. Only a descriptor opened for writing on a
 // path the sandbox cannot read makes node abort.
-describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'descriptors handed to a sandboxed node under a read-denied directory' : 'descriptors skipped', () => {
+describe.skipIf(!srtStatus.ok)(srtStatus.ok ? 'descriptors handed to a sandboxed node under a read-denied directory' : `descriptors skipped: ${srtStatus.detail}`, () => {
   const nodeUnderSrt = (denied: string, stdio: (number | 'ignore' | 'pipe')[]) => {
     const repo = join(base, 'repo');
     mkdirSync(repo, { recursive: true });

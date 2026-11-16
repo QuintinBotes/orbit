@@ -11,6 +11,7 @@ import type { SandboxProfile, WrappedCommand } from '../../../src/isolation/type
 import { which } from '../../../src/isolation/util.ts';
 import { checkFor, snapshotFor, tempRoot, writeExecutable } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Real processes under the real srt. Everything lives in a temp root with a
@@ -18,7 +19,7 @@ import { runWrapped } from './run.ts';
  */
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await provider.available();
+const status = requiredOnCi(await provider.available());
 const hasGit = which('git', process.env.PATH) !== null;
 const curl = which('curl', process.env.PATH);
 

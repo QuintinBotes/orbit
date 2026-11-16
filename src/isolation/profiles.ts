@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
 import { credentialGlobsOf } from '../policy/builtin.ts';
-import { orbitTmpRoot } from '../policy/paths.ts';
+import { orbitTmpRoot, orbitTmpRoots } from '../policy/paths.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import { removeScratch } from './toolchains.ts';
 import type { SandboxProfile } from './types.ts';
@@ -420,7 +420,7 @@ export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<strin
   return uniq([
     ...HOME_DENY_READ.map((rel) => join(home, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
-    orbitTmpRoot(),
+    ...orbitTmpRoots(),
     ...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)),
     ...codexHomes(home, env, dirs.codexHome),
     ...museConfigDirs(home, env),
@@ -428,11 +428,11 @@ export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<strin
 }
 
 /**
- * Every profile denies reading orbitTmpRoot(), and each worker's own subdirectory is re-allowed through its writable
+ * Every profile denies reading every temp root (orbitTmpRoots), and each worker's own subdirectory is re-allowed through its writable
  * set, so concurrent workers cannot read each other's temp files with Bash; the guard hook keeps the file tools out
  * (policy/authorize.ts, `read.worker-tmp`).
  */
-export { orbitTmpRoot };
+export { orbitTmpRoot, orbitTmpRoots };
 
 /** A worker's private temp directory, derived from its worker directory so a restarted controller finds the same one. */
 export function workerTmpDir(workerDir: string, root: string = orbitTmpRoot()): string {
@@ -590,7 +590,7 @@ function denyList(opts: { home: string; repoRoot: string; worktree: string; extr
     // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
     // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
     ...credentialFilesIn(opts.worktree, credentialGlobsOf(opts.snapshot), opts.credentialWalkLimit === undefined ? {} : { limit: opts.credentialWalkLimit }),
-    orbitTmpRoot(),
+    ...orbitTmpRoots(),
     ...(parent ? [parent] : []),
     ...opts.extra,
   ]);
