@@ -149,6 +149,7 @@ export function makeLab(opts: LabOptions = {}): Lab {
   git(repo, 'commit', '-q', '-m', 'Demo app');
   const remote = join(base, 'remote.git');
   git(base, 'init', '-q', '--bare', '-b', 'main', remote);
+  git(base, '-C', remote, 'config', 'core.hooksPath', join(remote, 'hooks')); // not the developer's global hooksPath (#183)
   git(repo, 'remote', 'add', 'origin', remote);
   git(repo, 'push', '-q', 'origin', 'main');
   const config = labConfig(repo, opts.tweak);

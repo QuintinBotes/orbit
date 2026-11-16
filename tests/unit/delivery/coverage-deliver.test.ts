@@ -1,4 +1,5 @@
-import { chmodSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetFaults } from '../../../src/core/faults.ts';
@@ -111,6 +112,21 @@ describe('deliver: the remote must hold exactly the delivered commit', () => {
     const c = lab.candidate('x');
     await expect(deliver(input(c))).rejects.toMatchObject({ code: 'DELIVERY_FAILED', message: expect.stringContaining('no such branch') });
     expect(lab.fake.state.prs).toHaveLength(0);
+  });
+
+  it('runs the remote hook even when the user has a global core.hooksPath (#183)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'orbit-home-'));
+    mkdirSync(join(home, 'global-hooks'));
+    writeFileSync(join(home, '.gitconfig'), `[core]\n\thooksPath = ${join(home, 'global-hooks')}\n`);
+    const realHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      hook(`git update-ref -d refs/heads/${branch()}`);
+      const c = lab.candidate('x');
+      await expect(deliver(input(c))).rejects.toMatchObject({ code: 'DELIVERY_FAILED', message: expect.stringContaining('no such branch') });
+    } finally {
+      process.env.HOME = realHome;
+    }
   });
 });
 
