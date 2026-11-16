@@ -74,10 +74,13 @@ issue it blocks.
   counted and the issue keeps its labels), and on an error that is the
   queue's rather than an issue's (admission, the base branch). Each run's
   `scheduler.hard_limits.model_cost_usd` is lowered to what is left of the
-  budget; a run that ends EXHAUSTED with the failure class `budget` under that
-  lowered cap stops the queue and does not hand its issue to a person. A run
-  that review rounds or the attempt cap ended is the issue's, as without a
-  budget.
+  budget. A run that ends EXHAUSTED under that lowered cap because the money
+  ran out stops the queue and does not hand its issue to a person. The money
+  ran out when the ending names the cost counter (a cost refusal or the cost
+  cap, whatever caused the run trouble first), or when the ending names no
+  counter and `budget` is the run's only cause. The failure class alone cannot
+  say, since every EXHAUSTED run gets `budget` as its last cause. A run that
+  review rounds or the attempt cap ended is the issue's, as without a budget.
 - **A record.** `.orbit/queue/<id>.json` is rewritten after every issue:
   per issue the outcome (delivered, person, skipped, budget, interrupted), the
   pull request or branch, and every attempt with its run id, state, failure

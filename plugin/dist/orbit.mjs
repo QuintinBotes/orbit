@@ -75002,7 +75002,9 @@ async function workIssue(ctx, q, record, issue, o) {
       entry.attempts.push({ run_id: run.id, state: result2.run.state, failure_class: failureClass(result2.run), open_questions: open2, cost_usd: typeof cost === "number" && Number.isFinite(cost) ? cost : null });
       if (result2.interrupted) return { ...entry, outcome: "interrupted", reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
       if (result2.terminated) return { ...entry, outcome: "interrupted", reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
-      if (result2.run.state === "EXHAUSTED" && capped && result2.run.failureClass === "budget") {
+      const ended = db.get("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
+      const outOfMoney = ended === "cost_usd" || ended === null && result2.run.failureClass === "budget";
+      if (result2.run.state === "EXHAUSTED" && capped && outOfMoney) {
         return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
       }
       if (result2.run.state === "SUCCEEDED") {

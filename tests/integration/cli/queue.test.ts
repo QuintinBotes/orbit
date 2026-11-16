@@ -436,6 +436,24 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     expect(issues(l).issue(1)!.labels).toEqual(['spec', 'ready-for-agent', 'ready-for-human']);
   }, 300_000);
 
+  it('a run that ran out of the queue\'s money after its session hit the turn cap (class turn-cap, then budget) stops the queue as budget, and the issue keeps its labels', async () => {
+    const l = lab('autonomous');
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    // Attempt 1's session ends at its turn cap; the repair's session then costs more than the whole budget.
+    writeScenario(l, baseScenario({ planner: [planner('sub')], implementer: [{ outcome: 'max_turns' }, { ...implement('sub'), usage: { costUSD: 1.6 } }], verifier: [DIAGNOSIS] }));
+    // One attempt, so it is the run's own end that decides, not the queue's check before a second attempt.
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--budget-usd', '1.5', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(0);
+    const all = runs(l);
+    expect(all.map((x) => [x.issue, x.state])).toEqual([[1, 'EXHAUSTED']]);
+    expect([all[0]!.failureClass, all[0]!.failureSecondary]).toEqual(['turn-cap', 'budget']);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
+    expect(rec.stop).toMatchObject({ kind: 'budget' });
+    expect(issues(l).writes).toEqual([]);
+  }, 300_000);
+
   it('SIGTERM during a run stops the queue: no further run, no failed run counted, and the issue keeps its labels', async () => {
     const l = lab('autonomous');
     put(l, 1, 'sub');

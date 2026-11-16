@@ -553,8 +553,12 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       // SIGTERM (timeout, systemd or docker stop) stops the queue as Ctrl-C does: no further run, and the issue keeps its labels.
       if (result.terminated) return { ...entry, outcome: 'interrupted', reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
       // Only a run that ran out of money under the queue's lowered cap is the queue's; review rounds or attempt caps are the issue's.
-      // shortcut: a run that hit its wall-time cap is also class budget and counts here; read the ending counter if that matters.
-      if (result.run.state === 'EXHAUSTED' && capped && result.run.failureClass === 'budget') {
+      // The class alone cannot say: every EXHAUSTED run gets `budget` as its last cause. The ending's counter can: a cost
+      // refusal or the cost cap names cost_usd, whatever came first; an ending that names no counter is money when budget is its only cause.
+      // shortcut: an unfunded-session ending names no counter, so in a run with an earlier cause (a turn cap) it reads as the issue's; record the counter there if that matters.
+      const ended = db.get<{ counter: string | null }>("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
+      const outOfMoney = ended === 'cost_usd' || (ended === null && result.run.failureClass === 'budget');
+      if (result.run.state === 'EXHAUSTED' && capped && outOfMoney) {
         return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
       }
       if (result.run.state === 'SUCCEEDED') {
