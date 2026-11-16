@@ -92,13 +92,39 @@ async function settle(max = 12) {
   return out;
 }
 
-/** A reviewer that approves, except in a finding's one re-review (ADR 0015, amended), where it raises `f` again as it was. */
-function stillPresent(f: IngestedFinding): NonNullable<Setup['reviewer']> {
+/**
+ * A reviewer that approves, except in a finding's one re-review (ADR 0015, amendment of 2026-11-16), where it answers by
+ * the finding's id: `gone` (APPROVE with an info finding giving its evidence), `other` (REPAIR_REQUIRED naming only another
+ * finding) or, by default, still present (the finding raised again).
+ */
+function answers(how: Record<string, 'gone' | 'other'> = {}): NonNullable<Setup['reviewer']> {
   return ({ spec }) => {
     const candidate_revision = spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
-    if (!spec.prompt.includes('This is a re-review of one finding')) return okResult({ verdict: 'APPROVE', candidate_revision, findings: [] });
-    return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [{ id: f.externalId, severity: f.severity, category: f.category, location: f.location, claim: f.claim, evidence: f.evidence, suggested_validation: f.suggestedValidation }] });
+    const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(spec.prompt)?.[1];
+    if (!id) return okResult({ verdict: 'APPROVE', candidate_revision, findings: [] });
+    const f = (fid: string, severity: string, claim: string) => ({ id: fid, severity, category: 'correctness', location: 'apps/calc.mjs:2', claim, evidence: `tests/mul.test.mjs:3 covers ${fid}`, suggested_validation: null });
+    if (how[id] === 'gone') return okResult({ verdict: 'APPROVE', candidate_revision, findings: [f(id, 'info', `${id} no longer holds`)] });
+    if (how[id] === 'other') return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [f('OTHER-1', 'high', 'add has no test either')] });
+    return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [f(id, 'high', `${id} still holds`)] });
   };
+}
+
+const USAGE = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
+const TURN_CAPPED = { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' } as const;
+
+/** Attempt n's candidate, from an implementer that ended with `outcome`, and a REPAIR_REQUIRED review of it raising `findings`. */
+async function repairAttempt(base: string, repo: { worktree: string }, n: number, outcome: Parameters<typeof finishWorker>[2], findings: IngestedFinding[] = []) {
+  writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), `export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // ${n}\n`);
+  const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: base, attempt: n, workerId: null });
+  lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: n }));
+  lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: c.id }));
+  addEvidence(lab, c);
+  const w = planWorker(lab.db, { id: `wrk-impl-${n}`, runId: lab.runId, role: 'implementer', provider: 'claude', attempt: n, workerDir: join(lab.base, `wi${n}`), cwd: lab.repo }, lab.clock, OWNER);
+  markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+  finishWorker(lab.db, w.id, outcome, lab.clock, OWNER);
+  record(c, 'REPAIR_REQUIRED', findings);
+  lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+  return c;
 }
 
 function record(cand: { id: string; treeHash: string }, verdict: 'APPROVE' | 'REPAIR_REQUIRED' | 'BLOCK', findings: IngestedFinding[] = [], provider = 'codex', id = `rev-${listReviews(lab.db, lab.runId, { includeInvalidated: true }).length + 1}`) {
@@ -444,7 +470,7 @@ describe('a review that is already recorded', () => {
   // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
   it('a carried finding going to repair again after a repair whose implementer named no test for it ends as non-progress, not with another brief (BLOCKED, offering the verified candidate: #169)', async () => {
     // Its one re-review (ADR 0015, amendment of 2026-11-16) finds it still present, as it was raised.
-    const { cand, repo } = await setup({ reviewer: stillPresent(finding('TEST-1')) });
+    const { cand, repo } = await setup({ reviewer: answers() });
     const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
     routed(1);
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
@@ -495,31 +521,95 @@ describe('a review that is already recorded', () => {
   });
 
   it('an external id two briefed findings share does not count as naming either of them (#156)', async () => {
-    const { cand, repo } = await setup();
+    const { cand, repo } = await setup({ reviewer: answers() });
     const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
     record(cand, 'REPAIR_REQUIRED', [finding('TEST-1', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 })]);
     await run();
     expect(state()).toBe('REPAIRING');
-    // Every review round is spent, so neither finding gets its one re-review (ADR 0015, amended): the stop below is #156's.
-    const ledger = lab.ctx().ledger!;
-    const rounds = ledger.state('review_rounds');
-    ledger.consume('review_rounds', rounds.allowance - rounds.used);
-    writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // 2\n');
-    const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: 2, workerId: null });
-    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));
-    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2, candidate_id: c.id }));
-    addEvidence(lab, c);
-    const w = planWorker(lab.db, { id: 'wrk-impl-2', runId: lab.runId, role: 'implementer', provider: 'claude', attempt: 2, workerDir: join(lab.base, 'wi2'), cwd: lab.repo }, lab.clock, OWNER);
-    markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
-    const usage = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
     const ambiguous = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
-    finishWorker(lab.db, w.id, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: ambiguous, text: null, error: null, exitCode: 0, usage, durationMs: 1 } }, lab.clock, OWNER);
-    record(c, 'REPAIR_REQUIRED', []);
-    lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    const reported = { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: ambiguous, text: null, error: null, exitCode: 0, usage: USAGE, durationMs: 1 } } as Parameters<typeof finishWorker>[2];
+    // Both findings are carried and no test settles them: each gets its one re-review (ADR 0015, amended), which finds
+    // it still present, and the repair goes on.
+    await repairAttempt(cand.parentSha, repo, 2, reported);
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+    // Carried again, with no re-review left: a report that names only the id both share names neither, so the run stops.
+    await repairAttempt(cand.parentSha, repo, 3, reported);
     expect(await run()).toMatchObject({ done: true });
     expect(state()).toBe('BLOCKED');
     expect(decisions('repair.non-progress')).toHaveLength(1);
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+  });
+});
+
+describe("a carried finding's one re-review (ADR 0015, amendment of 2026-11-16)", () => {
+  /** Review 1 raises `first`; attempt 2 ends at its turn cap without a report; review 2 raises `second` on its tree. */
+  async function carried(first: IngestedFinding[], second: IngestedFinding[], o: Setup = {}) {
+    const { cand, repo } = await setup(o);
+    record(cand, 'REPAIR_REQUIRED', first);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    return repairAttempt(cand.parentSha, repo, 2, TURN_CAPPED, second);
+  }
+  const TEST_2 = finding('TEST-2', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 });
+  const evidenceRefs = (f: { resolutionJson: unknown }): unknown => (f.resolutionJson as { evidence_refs?: unknown } | null)?.evidence_refs;
+
+  it('two carried findings: the first is dropped, a pass after that keeps its record, and the second, still present, ends the run at the review round cap', async () => {
+    await carried([finding('TEST-1'), TEST_2], [finding('TEST-1'), TEST_2], { reviewer: answers({ 'TEST-1': 'gone' }), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(2 of 2\) with 1 open finding\(s\): TEST-2/);
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+    const all = listFindings(lab.db, lab.runId);
+    for (const f of all.filter((x) => x.externalId === 'TEST-1')) {
+      expect(f.status).toBe('rejected');
+      expect(f.resolution).toMatch(/^dropped: its one re-review \S+ by codex of tree \w+, told it by id with the candidate's diff and evidence, found the defect gone: tests\/mul\.test\.mjs:3 covers TEST-1/);
+      expect(evidenceRefs(f)).toEqual([expect.stringMatching(/^rereview:/)]);
+    }
+    for (const f of all.filter((x) => x.externalId === 'TEST-2')) expect(f.status).toBe('claim_pending');
+  });
+
+  it('never approves the tree: once the finding is dropped, the low finding of the same review still goes to repair', async () => {
+    const low = finding('LOW-2', { severity: 'low', claim: 'mul has no doc comment' });
+    await carried([finding('TEST-1')], [finding('TEST-1'), low], { reviewer: answers({ 'TEST-1': 'gone' }) });
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(listReviews(lab.db, lab.runId).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'REPAIR_REQUIRED']);
+    const all = listFindings(lab.db, lab.runId);
+    expect(all.filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['rejected', 'rejected']);
+    const brief = JSON.parse(readFileSync(briefPath(lab.ctx(), 3), 'utf8')) as { refs: string[] };
+    expect(brief.refs).toEqual(all.filter((f) => f.externalId === 'LOW-2').map((f) => f.id));
+  });
+
+  it('a re-reviewer that fails is replaced by another that did not raise the finding, not by the one that raised it', async () => {
+    const reviewer = { command: 'codex', data_policy_eligible: true, model: 'gpt-6-astra', reasoning_effort: null, extra_args: [] };
+    await carried([finding('TEST-1')], [finding('TEST-1')], {
+      reviewer: answers({ 'TEST-1': 'gone' }),
+      tweak: (c) => {
+        c.providers['codex-b'] = reviewer;
+        c.providers['codex-c'] = reviewer;
+        c.review = { ...c.review, providers: ['codex', 'codex-b', 'codex-c'], when_unavailable: 'block' };
+      },
+    });
+    lab.deps.adapters = { ...lab.deps.adapters, 'codex-b': scriptedAdapter(lab, () => okResult(null, { status: 'failed', error: 'crashed' })), 'codex-c': scriptedAdapter(lab, answers({ 'TEST-1': 'gone' })) };
+    await settle(30);
+    const sessions = listWorkers(lab.db, { runId: lab.runId, role: 'reviewer' }).filter((w) => w.purpose?.startsWith('review-finding:'));
+    expect(sessions.map((w) => w.provider)).toEqual(['codex-b', 'codex-b', 'codex-c']);
+    expect(decisions('review.finding-rereview.select').map((d) => d.summary)).toEqual([
+      expect.stringMatching(/^re-reviewer of finding TEST-1: codex-b\/gpt-6-astra \(independent\), not codex, which raised it$/),
+      expect.stringMatching(/^re-reviewer of finding TEST-1: codex-c\/gpt-6-astra \(independent\), not codex, which raised it$/),
+    ]);
+    expect(listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['rejected', 'rejected']);
+  });
+
+  it('an answer that asks for repair without naming the finding keeps it: it is not read as gone', async () => {
+    await carried([finding('TEST-1')], [finding('TEST-1')], { reviewer: answers({ 'TEST-1': 'other' }) });
+    await settle();
+    expect(listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['claim_pending', 'claim_pending']);
+    expect(listFindings(lab.db, lab.runId).some((f) => f.externalId === 'OTHER-1')).toBe(false);
+    expect(state()).toBe('REPAIRING');
   });
 });
 

@@ -62,8 +62,8 @@ const revisionOf = (prompt: string): string => prompt.match(/candidate revision 
 
 /**
  * A carried finding no test settles gets one re-review (ADR 0015, amendment of 2026-11-16). Here it finds the defect still
- * present, in its own words under the finding's id, so the finding goes back to repair as these tests expect, and the
- * re-review's own wording (another fingerprint) leaves the tests each finding was judged by as they were.
+ * present, so the finding goes back to repair as these tests expect. A re-review is no review of the tree: its answer
+ * raises no finding, so the findings each test judges are the ones it recorded.
  */
 const reReviewed = (prompt: string): object | null => {
   const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(prompt)?.[1];
@@ -578,7 +578,7 @@ describe('a reviewer who raises the finding again on a tree that has the repair 
     await run();
     const all = listFindings(lab.db, lab.runId).filter((x) => x.externalId === 'TEST-1');
     expect(all.map((x) => x.status).filter((s) => s === 'resolved')).toEqual([]);
-    expect(all.find((x) => x.reviewId === 'rev-2')!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
+    expect(all.at(-1)!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
     expect(probes()).toEqual([]);
     // TEST-1 would go to repair again after a repair that named no test for it: non-progress (#156), not attempt 4. The
     // candidates passed verification, so the run that ran out offers the newest of them (#169).

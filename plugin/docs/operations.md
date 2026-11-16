@@ -302,13 +302,29 @@ finding (exit 1, 2 attempts): COR-1".
 
 A review repair, once one goes, is also briefed every unresolved finding a
 `REPAIR_REQUIRED` review of the tree raised, whatever its severity; what blocks
-the tree does not change. When every finding about to go to repair
-was in the previous review repair and no implementer report since names a test
-for any of them (an implementer that ended at its turn cap without a report
-names none), the run stops as non-progress (`repair.non-progress`) naming the
-open findings, since only such a test can close them and the same brief would
-end the same way. The reviewed candidate passed verification, so the run ends
-`BLOCKED` and offers it (see below), unless the run delivered a candidate.
+the tree does not change.
+
+A blocking finding that was sent to repair from an earlier tree, is still open
+on the current verified candidate and that no check confirmed (an "add tests"
+finding whose test passes before and after the repair, say) gets one re-review
+before it goes to repair again (ADR 0015, amendment of 2026-11-16). A fresh
+reviewer session, of an independent provider that did not raise it while one is
+eligible, is told the finding by id with the candidate's review packet and
+answers only whether the defect is still present. It is no review of the tree:
+it never approves it. Gone, the finding is dropped with the re-reviewer's
+evidence (`review.finding-rereview.answer`, then `review.finding.rejected`) and
+the tree is decided on its own reviews without it. Still present, it goes to
+repair within the budgets. A run asks one re-review per finding, at the cost of
+a review round.
+
+When every finding about to go to repair was in the previous review repair and
+no implementer report since names a test for any of them (an implementer that
+ended at its turn cap without a report names none), the run stops as
+non-progress (`repair.non-progress`) naming the open findings, since only such a
+test can close them and the same brief would end the same way; on a tree where
+a re-review found one of them still present, the repair goes on once more. The
+reviewed candidate passed verification, so the run ends `BLOCKED` and offers it
+(see below), unless the run delivered a candidate.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the

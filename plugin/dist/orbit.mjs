@@ -49139,11 +49139,20 @@ function decisionId(kind, findingId, status2, reason) {
 }
 function persistResolution(db, runDir2, runId, resolution, clock) {
   const updated = [];
+  const onRecord = /* @__PURE__ */ new Set();
   db.tx(() => {
     for (const d of resolution.dispositions) {
-      for (const memberId of d.memberIds) {
+      const rows = d.memberIds.map((memberId) => {
         const row = db.get("SELECT * FROM findings WHERE id = ? AND run_id = ?", memberId, runId);
         if (!row) throw new OrbitError("NOT_FOUND", `no finding ${memberId} in run ${runId}`);
+        return row;
+      });
+      if (TERMINAL_FINDING_STATUSES.includes(d.status) && rows.every((r) => r.status === d.status)) {
+        onRecord.add(d);
+        continue;
+      }
+      for (const row of rows) {
+        const memberId = row.id;
         if (TERMINAL_FINDING_STATUSES.includes(row.status) && row.status !== d.status) continue;
         const changed2 = row.status !== d.status || row.resolution !== d.reason;
         updateFindingStatus(
@@ -49171,6 +49180,7 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
     }
   });
   for (const d of resolution.dispositions) {
+    if (onRecord.has(d)) continue;
     const noted = d.recordedClassification !== void 0 && d.status === "advisory";
     if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved" && !noted) continue;
     const kind = noted ? "review.finding.noted" : `review.finding.${d.status}`;
@@ -53947,8 +53957,8 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
       outcome("unanswered");
       continue;
     }
-    const answerId = answerDecisionId(q.id);
-    const answer = getDecision(ctx.db, answerId);
+    const answerId2 = answerDecisionId(q.id);
+    const answer = getDecision(ctx.db, answerId2);
     const answeredBy = answer?.data?.answered_by;
     if (!answer || answer.kind !== ANSWER_DECISION_KIND || answer.runId !== ctx.runId || typeof answeredBy !== "string" || !isHumanActor(answeredBy)) {
       outcome("declined", "the answer is not a recorded decision by a person");
@@ -53993,7 +54003,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         if (never !== null) throw new OrbitError("POLICY_DENIED", never, { checkId: data.check_id });
         const res = applyAmendment(current, proposal, {
           snapshot: snapshot2,
-          approvedBy: answerId,
+          approvedBy: answerId2,
           policyHash: row2.policy_hash,
           history: amendmentHistory(ctx.db, ctx.runId),
           ...baseline ? { baselineFailures: baseline.failures.map((f) => ({ checkId: f.checkId, fingerprint: f.fingerprint })) } : {}
@@ -54012,7 +54022,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         } catch {
           rejected = { field: "baseline_exceptions", old_value: null, new_value: null, evidence: proposal.evidence, reason: proposal.reason, approval_required: true, affected_verification: [`check:${data.check_id}`] };
         }
-        insertAmendment(ctx.db, { runId: ctx.runId, record: rejected, change: proposal.change, status: "rejected", approvedBy: answerId, note: err.message }, ctx.clock, "controller");
+        insertAmendment(ctx.db, { runId: ctx.runId, record: rejected, change: proposal.change, status: "rejected", approvedBy: answerId2, note: err.message }, ctx.clock, "controller");
         outcome("refused", err.message);
         break;
       }
@@ -54021,9 +54031,9 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
       const wrote = ctx.db.tx(() => {
         const res = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", JSON.stringify(next), after, ctx.runId, row2.contract_json);
         if (res.changes !== 1) return false;
-        insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
+        insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId2, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
         invalidateEvidence(ctx.db, ctx.runId, `the contract now accepts a baseline exception for check ${data.check_id}`, ctx.clock, { exceptVerdict: "PASS" });
-        appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId }, ctx.clock.now());
+        appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId2 }, ctx.clock.now());
         return true;
       });
       if (!wrote) continue;
@@ -54035,8 +54045,8 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
           id: `dec-${ctx.runId}-baseline-exception-applied-${keyOf(ctx.runId, data.check_id, data.fingerprint)}`,
           runId: ctx.runId,
           kind: "contract.baseline-exception",
-          summary: `the contract accepts the pre-existing failure of check ${data.check_id} (fingerprint ${data.fingerprint}) as a baseline exception, approved by ${answeredBy} in ${answerId}`,
-          data: { check_id: data.check_id, fingerprint: data.fingerprint, approved_by: answeredBy, answer_decision: answerId, question_id: data.question_id }
+          summary: `the contract accepts the pre-existing failure of check ${data.check_id} (fingerprint ${data.fingerprint}) as a baseline exception, approved by ${answeredBy} in ${answerId2}`,
+          data: { check_id: data.check_id, fingerprint: data.fingerprint, approved_by: answeredBy, answer_decision: answerId2, question_id: data.question_id }
         },
         ctx.clock,
         { actor: "controller" }
@@ -65955,7 +65965,7 @@ async function singleReview(ctx, cand, sel, opts) {
       cwd: checkout,
       readOnly: true,
       phase: "final",
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh, sel.provider, opts.reReview ?? null)
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", opts.fresh, sel.provider)
     }),
     accept: (r) => {
       try {
@@ -66192,12 +66202,11 @@ async function resolveAndDecide(ctx, cand) {
     const stop = await safePoint(ctx);
     if (stop) return stop;
   }
-  const reReviews = reReviewRecords(ctx);
-  const reReviewed = new Set(reReviews.map((r) => recordedFreshReview(ctx, r)?.id));
-  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews.filter((r) => !reReviewed.has(r.id)), snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
+  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
-  const stillPresent = settleReReviews(ctx, state, resolution, reReviews);
+  const reReviews = reReviewRecords(ctx);
+  const stillPresent = settleReReviews(ctx, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -66403,14 +66412,10 @@ async function reReviewCarried(ctx, cand, going, state, recs) {
   const rounds = ctx.ledger.state("review_rounds");
   if (rounds.used >= rounds.allowance) return null;
   const carried = new Set(reviewRepairs(ctx).filter((r) => r.tree_hash !== cand.treeHash).flatMap((r) => r.findings.map((f) => f.fingerprint)));
-  const all = [...state.findings, ...state.previousFindings];
-  const byReReview = new Set(recs.map((r) => recordedFreshReview(ctx, r)?.id));
-  const d = going.find((x) => x.blocking && x.status !== "accepted" && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint) && !all.some((f) => x.memberIds.includes(f.id) && byReReview.has(f.reviewId)));
+  const d = going.find((x) => x.blocking && x.status !== "accepted" && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint));
   if (!d) return null;
+  const all = [...state.findings, ...state.previousFindings];
   const raisedBy = [...new Set(all.filter((f) => d.memberIds.includes(f.id)).map((f) => f.provider))];
-  const failed = Object.fromEntries(activeReviewerFailures(ctx).map((f) => [f.provider, f.reason]));
-  for (const p of raisedBy) failed[p] ??= "it raised the finding under re-review";
-  const other = fallbackSelection(ctx, await checkEnvironment(ctx), failed);
   const rec2 = {
     fingerprint: d.fingerprint,
     finding_id: d.findingId,
@@ -66422,42 +66427,90 @@ async function reReviewCarried(ctx, cand, going, state, recs) {
     raised_by: raisedBy,
     tree_hash: cand.treeHash,
     candidate_id: cand.id,
-    base: `review-finding:${cand.id}:${d.fingerprint}`,
-    reviewer: other.decision === "SELECT" && other.independent && other.needsApproval !== true ? other : null
+    base: `review-finding:${cand.id}:${d.fingerprint}`
   };
-  const who = rec2.reviewer ? `reviewer ${reviewerLabel(rec2.reviewer)}, not ${raisedBy.join(", ")}, which raised it` : `no independent reviewer other than ${raisedBy.join(", ")} is eligible, so the run's reviewer re-reviews it in a fresh session`;
-  decide2(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it; ${who}`, data: rec2 });
+  decide2(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it`, data: rec2 });
   return reReview(ctx, cand, rec2);
 }
-async function reReview(ctx, cand, rec2) {
-  const usable = rec2.reviewer && !activeReviewerFailures(ctx).some((f) => f.provider === rec2.reviewer.provider) ? { ok: true, sel: rec2.reviewer } : await usableReviewer(ctx, cand);
-  if (!usable.ok) return usable.step;
-  const pending = await singleReview(ctx, cand, usable.sel, { base: rec2.base, what: `the ${usable.sel.provider} re-reviewer of finding ${reReviewId(rec2)}`, fresh: null, reReview: rec2 });
-  return pending ?? resolveAndDecide(ctx, cand);
+async function reReviewer(ctx, rec2) {
+  const failures = listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_FAILED_KIND }).map((d) => d.data).filter((f) => f.fingerprint === rec2.fingerprint);
+  const id = `dec-${ctx.run.id}-rereview-select-${rec2.fingerprint}-${failures.length}`;
+  const prior = getDecision(ctx.db, id);
+  if (prior) return prior.data.reviewer;
+  const failed = Object.fromEntries([...activeReviewerFailures(ctx), ...failures].map((f) => [f.provider, f.reason]));
+  const others = { ...failed };
+  for (const p of rec2.raised_by) others[p] ??= "it raised the finding under re-review";
+  const env = await checkEnvironment(ctx);
+  const usable = (s) => s.decision === "SELECT" && s.needsApproval !== true ? s : null;
+  const other = usable(fallbackSelection(ctx, env, others));
+  const reviewer = other?.independent ? other : usable(fallbackSelection(ctx, env, failed));
+  const name = reReviewId(rec2);
+  const summary = !reviewer ? `no reviewer is left to re-review finding ${name}` : `re-reviewer of finding ${name}: ${reviewerLabel(reviewer)}${rec2.raised_by.includes(reviewer.provider) ? `, which raised it: no other reviewer is eligible` : `, not ${rec2.raised_by.join(", ")}, which raised it`}`;
+  decide2(ctx, { id, kind: REREVIEW_SELECT_KIND, summary, data: { fingerprint: rec2.fingerprint, reviewer } });
+  return reviewer;
 }
-function settleReReviews(ctx, state, resolution, recs) {
+async function reReview(ctx, cand, rec2) {
+  const name = reReviewId(rec2);
+  const answer = (a, summary) => void decide2(ctx, { id: answerId(ctx, rec2), kind: REREVIEW_ANSWER_KIND, summary, data: { fingerprint: rec2.fingerprint, ...a } });
+  const sel = await reReviewer(ctx, rec2);
+  if (!sel) {
+    answer({ worker_id: null, provider: null, verdict: null, findings: [] }, `finding ${name} keeps its status: no reviewer was left to re-review it`);
+    return resolveAndDecide(ctx, cand);
+  }
+  const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
+  const got = await obtain(ctx, {
+    base: `${rec2.base}~${sel.provider}`,
+    maxAttempts: MAX_REGENERATIONS,
+    what: `the ${sel.provider} re-reviewer of finding ${name}`,
+    // A re-reviewer that fails is chosen again without it; the tree's reviews stand as they are.
+    exhausted: async (failed) => {
+      const reason = `${failed.status}${failed.error ? `: ${clipAtWord(failed.error.replace(/\s+/g, " ").trim(), 300)}` : ""} after ${MAX_REGENERATIONS} attempt(s)`;
+      decide2(ctx, { kind: REREVIEW_FAILED_KIND, summary: `re-reviewer ${sel.provider} of finding ${name} failed: ${reason}; choosing again without it`, data: { fingerprint: rec2.fingerprint, provider: sel.provider, reason } });
+      return MOVED;
+    },
+    beforeStart: () => ctx.ledger.consume("review_rounds", 1),
+    request: (purpose) => ({ role: "reviewer", purpose, candidateId: cand.id, provider: sel.provider, model: sel.model, effort: reviewEffort(ctx, sel), cwd: checkout, readOnly: true, phase: "final", prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", null, sel.provider, rec2) }),
+    accept: (r) => {
+      try {
+        return ingestFindings({ output: r.structured, candidate: cand });
+      } catch (err) {
+        if (isOrbitError(err, "STALE_EVIDENCE")) throw new OrbitError("MALFORMED_OUTPUT", err.message);
+        throw err;
+      }
+    }
+  }).catch(async (err) => {
+    await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {
+    });
+    throw err;
+  });
+  if (!got.ok) return got.step;
+  await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {
+  });
+  const findings = got.value.findings.map((f) => ({ id: f.externalId, severity: f.severity, claim: clipAtWord(f.claim, 300), evidence: clipAtWord(f.evidence, 500) }));
+  answer({ worker_id: got.worker.id, provider: got.worker.provider, verdict: got.value.verdict, findings }, `re-review of finding ${name} by ${got.worker.provider}: ${got.value.verdict}`);
+  return resolveAndDecide(ctx, cand);
+}
+function settleReReviews(ctx, resolution, recs) {
   const present = /* @__PURE__ */ new Set();
   for (const rec2 of recs) {
-    const review = rec2.tree_hash === resolution.treeHash ? recordedFreshReview(ctx, rec2) : null;
-    if (!review) continue;
-    const own = state.findings.filter((f) => f.reviewId === review.id);
-    const same2 = own.filter((f) => f.externalId === reReviewId(rec2) || findingFingerprint(f) === rec2.fingerprint);
-    const gone = !same2.some((f) => f.severity !== "info") && (review.verdict === "APPROVE" || own.some((f) => f.severity !== "info"));
+    const answer = rec2.tree_hash === resolution.treeHash ? reReviewAnswer(ctx, rec2) : null;
+    if (!answer || answer.verdict === null) continue;
+    const gone = answer.verdict === "APPROVE" && answer.findings.every((f) => f.severity === "info");
     if (!gone) present.add(rec2.fingerprint);
-    const who = `re-review ${review.id} by ${review.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
-    const again = new Set(same2.map((f) => f.id));
+    const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
     for (const d of resolution.dispositions) {
-      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id) || again.has(id))) continue;
+      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id))) continue;
       if (!UNRESOLVED_FINDING_STATUSES.includes(d.status)) continue;
       if (!gone) {
         d.disagreement = null;
-        d.reason += `; its one ${who} found it still present`;
+        d.reason += `; its one ${who} found it still present (${answer.verdict})`;
         continue;
       }
       d.status = "rejected";
       d.blocking = false;
-      d.evidenceRefs = [...d.evidenceRefs, `review:${review.id}`];
-      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(same2[0]?.evidence ?? `it ${review.verdict === "APPROVE" ? "approved the tree" : "named only other findings"} and did not raise it again`, 300)}`;
+      d.evidenceRefs = [...d.evidenceRefs, `rereview:${answer.worker_id}`];
+      const evidence = answer.findings.find((f) => f.id === reReviewId(rec2))?.evidence ?? "it approved without raising it again";
+      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(evidence, 300)}`;
     }
   }
   refreshLists(resolution);
@@ -67071,7 +67124,7 @@ function reReviewText(rec2) {
   const id = reReviewId(rec2);
   return [
     `This is a re-review of one finding, ${id} (${rec2.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
-    "Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout.",
+    "Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout. Your answer decides only this finding: it neither approves the candidate nor raises other findings, so do not report any.",
     `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id} whose evidence names what in the candidate shows that it is gone.`
   ];
 }
@@ -67082,7 +67135,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync49(checkout) || readdirSync14(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, reReviewId, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, REREVIEW_SELECT_KIND, REREVIEW_FAILED_KIND, REREVIEW_ANSWER_KIND, reReviewId, answerId, reReviewAnswer, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -67138,8 +67191,13 @@ var init_reviewing = __esm({
     FRESH_REVIEW_KIND = "review.fresh";
     SHALLOW_REVIEW_EFFORT = "high";
     REREVIEW_KIND = "review.finding-rereview";
+    REREVIEW_SELECT_KIND = "review.finding-rereview.select";
+    REREVIEW_FAILED_KIND = "review.finding-rereview.failed";
+    REREVIEW_ANSWER_KIND = "review.finding-rereview.answer";
     reReviewId = (rec2) => rec2.external_id ?? "FINDING-1";
-    askedReReview = (ctx, cand, recs) => recs.find((r) => r.tree_hash === cand.treeHash && !recordedFreshReview(ctx, r));
+    answerId = (ctx, rec2) => `dec-${ctx.run.id}-rereview-answer-${rec2.fingerprint}`;
+    reReviewAnswer = (ctx, rec2) => getDecision(ctx.db, answerId(ctx, rec2))?.data ?? null;
+    askedReReview = (ctx, cand, recs) => recs.find((r) => r.tree_hash === cand.treeHash && !reReviewAnswer(ctx, r));
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
     NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";

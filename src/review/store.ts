@@ -20,7 +20,7 @@ import {
   type ReviewRecord,
   type ReviewVerdict,
 } from './types.ts';
-import type { Resolution, ResolvableFinding, ResolverReview } from './resolve.ts';
+import type { Disposition, Resolution, ResolvableFinding, ResolverReview } from './resolve.ts';
 
 /**
  * Repositories for the reviews and findings tables. A review is bound to the
@@ -416,11 +416,22 @@ function decisionId(kind: string, findingId: string, status: string, reason: str
  */
 export function persistResolution(db: OrbitDb, runDir: string, runId: string, resolution: Resolution, clock: Clock): { updated: string[] } {
   const updated: string[] = [];
+  // A closure already on record (every member rejected or resolved as the disposition says) is read back, not decided
+  // again: written again it would lose the evidence it was closed with, which a later pass on the tree does not carry.
+  const onRecord = new Set<Disposition>();
   db.tx(() => {
     for (const d of resolution.dispositions) {
-      for (const memberId of d.memberIds) {
+      const rows = d.memberIds.map((memberId) => {
         const row = db.get<FindingRow>('SELECT * FROM findings WHERE id = ? AND run_id = ?', memberId, runId);
         if (!row) throw new OrbitError('NOT_FOUND', `no finding ${memberId} in run ${runId}`);
+        return row;
+      });
+      if ((TERMINAL_FINDING_STATUSES as readonly string[]).includes(d.status) && rows.every((r) => r.status === d.status)) {
+        onRecord.add(d);
+        continue;
+      }
+      for (const row of rows) {
+        const memberId = row.id;
         // A member that is terminal keeps its status; the group's outcome applies to the rest.
         if ((TERMINAL_FINDING_STATUSES as readonly string[]).includes(row.status) && row.status !== d.status) continue;
         const changed = row.status !== d.status || row.resolution !== d.reason;
@@ -449,6 +460,7 @@ export function persistResolution(db: OrbitDb, runDir: string, runId: string, re
     }
   });
   for (const d of resolution.dispositions) {
+    if (onRecord.has(d)) continue;
     // A finding that disputes a classification Orbit recorded is a note: on the record, so the report and timeline show it.
     const noted = d.recordedClassification !== undefined && d.status === 'advisory';
     if (d.status !== 'accepted' && d.status !== 'rejected' && d.status !== 'excepted' && d.status !== 'resolved' && !noted) continue;

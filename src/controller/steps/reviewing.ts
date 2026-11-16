@@ -140,7 +140,7 @@ async function usableReviewer(ctx: RunContext, cand: CandidateRecord): Promise<{
  * One general reviewer session of the candidate under the purpose `base`, recorded as a review of its tree. Returns the
  * step to take while it runs or when no usable review came back, and null once the review is recorded.
  */
-async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: SelectedReviewer, opts: { base: string; what: string; fresh: FreshReviewRecord | null; reReview?: ReReviewRecord }): Promise<StepResult | null> {
+async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: SelectedReviewer, opts: { base: string; what: string; fresh: FreshReviewRecord | null }): Promise<StepResult | null> {
   const round = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   let switched = false;
@@ -164,7 +164,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
       cwd: checkout,
       readOnly: true,
       phase: 'final',
-      prompt: () => reviewerPrompt(ctx, cand, reviewDir, 'general', opts.fresh, sel.provider, opts.reReview ?? null),
+      prompt: () => reviewerPrompt(ctx, cand, reviewDir, 'general', opts.fresh, sel.provider),
     }),
     accept: (r) => {
       try {
@@ -449,13 +449,11 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     const stop = await safePoint(ctx);
     if (stop) return stop;
   }
-  // A re-review judged one finding: its verdict neither approves nor disputes the others.
-  const reReviews = reReviewRecords(ctx);
-  const reReviewed = new Set(reReviews.map((r) => recordedFreshReview(ctx, r)?.id));
-  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews.filter((r) => !reReviewed.has(r.id)), snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
+  const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
-  const stillPresent = settleReReviews(ctx, state, resolution, reReviews);
+  const reReviews = reReviewRecords(ctx);
+  const stillPresent = settleReReviews(ctx, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -634,8 +632,8 @@ function freshReviewOf(ctx: RunContext, treeHash: string): FreshReviewRecord | n
   return d ? (d.data as FreshReviewRecord) : null;
 }
 
-/** The recorded review of the fresh reviewer's (or re-reviewer's) sessions, or null while none has come back. */
-function recordedFreshReview(ctx: RunContext, rec: Pick<FreshReviewRecord, 'base' | 'tree_hash'>): ReviewRecord | null {
+/** The recorded review of the fresh reviewer's sessions, or null while none has come back. */
+function recordedFreshReview(ctx: RunContext, rec: FreshReviewRecord): ReviewRecord | null {
   // A substitute reviewer's sessions run under the same base with a ~<provider> suffix (#116).
   const prefixes = [`${rec.base}#`, `${rec.base}~`];
   const workers = new Set(ctx.db.all<{ id: string; purpose: string | null }>("SELECT id, purpose FROM workers WHERE run_id = ? AND role = 'reviewer'", ctx.run.id).filter((w) => prefixes.some((p) => w.purpose?.startsWith(p))).map((w) => w.id));
@@ -744,6 +742,20 @@ function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution
 
 /** The decision that asks a finding's one re-review. Its id is the finding's fingerprint, so a run asks it once. */
 const REREVIEW_KIND = 'review.finding-rereview';
+/** The re-reviewer chosen for a finding: one decision for the first choice and one after each re-reviewer that failed. */
+const REREVIEW_SELECT_KIND = 'review.finding-rereview.select';
+const REREVIEW_FAILED_KIND = 'review.finding-rereview.failed';
+/** The re-reviewer's answer, or that none could give one. A re-review is not a review of the tree: this is all it records. */
+const REREVIEW_ANSWER_KIND = 'review.finding-rereview.answer';
+
+interface ReReviewAnswer {
+  fingerprint: string;
+  /** The re-reviewer's session and provider; null, with a null verdict, when no eligible re-reviewer gave an answer. */
+  worker_id: string | null;
+  provider: string | null;
+  verdict: IngestedReview['verdict'] | null;
+  findings: { id: string; severity: string; claim: string; evidence: string }[];
+}
 
 interface ReReviewRecord {
   fingerprint: string;
@@ -758,10 +770,8 @@ interface ReReviewRecord {
   /** The tree it judges, and the candidate that carries it. */
   tree_hash: string;
   candidate_id: string;
-  /** The purpose base of the re-reviewer's sessions. */
+  /** The purpose base of the re-reviewer's sessions; each re-reviewer's sessions add ~<provider>. */
   base: string;
-  /** An independent reviewer other than those that raised it, by the run's reviewer rules; null when none is eligible, and the run's own reviewer re-reviews it in a fresh session. */
-  reviewer: SelectedReviewer | null;
 }
 
 function reReviewRecords(ctx: RunContext): ReReviewRecord[] {
@@ -771,16 +781,21 @@ function reReviewRecords(ctx: RunContext): ReReviewRecord[] {
 /** The id the re-reviewer answers under: the finding's own (an ingested finding always has one). */
 const reReviewId = (rec: ReReviewRecord): string => rec.external_id ?? 'FINDING-1';
 
+const answerId = (ctx: RunContext, rec: ReReviewRecord): string => `dec-${ctx.run.id}-rereview-answer-${rec.fingerprint}`;
+
+/** The recorded answer of a finding's re-review, or null while none has come back. */
+const reReviewAnswer = (ctx: RunContext, rec: ReReviewRecord): ReReviewAnswer | null => (getDecision(ctx.db, answerId(ctx, rec))?.data as ReReviewAnswer | undefined) ?? null;
+
 /** The re-review asked for this candidate's tree that has not come back yet. */
-const askedReReview = (ctx: RunContext, cand: CandidateRecord, recs: readonly ReReviewRecord[]): ReReviewRecord | undefined => recs.find((r) => r.tree_hash === cand.treeHash && !recordedFreshReview(ctx, r));
+const askedReReview = (ctx: RunContext, cand: CandidateRecord, recs: readonly ReReviewRecord[]): ReReviewRecord | undefined => recs.find((r) => r.tree_hash === cand.treeHash && !reReviewAnswer(ctx, r));
 
 /**
  * A blocking finding sent to repair from an earlier tree, still open on this verified candidate and confirmed by no
  * check, is one the repair probe cannot settle (its test passes before and after, or none was named). Before it goes to
- * repair again it gets one re-review: a fresh reviewer session, of an independent provider that did not raise it when
- * the run's reviewer rules allow one, told the finding by id with the candidate's packet (its diff and evidence). One per
- * finding per run, none for a finding a re-review raised, and none without a review round left. Returns the step while
- * one runs, else null.
+ * repair again it gets one re-review: a fresh reviewer session told the finding by id with the candidate's packet (its
+ * diff and evidence), which answers only whether that defect is still present. It is no review of the tree: it never
+ * approves it and raises no finding. One per finding per run, and none without a review round left. Returns the step
+ * while one runs, else null.
  */
 async function reReviewCarried(ctx: RunContext, cand: CandidateRecord, going: readonly Disposition[], state: ReturnType<typeof loadResolverState>, recs: readonly ReReviewRecord[]): Promise<StepResult | null> {
   const asked = askedReReview(ctx, cand, recs);
@@ -788,14 +803,10 @@ async function reReviewCarried(ctx: RunContext, cand: CandidateRecord, going: re
   const rounds = ctx.ledger!.state('review_rounds');
   if (rounds.used >= rounds.allowance) return null;
   const carried = new Set(reviewRepairs(ctx).filter((r) => r.tree_hash !== cand.treeHash).flatMap((r) => r.findings.map((f) => f.fingerprint)));
-  const all = [...state.findings, ...state.previousFindings];
-  const byReReview = new Set(recs.map((r) => recordedFreshReview(ctx, r)?.id));
-  const d = going.find((x) => x.blocking && x.status !== 'accepted' && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint) && !all.some((f) => x.memberIds.includes(f.id) && byReReview.has(f.reviewId)));
+  const d = going.find((x) => x.blocking && x.status !== 'accepted' && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint));
   if (!d) return null;
+  const all = [...state.findings, ...state.previousFindings];
   const raisedBy = [...new Set(all.filter((f) => d.memberIds.includes(f.id)).map((f) => f.provider))];
-  const failed = Object.fromEntries(activeReviewerFailures(ctx).map((f) => [f.provider, f.reason]));
-  for (const p of raisedBy) failed[p] ??= 'it raised the finding under re-review';
-  const other = fallbackSelection(ctx, await checkEnvironment(ctx), failed);
   const rec: ReReviewRecord = {
     fingerprint: d.fingerprint,
     finding_id: d.findingId,
@@ -808,52 +819,105 @@ async function reReviewCarried(ctx: RunContext, cand: CandidateRecord, going: re
     tree_hash: cand.treeHash,
     candidate_id: cand.id,
     base: `review-finding:${cand.id}:${d.fingerprint}`,
-    reviewer: other.decision === 'SELECT' && other.independent && other.needsApproval !== true ? other : null,
   };
-  const who = rec.reviewer ? `reviewer ${reviewerLabel(rec.reviewer)}, not ${raisedBy.join(', ')}, which raised it` : `no independent reviewer other than ${raisedBy.join(', ')} is eligible, so the run's reviewer re-reviews it in a fresh session`;
-  decide(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it; ${who}`, data: rec });
+  decide(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it`, data: rec });
   return reReview(ctx, cand, rec);
 }
 
-/** Start or collect a finding's re-review, then decide the tree again with its answer. */
+/**
+ * The re-reviewer, by the run's reviewer rules: an independent provider that did not raise the finding, and has not
+ * failed at run time or as one of its re-reviewers, while one is eligible; else the run's own reviewer (the provider
+ * that raised it too). Chosen once, and again after each re-reviewer that failed; null when no reviewer is left.
+ */
+async function reReviewer(ctx: RunContext, rec: ReReviewRecord): Promise<SelectedReviewer | null> {
+  const failures = listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_FAILED_KIND }).map((d) => d.data as { fingerprint: string; provider: string; reason: string }).filter((f) => f.fingerprint === rec.fingerprint);
+  const id = `dec-${ctx.run.id}-rereview-select-${rec.fingerprint}-${failures.length}`;
+  const prior = getDecision(ctx.db, id);
+  if (prior) return (prior.data as { reviewer: SelectedReviewer | null }).reviewer;
+  const failed: Record<string, string> = Object.fromEntries([...activeReviewerFailures(ctx), ...failures].map((f) => [f.provider, f.reason]));
+  const others = { ...failed };
+  for (const p of rec.raised_by) others[p] ??= 'it raised the finding under re-review';
+  const env = await checkEnvironment(ctx);
+  const usable = (s: ReviewerSelection): SelectedReviewer | null => (s.decision === 'SELECT' && s.needsApproval !== true ? s : null);
+  const other = usable(fallbackSelection(ctx, env, others));
+  const reviewer = other?.independent ? other : usable(fallbackSelection(ctx, env, failed));
+  const name = reReviewId(rec);
+  const summary = !reviewer
+    ? `no reviewer is left to re-review finding ${name}`
+    : `re-reviewer of finding ${name}: ${reviewerLabel(reviewer)}${rec.raised_by.includes(reviewer.provider) ? `, which raised it: no other reviewer is eligible` : `, not ${rec.raised_by.join(', ')}, which raised it`}`;
+  decide(ctx, { id, kind: REREVIEW_SELECT_KIND, summary, data: { fingerprint: rec.fingerprint, reviewer } });
+  return reviewer;
+}
+
+/** Start or collect a finding's re-review and record its answer, then decide the tree again with it. */
 async function reReview(ctx: RunContext, cand: CandidateRecord, rec: ReReviewRecord): Promise<StepResult> {
-  // The reviewer chosen when it was asked, unless it has failed since: then the run's own.
-  const usable = rec.reviewer && !activeReviewerFailures(ctx).some((f) => f.provider === rec.reviewer!.provider) ? { ok: true as const, sel: rec.reviewer } : await usableReviewer(ctx, cand);
-  if (!usable.ok) return usable.step;
-  const pending = await singleReview(ctx, cand, usable.sel, { base: rec.base, what: `the ${usable.sel.provider} re-reviewer of finding ${reReviewId(rec)}`, fresh: null, reReview: rec });
-  return pending ?? resolveAndDecide(ctx, cand);
+  const name = reReviewId(rec);
+  const answer = (a: Omit<ReReviewAnswer, 'fingerprint'>, summary: string): void => void decide(ctx, { id: answerId(ctx, rec), kind: REREVIEW_ANSWER_KIND, summary, data: { fingerprint: rec.fingerprint, ...a } });
+  const sel = await reReviewer(ctx, rec);
+  if (!sel) {
+    answer({ worker_id: null, provider: null, verdict: null, findings: [] }, `finding ${name} keeps its status: no reviewer was left to re-review it`);
+    return resolveAndDecide(ctx, cand);
+  }
+  const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
+  const got = await obtain<IngestedReview>(ctx, {
+    base: `${rec.base}~${sel.provider}`,
+    maxAttempts: MAX_REGENERATIONS,
+    what: `the ${sel.provider} re-reviewer of finding ${name}`,
+    // A re-reviewer that fails is chosen again without it; the tree's reviews stand as they are.
+    exhausted: async (failed) => {
+      const reason = `${failed.status}${failed.error ? `: ${clipAtWord(failed.error.replace(/\s+/g, ' ').trim(), 300)}` : ''} after ${MAX_REGENERATIONS} attempt(s)`;
+      decide(ctx, { kind: REREVIEW_FAILED_KIND, summary: `re-reviewer ${sel.provider} of finding ${name} failed: ${reason}; choosing again without it`, data: { fingerprint: rec.fingerprint, provider: sel.provider, reason } });
+      return MOVED;
+    },
+    beforeStart: () => ctx.ledger!.consume('review_rounds', 1),
+    request: (purpose) => ({ role: 'reviewer', purpose, candidateId: cand.id, provider: sel.provider, model: sel.model, effort: reviewEffort(ctx, sel), cwd: checkout, readOnly: true, phase: 'final', prompt: () => reviewerPrompt(ctx, cand, reviewDir, 'general', null, sel.provider, rec) }),
+    accept: (r) => {
+      try {
+        return ingestFindings({ output: r.structured, candidate: cand });
+      } catch (err) {
+        if (isOrbitError(err, 'STALE_EVIDENCE')) throw new OrbitError('MALFORMED_OUTPUT', err.message);
+        throw err;
+      }
+    },
+  }).catch(async (err) => {
+    await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {});
+    throw err;
+  });
+  if (!got.ok) return got.step;
+  await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {});
+  const findings = got.value.findings.map((f) => ({ id: f.externalId, severity: f.severity, claim: clipAtWord(f.claim, 300), evidence: clipAtWord(f.evidence, 500) }));
+  answer({ worker_id: got.worker.id, provider: got.worker.provider, verdict: got.value.verdict, findings }, `re-review of finding ${name} by ${got.worker.provider}: ${got.value.verdict}`);
+  return resolveAndDecide(ctx, cand);
 }
 
 /**
- * What each recorded re-review of this tree says of its finding. Still present when the re-review raised it again (its
- * id or fingerprint, above info), or withheld approval naming nothing else: the finding stays as it is, its reason says
- * so, and its fingerprint is returned. Otherwise gone: the finding is dropped (rejected) with the re-reviewer's evidence,
- * and the gate decides the tree without it.
+ * What each answered re-review of this tree says of its finding. Gone only on an APPROVE that raises nothing above info:
+ * the finding is dropped (rejected) with the re-reviewer's evidence, and the tree is decided on its own reviews as if it
+ * had not been raised. Any other answer, naming the finding or not, keeps it as still present: its reason says so and
+ * its fingerprint is returned. No answer leaves it as it is.
  */
-function settleReReviews(ctx: RunContext, state: ReturnType<typeof loadResolverState>, resolution: Resolution, recs: readonly ReReviewRecord[]): Set<string> {
+function settleReReviews(ctx: RunContext, resolution: Resolution, recs: readonly ReReviewRecord[]): Set<string> {
   const present = new Set<string>();
   for (const rec of recs) {
-    const review = rec.tree_hash === resolution.treeHash ? recordedFreshReview(ctx, rec) : null;
-    if (!review) continue;
-    const own = state.findings.filter((f) => f.reviewId === review.id);
-    const same = own.filter((f) => f.externalId === reReviewId(rec) || findingFingerprint(f) === rec.fingerprint);
-    const gone = !same.some((f) => f.severity !== 'info') && (review.verdict === 'APPROVE' || own.some((f) => f.severity !== 'info'));
+    const answer = rec.tree_hash === resolution.treeHash ? reReviewAnswer(ctx, rec) : null;
+    if (!answer || answer.verdict === null) continue;
+    const gone = answer.verdict === 'APPROVE' && answer.findings.every((f) => f.severity === 'info');
     if (!gone) present.add(rec.fingerprint);
-    const who = `re-review ${review.id} by ${review.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
-    const again = new Set(same.map((f) => f.id));
+    const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
     for (const d of resolution.dispositions) {
-      if (d.fingerprint !== rec.fingerprint && !d.memberIds.some((id) => rec.member_ids.includes(id) || again.has(id))) continue;
+      if (d.fingerprint !== rec.fingerprint && !d.memberIds.some((id) => rec.member_ids.includes(id))) continue;
       if (!(UNRESOLVED_FINDING_STATUSES as readonly string[]).includes(d.status)) continue;
       if (!gone) {
-        // The re-review settled whether it holds: an approval of the tree is no dispute for the Inquisition, it goes to repair.
+        // The re-review settled whether it holds: another review's approval is no dispute for the Inquisition; it goes to repair.
         d.disagreement = null;
-        d.reason += `; its one ${who} found it still present`;
+        d.reason += `; its one ${who} found it still present (${answer.verdict})`;
         continue;
       }
       d.status = 'rejected';
       d.blocking = false;
-      d.evidenceRefs = [...d.evidenceRefs, `review:${review.id}`];
-      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(same[0]?.evidence ?? `it ${review.verdict === 'APPROVE' ? 'approved the tree' : 'named only other findings'} and did not raise it again`, 300)}`;
+      d.evidenceRefs = [...d.evidenceRefs, `rereview:${answer.worker_id}`];
+      const evidence = answer.findings.find((f) => f.id === reReviewId(rec))?.evidence ?? 'it approved without raising it again';
+      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(evidence, 300)}`;
     }
   }
   refreshLists(resolution);
@@ -1739,7 +1803,7 @@ function reReviewText(rec: ReReviewRecord): string[] {
   const id = reReviewId(rec);
   return [
     `This is a re-review of one finding, ${id} (${rec.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
-    'Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout.',
+    'Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout. Your answer decides only this finding: it neither approves the candidate nor raises other findings, so do not report any.',
     `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id} whose evidence names what in the candidate shows that it is gone.`,
   ];
 }
