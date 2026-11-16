@@ -30,7 +30,11 @@ describe('skipping for a missing capability', () => {
     expect(requiredOnCi(up, { CI: 'true' })).toBe(up);
   });
 
-  it('reads CI the way CI services set it', () => {
+  it('reads CI the way CI services set it, and an Orbit check as not CI', () => {
     expect([onCi({ CI: 'true' }), onCi({ CI: '1' }), onCi({}), onCi({ CI: '' }), onCi({ CI: 'false' }), onCi({ CI: '0' })]).toEqual([true, true, false, false, false, false]);
+    // An Orbit check sets CI=1 for its tools and provides none of the capabilities: a test there skips.
+    const c = ctx();
+    skipOrFailOnCi(c, 'ps cannot run here', { CI: '1', ORBIT_CHECK_TOKEN: 'token' });
+    expect(c.skipped).toEqual(['ps cannot run here']);
   });
 });

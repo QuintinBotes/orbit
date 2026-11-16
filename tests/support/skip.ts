@@ -1,8 +1,11 @@
 type Env = Readonly<Record<string, string | undefined>>;
 
-/** Whether this is a CI run, which provides every capability the suite probes for (ps, Chromium, srt). */
+/**
+ * Whether this is a CI run, which provides every capability the suite probes for (ps, Chromium, srt). An Orbit check
+ * sets CI=1 as well, to keep tools non-interactive (evidence/runner.ts), but provides none of them: it is not CI.
+ */
 export function onCi(env: Env = process.env): boolean {
-  return Boolean(env.CI) && env.CI !== 'false' && env.CI !== '0';
+  return Boolean(env.CI) && env.CI !== 'false' && env.CI !== '0' && !env.ORBIT_CHECK_TOKEN;
 }
 
 /**
