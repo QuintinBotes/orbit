@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { candidateAt, commitAll, freePort, harness, makeUiRepo, resetTo, runUi, writeFile, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
 
 let repo: UiRepo;
 
@@ -14,7 +15,8 @@ afterAll(() => repo.cleanup());
 beforeEach(() => resetTo(repo));
 
 describe('console and network capture', () => {
-  it('records console errors, failed responses and the viewport without failing a passing journey', async () => {
+  it('records console errors, failed responses and the viewport without failing a passing journey', async (ctx) => {
+    skipWithoutChromium(ctx);
     const port = await freePort();
     const h = harness(repo, port, { filter: ['reports.spec.ts'] });
     const r = await runUi(repo, candidateAt(repo.dir, repo.baseSha), h, { name: 'noise', appEnv: { APP_NOISE: '1' } });
@@ -31,7 +33,8 @@ describe('console and network capture', () => {
     }
   }, 90_000);
 
-  it('a failing journey carries those errors into its brief, fenced as untrusted', async () => {
+  it('a failing journey carries those errors into its brief, fenced as untrusted', async (ctx) => {
+    skipWithoutChromium(ctx);
     const port = await freePort();
     const h = harness(repo, port, { filter: ['reports.spec.ts'] });
     const r = await runUi(repo, candidateAt(repo.dir, repo.baseSha), h, { name: 'noise-fail', appEnv: { APP_NOISE: '1', APP_DEFECT_EXPORT: '1' } });
@@ -100,7 +103,8 @@ describe('what the runner refuses', () => {
 });
 
 describe('journeys are untrusted code', () => {
-  it('a journey that plants a baseline file is flagged', async () => {
+  it('a journey that plants a baseline file is flagged', async (ctx) => {
+    skipWithoutChromium(ctx);
     writeFile(
       repo.dir,
       'journeys/sneaky.spec.ts',

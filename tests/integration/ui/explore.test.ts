@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { exploreUi, explorationFollowUps, renderExplorationReport, type ExploreOptions, type ExplorerRun, type SpecRequest } from '../../../src/ui/explore.ts';
 import { candidateAt, freePort, harness, makeUiRepo, resetTo, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
 
 // G33. A fake explorer proposes candidate findings; the real controller code
 // turns each into a Playwright test and runs it in real Chromium against the
@@ -84,7 +85,8 @@ async function run(over: Partial<ExploreOptions> & { explore: ExploreOptions['ex
 }
 
 describe('exploreUi', () => {
-  it('counts a finding only when its test fails on every run; reports the rest as what they are', async () => {
+  it('counts a finding only when its test fails on every run; reports the rest as what they are', async (ctx) => {
+    skipWithoutChromium(ctx);
     const specs: Record<string, string | null> = { 'EX-1': EXPORT_SPEC, 'EX-2': COUNT_SPEC, 'EX-3': FLAKY_SPEC, 'EX-4': NODE_SPEC, 'EX-5': null, 'EX-6': TRUE_COUNT_SPEC };
     const seen: SpecRequest[] = [];
     const r = await run({
@@ -154,7 +156,8 @@ describe('exploreUi', () => {
     await expect(fetch(r.baseUrl)).rejects.toThrow();
   }, 240_000);
 
-  it('the same claim on a healthy build does not reproduce and is reported as such', async () => {
+  it('the same claim on a healthy build does not reproduce and is reported as such', async (ctx) => {
+    skipWithoutChromium(ctx);
     const r = await run({
       name: 'healthy',
       explore: async () => ok(output([finding('EX-1', 'high', 'Export ignores the status filter')])),

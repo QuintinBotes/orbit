@@ -6,6 +6,7 @@ import { isGroupAlive } from '../../../src/core/proc.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { startApp, stopApp } from '../../../src/ui/app-fixture.ts';
 import { candidateAt, commitAll, freePort, git, harness, makeUiRepo, resetTo, runUi, writeFile, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
 
 let repo: UiRepo;
 beforeAll(async () => {
@@ -15,7 +16,8 @@ afterAll(() => repo.cleanup());
 beforeEach(() => resetTo(repo));
 
 describe('stale or inconsistent reports', () => {
-  it('a report left in the evidence directory by an earlier run is never read as this run', async () => {
+  it('a report left in the evidence directory by an earlier run is never read as this run', async (ctx) => {
+    skipWithoutChromium(ctx);
     const port = await freePort();
     const h = harness(repo, port, { filter: ['reports.spec.ts'] });
     const cand = candidateAt(repo.dir, repo.baseSha);
@@ -30,7 +32,8 @@ describe('stale or inconsistent reports', () => {
     expect(second.journeys).toEqual([]);
   }, 120_000);
 
-  it('a nonzero exit with a report that shows no failure is an error, not a pass', async () => {
+  it('a nonzero exit with a report that shows no failure is an error, not a pass', async (ctx) => {
+    skipWithoutChromium(ctx);
     writeFile(repo.dir, 'wrap.sh', 'npx --no-install playwright test "$@"\nexit 3\n');
     const cand = commitAll(repo.dir, 'wrapper');
     const port = await freePort();
@@ -50,7 +53,8 @@ describe('evidence must describe the candidate', () => {
     await expect(runUi(repo, candidateAt(repo.dir, repo.baseSha), harness(repo, port, { filter: ['extra.spec.ts'] }), { name: 'untracked' })).rejects.toMatchObject({ code: 'STALE_EVIDENCE' });
   });
 
-  it('a journey that edits tracked application source cannot produce a pass', async () => {
+  it('a journey that edits tracked application source cannot produce a pass', async (ctx) => {
+    skipWithoutChromium(ctx);
     writeFile(
       repo.dir,
       'journeys/mutate.spec.ts',
