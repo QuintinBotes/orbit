@@ -168,6 +168,12 @@ export interface RouteStat {
   meanCostUsd: number | null;
   costSamples: number;
   meanTokens: number | null;
+  /** The difficulty class the outcomes were recorded under, when the statistics were read for one class. */
+  difficulty?: string | null;
+  /** Distinct runs the outcomes came from, and the time of the oldest and newest outcome (epoch ms). */
+  runs?: number;
+  firstTs?: number | null;
+  lastTs?: number | null;
 }
 
 export interface PreviousRoute {
@@ -212,11 +218,58 @@ export interface RouteSignals {
 
 /** The subset of trusted configuration routing reads. OrbitConfig satisfies it. */
 export interface RoutingPolicy {
-  routing: { allowed_models: string[]; overrides: Record<string, string> };
+  routing: { allowed_models: string[]; overrides: Record<string, string>; learning?: Partial<RoutingLearning> };
   /** review.providers and review.when_unavailable, or the legacy keys of an older snapshot (policy/review.ts). */
   review: ReviewAvailabilitySettings;
   providers: Record<string, { model: string | null; data_policy_eligible: boolean; reasoning_effort?: string | null }>;
   scheduler?: { repeated_failure_threshold: number };
+}
+
+/**
+ * `routing.learning`: when measured route outcomes may displace the routing table's choice. Learning only chooses
+ * among the models the policy already permits, and never against a `routing.overrides` entry.
+ */
+export interface RoutingLearning {
+  /** false: routing reads no measured outcomes at all (the table and the priors decide). Outcomes are still recorded. */
+  enabled: boolean;
+  /** Judged outcomes (verified, failed or rejected) of one route in one task class needed before they decide anything. */
+  min_samples: number;
+  /** The measured pass rate a route needs to displace the table's choice; below it the table's choice stands. */
+  min_pass_rate: number;
+  /** Outcomes older than this many days are not read. */
+  window_days: number;
+}
+
+/** What routing read from measured outcomes for one decision, and what it did with it. */
+export interface RouteLearning {
+  /** Measured outcomes displaced the table's choice. */
+  applied: boolean;
+  /** The model the table chose before measured outcomes were read. */
+  table_choice: RouteRef;
+  /** One sentence: why the table's choice was displaced, or why it stands. */
+  reason: string;
+  /** The task class the outcomes were read for. */
+  task_class: { work_kind: WorkKind; difficulty: DifficultyClass };
+  min_samples: number;
+  min_pass_rate: number;
+  window_days: number | null;
+  /** Every route of this class with recorded outcomes that was considered, in a stable order. */
+  measured: {
+    provider: string;
+    model: string;
+    /** verified + failed + rejected: outcomes caused by the environment are not among them. */
+    judged: number;
+    verified: number;
+    /** verified / judged; null with no judged outcome. */
+    pass_rate: number | null;
+    /** Outcomes with a known cost, and their mean. An unknown cost is never counted as zero. */
+    cost_samples: number;
+    mean_cost_usd: number | null;
+    runs: number | null;
+    first_ts: number | null;
+    last_ts: number | null;
+    verdict: string;
+  }[];
 }
 
 export type CostBasis = 'measured' | 'blended' | 'prior' | 'unavailable';
@@ -274,4 +327,6 @@ export interface RouteDecision {
   difficulty: DifficultyClass;
   escalated_from?: RouteRef;
   down_routed_from?: RouteRef;
+  /** Present when measured outcomes of this task class were read; says whether and why they displaced the table. */
+  learning?: RouteLearning;
 }

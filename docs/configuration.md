@@ -1295,11 +1295,23 @@ routing:
     inquisitor: 6000
     curator: 8000
     explorer: 6000
+  learning:                               # measured outcomes may move work to a cheaper model
+    enabled: true                         # false: routing reads no outcomes; they are still recorded
+    min_samples: 20                       # judged outcomes of one model in one task class, 1 to 100000
+    min_pass_rate: 0.8                    # measured pass rate needed to displace the table's choice, 0 to 1
+    window_days: 90                       # older outcomes are not read, 1 to 3650
 
 retention:
   keep_runs_days: 30
   redact_patterns: []                     # extra regular expressions redacted from logs and artifacts
 ```
+
+`learning` decides when the measured outcomes of earlier implementation
+attempts may displace the routing table's choice; the rules are in
+[the learning layer](learning.md#routing-from-measured-outcomes). It only
+chooses among `allowed_models`, and an entry in `overrides` always wins over
+it. The settings are read from the policy frozen at the start of a run, like
+every other setting.
 
 `output_budgets` defaults follow the token-efficiency table in
 [the architecture](architecture.md); a partial map overrides only the roles it

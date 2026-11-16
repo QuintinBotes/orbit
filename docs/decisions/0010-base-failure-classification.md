@@ -526,3 +526,68 @@ always has the base result it asks for. It also changes the fix this decision
 names for a `dotnet format` check that cannot run in the sandbox: remove it
 and run it in CI, no longer "or set `checks.<id>.mandatory: false`", since a
 contract that requires an optional check runs it on the base revision too.
+
+## Addendum (2026-11-15): a package that is not installed where the check runs (issue #166)
+
+Issues #133 and #158 lost an attempt and a diagnosis each to a check that died
+with `Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from
+.../check-1/scripts/build.mjs`. Their cause was fixed where it lay: a recorded
+dependency install belongs to the checkout it ran in (#137), and that fix reads
+no error text. What was left open is what Orbit says when a check dies this way
+for any other reason. It was a pre-existing failure on the base revision,
+offered as a baseline exception that would let a run pass with a check that
+never ran, and a defect of the candidate in VERIFYING, briefed to an
+implementer who may not install packages.
+
+A new environment signal, `module-not-found` (`classifyModuleNotFound`), reads
+node's own report that it could not resolve a package by name, from the ES
+module loader (`Cannot find package 'x' imported from <file>`) or the CommonJS
+one (`Cannot find module 'x'` with its require stack), and only with no compile
+error or failing test in the output. A specifier that is a path is a file of
+the repository: a missing target or the code's failure, as before. A test file
+that cannot import is reported by its runner as a failing test, and stays the
+code's.
+
+The text shows that the package is absent, not whose doing that is: the
+repository's own code can import a package nothing declares, on the base
+revision or in a change, which is why #137 did not classify from the text. So
+the signal is base-gated like the others this decision added, and it counts
+only when the records show the checkout was not provisioned:
+
+- on the base revision, when no dependency install ran and passed in its
+  checkout (the baseline's `install` is skipped or failed): the run ends
+  `BLOCKED` at PREFLIGHT, naming the package and
+  `dependencies.install_command`. Where the install passed and the package is
+  still missing, the base revision's own code imports what it does not declare:
+  a pre-existing failure, which keeps its baseline-exception question;
+- on a candidate, when the same check showed the same missing module on the
+  base revision, or when the check passed on the base revision in a checkout
+  where the install ran and passed and no install passed in the checkout the
+  candidate's check ran in. The run then ends `BLOCKED` with
+  `verification.environment-failure`, and no diagnosis or repair is started.
+
+Anything else goes to repair: a check that passed on the base revision in a
+checkout prepared the same way and now misses a module is the change's until
+shown otherwise. The file that imported the package is not read as evidence. A
+review of the first version of this addendum found it was: a file under
+`node_modules`, or a checkout file the change does not list, counted as "not
+the change's", though a change that configures a tool plugin it never added, or
+whose source compiles to untracked output, produces exactly those importers.
+
+Only node's two loaders are read, and only a bare name or a scoped name: an
+unscoped name with a subpath (`src/x`), `~/x` and `@/x` read like a bundler's
+or a tsconfig's path alias, which the text cannot tell from a package. Python's
+`ModuleNotFoundError: No module named 'x'` is left out: it does not tell a
+package from a module of the repository.
+
+Two refusals of a dependency fetch are read as well, both as signals that
+already existed. cargo prints the path it was refused at the head of its error
+chain and the operating system's answer under `Caused by:` (`Read-only file
+system (os error 30)`), so a denial line of that shape is read with the path
+its chain names: `filesystem-denied` for EPERM and EROFS, the gated
+`permission-denied` for EACCES. pnpm's `ERR_PNPM_FETCH_403` (issue #141: pnpm
+fetching the version `packageManager` pins, with no cache to read) is
+`network-denied`, gated on a candidate. The node output in the tests was
+captured; the cargo and pnpm lines are written from those tools' error format,
+since neither failure could be captured under the sandbox here.
+

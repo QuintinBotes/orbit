@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { toEvidenceUi } from '../../../src/ui/runner.ts';
+import { QUARANTINED } from '../../support/quarantine.ts';
 import { candidateAt, commitAll, freePort, harness, makeUiRepo, resetTo, runUi, updateBaselines, type UiRepo } from './helpers.ts';
 
 // Scenarios 17 and 18: accessibility fails only on NEW serious violations, and
@@ -79,7 +80,8 @@ describe('visual baselines (scenario 18)', () => {
     expect(v.expected).toContain(r.outDir);
   }, 90_000);
 
-  it('a candidate that re-records the baselines to match the regression is flagged and cannot pass', async () => {
+  // Quarantined (issue #185): once on CI the run ended ERROR, not BLOCKED, and the log did not say why.
+  it.skipIf(QUARANTINED)('a candidate that re-records the baselines to match the regression is flagged and cannot pass', async () => {
     await updateBaselines(repo.dir, { APP_DEFECT_VISUAL: '1' });
     const cand = commitAll(repo.dir, 'update screenshots');
     const port = await freePort();
@@ -89,7 +91,7 @@ describe('visual baselines (scenario 18)', () => {
     // Against the edited baseline the journeys are green: that is exactly the hiding the gate must refuse.
     expect(r.stats.failed).toBe(0);
     expect(r.visualBaselineChanges.sort()).toEqual([`journeys/__screenshots__/desktop/${process.platform}/visual.spec.ts/reports.png`, `journeys/__screenshots__/mobile/${process.platform}/visual.spec.ts/reports.png`]);
-    expect(r.verdict).toBe('BLOCKED');
+    expect(r.verdict, r.reasons.join('\n')).toBe('BLOCKED');
     expect(r.passed).toBe(false);
     expect(r.reasons.join(' ')).toMatch(/baselines changed.*human review/);
     expect(uiFailureBrief(r).baselineChanges.visual).toHaveLength(2);

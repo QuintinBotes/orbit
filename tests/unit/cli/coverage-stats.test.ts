@@ -108,6 +108,7 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
     concurrency_overhead: { worker_queue_ms: 800, workers_measured: 5, worker_active_ms: 45_000, step_wait_ms: 100_000, step_wait_events: 4, overhead_ratio: 0.1 },
     stale_evidence_prevented: { evidence_invalidated: 2, reviews_invalidated: 1, deliveries_refused: 1, total: 4 },
     ui_defects: { discovered: 3, runs_with_ui_defects: 2 },
+    routes: [],
     missing: [],
     ...over,
   };

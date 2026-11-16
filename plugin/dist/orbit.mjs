@@ -21221,6 +21221,17 @@ var init_config_schema = __esm({
                 curator: { type: "integer", minimum: 100, maximum: 2e5 },
                 explorer: { type: "integer", minimum: 100, maximum: 2e5 }
               }
+            },
+            learning: {
+              type: "object",
+              additionalProperties: false,
+              required: ["enabled", "min_samples", "min_pass_rate", "window_days"],
+              properties: {
+                enabled: { type: "boolean" },
+                min_samples: { type: "integer", minimum: 1, maximum: 1e5 },
+                min_pass_rate: { type: "number", minimum: 0, maximum: 1 },
+                window_days: { type: "integer", minimum: 1, maximum: 3650 }
+              }
             }
           }
         },
@@ -21675,7 +21686,7 @@ function defaultConfig(mode = DEFAULT_MODE) {
       codex: defaultProvider("codex", false)
     },
     // Fable is left out on purpose: headless Claude Code bills Fable usage credits without asking.
-    routing: { allowed_models: ["opus", "sonnet", "haiku"], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS } },
+    routing: { allowed_models: ["opus", "sonnet", "haiku"], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING } },
     static_security: defaultStaticSecurity(),
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
@@ -21737,6 +21748,16 @@ function defaultUi() {
     },
     visual_baseline_auto_accept: false,
     exploration: defaultUiExploration()
+  };
+}
+function routingLearning(config) {
+  const l = config.routing.learning ?? {};
+  const num7 = (v, fallback, min, max) => typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+  return {
+    enabled: typeof l.enabled === "boolean" ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
+    min_samples: Math.floor(num7(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 1e5)),
+    min_pass_rate: num7(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
+    window_days: num7(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650)
   };
 }
 function defaultUiExploration() {
@@ -22097,7 +22118,7 @@ function deepFreeze2(value) {
   }
   return value;
 }
-var import__, import_ajv_formats, Ajv2020, addFormats, CONFIG_RELATIVE_PATH, RUN_MODES, DEFAULT_MODE, DELIVERY_MODES, UNATTENDED_MODES, DELIVERY_ACTIONS, RELEASE_ACTIONS, FORBIDDEN_CHECK_ENV, DANGEROUS_KEYS, DEFAULT_OUTPUT_BUDGETS, BUDGET_ROLES, DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS, REVIEW_REASONING_EFFORTS, DEFAULT_REVIEW_REASONING_EFFORT, MUSE_REASONING_EFFORTS, MUSE_DEFAULT_MODEL, MUSE_DEFAULT_REASONING_EFFORT, CONTAINER_DEFAULTS, compiled, SEMANTIC_RULES;
+var import__, import_ajv_formats, Ajv2020, addFormats, CONFIG_RELATIVE_PATH, RUN_MODES, DEFAULT_MODE, DELIVERY_MODES, UNATTENDED_MODES, DELIVERY_ACTIONS, RELEASE_ACTIONS, FORBIDDEN_CHECK_ENV, DANGEROUS_KEYS, DEFAULT_OUTPUT_BUDGETS, BUDGET_ROLES, DEFAULT_ROUTING_LEARNING, DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS, REVIEW_REASONING_EFFORTS, DEFAULT_REVIEW_REASONING_EFFORT, MUSE_REASONING_EFFORTS, MUSE_DEFAULT_MODEL, MUSE_DEFAULT_REASONING_EFFORT, CONTAINER_DEFAULTS, compiled, SEMANTIC_RULES;
 var init_config = __esm({
   "src/policy/config.ts"() {
     "use strict";
@@ -22144,6 +22165,7 @@ var init_config = __esm({
       explorer: 6e3
     });
     BUDGET_ROLES = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS));
+    DEFAULT_ROUTING_LEARNING = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
     DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS = 900;
     REVIEW_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
     DEFAULT_REVIEW_REASONING_EFFORT = "medium";
@@ -24332,6 +24354,18 @@ var init_schema4 = __esm({
   ALTER TABLE runs ADD COLUMN failure_class TEXT;
   ALTER TABLE runs ADD COLUMN failure_secondary TEXT;
   ALTER TABLE runs ADD COLUMN orbit_version TEXT;
+  `,
+      /* 8: what a route outcome was recorded for (issue #168): the role, the effort, the difficulty class, and the attempt it settles */
+      `
+  ALTER TABLE route_outcomes ADD COLUMN role TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN effort TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN difficulty TEXT;
+  -- The attempt the outcome settles (its candidate id) and the record that settled it (an evidence report or a review
+  -- gate). One outcome per attempt of a run: a step retried after a crash finds the row and writes nothing.
+  ALTER TABLE route_outcomes ADD COLUMN attempt_key TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN evidence_ref TEXT;
+  CREATE UNIQUE INDEX route_outcomes_attempt ON route_outcomes(run_id, attempt_key) WHERE attempt_key IS NOT NULL;
+  CREATE INDEX route_outcomes_class ON route_outcomes(work_kind, difficulty, ts);
   `
     ];
   }
@@ -29790,7 +29824,7 @@ var init_pricing = __esm({
 });
 
 // src/routing/types.ts
-var SURFACES, FAMILY_SURFACE, WORK_KINDS;
+var SURFACES, FAMILY_SURFACE, WORK_KINDS, ROUTE_OUTCOMES;
 var init_types2 = __esm({
   "src/routing/types.ts"() {
     "use strict";
@@ -29808,6 +29842,7 @@ var init_types2 = __esm({
       "safety-review",
       "curation"
     ];
+    ROUTE_OUTCOMES = ["verified", "failed", "rejected", "error", "cancelled"];
   }
 });
 
@@ -37754,12 +37789,49 @@ function ratio(part, whole2) {
 function count(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
+function recordRouteOutcome(db, input, clock) {
+  if (!WORK_KINDS.includes(input.workKind)) throw new OrbitError("SCHEMA_INVALID", `unknown work kind ${input.workKind}`);
+  if (!ROUTE_OUTCOMES.includes(input.outcome)) throw new OrbitError("SCHEMA_INVALID", `unknown route outcome ${input.outcome}`);
+  if (!input.provider || !input.modelId) throw new OrbitError("SCHEMA_INVALID", "route outcome needs a provider and a model");
+  const ts = clock.now();
+  const key2 = input.attemptKey ?? null;
+  return db.tx(() => {
+    if (key2 !== null) {
+      const prior = db.get("SELECT id FROM route_outcomes WHERE run_id = ? AND attempt_key = ?", input.runId, key2);
+      if (prior) return prior.id;
+    }
+    return db.run(
+      "INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts, role, effort, difficulty, attempt_key, evidence_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      input.runId,
+      input.workKind,
+      input.provider,
+      input.modelId,
+      input.outcome,
+      count(input.costUsd),
+      count(input.tokens),
+      ts,
+      input.role ?? null,
+      input.effort ?? null,
+      input.difficulty ?? null,
+      key2,
+      input.evidenceRef ?? null
+    ).lastInsertRowid;
+  });
+}
 function routeStats(db, filter = {}) {
-  const where2 = [];
+  const where2 = [`NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}`];
   const params = [];
   if (filter.workKind) {
     where2.push("work_kind = ?");
     params.push(filter.workKind);
+  }
+  if (filter.role) {
+    where2.push("role = ?");
+    params.push(filter.role);
+  }
+  if (filter.difficulty) {
+    where2.push("difficulty = ?");
+    params.push(filter.difficulty);
   }
   if (filter.provider) {
     where2.push("provider = ?");
@@ -37779,7 +37851,8 @@ function routeStats(db, filter = {}) {
             SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
             SUM(CASE WHEN outcome = 'rejected' THEN 1 ELSE 0 END) AS rejected,
             SUM(CASE WHEN outcome IN ('error', 'cancelled') THEN 1 ELSE 0 END) AS errors,
-            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens
+            AVG(cost_usd) AS mean_cost, COUNT(cost_usd) AS cost_samples, AVG(tokens) AS mean_tokens,
+            COUNT(DISTINCT run_id) AS runs, MIN(ts) AS first_ts, MAX(ts) AS last_ts
        FROM route_outcomes ${where2.length ? `WHERE ${where2.join(" AND ")}` : ""}
       GROUP BY work_kind, provider, model_id
       ORDER BY work_kind, provider, model_id`,
@@ -37799,10 +37872,15 @@ function routeStats(db, filter = {}) {
       successRate: judged > 0 ? r.verified / judged : null,
       meanCostUsd: r.mean_cost === null ? null : roundUsd(r.mean_cost),
       costSamples: r.cost_samples,
-      meanTokens: r.mean_tokens === null ? null : Math.round(r.mean_tokens)
+      meanTokens: r.mean_tokens === null ? null : Math.round(r.mean_tokens),
+      ...filter.difficulty ? { difficulty: filter.difficulty } : {},
+      runs: r.runs,
+      firstTs: r.first_ts,
+      lastTs: r.last_ts
     };
   });
 }
+var ROUTE_OUTCOME_NOT_THE_ROUTES;
 var init_usage = __esm({
   "src/routing/usage.ts"() {
     "use strict";
@@ -37812,6 +37890,9 @@ var init_usage = __esm({
     init_pricing();
     init_types2();
     init_pricing();
+    ROUTE_OUTCOME_NOT_THE_ROUTES = `(outcome = 'failed' AND evidence_ref IS NOT NULL AND EXISTS (
+  SELECT 1 FROM runs r WHERE r.id = route_outcomes.run_id AND r.failure_class IN ('environment', 'check-misconfigured')
+     AND (CASE WHEN json_valid(r.outcome_json) THEN json_extract(r.outcome_json, '$.report_id') END) = route_outcomes.evidence_ref))`;
   }
 });
 
@@ -39187,7 +39268,7 @@ function classifyCouldNotRun(input) {
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown3)) lines.push(shown3);
   };
   for (const pipe of pipes) show(pipe.line, 0);
-  for (const raw of all) {
+  for (const [index, raw] of all.entries()) {
     const line3 = raw.trim();
     const deny2 = SEATBELT_DENY.exec(line3);
     const denial = DENIAL.exec(line3);
@@ -39196,12 +39277,13 @@ function classifyCouldNotRun(input) {
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line3) : null;
     const tls = NUGET_TLS_DENIAL.exec(line3);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line3) : null;
-    const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside);
+    const subject = OS_ERROR.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).length === 0 ? chainHead(all, index) : null;
+    const pathOutside = () => (line3.match(ABSOLUTE_PATH) ?? []).some(outside) || subject !== null && (subject.match(ABSOLUTE_PATH) ?? []).every(outside);
     const readOnlyWithoutPath = () => input.pathlessReadOnly === true && READ_ONLY2.test(line3) && (line3.match(ABSOLUTE_PATH) ?? []).length === 0;
     const candidates = [];
     if (deny2 && (!deny2[1].toLowerCase().startsWith("file-") || deny2[2] !== void 0 && isAbsolute14(deny2[2]) && outside(deny2[2]))) candidates.push({ signal: "sandbox-violation", at: deny2.index });
-    if (denial && FS_CALL.test(line3) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: "filesystem-denied", at: denial.index });
-    if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3)) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
+    if (denial && (FS_CALL.test(line3) || subject !== null) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: "filesystem-denied", at: denial.index });
+    if (permission && (FS_CALL.test(line3) || LISTEN_CALL.test(line3) || subject !== null) && pathOutside()) candidates.push({ signal: "permission-denied", at: permission.index });
     if (network) candidates.push({ signal: "network-denied", at: network.index });
     if (nuget) candidates.push({ signal: "nuget-http-denied", at: nuget.index });
     if (tls) candidates.push({ signal: "nuget-tls-denied", at: tls.index });
@@ -39214,17 +39296,65 @@ function classifyCouldNotRun(input) {
       const first = text2.split("\n", MAX_SCANNED_LINES2).find((l) => MSBUILD_INTERNAL_FAILURE.test(l));
       if (first !== void 0) show(first.replace(/\r$/, "").trim(), 0);
     }
+    if (subject !== null && (found.signal === "filesystem-denied" || found.signal === "permission-denied")) show(subject, 0);
     show(line3, found.at);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => s === "pipe-denied" ? pipeCause(pipes) : CAUSES[s]).join("; "), lines };
 }
-var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED;
+function chainHead(lines, at) {
+  let causedBy = false;
+  for (let i = at - 1; i >= 0 && i >= at - CHAIN_LINES; i--) {
+    const line3 = lines[i].trim();
+    if (line3 === "") continue;
+    if (/^Caused by:$/i.test(line3)) {
+      causedBy = true;
+      continue;
+    }
+    if (!causedBy) return null;
+    if ((line3.match(ABSOLUTE_PATH) ?? []).length > 0) return line3;
+  }
+  return null;
+}
+function classifyModuleNotFound(input) {
+  const text2 = stripAnsi(input.output);
+  if (showsCodeFailure(text2)) return null;
+  const lines = text2.split("\n", MAX_SCANNED_LINES2).map((raw) => raw.replace(/\r$/, "").trim());
+  for (const [i, line3] of lines.entries()) {
+    const esm = ESM_PACKAGE_NOT_FOUND.exec(line3);
+    const cjs = esm ? null : CJS_MODULE_NOT_FOUND.exec(line3);
+    const specifier = esm?.[1] ?? cjs?.[1];
+    if (specifier === void 0) continue;
+    const named2 = PACKAGE_SPECIFIER.exec(specifier);
+    const name = named2?.[1] ?? named2?.[2];
+    if (name === void 0) continue;
+    let importer = esm?.[2];
+    if (cjs && /^Require stack:$/.test(lines[i + 1] ?? "")) importer = REQUIRE_STACK_ENTRY.exec(lines[i + 2] ?? "")?.[1];
+    return {
+      checkId: input.checkId,
+      fingerprint: null,
+      signals: ["module-not-found"],
+      cause: `the package "${name}" the check imports is not installed where the check runs`,
+      lines: [excerpt(line3, esm?.index ?? cjs?.index ?? 0)],
+      module: name,
+      ...importer !== void 0 ? { importer } : {}
+    };
+  }
+  return null;
+}
+function classifyCandidateModuleNotFound(input) {
+  const found = classifyModuleNotFound({ checkId: input.checkId, output: input.output });
+  if (!found) return null;
+  if (input.baseSignals.includes("module-not-found")) return found;
+  if (input.base === null || !input.base.passed || !input.base.installed || input.installed) return null;
+  return found;
+}
+var BASE_GATED_SIGNALS, MAX_EVIDENCE_LINES, MAX_LINE_CHARS, MAX_SCANNED_LINES2, VIOLATION, EPERM, NOT_PERMITTED, DENIED, ABSOLUTE_PATH, CAUSES, BUILD_HOST_CAUSE, CRASH_SIGNALS, TRACE_HEADER, JS_FRAME, TRACE_FRAME, KILLED_BY_SIGNAL, RUNNER_FOOTER, FS_CALL, LISTEN_CALL, DENIAL, READ_ONLY2, PERMISSION_DENIAL, SEATBELT_DENY, NETWORK_DENIAL, NUGET_HTTP_DENIAL, NUGET_TLS_DENIAL, DOMAIN_NAME_DENIED, OS_ERROR, CHAIN_LINES, SOCKET_DENIAL, MSBUILD_INTERNAL_FAILURE, TOOL_CRASH, CODE_FAILURE, ERROR_COUNT, MSBUILD_ERROR_SUMMARY, MSBUILD_ERROR_LINE, NUGET_TARGETS, RUNNER_NODE_DENIAL, BUILD_HOST_FRAME, BUILD_HOST_PIPE, UNHANDLED, ESM_PACKAGE_NOT_FOUND, CJS_MODULE_NOT_FOUND, REQUIRE_STACK_ENTRY, PACKAGE_SPECIFIER;
 var init_environment_failure = __esm({
   "src/evidence/environment-failure.ts"() {
     "use strict";
     init_fingerprint();
-    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "program-denied", "pipe-denied"]);
+    BASE_GATED_SIGNALS = /* @__PURE__ */ new Set(["permission-denied", "socket-denied", "network-denied", "nuget-http-denied", "nuget-tls-denied", "program-not-found", "program-denied", "pipe-denied", "module-not-found"]);
     MAX_EVIDENCE_LINES = 3;
     MAX_LINE_CHARS = 200;
     MAX_SCANNED_LINES2 = 2e5;
@@ -39249,7 +39379,8 @@ var init_environment_failure = __esm({
       "nuget-tls-denied": "NuGet could not establish the SSL connection to its package source in the sandbox (on macOS srt keeps the system trust service out of reach, so .NET cannot verify nuget.org's certificate there), so the restore could reach no package source",
       "program-not-found": "a program the check runs was not found where it runs (exit 127)",
       "program-denied": 'the sandbox or the operating system refused to start a program the check runs (exit 126, "operation not permitted")',
-      "pipe-denied": "the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing"
+      "pipe-denied": "the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing",
+      "module-not-found": "a package the check imports is not installed where the check runs"
     };
     BUILD_HOST_CAUSE = "the sandbox refused the build host dotnet format loads the project with the named pipe it binds under /tmp, so nothing was formatted";
     CRASH_SIGNALS = /* @__PURE__ */ new Set(["SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGTRAP", "SIGSYS"]);
@@ -39264,10 +39395,12 @@ var init_environment_failure = __esm({
     READ_ONLY2 = /\bEROFS\b|read-only file system/i;
     PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
     SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
-    NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
+    NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'|\bERR_PNPM_FETCH_403\b/i;
     NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.Net\.CookieContainer' threw an exception\b/;
     NUGET_TLS_DENIAL = /\berror NU1301:\s+The SSL connection could not be established\b/;
     DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
+    OS_ERROR = /\((?:os error|errno) \d+\)\s*$/i;
+    CHAIN_LINES = 6;
     SOCKET_DENIAL = /\bSocketException \((?:1|13)\): (?:Permission denied|Operation not permitted)\b|\b(?:bind|listen|connect)\b.*(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted)|(?:\bEACCES\b|\bEPERM\b|permission denied|operation not permitted).*\b(?:bind|listen|connect)\b/i;
     MSBUILD_INTERNAL_FAILURE = /\bMSBUILD : error MSB1025\b/;
     TOOL_CRASH = [MSBUILD_INTERNAL_FAILURE, /^\s*at (?:Microsoft\.Build|Microsoft\.DotNet|NuGet|Microsoft\.CodeAnalysis|Microsoft\.TestPlatform|Microsoft\.VisualStudio\.TestPlatform\.(?:CommandLine|CrossPlatEngine|Client|Common|CommunicationUtilities))\./m];
@@ -39327,6 +39460,10 @@ var init_environment_failure = __esm({
     BUILD_HOST_FRAME = /\bMicrosoft\.CodeAnalysis\.MSBuild\.BuildHostProcessManager\b/;
     BUILD_HOST_PIPE = /\bSystem\.IO\.Pipes\.NamedPipeClientStream\.(?:ConnectInternal|TryConnect)\b|unable to connect to it'?s pipe/;
     UNHANDLED = /^Unhandled exception[.:]\s/;
+    ESM_PACKAGE_NOT_FOUND = /\bCannot find package '([^']+)' imported from (\S.*?)\s*$/;
+    CJS_MODULE_NOT_FOUND = /\bCannot find module '([^']+)'\s*$/;
+    REQUIRE_STACK_ENTRY = /^-\s+(\S.*)$/;
+    PACKAGE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/[a-z0-9][\w.~-]*)(?:\/.*)?$|^([a-z0-9][\w.~-]*)$/i;
   }
 });
 
@@ -46676,10 +46813,12 @@ function workerActivity(opts, w, now) {
   return t !== null && t <= now ? t : null;
 }
 function checkActivity(db, run, now) {
+  const ended = db.get("SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?", run.id)?.t ?? null;
+  const last = ended !== null && ended <= now ? [ended] : [];
   const open2 = db.all("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
-  if (open2.length === 0) return [];
+  if (open2.length === 0) return last;
   const dirs = findCheckDirs(dirname23(run.policyPath));
-  return open2.map((c) => {
+  return [...last, ...open2.map((c) => {
     const found = dirs.get(c.id);
     if (!found) return null;
     try {
@@ -46688,7 +46827,7 @@ function checkActivity(db, run, now) {
     } catch {
       return null;
     }
-  });
+  })];
 }
 function probeActivity(db, run, now) {
   const open2 = db.all("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
@@ -46783,6 +46922,7 @@ function route(req) {
     policy: req.policy,
     registry: req.registry,
     outcomes: req.outcomes ?? [],
+    learning: routingLearning(req.policy),
     threshold: Math.max(1, req.policy.scheduler?.repeated_failure_threshold ?? 2),
     evidence: uniq4([...s.evidence ?? [], ...s.previousRoute?.evidence ?? []]),
     ignored: workerClaimNotes(s),
@@ -46807,12 +46947,14 @@ function routeLadder(ctx) {
   const notes = [];
   let startTier = profile.startTier;
   let preferred = null;
+  let overridden = false;
   const override = policy.routing.overrides[ctx.workKind];
   if (override) {
     const r = resolveOverride(override, ctx.registry);
     if (r && r.provider === "claude" && r.tier !== null) {
       startTier = r.tier;
       preferred = r.modelId;
+      overridden = true;
       notes.push(`routing.overrides.${ctx.workKind} sets the starting point to ${override}`);
     } else {
       ctx.ignored.push(`routing.overrides.${ctx.workKind}=${override} names no claude-cli model or family; ignored`);
@@ -46886,7 +47028,7 @@ function routeLadder(ctx) {
   if (ctx.workKind === "screenshot" && active.length === 0 && tier < FABLE_TIER - 1) {
     const stat = statFor(ctx, chosen);
     const judged = stat ? stat.verified + stat.failed + stat.rejected : 0;
-    if (stat && judged >= MIN_MEASURED_SAMPLES && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
+    if (stat && judged >= ctx.learning.min_samples && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
       const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf2);
       if (up) {
         justification.signals.push({ signal: "measured-accuracy", detail: `measured accuracy ${pct(stat.successRate)} over ${judged} outcomes is below ${pct(ACCURACY_FLOOR)}`, evidence: [] });
@@ -46895,28 +47037,108 @@ function routeLadder(ctx) {
       }
     }
   }
-  if (active.length === 0 && !downRoutedFrom) {
-    const mine = costOf2(chosen);
-    if (mine.basis === "measured" && mine.total !== null) {
-      let best = null;
-      for (const t of [tier - 1, tier + 1]) {
-        if (t < 1 || t >= FABLE_TIER) continue;
-        for (const m of byTier.get(t) ?? []) {
-          const c = costOf2(m);
-          if (c.basis !== "measured" || c.total === null) continue;
-          if (c.total < mine.total * (1 - CALIBRATION_MARGIN) && (!best || best.c.total > c.total)) best = { m, c };
-        }
-      }
-      if (best) {
-        const detail = `measured expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} vs $${fmt(mine.total)} for ${chosen.modelId}`;
-        notes.push(`calibrated by measured outcomes: ${detail}`);
-        if ((tierOf(best.m) ?? 0) > tier) justification.signals.push({ signal: "measured-outcomes", detail, evidence: [] });
-        chosen = best.m;
+  const tableChoice = chosen;
+  let learning;
+  if (ctx.outcomes.length > 0) {
+    const blocked = overridden ? `routing.overrides.${ctx.workKind} is an explicit choice, so measured outcomes do not displace it` : active.length > 0 ? "difficulty is being escalated, so measured outcomes do not displace the route" : downRoutedFrom ? "the route follows a solved diagnosis back down, so measured outcomes do not displace it" : null;
+    const learned = calibrate(ctx, tier, chosen, byTier, costOf2, blocked);
+    if (learned.measured.length > 0) {
+      learning = {
+        applied: learned.pick !== null,
+        table_choice: ref2(tableChoice),
+        reason: learned.reason,
+        task_class: { work_kind: ctx.workKind, difficulty: signals.difficulty },
+        min_samples: ctx.learning.min_samples,
+        min_pass_rate: ctx.learning.min_pass_rate,
+        window_days: ctx.learning.window_days,
+        measured: learned.measured
+      };
+      if (learned.pick) {
+        notes.push(`calibrated by measured outcomes: ${learned.reason}`);
+        if ((tierOf(learned.pick) ?? 0) > tier) justification.signals.push({ signal: "measured-outcomes", detail: learned.reason, evidence: [] });
+        chosen = learned.pick;
+      } else if (learned.restored) {
+        notes.push(`table default kept: ${learned.reason}`);
       }
     }
   }
   const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf2) : void 0;
-  return finish3(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
+  const decision = finish3(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom);
+  if (learning) decision.learning = learning;
+  return decision;
+}
+function calibrate(ctx, tier, chosen, byTier, costOf2, blocked) {
+  const { min_samples: min, min_pass_rate: floor } = ctx.learning;
+  const mine = costOf2(chosen);
+  const measured = [];
+  const candidates = [];
+  const below = [];
+  const short3 = [];
+  const held = [];
+  const floorTier = ctx.previousTier;
+  const describe3 = (m, verdict) => {
+    const st = statFor(ctx, m);
+    if (!st) return;
+    const judged = st.verified + st.failed + st.rejected;
+    measured.push({
+      provider: m.provider,
+      model: m.modelId,
+      judged,
+      verified: st.verified,
+      pass_rate: judged > 0 ? round3(st.verified / judged) : null,
+      cost_samples: st.costSamples,
+      mean_cost_usd: st.costSamples > 0 ? st.meanCostUsd : null,
+      runs: st.runs ?? null,
+      first_ts: st.firstTs ?? null,
+      last_ts: st.lastTs ?? null,
+      verdict
+    });
+  };
+  describe3(chosen, "the table's choice");
+  for (const t of [tier - 1, tier + 1]) {
+    if (t < 1 || t >= FABLE_TIER) continue;
+    for (const m of [...byTier.get(t) ?? []].sort((a, b) => a.modelId.localeCompare(b.modelId))) {
+      const st = statFor(ctx, m);
+      if (!st) continue;
+      const judged = st.verified + st.failed + st.rejected;
+      const rate2 = judged > 0 ? st.verified / judged : null;
+      const c = costOf2(m);
+      let verdict;
+      if (t < tier && floorTier !== null && t < floorTier) {
+        verdict = `an earlier attempt of this run ran on ${TIER_NAME[floorTier]}, and measured outcomes never route the run below it`;
+        held.push(`${m.modelId} is below ${TIER_NAME[floorTier]}, where an earlier attempt of this run ran`);
+      } else if (judged < min || rate2 === null) {
+        verdict = `${judged} of the ${min} judged outcomes needed`;
+        short3.push(`${m.modelId} has ${verdict}`);
+      } else if (t < tier && rate2 < floor) {
+        verdict = `measured pass rate ${pct(rate2)} over ${judged} outcomes is below ${pct(floor)}`;
+        below.push(`${verdict} for ${m.modelId}`);
+      } else if (c.total === null) {
+        verdict = "its cost is unknown, and an unknown cost is not counted as a lower one";
+      } else if (t > tier && (c.basis !== "measured" || mine.basis !== "measured")) {
+        verdict = "a higher tier displaces the table's choice only when both are measured";
+      } else if (mine.total === null || !(c.total < mine.total * (1 - CALIBRATION_MARGIN))) {
+        verdict = `expected cost per verified task $${fmt(c.total)} is not clearly below $${fmt(mine.total)} for ${chosen.modelId}`;
+      } else {
+        verdict = "qualifies";
+        candidates.push({ m, c, t });
+      }
+      describe3(m, verdict);
+    }
+  }
+  if (blocked) return { pick: null, restored: false, reason: blocked, measured };
+  candidates.sort((a, b) => a.c.total - b.c.total || a.t - b.t || a.m.modelId.localeCompare(b.m.modelId));
+  const best = candidates[0];
+  if (best) {
+    const st = statFor(ctx, best.m);
+    const judged = st.verified + st.failed + st.rejected;
+    const reason2 = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} (${costBasisWords(best.c.basis)}) vs $${fmt(mine.total)} for ${chosen.modelId} (${costBasisWords(mine.basis)})`;
+    return { pick: best.m, restored: false, reason: reason2, measured };
+  }
+  if (below.length > 0) return { pick: null, restored: true, reason: `${below.join("; ")}, so ${chosen.modelId} from the routing table is used`, measured };
+  if (held.length > 0) return { pick: null, restored: false, reason: `the routing table decides: ${held.join("; ")}`, measured };
+  const reason = short3.length > 0 ? `the routing table decides: ${short3.join("; ")}` : `the routing table decides: no measured route is clearly cheaper per verified task than ${chosen.modelId}`;
+  return { pick: null, restored: false, reason, measured };
 }
 function observedDifficulty(ctx, startTier) {
   const s = ctx.signals;
@@ -47145,7 +47367,8 @@ function estimateRoute(m, ctx) {
   const measuredCost = stat && stat.costSamples > 0 ? stat.meanCostUsd : null;
   const attemptCost = measuredCost ?? (m.pricing ? priceProfile(profile.tokens, m.pricing) : null);
   if (attemptCost === null) return { total: null, breakdown: null, basis: "unavailable", success };
-  const basis = judged >= MIN_MEASURED_SAMPLES && (stat?.costSamples ?? 0) >= MIN_MEASURED_SAMPLES ? "measured" : judged > 0 || measuredCost !== null ? "blended" : "prior";
+  const min = ctx.learning.min_samples;
+  const basis = judged >= min && (stat?.costSamples ?? 0) >= min ? "measured" : judged > 0 || measuredCost !== null ? "blended" : "prior";
   const attempts = 1 / success;
   const handoff = ctx.signals.previousRoute && ctx.signals.previousRoute.model !== m.modelId && ctx.previous?.modelId !== m.modelId && m.pricing;
   const breakdown = {
@@ -47164,8 +47387,11 @@ function priceProfile(t, p) {
   const uncached = Math.max(0, t.input - cached - written);
   return (uncached * p.input + cached * p.cache_read + written * p.cache_write_5m + t.output * p.output) / 1e6;
 }
+function costBasisWords(basis) {
+  return basis === "measured" ? "measured" : basis === "blended" ? "measured cost blended with list price" : basis === "prior" ? "list price" : "unknown";
+}
 function statFor(ctx, m) {
-  return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider);
+  return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider && (s.difficulty === void 0 || s.difficulty === null || s.difficulty === ctx.signals.difficulty));
 }
 function finish3(ctx, startTier, chosen, displaced, baseEffort, effortBump, notes, justification, assessment, costOf2, escalatedFrom, downRoutedFrom) {
   const s = ctx.signals;
@@ -47352,7 +47578,7 @@ var init_router = __esm({
     };
     PRIOR_REVIEW_SUCCESS = 0.9;
     PRIOR_WEIGHT = 4;
-    MIN_MEASURED_SAMPLES = 5;
+    MIN_MEASURED_SAMPLES = DEFAULT_ROUTING_LEARNING.min_samples;
     CALIBRATION_MARGIN = 0.1;
     ACCURACY_FLOOR = 0.7;
     MIN_SUCCESS = 0.05;
@@ -50074,9 +50300,12 @@ function routeFor(ctx, purpose, workKind, signals) {
   }
   const config = ctx.snapshot.config;
   try {
-    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes: routeStats(ctx.db, { workKind }) });
+    const learning = routingLearning(config);
+    const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
+    const outcomes = learns ? routeStats(ctx.db, { workKind, role: "implementer", difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 864e5 }) : [];
+    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
     const rec2 = toDecisionRecord(decision);
-    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose } }, ctx.clock);
+    recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose, ...learning.enabled ? {} : { learning_disabled: "routing.learning.enabled is false: measured outcomes were not read" } } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId: decisionId2 };
   } catch (err) {
     if (!isOrbitError(err, "PROVIDER_UNAVAILABLE")) throw err;
@@ -50141,7 +50370,7 @@ async function collectIfFinished(ctx, w, phase = "work") {
   settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
   return false;
 }
-var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES;
+var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES, IMPLEMENT_PURPOSE;
 var init_workers2 = __esm({
   "src/controller/workers.ts"() {
     "use strict";
@@ -50175,6 +50404,7 @@ var init_workers2 = __esm({
     OUTPUT_CAP_CEILING = 32e3;
     OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
     ZERO_COST_STATUSES = /* @__PURE__ */ new Set(["auth_failed", "failed", "transient_error"]);
+    IMPLEMENT_PURPOSE = "implement:";
   }
 });
 
@@ -59811,6 +60041,11 @@ function environmentFixes(failures, platform3) {
     fixes.push(`put the program where the check sandbox lets a check start it, or build it inside each checkout through dependencies.install_command and run it by a path relative to the check's cwd, then correct ${refusedProgram.map((f) => command(f.checkId)).join(", ")} in .orbit/config.yaml${path} (orbit doctor names a check whose program lies in a folder the check sandbox denies; docs/configuration.md, "Tool environments")`);
     change(named2, command);
   }
+  const modules = has2("module-not-found");
+  if (modules.length > 0) {
+    const names = [...new Set(modules.flatMap((f) => f.module !== void 0 ? [f.module] : []))];
+    fixes.push(`${names.length > 0 ? `${names.map((n2) => `"${n2}"`).join(", ")} ${names.length > 1 ? "are" : "is"}` : "a package is"} not installed in the checkout the check ran in, and no change to the code installs a package: Orbit installs dependencies in every checkout from an npm lockfile or with dependencies.install_command, so read that install's log (orbit-install, beside the check's) for why the package is missing; where no install ran, set dependencies.install_command in .orbit/config.yaml to the command that installs the repository's dependencies and start a new run (docs/troubleshooting.md, "A check cannot find a package")`);
+  }
   const missing = has2("program-not-found").filter((f) => !located.includes(f));
   if (missing.length > 0) {
     const keys = missing.map((f) => command(f.checkId)).join(", ");
@@ -59842,7 +60077,10 @@ function baselineEnvironmentFailures(ctx, report2, checkoutDir) {
     const entry = report2.checks.find((c) => c.checkId === failure.checkId);
     const exitCode = row ? row.exitCode : entry?.exitCode ?? null;
     const startFailure = row?.status === "ERROR" || entry?.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
-    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null);
+    const found = classifyNotExecuted({ checkId: failure.checkId, output, startFailure }) ?? classifyCouldNotRun({ checkId: failure.checkId, output, insideRoots }) ?? (def && def.kind === "command" ? classifyProgramNotFound({ checkId: failure.checkId, command: def.command, shell: def.shell, exitCode, output }) ?? deniedFolderFailure(ctx, def, { checkId: failure.checkId, exitCode, output }, insideRoots, report2.baseRevision) : null) ?? // A package the check imports, in a checkout no dependency install ran and passed in (issue #166). Where the install
+    // passed and the package is still missing, the base revision's own code imports what it does not declare: a
+    // pre-existing failure, which keeps its baseline-exception question.
+    ((row ? row.status : entry?.status) === "FAILED" && (report2.install?.skipped !== false || report2.install.ok !== true) ? classifyModuleNotFound({ checkId: failure.checkId, output }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkoutDir);
     const located = def && def.kind === "command" ? deniedProgramOf(ctx, found, def, report2.baseRevision) : null;
@@ -60151,6 +60389,9 @@ function checksNotExecutedFor(ctx, cand, report2) {
     return f?.classification === "environment" ? f.signals ?? [] : [];
   };
   const checkout = join58(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const complete2 = baseline && baseline.baseRevision === ctx.run.baseRevision && baseline.complete === true && Array.isArray(baseline.checks) ? baseline : null;
+  const baseCheck2 = (checkId) => complete2 ? { passed: complete2.checks.some((c) => c.checkId === checkId && c.status === "PASSED") && !baseFailures.some((f) => f.checkId === checkId), installed: complete2.install?.skipped === false && complete2.install.ok === true } : null;
+  const installedIn = (cwd) => listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: INSTALL_CHECK_ID }).some((r) => r.status === "PASSED" && r.cwd === cwd);
   for (const result2 of report2.checks) {
     if (!mandatory.has(result2.id) || result2.status !== "FAILED" && result2.status !== "ERROR") continue;
     const row = listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id, checkId: result2.id, rootsOnly: true }).at(-1);
@@ -60158,7 +60399,8 @@ function checksNotExecutedFor(ctx, cand, report2) {
     const output = outputOf(row);
     const startFailure = row.status === "ERROR" ? /could not start the check:[^\n]*/.exec(output)?.[0] ?? null : null;
     const found = classifyNotExecuted({ checkId: result2.id, output, startFailure }) ?? // Refused a filesystem operation outside its checkout before it compiled or tested anything (issue #10).
-    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null);
+    (row.status === "FAILED" ? classifyCouldNotRun({ checkId: result2.id, output, insideRoots: [checkout, row.cwd, ...row.logPath ? [dirname30(row.logPath)] : []], baseSignals: baseSignals(result2.id) }) : null) ?? // A package that is not installed in the checkout: the change's, unless the records show the checkout was not provisioned (issue #166).
+    (row.status === "FAILED" ? classifyCandidateModuleNotFound({ checkId: result2.id, output, baseSignals: baseSignals(result2.id), base: baseCheck2(result2.id), installed: installedIn(row.cwd) }) : null);
     if (!found) continue;
     const folderForm = folderFormRunsAt(ctx, checkout);
     out.push({ ...found, ...commandOf(ctx, result2.id), folderForm, ...stoppedNodeFix(ctx, found, checkout, folderForm), questionId: null, ...row.logPath ? { logPath: row.logPath } : {} });
@@ -60201,6 +60443,7 @@ var init_environment_block = __esm({
     init_dotnet_format();
     init_environment_failure();
     init_git2();
+    init_runner();
     init_store();
     init_baseline_exception();
     init_profiles();
@@ -64765,6 +65008,73 @@ var init_implementing = __esm({
   }
 });
 
+// src/controller/route-outcome.ts
+function implementRouteDecisionId(runId, attempt) {
+  return `dec-route-${runId}-implement_${attempt}`;
+}
+function attemptOf2(ctx, cand) {
+  const row = ctx.db.get(
+    "SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.candidate_id') = ? ORDER BY id DESC LIMIT 1",
+    ctx.run.id,
+    CANDIDATE_EVENT,
+    cand.id
+  );
+  return typeof row?.n === "number" && row.n > 0 ? row.n : cand.attempt;
+}
+function settleRouteOutcome(ctx, cand, settlement) {
+  if (settlement.environment) return null;
+  const attempt = attemptOf2(ctx, cand);
+  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, attempt));
+  const d = decision?.data ?? null;
+  if (!d || typeof d.provider !== "string" || typeof d.model !== "string" || !d.provider || !d.model) return null;
+  const workKind = WORK_KINDS.includes(String(d.work_kind)) ? d.work_kind : "routine-code";
+  const spent = attemptSpend(ctx, attempt);
+  return recordRouteOutcome(
+    ctx.db,
+    {
+      runId: ctx.run.id,
+      workKind,
+      provider: d.provider,
+      modelId: d.model,
+      outcome: settlement.outcome,
+      costUsd: spent.costUsd,
+      tokens: spent.tokens,
+      role: "implementer",
+      effort: typeof d.effort === "string" ? d.effort : null,
+      difficulty: ctx.run.difficulty ?? null,
+      attemptKey: `attempt:${attempt}`,
+      evidenceRef: settlement.evidenceRef
+    },
+    ctx.clock
+  );
+}
+function attemptSpend(ctx, attempt) {
+  const rows = ctx.db.all(
+    `SELECT w.id AS worker_id, u.cost_usd, u.cost_source, u.input_tokens, u.output_tokens, (u.id IS NOT NULL) AS has_usage
+       FROM workers w LEFT JOIN usage u ON u.worker_id = w.id AND u.run_id = w.run_id
+      WHERE w.run_id = ? AND w.role = 'implementer' AND w.attempt = ?`,
+    ctx.run.id,
+    attempt
+  );
+  if (rows.length === 0) return { costUsd: null, tokens: null };
+  const costKnown = rows.every((r) => r.has_usage === 1 && r.cost_usd !== null && r.cost_source !== "unavailable");
+  const tokensKnown = rows.every((r) => r.has_usage === 1 && r.input_tokens !== null && r.output_tokens !== null);
+  return {
+    costUsd: costKnown ? roundUsd(rows.reduce((a, r) => a + r.cost_usd, 0)) : null,
+    tokens: tokensKnown ? rows.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0) : null
+  };
+}
+var init_route_outcome = __esm({
+  "src/controller/route-outcome.ts"() {
+    "use strict";
+    init_decisions();
+    init_usage();
+    init_pricing();
+    init_types2();
+    init_context2();
+  }
+});
+
 // src/controller/steps/verifying.ts
 import { existsSync as existsSync47, readdirSync as readdirSync13 } from "node:fs";
 import { join as join67 } from "node:path";
@@ -64875,7 +65185,11 @@ async function act(ctx, cand, ev) {
   const sameAsBase = verdict === "FAIL" ? environmentFailuresFor(ctx, cand, ev.report) : [];
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n2) => !sameAsBase.some((b) => b.checkId === n2.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
-  if (verdict === "FAIL") return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  if (verdict === "FAIL") {
+    const ranAndFailed = ev.report.checks.some((c) => c.status === "FAILED") || (ev.report.ui ?? []).some((j) => j.status === "FAILED");
+    if (ranAndFailed) settleRouteOutcome(ctx, cand, { outcome: "failed", evidenceRef: ev.id });
+    return move2(ctx, "DIAGNOSING", `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  }
   const routed = await routeFailBefore(ctx, cand, ev, async () => {
     const t = await pendingTrigger(ctx, cand, null);
     return t ? move2(ctx, "INQUISITION", `verification incomplete: ${t.summary}`, { data: { trigger: t } }) : null;
@@ -65007,6 +65321,7 @@ var init_verifying = __esm({
     init_gates();
     init_authorization();
     init_verification();
+    init_route_outcome();
     init_fail_before2();
     init_contracting();
     init_baseline_amendment();
@@ -65782,6 +66097,7 @@ async function resolveAndDecide(ctx, cand) {
       if (shallow.length > 0) return decideShallowApproval(ctx, cand, shallow, gate.reasons);
     }
     progress(ctx, "review.approved", { candidate_id: cand.id, tree_hash: cand.treeHash });
+    settleRouteOutcome(ctx, cand, { outcome: "verified", evidenceRef: `review-gate:${cand.treeHash}` });
     const waiting = await blockOnOpenQuestions(ctx, "delivery");
     if (waiting) return waiting;
     return move2(ctx, "DELIVERING", gate.details.independent ? `independent review cleared tree ${cand.treeHash}` : `review cleared tree ${cand.treeHash}, but it was ${gate.notes[0]}`);
@@ -65815,6 +66131,7 @@ async function resolveAndDecide(ctx, cand) {
     }
     const stalled = stalledReviewRepair(ctx, cand, repairable);
     if (stalled) {
+      settleRouteOutcome(ctx, cand, { outcome: "rejected", evidenceRef: `review-gate:${cand.treeHash}` });
       const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
       const blocked = await blockOnOpenQuestions(ctx, "another review repair", { detail: `non-progress: ${stalled.reason}.`, outcome });
       if (blocked) return blocked;
@@ -66026,9 +66343,9 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
   const holders = (path) => [...passed.keys()].filter((id) => underCheck(path, checks[id])).sort();
   const reports = listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.state === "SUCCEEDED" && w.resultJson);
   const everyFinding = repairs2.flatMap((r) => r.findings);
-  const attemptOf2 = /* @__PURE__ */ new Map();
-  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf2.set(c.treeHash, Math.max(attemptOf2.get(c.treeHash) ?? 0, c.attempt));
-  const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf2.get(t) ?? 0) >= attempt) ?? null;
+  const attemptOf3 = /* @__PURE__ */ new Map();
+  for (const c of listCandidates(ctx.db, ctx.run.id)) attemptOf3.set(c.treeHash, Math.max(attemptOf3.get(c.treeHash) ?? 0, c.attempt));
+  const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf3.get(t) ?? 0) >= attempt) ?? null;
   const judged = /* @__PURE__ */ new Set();
   for (const r of [...pending].reverse()) {
     const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id) => seen.closed.has(id)));
@@ -66322,6 +66639,7 @@ async function routeToRepair(ctx, cand, toRepair, resolution, texts, waiting = {
   const ledger = ctx.ledger;
   const contract = assertContract(ctx);
   const outcome = { open_findings: openFindings(toRepair) };
+  settleRouteOutcome(ctx, cand, { outcome: "rejected", evidenceRef: `review-gate:${cand.treeHash}` });
   const rounds = ledger.state("review_rounds");
   if (rounds.used >= rounds.allowance) {
     return finishRun(ctx, "EXHAUSTED", `review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)}) with ${toRepair.length} open finding(s): ${describeFindings(ctx, toRepair)}`.slice(0, 2e3), { data: { counter: "review_rounds", used: rounds.used, hard_cap: rounds.hard_cap }, outcome });
@@ -66602,6 +66920,7 @@ var init_reviewing = __esm({
     init_store4();
     init_context2();
     init_gates();
+    init_route_outcome();
     init_common();
     init_globs();
     init_scheduler();
@@ -72331,6 +72650,14 @@ routing:
     inquisitor: 6000
     curator: 8000
     explorer: 6000
+  # Measured outcomes of earlier attempts may move a kind of work to a cheaper
+  # model that has proved itself, among the allowed_models only and never
+  # against an entry in overrides. enabled: false keeps the routing table.
+  learning:
+    enabled: true
+    min_samples: 20        # judged outcomes of one model in one task class before they count
+    min_pass_rate: 0.8     # the measured pass rate a model needs to displace the table's choice
+    window_days: 90        # older outcomes are not read
 
 retention:
   keep_runs_days: 30
@@ -74140,6 +74467,7 @@ function metricsFor(db, window = {}) {
     concurrency_overhead: overhead,
     stale_evidence_prevented: { evidence_invalidated: evidenceInvalidated, reviews_invalidated: reviewsInvalidated, deliveries_refused: deliveriesRefused, total: evidenceInvalidated + reviewsInvalidated + deliveriesRefused },
     ui_defects: { discovered: ui.discovered, runs_with_ui_defects: ui.runs },
+    routes: routeMetrics(db, inWindow, params, missing),
     missing
   };
 }
@@ -74202,6 +74530,47 @@ function byVersion(db, runs) {
       failure_classes: classes
     };
   });
+}
+function routeMetrics(db, inWindow, params, missing) {
+  const rows = db.all(
+    `SELECT work_kind, difficulty, role, provider, model_id, GROUP_CONCAT(DISTINCT effort) AS efforts, COUNT(*) AS outcomes, COUNT(DISTINCT run_id) AS runs,
+            COALESCE(SUM(outcome = 'verified'), 0) AS verified, COALESCE(SUM(outcome = 'failed' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS failed,
+            COALESCE(SUM(outcome = 'rejected' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS rejected,
+            COALESCE(SUM(outcome NOT IN ('verified', 'failed', 'rejected') OR ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS excluded,
+            SUM(cost_usd) AS cost, COUNT(cost_usd) AS cost_samples, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+       FROM route_outcomes WHERE ${inWindow}
+      GROUP BY work_kind, difficulty, role, provider, model_id
+      ORDER BY work_kind, difficulty, role, provider, model_id`,
+    ...params
+  );
+  const out = rows.map((r) => {
+    const unmeasured = r.outcomes - r.cost_samples;
+    const cost = roundUsd(r.cost ?? 0);
+    return {
+      work_kind: r.work_kind,
+      difficulty: r.difficulty,
+      role: r.role,
+      provider: r.provider,
+      model: r.model_id,
+      efforts: (r.efforts ?? "").split(",").filter(Boolean).sort(),
+      outcomes: r.outcomes,
+      runs: r.runs,
+      verified: r.verified,
+      failed: r.failed,
+      rejected: r.rejected,
+      excluded: r.excluded,
+      pass_rate: rate(r.verified, r.verified + r.failed + r.rejected),
+      cost_usd: cost,
+      unmeasured_outcomes: unmeasured,
+      cost_complete: unmeasured === 0,
+      cost_per_accepted_usd: r.verified > 0 && unmeasured === 0 ? roundUsd(cost / r.verified) : null,
+      first_ts: r.first_ts,
+      last_ts: r.last_ts
+    };
+  });
+  const partial = out.filter((r) => !r.cost_complete);
+  if (partial.length > 0) missing.push(`cost is unknown for ${partial.reduce((a, r) => a + r.unmeasured_outcomes, 0)} route outcome(s) on ${partial.length} route(s); those routes have no cost per accepted task`);
+  return out;
 }
 function rate(numerator, denominator) {
   return { numerator, denominator, rate: denominator > 0 ? Math.round(numerator / denominator * 1e4) / 1e4 : null };
@@ -74393,6 +74762,7 @@ var init_metrics = __esm({
     init_pricing();
     init_pricing();
     init_failure_class();
+    init_usage();
     init_run_store();
     FINISHED_STATES = ["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE", "BLOCKED"];
     TERMINAL2 = ["SUCCEEDED", "BLOCKED", "EXHAUSTED", "IMPOSSIBLE", "CANCELLED"];
@@ -74458,6 +74828,24 @@ function renderStats(m) {
   }
   if (m.token_usage.by_model.length > 0) {
     out.push("", table(m.token_usage.by_model.map((b) => [b.model ?? "(unknown model)", b.provider, String(b.records), n(b.input), n(b.output), pct2(b.cache_hit_ratio)]), ["MODEL", "PROVIDER", "RECORDS", "INPUT", "OUTPUT", "CACHE HIT"]).trimEnd());
+  }
+  if (m.routes.length > 0) {
+    out.push(
+      "",
+      "Routes (settled implementation attempts; routing.learning reads these):",
+      table(
+        m.routes.map((r) => [
+          `${r.work_kind}${r.difficulty ? ` (${r.difficulty})` : ""}`,
+          `${r.provider}/${r.model}`,
+          r.role ?? "-",
+          pct2(r.pass_rate.rate),
+          `${r.pass_rate.numerator} of ${r.pass_rate.denominator}${r.excluded > 0 ? `, ${r.excluded} not judged` : ""}`,
+          usd2(r.cost_per_accepted_usd),
+          r.cost_complete ? `${usd2(r.cost_usd)} over ${r.outcomes} attempt(s)` : `cost unknown for ${r.unmeasured_outcomes} of ${r.outcomes} attempt(s)`
+        ]),
+        ["TASK CLASS", "ROUTE", "ROLE", "PASS RATE", "VERIFIED", "COST PER ACCEPTED", "COST"]
+      ).trimEnd()
+    );
   }
   if (m.missing.length > 0) out.push("", "Not measured:", ...m.missing.map((x) => `  - ${x}`));
   out.push("", "A dash means no data in the window, not zero.");
@@ -74561,11 +74949,23 @@ function buildRunStatus(ctx, db, run) {
     budgets,
     spend: spendBreakdown(db, run.id),
     workers: { active: workers.filter((w) => w.state === "PLANNED" || w.state === "RUNNING").map(workerSummary), counts },
+    ...learnedRoute(db, run.id),
     questions: {
       open: questions.filter((q) => q.status === "open").map((q) => ({ id: q.id, question: q.question, material: q.material, affected: q.affected })),
       answered: questions.filter((q) => q.status === "answered").length
     }
   };
+}
+function learnedRoute(db, runId) {
+  const row = db.get("SELECT data_json FROM decisions WHERE run_id = ? AND kind = 'route' AND json_extract(data_json, '$.purpose') LIKE 'implement:%' ORDER BY created_at DESC, rowid DESC LIMIT 1", runId);
+  if (!row?.data_json) return {};
+  try {
+    const d = JSON.parse(row.data_json);
+    if (!d.learning || typeof d.learning.reason !== "string" || !d.provider || !d.model) return {};
+    return { routing: { purpose: d.purpose ?? "implement", provider: d.provider, model: d.model, displaced_table: d.learning.applied === true, table_model: d.learning.table_choice?.model ?? d.model, reason: d.learning.reason } };
+  } catch {
+    return {};
+  }
 }
 function fmtCounter(c) {
   const cost = c.counter === "cost_usd";
@@ -74599,6 +74999,10 @@ function renderRunStatus(s, now) {
   const counts = Object.entries(s.workers.counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ");
   out.push(`workers:   ${s.workers.active.length} active${counts ? ` (all: ${counts})` : ""}`);
   for (const w of s.workers.active) out.push(`  ${w.id}  ${w.role}  ${w.provider}/${w.model ?? "default"}  ${w.state}${w.spawned_at ? `  started ${ago(now, w.spawned_at)}` : ""}`);
+  if (s.routing) {
+    out.push(`routing:   ${s.routing.purpose} -> ${s.routing.provider}/${s.routing.model}${s.routing.displaced_table ? ` instead of ${s.routing.table_model} from the routing table` : " (the routing table's choice)"}: ${flat(s.routing.reason)}`);
+    out.push("  measured outcomes per route: orbit stats; switch off with routing.learning.enabled: false");
+  }
   out.push(`questions: ${s.questions.open.length} open, ${s.questions.answered} answered`);
   for (const q of s.questions.open) out.push(`  ${q.id}${q.material ? "  [material]" : ""}  ${flat(q.question)}`);
   if (s.questions.open.length > 0) out.push(`  answer with: orbit decide ${s.id} <question-id> <answer>`);

@@ -86,6 +86,27 @@ describe('migrations', () => {
     ]);
   });
 
+  it('migration 8 keeps the route outcomes an older state database holds and adds what issue #168 records', () => {
+    const path = join(dir, 'outcomes.db');
+    const old = openDb(path, { migrations: MIGRATIONS.slice(0, 7) });
+    old.run("INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, created_at, updated_at) VALUES ('r1', '/repo', 'g', 'supervised', 'SUCCEEDED', 'h', '/p', 1, 1)");
+    old.run("INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts) VALUES ('r1', 'routine-code', 'claude', 'm', 'verified', 0.5, 10, 5)");
+    old.run("INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, cost_usd, tokens, ts) VALUES ('r1', 'routine-code', 'claude', 'm', 'failed', NULL, NULL, 6)");
+    old.close();
+
+    const db = track(openDb(path));
+    expect((db.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    // The old rows load with the new fields empty, and two rows without an attempt key do not collide.
+    expect(db.all('SELECT outcome, cost_usd, role, effort, difficulty, attempt_key, evidence_ref FROM route_outcomes ORDER BY id')).toEqual([
+      { outcome: 'verified', cost_usd: 0.5, role: null, effort: null, difficulty: null, attempt_key: null, evidence_ref: null },
+      { outcome: 'failed', cost_usd: null, role: null, effort: null, difficulty: null, attempt_key: null, evidence_ref: null },
+    ]);
+    // One outcome per attempt of a run is the database's rule too, not only the recorder's.
+    const insert = "INSERT INTO route_outcomes (run_id, work_kind, provider, model_id, outcome, ts, attempt_key) VALUES ('r1', 'routine-code', 'claude', 'm', 'verified', 7, 'cand-1')";
+    db.run(insert);
+    expect(() => db.run(insert)).toThrow(/UNIQUE/);
+  });
+
   it.each([-60_000, 0])('migrates with a lease that expired %i ms from now', (offset) => {
     const path = join(dir, 'expired.db');
     const old = openDb(path, { migrations: MIGRATIONS.slice(0, 5) });

@@ -41,6 +41,7 @@ import { runWorktreeRoot, type RunContext } from '../context.ts';
 import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
+import { settleRouteOutcome } from '../route-outcome.ts';
 import { failBeforeStale, routeFailBefore } from '../fail-before.ts';
 import { storedPlan } from './contracting.ts';
 import { amendBaseline } from './baseline-amendment.ts';
@@ -185,7 +186,15 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   const sameAsBase = verdict === 'FAIL' ? environmentFailuresFor(ctx, cand, ev.report) : [];
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
-  if (verdict === 'FAIL') return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  if (verdict === 'FAIL') {
+    // The attempt's evidence is settled against it only when a trusted check or a required browser journey ran on the
+    // candidate to its end and failed (issue #168). An environment failure returned above; a refusal by a gate that ran
+    // no check (scope, size, the static security gate) and a check or journey that only timed out, was cancelled or
+    // could not run (a loaded machine looks the same) are not measurements of how well the route did the work.
+    const ranAndFailed = ev.report.checks.some((c) => c.status === 'FAILED') || (ev.report.ui ?? []).some((j) => j.status === 'FAILED');
+    if (ranAndFailed) settleRouteOutcome(ctx, cand, { outcome: 'failed', evidenceRef: ev.id });
+    return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  }
   // Fail-before under `required` (ADR 0014): not established blocks with a question per criterion; new tests that pass on
   // the base revision go to repair through the inquiry below, and to a person once the loop has gone round on this tree.
   const routed = await routeFailBefore(ctx, cand, ev, async () => {
