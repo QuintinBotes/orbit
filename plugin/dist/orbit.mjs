@@ -33929,8 +33929,8 @@ function headingsOf(lines) {
   const out = [];
   lines.forEach((l, index) => {
     if (l.code) return;
-    const m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l.text);
-    if (m) out.push({ index, level: m[1].length, title: plain(m[2].replace(/\*?\(mandatory\)\*?/i, "")) });
+    const m = /^\s{0,3}(#{1,6})\s+([\s\S]*)/.exec(l.text);
+    if (m) out.push({ index, level: m[1].length, title: plain(m[2].trimEnd().replace(/(?<!#)#+$/, "").replace(/\*?\(mandatory\)\*?/i, "")) });
   });
   return out;
 }
@@ -33968,13 +33968,22 @@ function labelled(lines, from, to, label) {
   }
   return null;
 }
+function isGivenWhenThen(text2) {
+  let from = 0;
+  for (const word of [/\bGiven\b/gi, /\bWhen\b/gi, /\bThen\b/gi]) {
+    word.lastIndex = from;
+    if (!word.exec(text2)) return false;
+    from = word.lastIndex;
+  }
+  return true;
+}
 function quote(text2) {
   const t = text2.replace(/\s+/g, " ").trim();
   return t.length > QUOTE_MAX ? `${t.slice(0, QUOTE_MAX)}...` : t;
 }
 function idItems(lines, from, to) {
   return listItems(lines, from, to).flatMap((item) => {
-    const m = /^\*\*(.+?)\*\*\s*:?\s*(.*)$/.exec(item.text.trim());
+    const m = /^\*\*(.+?)\*\*\s*:?\s*(.*)$/s.exec(item.text.trim());
     return m ? [{ label: m[1].trim().replace(/:$/, ""), text: plain(m[2]) }] : [];
   });
 }
@@ -34001,7 +34010,7 @@ function checkSpec(body) {
       if (!m) continue;
       const number = Number(m[1]);
       const priority = PRIORITY.exec(m[2])?.[1]?.toUpperCase() ?? null;
-      const title = m[2].replace(/\(\s*Priority\b[^)]*\)\s*$/i, "").trim() || `story ${number}`;
+      const title = m[2].replace(/\(\s*Priority\b[^()]*\)\s*$/i, "").trim() || `story ${number}`;
       const [a, b] = sectionRange(headings, h, lines.length);
       const name = `User Story ${number} (${quote(title)})`;
       const why = labelled(lines, a, b, /^Why this priority\s*:?\s*(.*)$/i);
@@ -34016,7 +34025,7 @@ function checkSpec(body) {
       const scenarios = [];
       for (const item of items) {
         const statement = plain(item.text);
-        if (GIVEN_WHEN_THEN.test(statement)) {
+        if (isGivenWhenThen(statement)) {
           scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
         } else if (start !== a && item.ordered) {
           problems.push(`${name}: the acceptance scenario on line ${item.index + 1} is not a Given/When/Then line: "${quote(statement)}"`);
@@ -34065,17 +34074,16 @@ function reproductionOf(body) {
   const text2 = lines.slice(from, to).map((l) => l.text).join("\n").trim();
   return text2 === "" ? null : text2;
 }
-var SCENARIO_MAX_CHARS, QUOTE_MAX, LIST_ITEM, GIVEN_WHEN_THEN, STORY, PRIORITY, ID_LIKE, CLARIFICATION, REPRODUCTION;
+var SCENARIO_MAX_CHARS, QUOTE_MAX, LIST_ITEM, STORY, PRIORITY, ID_LIKE, CLARIFICATION, REPRODUCTION;
 var init_spec = __esm({
   "src/intake/spec.ts"() {
     "use strict";
     SCENARIO_MAX_CHARS = 600;
     QUOTE_MAX = 160;
-    LIST_ITEM = /^\s*(?:\d+[.)]|[-*+])\s+(.*)$/;
-    GIVEN_WHEN_THEN = /\bGiven\b[\s\S]*\bWhen\b[\s\S]*\bThen\b/i;
+    LIST_ITEM = /^\s*(?:\d+[.)]|[-*+])\s+(.*)$/s;
     STORY = /^User Story\s+(\d+)\s*(?:[-:–—]\s*)?(.*)$/i;
     PRIORITY = /\(\s*Priority\s*:\s*(P\d+)\s*\)\s*$/i;
-    ID_LIKE = /^[A-Za-z]{1,6}-?\d+[A-Za-z0-9-]*$/;
+    ID_LIKE = /^[A-Za-z]{1,6}-?\d[A-Za-z0-9-]*$/;
     CLARIFICATION = /\[\s*NEEDS CLARIFICATION\b[^\]\n]*\]?/gi;
     REPRODUCTION = /^(?:steps to reproduce|how to reproduce|to reproduce|reproduction(?: steps)?|repro(?: steps)?|reproduce)\b/i;
   }
@@ -73774,6 +73782,7 @@ async function specCheckCommand(args, ctx) {
   const [target] = args.expect(1);
   let body;
   let prefix = "";
+  let name;
   let source;
   if (looksLikeIssueRef(target)) {
     const repo = await resolveRepo(ctx, args.str("repo"));
@@ -73781,14 +73790,17 @@ async function specCheckCommand(args, ctx) {
     const issue = await readIssue({ ref: parseIssueRef(target), reader: await issueReader(ctx, repo, config) });
     body = issue.body;
     prefix = `issue ${issue.repo}#${issue.number}: `;
+    name = `the body of issue ${issue.repo}#${issue.number}`;
     source = { issue: { repo: issue.repo, number: issue.number, updated_at: issue.updatedAt } };
   } else {
     const path = resolve27(ctx.cwd, target);
     if (!existsSync68(path) || !statSync19(path).isFile()) throw new OrbitError("NOT_FOUND", `no such file: ${target} (an issue is named by its number, #number, owner/repo#number or URL)`);
     if (statSync19(path).size > FILE_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${target} is larger than ${FILE_MAX_BYTES} bytes; that is not a spec`);
     body = readFileSync44(path, "utf8");
+    name = target;
     source = { file: target };
   }
+  if (body.length > ISSUE_BODY_MAX_CHARS) throw new OrbitError("SCHEMA_INVALID", `${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
   const check = checkSpec(body);
   const scenarios = scenariosOf(check.parsed);
   if (args.bool("json")) {

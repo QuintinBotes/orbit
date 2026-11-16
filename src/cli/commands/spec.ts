@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { OrbitError } from '../../core/errors.ts';
 import { issueReaderFor, type IssueReader } from '../../intake/github.ts';
-import { looksLikeIssueRef, parseIssueRef, readIssue } from '../../intake/issue.ts';
+import { ISSUE_BODY_MAX_CHARS, looksLikeIssueRef, parseIssueRef, readIssue } from '../../intake/issue.ts';
 import { checkSpec, scenariosOf } from '../../intake/spec.ts';
 import type { OrbitConfig } from '../../policy/types.ts';
 import type { Args, OptionSpec } from '../args.ts';
@@ -37,6 +37,7 @@ export async function specCheckCommand(args: Args, ctx: CliContext): Promise<num
   const [target] = args.expect(1);
   let body: string;
   let prefix = '';
+  let name: string;
   let source: Record<string, unknown>;
   // A word that reads as an issue reference is one; a file with such a name is named with a path (./42).
   if (looksLikeIssueRef(target!)) {
@@ -45,14 +46,18 @@ export async function specCheckCommand(args: Args, ctx: CliContext): Promise<num
     const issue = await readIssue({ ref: parseIssueRef(target!), reader: await issueReader(ctx, repo, config) });
     body = issue.body;
     prefix = `issue ${issue.repo}#${issue.number}: `;
+    name = `the body of issue ${issue.repo}#${issue.number}`;
     source = { issue: { repo: issue.repo, number: issue.number, updated_at: issue.updatedAt } };
   } else {
     const path = resolve(ctx.cwd, target!);
     if (!existsSync(path) || !statSync(path).isFile()) throw new OrbitError('NOT_FOUND', `no such file: ${target} (an issue is named by its number, #number, owner/repo#number or URL)`);
     if (statSync(path).size > FILE_MAX_BYTES) throw new OrbitError('SCHEMA_INVALID', `${target} is larger than ${FILE_MAX_BYTES} bytes; that is not a spec`);
     body = readFileSync(path, 'utf8');
+    name = target!;
     source = { file: target };
   }
+  // The cap `orbit run --issue` applies: a longer body is refused before it is checked.
+  if (body.length > ISSUE_BODY_MAX_CHARS) throw new OrbitError('SCHEMA_INVALID', `${name} is ${body.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
   const check = checkSpec(body);
   const scenarios = scenariosOf(check.parsed);
   if (args.bool('json')) {

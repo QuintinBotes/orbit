@@ -51,9 +51,10 @@ spec.md` for a file) says whether it is, without calling a model:
 - no `[NEEDS CLARIFICATION ...]` marker.
 
 Each problem is one line that names the story, id or marker; the exit code is
-4. An issue labelled `bug` with a reproduction section ("Steps to reproduce",
-"Reproduction") needs no spec: it runs as a repair whose new test must fail on
-the base revision.
+4. A body or file over 16 000 characters is refused unchecked, as
+`orbit run --issue` refuses it. An issue labelled `bug` with a reproduction
+section ("Steps to reproduce", "Reproduction") needs no spec: it runs as a
+repair whose new test must fail on the base revision.
 
 A closed or locked issue, a pull request, an issue of another repository, an
 issue with an open blocking issue, and a body that is empty, over 16 000

@@ -15,7 +15,7 @@ import { sha256 } from '../../../src/core/hash.ts';
 import { listRuns } from '../../../src/controller/run-store.ts';
 import { stateDbPath } from '../../../src/controller/start.ts';
 import { FakeIssueReader, FAKE_ISSUES_FILE } from '../../../src/intake/github.ts';
-import { readIssueGoal } from '../../../src/intake/issue.ts';
+import { ISSUE_BODY_MAX_CHARS, readIssueGoal } from '../../../src/intake/issue.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { argvCalls, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
 
@@ -141,6 +141,21 @@ describe('orbit spec check', () => {
     expect(bad.err).toContain('issue acme/app#43: spec check failed: 3 problems');
     const other = await cli(l, ['spec', 'check', 'acme/other#43', '--policy', l.configPath]);
     expect(other.err).toContain("is not in this checkout's repository (acme/app)");
+  });
+
+  it('refuses an issue body or a file over the cap orbit run --issue applies', async () => {
+    const l = lab();
+    const long = `${SPEC}\n${'x'.repeat(ISSUE_BODY_MAX_CHARS)}`;
+    issues(l).put({ number: 44, body: long });
+    const issue = await cli(l, ['spec', 'check', '#44', '--policy', l.configPath]);
+    expect(issue.code).toBe(4);
+    expect(issue.err).toContain(`the body of issue acme/app#44 is ${long.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
+    const file = join(l.base, 'spec.md');
+    writeFileSync(file, long);
+    const r = await cli(l, ['spec', 'check', file, '--json']);
+    expect(r.code).toBe(4);
+    expect(r.err).toContain(`${file} is ${long.length} characters; Orbit runs a spec of at most ${ISSUE_BODY_MAX_CHARS}`);
+    expect(r.out).toBe('');
   });
 
   it('names a file that does not exist, and asks for exactly one argument', async () => {

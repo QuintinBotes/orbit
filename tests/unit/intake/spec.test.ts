@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { ISSUE_BODY_MAX_CHARS } from '../../../src/intake/issue.ts';
 import { checkSpec, reproductionOf, scenariosOf } from '../../../src/intake/spec.ts';
 
 const fixture = (name: string): string => readFileSync(fileURLToPath(new URL(`../../fixtures/specs/${name}`, import.meta.url)), 'utf8');
@@ -80,6 +81,7 @@ describe('spec check', () => {
 
   it('accepts the template headings with their (mandatory) note', () => {
     expect(checkSpec(SPEC.replace('## Requirements', '## Requirements *(mandatory)*').replace('## Success Criteria', '## Success Criteria *(mandatory)*')).problems).toEqual([]);
+    expect(checkSpec(SPEC.replace('## Requirements', '## Requirements ##  ').replace('## Success Criteria', '## Success Criteria#')).problems).toEqual([]);
   });
 
   it('refuses requirement and criterion ids of another form, duplicates and sections with none', () => {
@@ -107,4 +109,32 @@ describe('spec check', () => {
     expect(reproductionOf('It is broken.\n')).toBeNull();
     expect(reproductionOf('## Steps to reproduce\n\n## Expected\n\n5\n')).toBeNull();
   });
+});
+
+// As in tests/unit/core/redact.test.ts: the bound catches catastrophic backtracking (minutes at the cap), not a busy runner.
+const LINEAR_BOUND_MS = 6_000;
+
+describe('spec check: linear time on hostile bodies at the cap', () => {
+  /** `head`, then `unit` repeated, then `tail`: as long as `orbit run --issue` accepts. */
+  const fill = (head: string, unit: string, tail = ''): string => head + unit.repeat(Math.floor((ISSUE_BODY_MAX_CHARS - head.length - tail.length) / unit.length)) + tail;
+  const STORY = '## User Scenarios & Testing\n\n### User Story 1 - x (Priority: P1)\n\n';
+  const hostile: [string, string][] = [
+    ['a heading of spaces before its last word', fill('# a', ' ', 'b')],
+    ['a heading of hashes before its last word', fill('# ', '#', 'a')],
+    ['a scenario of repeated Given When', fill(`${STORY}1. `, 'Given When ')],
+    ['a list entry of spaces before a line separator', fill(`${STORY}- `, ' ', 'x\u2028x')],
+    ['an id of digits', fill('## Requirements\n\n- **FR', '1', '!**: x')],
+    ['an id entry of bold marks before a line separator', fill('## Requirements\n\n- **a', '** ', '\u2028x')],
+    ['a story title of unclosed priorities', fill('## User Scenarios & Testing\n\n### User Story 1 - ', '(Priority ')],
+  ];
+  for (const [name, body] of hostile) {
+    it(name, () => {
+      expect(body.length).toBeGreaterThan(ISSUE_BODY_MAX_CHARS - 20);
+      expect(body.length).toBeLessThanOrEqual(ISSUE_BODY_MAX_CHARS);
+      const t0 = performance.now();
+      checkSpec(body);
+      reproductionOf(body);
+      expect(performance.now() - t0).toBeLessThan(LINEAR_BOUND_MS);
+    });
+  }
 });

@@ -97,8 +97,9 @@ function headingsOf(lines: readonly Line[]): Heading[] {
   const out: Heading[] = [];
   lines.forEach((l, index) => {
     if (l.code) return;
-    const m = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(l.text);
-    if (m) out.push({ index, level: m[1]!.length, title: plain(m[2]!.replace(/\*?\(mandatory\)\*?/i, '')) });
+    const m = /^\s{0,3}(#{1,6})\s+([\s\S]*)/.exec(l.text);
+    // The closing #s go in a second step: one pattern ending `(.*?)\s*#*\s*$` backtracks in cubic time. (?<!#) tries each run of #s once.
+    if (m) out.push({ index, level: m[1]!.length, title: plain(m[2]!.trimEnd().replace(/(?<!#)#+$/, '').replace(/\*?\(mandatory\)\*?/i, '')) });
   });
   return out;
 }
@@ -113,7 +114,9 @@ function findSection(headings: readonly Heading[], name: RegExp): Heading | null
   return headings.find((h) => name.test(h.title)) ?? null;
 }
 
-const LIST_ITEM = /^\s*(?:\d+[.)]|[-*+])\s+(.*)$/;
+// Every pattern in this file runs on untrusted issue bodies and is linear in its input (tests/unit/intake/spec.test.ts times them at the cap).
+// `s` lets `.*` cross a U+2028 in the line: without it `$` fails there and the `\s+` before it backtracks in quadratic time.
+const LIST_ITEM = /^\s*(?:\d+[.)]|[-*+])\s+(.*)$/s;
 
 /** List entries in a range, each with its wrapped continuation lines joined. */
 function listItems(lines: readonly Line[], from: number, to: number): { text: string; ordered: boolean; index: number }[] {
@@ -146,11 +149,21 @@ function labelled(lines: readonly Line[], from: number, to: number, label: RegEx
   return null;
 }
 
-const GIVEN_WHEN_THEN = /\bGiven\b[\s\S]*\bWhen\b[\s\S]*\bThen\b/i;
+/** "Given", then "When", then "Then", each a whole word: three forward searches, where one pattern backtracks in cubic time. */
+function isGivenWhenThen(text: string): boolean {
+  let from = 0;
+  for (const word of [/\bGiven\b/gi, /\bWhen\b/gi, /\bThen\b/gi]) {
+    word.lastIndex = from;
+    if (!word.exec(text)) return false;
+    from = word.lastIndex;
+  }
+  return true;
+}
+
 const STORY = /^User Story\s+(\d+)\s*(?:[-:–—]\s*)?(.*)$/i;
 const PRIORITY = /\(\s*Priority\s*:\s*(P\d+)\s*\)\s*$/i;
 /** A bold label that reads as an id: letters, then a dash or digits, no spaces ("FR-001", "SC-1", "REQ12"). */
-const ID_LIKE = /^[A-Za-z]{1,6}-?\d+[A-Za-z0-9-]*$/;
+const ID_LIKE = /^[A-Za-z]{1,6}-?\d[A-Za-z0-9-]*$/;
 /** The marker as the template writes it; a mention in inline code or a code block is not a marker. */
 const CLARIFICATION = /\[\s*NEEDS CLARIFICATION\b[^\]\n]*\]?/gi;
 
@@ -161,7 +174,7 @@ function quote(text: string): string {
 
 function idItems(lines: readonly Line[], from: number, to: number): { label: string; text: string }[] {
   return listItems(lines, from, to).flatMap((item) => {
-    const m = /^\*\*(.+?)\*\*\s*:?\s*(.*)$/.exec(item.text.trim());
+    const m = /^\*\*(.+?)\*\*\s*:?\s*(.*)$/s.exec(item.text.trim());
     return m ? [{ label: m[1]!.trim().replace(/:$/, ''), text: plain(m[2]!) }] : [];
   });
 }
@@ -195,7 +208,7 @@ export function checkSpec(body: string): SpecCheck {
       if (!m) continue;
       const number = Number(m[1]);
       const priority = PRIORITY.exec(m[2]!)?.[1]?.toUpperCase() ?? null;
-      const title = m[2]!.replace(/\(\s*Priority\b[^)]*\)\s*$/i, '').trim() || `story ${number}`;
+      const title = m[2]!.replace(/\(\s*Priority\b[^()]*\)\s*$/i, '').trim() || `story ${number}`;
       const [a, b] = sectionRange(headings, h, lines.length);
       const name = `User Story ${number} (${quote(title)})`;
       const why = labelled(lines, a, b, /^Why this priority\s*:?\s*(.*)$/i);
@@ -211,7 +224,7 @@ export function checkSpec(body: string): SpecCheck {
       const scenarios: SpecScenario[] = [];
       for (const item of items) {
         const statement = plain(item.text);
-        if (GIVEN_WHEN_THEN.test(statement)) {
+        if (isGivenWhenThen(statement)) {
           scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
         } else if (start !== a && item.ordered) {
           problems.push(`${name}: the acceptance scenario on line ${item.index + 1} is not a Given/When/Then line: "${quote(statement)}"`);

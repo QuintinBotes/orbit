@@ -25,7 +25,9 @@ run is asked to do.
   line; ids of the forms `FR-###` and `SC-###`, at least one of each and none
   twice; and no `[NEEDS CLARIFICATION ...]` marker. A marker inside inline
   code or a code block is a mention, not a marker. Every problem is one line
-  that names the story, id or marker. The `specify` CLI is not needed.
+  that names the story, id or marker. The `specify` CLI is not needed. Every
+  pattern the check runs is linear in the body's length, and both commands
+  refuse a body over 16 000 characters before checking it.
 - **Refusals happen before anything exists.** The issue is read once. A closed
   or locked issue, a pull request, an issue of another repository, an issue
   with an open blocking issue (GitHub's issue dependencies), an empty body, a
