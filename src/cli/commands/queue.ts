@@ -46,8 +46,8 @@ const DEFAULT_ATTEMPTS = 2;
 const DEFAULT_WAIT_MINUTES = 60;
 /** How often a waiting queue looks at the pull requests it waits on. */
 const POLL_MS = 60_000;
-/** Two issues in a row that end with a person stop the queue: something is wrong beyond one issue. */
-const PERSON_STREAK_STOP = 2;
+/** Two runs in a row that end without a delivered change, on one issue or across issues, stop the queue (FR-004). */
+const FAILED_RUNS_STOP = 2;
 /** The queue's records, one JSON file per `queue run`. */
 export const QUEUE_DIR = 'queue';
 
@@ -322,13 +322,18 @@ export interface QueueRecord {
   mode: string;
   started_at: number;
   ended_at: number | null;
-  stop: { kind: 'empty' | 'max-issues' | 'budget' | 'waited' | 'person-streak' | 'interrupted' | 'error'; reason: string } | null;
+  stop: { kind: 'empty' | 'max-issues' | 'budget' | 'waited' | 'failed-runs' | 'interrupted' | 'error'; reason: string } | null;
   spent_usd: number;
   issues: QueueIssueRecord[];
   /** Issues the queue closed because their pull request merged into the base branch. */
   closed: { number: number; pr: number }[];
   /** The backlog as it was left: what can run next, and why the rest waits. */
   remaining: object | null;
+}
+
+/** The runs since the last delivered one: those that ended without a delivered change, in a row. */
+function failedRunsInARow(attempts: readonly QueueAttempt[]): QueueAttempt[] {
+  return attempts.slice(attempts.findLastIndex((a) => a.state === 'SUCCEEDED') + 1);
 }
 
 function count(n: number, one: string, many = `${one}s`): string {
@@ -392,7 +397,6 @@ export async function queueRunCommand(args: Args, ctx: CliContext): Promise<numb
   };
 
   say('started', `queue ${record.id}: ${q.query.parent !== null ? `sub-issues of #${q.query.parent}` : `open issues`} labelled ${q.query.label} in ${q.tracker.repo}, one at a time from ${q.base} (${q.config.mode})`, { id: record.id, repo: q.tracker.repo, base: q.base, mode: q.config.mode });
-  let streak = 0;
   let waited = 0;
   const tried = new Set<number>();
   try {
@@ -441,10 +445,9 @@ export async function queueRunCommand(args: Args, ctx: CliContext): Promise<numb
         record.stop = { kind: 'interrupted', reason: `interrupted during #${entry.number}; its run is paused` };
         break;
       }
-      if (entry.outcome === 'person') streak++;
-      else if (entry.outcome === 'delivered') streak = 0;
-      if (streak >= PERSON_STREAK_STOP) {
-        record.stop = { kind: 'person-streak', reason: `${PERSON_STREAK_STOP} issues in a row ended with a person (${record.issues.filter((i) => i.outcome === 'person').slice(-PERSON_STREAK_STOP).map((i) => `#${i.number}`).join(', ')}); look at them before the queue goes on` };
+      const failed = failedRunsInARow(record.issues.flatMap((i) => i.attempts));
+      if (failed.length >= FAILED_RUNS_STOP) {
+        record.stop = { kind: 'failed-runs', reason: `${failed.length} runs in a row ended without a delivered change (${failed.map((a) => `${a.run_id} ${a.state}`).join(', ')}); look at them before the queue goes on` };
         break;
       }
     }
@@ -508,6 +511,8 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
   const entry: QueueIssueRecord = { number: issue.number, title: flat(issue.title).slice(0, 150), outcome: 'person', reason: '', pull_request: null, branch: null, attempts: [], warnings: [] };
   let problems: string[] = [];
   for (let n = 1; n <= o.attempts; n++) {
+    // No further run once FAILED_RUNS_STOP runs in a row have failed: the queue stops after this issue.
+    if (failedRunsInARow([...record.issues.flatMap((i) => i.attempts), ...entry.attempts]).length >= FAILED_RUNS_STOP) break;
     // The issue is read and judged again, as `orbit run --issue` does; a refusal is about the issue, not the queue.
     let input: Awaited<ReturnType<typeof issueRunInput>>;
     try {

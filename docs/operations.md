@@ -105,16 +105,21 @@ orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minut
 - A dependant starts only once its blocker is closed. GitHub closes an issue
   from `Closes #n` only for the default branch; for another base the queue
   closes an issue itself, with a comment, once its pull request has merged.
-  Merging stays with a person (or with a `release` run that may merge). When
-  only issues waiting on a merge are left, the queue looks every minute for up
-  to `--wait-minutes` (default 60; 0 stops at once).
+  When only issues waiting on a merge are left, the queue looks every minute
+  for up to `--wait-minutes` (default 60; 0 stops at once). In
+  `autonomous-delivery` that merge is a person's: the queue waits for it. A
+  `release` run merges its own pull request only when a person has approved
+  turning merge on for that run (every contract starts with `merge: false`),
+  so no mode yet works a blocking chain without a person.
 - An issue gets up to `--attempts` runs (default 2); a run waiting on an answer
   is not tried again. An issue whose runs did not deliver, or whose body fails
   `orbit spec check`, is labelled `ready-for-human` with one comment that says
   why, and its dependants wait.
 - The queue stops when the frontier is empty, at `--max-issues`, at
-  `--budget-usd` (each run is capped at what is left), after two issues in a
-  row end with a person, or on Ctrl-C (the run is paused). It prints what it
+  `--budget-usd` (each run is capped at what is left), after two runs in a
+  row, on one issue or across issues, end without a delivered change (a
+  delivered run resets the count; the issue still goes to a person as above),
+  or on Ctrl-C (the run is paused). It prints what it
   did and what is left, and keeps the same in `.orbit/queue/<id>.json`: per
   issue the outcome, pull request and every attempt. Exit 0, 10 when an issue
   went to a person, 20 when interrupted.

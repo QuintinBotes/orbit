@@ -264,32 +264,31 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     expect(after.out).toMatch(/^frontier \(1, in priority order\):\n  #1 Add sub\n/);
   }, 300_000);
 
-  it('story 1, scenario 2: an issue whose runs fail goes to a person; an independent issue still runs, and its dependant is skipped with the reason', async () => {
+  it('story 1, scenario 2: an issue whose run fails goes to a person; an independent issue still runs, and its dependant is skipped with the reason', async () => {
     const l = lab('autonomous');
     put(l, 1, 'sub');
     put(l, 2, 'div');
     put(l, 3, 'pow', { blockedBy: [1] });
-    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('sub'), planner('div')], implementer: [implement('sub', true), implement('sub', true), implement('div')], verifier: [RULED_OUT, RULED_OUT] }));
-    const r = await cli(l, ['queue', 'run', '--base', 'next', '--policy', l.configPath]);
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('div')], implementer: [implement('sub', true), implement('div')], verifier: [RULED_OUT] }));
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--policy', l.configPath]);
     expect(r.code, `${r.out}\n${r.err}`).toBe(10);
 
     expect(runs(l).map((x) => [x.issue, x.state])).toEqual([
       [1, 'IMPOSSIBLE'],
-      [1, 'IMPOSSIBLE'],
       [2, 'SUCCEEDED'],
     ]);
-    // Two attempts, then the label and one comment built from the controller's records.
+    // The label and one comment built from the controller's records.
     expect(issues(l).issue(1)!.labels).toEqual(['spec', 'ready-for-agent', 'ready-for-human']);
     const comment = issues(l).comments(1);
     expect(comment).toHaveLength(1);
     expect(comment[0]).toMatch(/^Orbit's queue hands this issue to a person and labelled it `ready-for-human`/);
     const failed = runs(l).filter((x) => x.issue === 1);
-    expect(comment[0]).toContain(`2 runs ended without a delivered change:\n\n- Run \`${failed[0]!.id}\`: IMPOSSIBLE, failure class ${failureClass(failed[0]!)}, spend $`);
+    expect(comment[0]).toContain(`1 run ended without a delivered change:\n\n- Run \`${failed[0]!.id}\`: IMPOSSIBLE, failure class ${failureClass(failed[0]!)}, spend $`);
     // SC-002: a failed issue never starts a dependant.
     expect(runs(l).some((x) => x.issue === 3)).toBe(false);
     const rec = record(l);
     expect(outcomes(rec)).toEqual([
-      [1, 'person', 2],
+      [1, 'person', 1],
       [2, 'delivered', 1],
     ]);
     // Each attempt keeps the failure class its run recorded (ADR 0018).
@@ -300,25 +299,53 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     expect(r.out).toContain('#3 Add pow: blocked by #1 (needs a person: labelled ready-for-human)');
   }, 300_000);
 
-  it('stops when two issues in a row end with a person: a spec that fails the check is handed over without a run', async () => {
+  it('FR-004: two failed runs in a row stop the queue, also when both are attempts on one issue', async () => {
+    const l = lab('autonomous');
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    // Issue 2 would deliver if the queue went on.
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('sub'), planner('div')], implementer: [implement('sub', true), implement('sub', true), implement('div')], verifier: [RULED_OUT, RULED_OUT] }));
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(10);
+    const failed = runs(l);
+    expect(failed.map((x) => [x.issue, x.state])).toEqual([
+      [1, 'IMPOSSIBLE'],
+      [1, 'IMPOSSIBLE'],
+    ]);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([[1, 'person', 2]]);
+    expect(rec.stop).toEqual({ kind: 'failed-runs', reason: `2 runs in a row ended without a delivered change (${failed[0]!.id} IMPOSSIBLE, ${failed[1]!.id} IMPOSSIBLE); look at them before the queue goes on` });
+    // The issue still goes to a person, with both runs in its comment; the independent issue waits for the next queue.
+    expect(issues(l).issue(1)!.labels).toEqual(['spec', 'ready-for-agent', 'ready-for-human']);
+    expect(issues(l).comments(1)[0]).toContain('2 runs ended without a delivered change:');
+    expect(rec.remaining).toMatchObject({ frontier: [{ number: 2, title: 'Add div' }] });
+  }, 300_000);
+
+  it('FR-004: fail, deliver, fail does not stop the queue; a spec that fails the check goes to a person without a run, which is no failed run', async () => {
     const l = lab('autonomous');
     issues(l).put({ number: 1, title: 'Vague', body: spec('sub').replace('It is the feature.', 'It is the feature [NEEDS CLARIFICATION: integers only?].'), labels: READY });
-    put(l, 2, 'div');
-    put(l, 3, 'pow');
-    writeScenario(l, baseScenario({ planner: [planner('div')], implementer: [implement('div', true)], verifier: [RULED_OUT] }));
+    put(l, 2, 'sub');
+    put(l, 3, 'div');
+    put(l, 4, 'pow');
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('div'), planner('pow')], implementer: [implement('sub', true), implement('div'), implement('pow', true)], verifier: [RULED_OUT, RULED_OUT] }));
     const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--policy', l.configPath]);
     expect(r.code, `${r.out}\n${r.err}`).toBe(10);
-    expect(runs(l).map((x) => [x.issue, x.state])).toEqual([[2, 'IMPOSSIBLE']]);
-    expect(outcomes(record(l))).toEqual([
+    expect(runs(l).map((x) => [x.issue, x.state])).toEqual([
+      [2, 'IMPOSSIBLE'],
+      [3, 'SUCCEEDED'],
+      [4, 'IMPOSSIBLE'],
+    ]);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([
       [1, 'person', 0],
       [2, 'person', 1],
+      [3, 'delivered', 1],
+      [4, 'person', 1],
     ]);
-    expect(record(l).stop).toMatchObject({ kind: 'person-streak', reason: expect.stringMatching(/^2 issues in a row ended with a person \(#1, #2\)/) });
-    // The spec's problem is quoted to the person who must fix it; the third issue was never taken.
+    expect(rec.stop).toEqual({ kind: 'empty', reason: 'the frontier is empty' });
+    // The spec's problem is quoted to the person who must fix it.
     expect(issues(l).comments(1)[0]).toContain('- line ');
     expect(issues(l).comments(1)[0]).toContain('[NEEDS CLARIFICATION: integers only?]');
-    expect(issues(l).issue(3)!.labels).toEqual(READY);
-    expect(r.out).toMatch(/frontier \(1, in priority order\):\n  #3 Add pow/);
   }, 300_000);
 
   it('story 2, scenario 1: with --max-issues 1 one issue runs, then the queue stops and lists the remaining frontier', async () => {

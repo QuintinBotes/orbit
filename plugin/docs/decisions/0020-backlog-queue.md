@@ -63,8 +63,10 @@ issue it blocks.
   class and spend; for a spec, the check's problems). The label keeps every
   later queue off it, so its dependants stay held.
 - **Stop rules.** The queue stops when the frontier is empty (after any
-  wait), at `--max-issues`, at `--budget-usd`, when two issues in a row end
-  with a person, on Ctrl-C (the run is paused, as in a foreground run), and on
+  wait), at `--max-issues`, at `--budget-usd`, after two runs in a row end
+  without a delivered change (FR-004: on one issue or across issues, a
+  delivered run resetting the count; the issue still goes to a person as
+  above, and no further run starts), on Ctrl-C (the run is paused, as in a foreground run), and on
   an error that is the queue's rather than an issue's (admission, the base
   branch). Each run's `scheduler.hard_limits.model_cost_usd` is lowered to what
   is left of the budget; a run that this cap ends stops the queue and does not

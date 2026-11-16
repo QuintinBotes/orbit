@@ -74791,6 +74791,9 @@ function lazyClient(q, ctx) {
   let c = null;
   return () => c ??= githubClientForConfig(q.repo, q.config, ctx.env, { requireScopedToken: false });
 }
+function failedRunsInARow(attempts) {
+  return attempts.slice(attempts.findLastIndex((a) => a.state === "SUCCEEDED") + 1);
+}
 function count3(n2, one, many = `${one}s`) {
   return `${n2} ${n2 === 1 ? one : many}`;
 }
@@ -74849,7 +74852,6 @@ async function queueRunCommand(args, ctx) {
     else line(ctx.io, text2);
   };
   say("started", `queue ${record.id}: ${q.query.parent !== null ? `sub-issues of #${q.query.parent}` : `open issues`} labelled ${q.query.label} in ${q.tracker.repo}, one at a time from ${q.base} (${q.config.mode})`, { id: record.id, repo: q.tracker.repo, base: q.base, mode: q.config.mode });
-  let streak = 0;
   let waited = 0;
   const tried = /* @__PURE__ */ new Set();
   try {
@@ -74897,10 +74899,9 @@ async function queueRunCommand(args, ctx) {
         record.stop = { kind: "interrupted", reason: `interrupted during #${entry.number}; its run is paused` };
         break;
       }
-      if (entry.outcome === "person") streak++;
-      else if (entry.outcome === "delivered") streak = 0;
-      if (streak >= PERSON_STREAK_STOP) {
-        record.stop = { kind: "person-streak", reason: `${PERSON_STREAK_STOP} issues in a row ended with a person (${record.issues.filter((i) => i.outcome === "person").slice(-PERSON_STREAK_STOP).map((i) => `#${i.number}`).join(", ")}); look at them before the queue goes on` };
+      const failed = failedRunsInARow(record.issues.flatMap((i) => i.attempts));
+      if (failed.length >= FAILED_RUNS_STOP) {
+        record.stop = { kind: "failed-runs", reason: `${failed.length} runs in a row ended without a delivered change (${failed.map((a) => `${a.run_id} ${a.state}`).join(", ")}); look at them before the queue goes on` };
         break;
       }
     }
@@ -74955,6 +74956,7 @@ async function workIssue(ctx, q, record, issue, o) {
   const entry = { number: issue.number, title: flat(issue.title).slice(0, 150), outcome: "person", reason: "", pull_request: null, branch: null, attempts: [], warnings: [] };
   let problems = [];
   for (let n2 = 1; n2 <= o.attempts; n2++) {
+    if (failedRunsInARow([...record.issues.flatMap((i) => i.attempts), ...entry.attempts]).length >= FAILED_RUNS_STOP) break;
     let input;
     try {
       input = await issueRunInput(ctx, q.repo, q.config, { repo: null, number: issue.number });
@@ -75014,7 +75016,7 @@ async function workIssue(ctx, q, record, issue, o) {
   }
   return entry;
 }
-var DEFAULT_LABEL, DEFAULT_HUMAN_LABEL, DEFAULT_ATTEMPTS2, DEFAULT_WAIT_MINUTES, POLL_MS, PERSON_STREAK_STOP, QUEUE_DIR, SELECT_OPTIONS, QUEUE_LIST_USAGE, QUEUE_LIST_OPTIONS, QUEUE_RUN_USAGE, QUEUE_RUN_OPTIONS, LABEL3;
+var DEFAULT_LABEL, DEFAULT_HUMAN_LABEL, DEFAULT_ATTEMPTS2, DEFAULT_WAIT_MINUTES, POLL_MS, FAILED_RUNS_STOP, QUEUE_DIR, SELECT_OPTIONS, QUEUE_LIST_USAGE, QUEUE_LIST_OPTIONS, QUEUE_RUN_USAGE, QUEUE_RUN_OPTIONS, LABEL3;
 var init_queue = __esm({
   "src/cli/commands/queue.ts"() {
     "use strict";
@@ -75046,7 +75048,7 @@ var init_queue = __esm({
     DEFAULT_ATTEMPTS2 = 2;
     DEFAULT_WAIT_MINUTES = 60;
     POLL_MS = 6e4;
-    PERSON_STREAK_STOP = 2;
+    FAILED_RUNS_STOP = 2;
     QUEUE_DIR = "queue";
     SELECT_OPTIONS = {
       parent: { type: "string", description: "work the sub-issues of this issue, in its order (default: every open issue carrying the label, oldest first)", valueName: "issue" },
