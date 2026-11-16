@@ -2,7 +2,8 @@ import { ORBIT_ROOT, run } from '../../scripts/demo/lib/example.ts';
 
 /**
  * Why Chromium cannot start here, or null when it can: one Playwright launch per test file, as the srt tests probe srt.
- * In a command check's sandbox on macOS it cannot: Orbit gives Chromium's Mach services to UI journey runs only (#203).
+ * In a command check's sandbox on macOS it cannot: Playwright finds no browser under the check's private home, and Orbit
+ * gives Chromium's Mach services to UI journey runs only (#203).
  */
 export const CHROMIUM_REFUSED: string | null = (() => {
   const script = "require('@playwright/test').chromium.launch().then((b) => b.close()).then(() => process.exit(0), (e) => { console.error(String(e && e.message).split('\\n')[0]); process.exit(1); })";
