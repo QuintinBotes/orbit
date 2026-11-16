@@ -96,7 +96,7 @@ function workerSummary(w: WorkerRecord): WorkerSummary {
 function stageOf(db: OrbitDb, run: RunRecord): string {
   if (!run.resumeState || !(run.state === 'INQUISITION' || run.state === 'BLOCKED' || run.state === 'RECOVERING')) return run.state;
   // A run that ran out holding a verified candidate (issue #169): a resume continues under the limits that stopped it.
-  const offered = heldVerifiedCandidate(run);
+  const offered = heldVerifiedCandidate(run, { exhausted: true });
   if (offered) return `${run.state} (holding verified candidate ${offered.seq}: deliver it or discard it)`;
   const fresh = run.state === 'BLOCKED' ? newRunNeeded(db, run) : null;
   return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;

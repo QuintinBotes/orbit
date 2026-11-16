@@ -564,7 +564,9 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       // shortcut: an unfunded-session ending names no counter, so in a run with an earlier cause (a turn cap) it reads as the issue's; record the counter there if that matters.
       const ended = db.get<{ counter: string | null }>("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
       const outOfMoney = ended === 'cost_usd' || (ended === null && result.run.failureClass === 'budget');
-      if ((result.run.state === 'EXHAUSTED' || held) && capped && outOfMoney) {
+      // Only a run that ran out holds its candidate for that reason; any other block offers its verified candidate too.
+      const ranOut = heldVerifiedCandidate(result.run, { exhausted: true }) !== null;
+      if ((result.run.state === 'EXHAUSTED' || ranOut) && capped && outOfMoney) {
         return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ''}` };
       }
       if (result.run.state === 'SUCCEEDED') {

@@ -234,6 +234,17 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit learn list` | `--status`, `--kind`, `--search <text>`, `--global`, `--limit <n>` (default 50); the other `learn` commands are in [the learning layer](learning.md) |
 | `orbit service install / uninstall / status / run` | `--entry <path>` on install |
 
+### doctor
+
+`orbit doctor` starts each check's executable and each toolchain inside the
+sandbox the check would get, in an empty scratch checkout, not the repository.
+It therefore cannot see a package manager the repository pins with
+`packageManager` in `package.json`: `pnpm --version` can pass there while the
+real check, which runs the pinned version, fails (#142). A run does not lose an
+attempt to that: a baseline whose checks all fail for one environment reason (a
+missing package, a refused package fetch) blocks at preflight and names that
+reason (#194).
+
 ### verify, repair, inquisition
 
 `orbit verify [run-id]` (default: the most recent run) re-runs the independent
@@ -351,13 +362,31 @@ finding (exit 1, 2 attempts): COR-1".
 
 A review repair, once one goes, is also briefed every unresolved finding a
 `REPAIR_REQUIRED` review of the tree raised, whatever its severity; what blocks
-the tree does not change. When every finding about to go to repair
-was in the previous review repair and no implementer report since names a test
-for any of them (an implementer that ended at its turn cap without a report
-names none), the run stops as non-progress (`repair.non-progress`) naming the
-open findings, since only such a test can close them and the same brief would
-end the same way. The reviewed candidate passed verification, so the run ends
-`BLOCKED` and offers it (see below), unless the run delivered a candidate.
+the tree does not change.
+
+A blocking finding that was sent to repair from an earlier tree, is still open
+on the current verified candidate and that no check confirmed (an "add tests"
+finding whose test passes before and after the repair, say) gets one re-review
+before it goes to repair again (ADR 0015, amendment of 2026-11-16). A fresh
+reviewer session, of an independent provider that did not raise it while one is
+eligible, is told the finding by id with the candidate's review packet and
+answers only whether the defect is still present. It is no review of the tree:
+it never approves it. Gone, the finding is dropped with the re-reviewer's
+evidence (`review.finding-rereview.answer`, then `review.finding.rejected`) and
+the tree is decided on its own reviews without it; when that leaves no open
+finding and no approval, the tree gets one full fresh review (`review.fresh`),
+whose APPROVE alone clears it. Still present, it goes to
+repair within the budgets. A run asks one re-review per finding, at the cost of
+a review round.
+
+When every finding about to go to repair was in the previous review repair and
+no implementer report since names a test for any of them (an implementer that
+ended at its turn cap without a report names none), the run stops as
+non-progress (`repair.non-progress`) naming the open findings, since only such a
+test can close them and the same brief would end the same way; on a tree where
+a re-review found one of them still present, the repair goes on once more. The
+reviewed candidate passed verification, so the run ends `BLOCKED` and offers it
+(see below), unless the run delivered a candidate.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
@@ -409,8 +438,13 @@ on exactly the reviewed tree, pushes the task branch and opens a pull request
 
 A run that runs out (a budget, a cap, non-progress: anything that would end it
 `EXHAUSTED`) while it holds a candidate that passed verification ends `BLOCKED`
-instead, and offers that candidate (issue #169). A run that delivered a candidate
-ends `EXHAUSTED` as before: it has its pull request. The
+instead, and offers that candidate (issue #169). A run that stops `BLOCKED` for
+any other reason while it holds one offers it the same way (`decided: BLOCKED`
+in the outcome), beside the block's own way forward, which a resume still
+takes. A run that delivered a candidate, or pushed its delivery commit before
+the delivery failed, offers none: its branch holds that commit. A run that
+delivered ends `EXHAUSTED` as before: it has its pull request. A block on a
+policy snapshot that no longer verifies offers none either. The
 newest candidate whose standing evidence is PASS is the one offered. The outcome
 reason says why the run stopped, then names the candidate (its number, commit
 and ref, the checks it passed, and each open review finding with its review round,
@@ -419,8 +453,11 @@ has a "Verified candidate" section and `verified_candidate` in `final.json` with
 the same facts and two commands. `deliver_command`, run from the repository root,
 pushes the candidate commit to `<repository.branch_prefix><run-id>` and opens a
 draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
-lists the checks it passed and every open finding; it needs `gh`, and you run
-it, because no review approved the candidate. `discard_command` is
+lists the checks it passed and every open finding, and says whether a review
+approved it; it needs `gh`, and you run it, because Orbit did not deliver it.
+Every value it takes from the policy (remote, branch, paths) is one shell word,
+quoted where needed, `git push` reads its arguments after `--`, and a value
+with a leading `-` is refused, so none can act as an option. `discard_command` is
 `orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
 mode, and `orbit resume` would continue the run under the limits that stopped
 it. The failure

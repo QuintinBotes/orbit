@@ -63,7 +63,7 @@ function nextAction(input: PayloadInput): string {
   const [first] = questionIds;
   // A run that ran out holding a verified candidate (issue #169): a resume continues under the limits that stopped it; a person
   // delivers the candidate or discards it. The commands are in the report, not in a notification.
-  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null });
+  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null }, { exhausted: true });
   if (offered) return `Read orbit report ${run.id}: candidate ${offered.seq} passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${run.id}.`;
   // A decision a person declined: no answer to another question makes a resume succeed.
   if (run.state === 'BLOCKED' && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {

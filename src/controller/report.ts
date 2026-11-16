@@ -538,7 +538,7 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       const why = run.outcomeReason ?? 'The run is blocked.';
       // A frozen-policy block already names the way forward (a new run), a run that holds a verified candidate how to
       // deliver or discard it (issue #169), and most others already name the resume command.
-      if (outcomeHas(run, 'frozen_policy') || heldVerifiedCandidate(run) !== null) return why;
+      if (outcomeHas(run, 'frozen_policy') || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
       // A reason recorded without a closing full stop still reads as its own sentence.
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       // Where a resume cannot clear the block, the reason either says a new run already (an environment block) or is told so (issue #33).

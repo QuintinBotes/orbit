@@ -120,7 +120,7 @@ describe.skipIf(!READY)('acceptance: a verified candidate is always offered, eve
     // One command: push the candidate commit to the run's branch, then open a draft pull request from it with the body
     // Orbit wrote. The lab has no gh, so the push runs as the person would run it and the body is read as gh would send it.
     const [push, pr] = offered.deliver_command.split(' && ');
-    expect(push).toBe(`git push origin ${offered.commit}:refs/heads/${offered.branch}`);
+    expect(push).toBe(`git push -- origin ${offered.commit}:refs/heads/${offered.branch}`);
     expect(pr).toMatch(new RegExp(`^gh pr create --draft --base main --head ${offered.branch} --title "Orbit run ${run.id}: verified candidate 1" --body-file (\\S+)$`));
     execFileSync('sh', ['-c', push!], { cwd: l.repo, stdio: 'pipe' });
     expect(git(l.remote, 'rev-parse', `refs/heads/${offered.branch}`)).toBe(offered.commit);
@@ -148,7 +148,8 @@ describe.skipIf(!READY)('acceptance: a verified candidate is always offered, eve
 
     expect(listEvidenceReports(db, run.id).map((e) => e.report.verdict)).toEqual(['PASS', 'PASS']);
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
-    expect(done.outcomeReason).toMatch(/^non-progress: the review repair brief of attempt 2 was sent TEST-1, DOC-1/);
+    // The third review answer is TEST-1's one re-review (still present), which spends the last review round.
+    expect(done.outcomeReason).toMatch(/^review_rounds hard cap reached \(3 of 3\) with 2 open finding\(s\): TEST-1/);
     const [, newer] = listCandidates(db, run.id);
     expect(finalReport(l, run.id).verified_candidate).toMatchObject({ seq: 2, commit: newer!.commitSha });
     expect(l.github().state.prs).toEqual([]);

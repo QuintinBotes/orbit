@@ -34434,9 +34434,9 @@ function checkSpec(body) {
       if (!m) continue;
       const number = Number(m[1]);
       const priority = PRIORITY.exec(m[2])?.[1]?.toUpperCase() ?? null;
-      const title = m[2].replace(/\(\s*Priority\b[^()]*\)\s*$/i, "").trim() || `story ${number}`;
+      const title2 = m[2].replace(/\(\s*Priority\b[^()]*\)\s*$/i, "").trim() || `story ${number}`;
       const [a, b] = sectionRange(headings, h, lines.length);
-      const name = `User Story ${number} (${quote(title)})`;
+      const name = `User Story ${number} (${quote(title2)})`;
       const why = labelled(lines, a, b, /^Why this priority\s*:?\s*(.*)$/i);
       const independentTest = labelled(lines, a, b, /^Independent Test\s*:?\s*(.*)$/i);
       if (stories.some((s) => s.number === number)) problems.push(`${name}: the story number ${number} is used twice`);
@@ -34450,13 +34450,13 @@ function checkSpec(body) {
       for (const item of items) {
         const statement = plain(item.text);
         if (isGivenWhenThen(statement)) {
-          scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
+          scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title2, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
         } else if (start !== a && item.ordered) {
           problems.push(`${name}: the acceptance scenario on line ${item.index + 1} is not a Given/When/Then line: "${quote(statement)}"`);
         }
       }
       if (scenarios.length === 0) problems.push(`${name} has no Given/When/Then line`);
-      stories.push({ number, title, priority, why: why || null, independentTest: independentTest || null, scenarios });
+      stories.push({ number, title: title2, priority, why: why || null, independentTest: independentTest || null, scenarios });
     }
     if (stories.length === 0) problems.push('"User Scenarios & Testing" has no user story (a heading such as "### User Story 1 - Title (Priority: P1)")');
   }
@@ -49341,11 +49341,20 @@ function decisionId(kind, findingId, status2, reason) {
 }
 function persistResolution(db, runDir2, runId, resolution, clock) {
   const updated = [];
+  const onRecord = /* @__PURE__ */ new Set();
   db.tx(() => {
     for (const d of resolution.dispositions) {
-      for (const memberId of d.memberIds) {
+      const rows = d.memberIds.map((memberId) => {
         const row = db.get("SELECT * FROM findings WHERE id = ? AND run_id = ?", memberId, runId);
         if (!row) throw new OrbitError("NOT_FOUND", `no finding ${memberId} in run ${runId}`);
+        return row;
+      });
+      if (TERMINAL_FINDING_STATUSES.includes(d.status) && rows.every((r) => r.status === d.status)) {
+        onRecord.add(d);
+        continue;
+      }
+      for (const row of rows) {
+        const memberId = row.id;
         if (TERMINAL_FINDING_STATUSES.includes(row.status) && row.status !== d.status) continue;
         const changed2 = row.status !== d.status || row.resolution !== d.reason;
         updateFindingStatus(
@@ -49373,6 +49382,7 @@ function persistResolution(db, runDir2, runId, resolution, clock) {
     }
   });
   for (const d of resolution.dispositions) {
+    if (onRecord.has(d)) continue;
     const noted = d.recordedClassification !== void 0 && d.status === "advisory";
     if (d.status !== "accepted" && d.status !== "rejected" && d.status !== "excepted" && d.status !== "resolved" && !noted) continue;
     const kind = noted ? "review.finding.noted" : `review.finding.${d.status}`;
@@ -52505,17 +52515,35 @@ var init_run_refs = __esm({
 
 // src/controller/verified-candidate.ts
 import { join as join43 } from "node:path";
+function shellWord2(v) {
+  if (v.startsWith("-")) throw new OrbitError("CONFIG_INVALID", `"${v}" starts with '-', so a command would read it as an option`);
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+}
+function title(runId, seq2) {
+  const t = `Orbit run ${runId}: verified candidate ${seq2}`;
+  return /^[A-Za-z0-9_.-]+$/.test(runId) ? `"${t}"` : shellWord2(t);
+}
 function findVerifiedCandidate(db, run, snapshot2) {
   const candidates = listCandidates(db, run.id);
   if (candidates.some((c) => c.status === "DELIVERED")) return null;
+  if (db.get("SELECT 1 AS x FROM actions WHERE run_id = ? AND kind = 'push' AND state = 'SUCCEEDED'", run.id)) return null;
   for (const cand of candidates.reverse()) {
     const ev = currentEvidenceReport(db, run.id, cand.id);
     if (ev?.verdict !== "PASS") continue;
-    const rounds = new Map(listReviews(db, run.id, { includeInvalidated: true }).map((r) => [r.id, r.round]));
+    const reviews = listReviews(db, run.id, { includeInvalidated: true });
+    const rounds = new Map(reviews.map((r) => [r.id, r.round]));
     const open2 = listFindings(db, run.id, { statuses: OPEN_STATUSES }).map((f) => ({ id: f.externalId ?? f.id, review_round: rounds.get(f.reviewId) ?? null, severity: f.severity, status: f.status, claim: clipAtWord(f.claim, 300) }));
+    const approved = reviews.find((r) => r.treeHash === cand.treeHash && r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot2.config.repository;
     const branch = run.branch ?? `${prefix}${run.id}`;
     const body = `.orbit/runs/${run.id}/${VERIFIED_CANDIDATE_BODY}`;
+    let deliver2;
+    try {
+      deliver2 = `git push -- ${shellWord2(remote)} ${shellWord2(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord2(base)} --head ${shellWord2(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord2(body)}`;
+    } catch (err) {
+      if (isOrbitError(err, "CONFIG_INVALID")) return null;
+      throw err;
+    }
     return {
       candidate_id: cand.id,
       seq: cand.seq,
@@ -52526,8 +52554,9 @@ function findVerifiedCandidate(db, run, snapshot2) {
       checks_passed: ev.report.checks.filter((c) => c.status === "PASSED").map((c) => c.id),
       open_findings: open2,
       branch,
-      deliver_command: `git push ${remote} ${cand.commitSha}:refs/heads/${branch} && gh pr create --draft --base ${base} --head ${branch} --title "Orbit run ${run.id}: verified candidate ${cand.seq}" --body-file ${body}`,
-      discard_command: `orbit cancel ${run.id}`
+      approved_by: approved?.id ?? null,
+      deliver_command: deliver2,
+      discard_command: `orbit cancel ${shellWord2(run.id)}`
     };
   }
   return null;
@@ -52548,15 +52577,16 @@ function offerSection(vc) {
     `- discard it: ${vc.discard_command}`
   ];
 }
-function offerAdvice(vc) {
-  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would continue the run under the limits that stopped it.`;
+function offerAdvice(vc, exhausted2 = true) {
+  const commands = `to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}.`;
+  return exhausted2 ? `Deliver it or discard it: ${commands} Resuming would continue the run under the limits that stopped it.` : `Instead of clearing the block, you can deliver it or discard it: ${commands}`;
 }
 function writeOfferBody(runDir2, runId, vc, contract, stopped) {
   const lines = [
     contract ? `Orbit run ${runId}: ${contract.objective}` : `Orbit run ${runId}`,
     "",
     `Candidate ${vc.seq} (commit ${vc.commit}) passed verification, then the run stopped before delivery: ${clipAtWord(stopped, 300)}`,
-    "No review approved it: a person chose to deliver it with its open findings.",
+    vc.approved_by ? `Review ${vc.approved_by} approved its tree; Orbit did not deliver it, and a person chose to deliver it with any open findings below.` : "No review approved it: a person chose to deliver it with its open findings.",
     "",
     `Checks passed: ${vc.checks_passed.join(", ") || "none"}`,
     "",
@@ -52566,11 +52596,12 @@ function writeOfferBody(runDir2, runId, vc, contract, stopped) {
   atomicWrite(join43(runDir2, VERIFIED_CANDIDATE_BODY), `${redact(lines.join("\n"))}
 `);
 }
-function heldVerifiedCandidate(run) {
+function heldVerifiedCandidate(run, opts = {}) {
   if (run.state !== "BLOCKED" || !run.outcomeJson) return null;
   try {
     const o = JSON.parse(run.outcomeJson);
     const vc = o.verified_candidate;
+    if (opts.exhausted === true && o.decided !== "EXHAUSTED") return null;
     return vc !== null && typeof vc === "object" && typeof vc.seq === "number" ? vc : null;
   } catch {
     return null;
@@ -52580,6 +52611,7 @@ var VERIFIED_CANDIDATE_BODY, OPEN_STATUSES, findingLine;
 var init_verified_candidate = __esm({
   "src/controller/verified-candidate.ts"() {
     "use strict";
+    init_errors();
     init_fsx();
     init_redact();
     init_text2();
@@ -52607,7 +52639,7 @@ function sanitizeReason(text2) {
 function nextAction(input) {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
-  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null });
+  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null }, { exhausted: true });
   if (offered) return `Read orbit report ${run.id}: candidate ${offered.seq} passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${run.id}.`;
   if (run.state === "BLOCKED" && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {
     return `Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`;
@@ -54149,8 +54181,8 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
       outcome("unanswered");
       continue;
     }
-    const answerId = answerDecisionId(q.id);
-    const answer = getDecision(ctx.db, answerId);
+    const answerId2 = answerDecisionId(q.id);
+    const answer = getDecision(ctx.db, answerId2);
     const answeredBy = answer?.data?.answered_by;
     if (!answer || answer.kind !== ANSWER_DECISION_KIND || answer.runId !== ctx.runId || typeof answeredBy !== "string" || !isHumanActor(answeredBy)) {
       outcome("declined", "the answer is not a recorded decision by a person");
@@ -54195,7 +54227,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         if (never !== null) throw new OrbitError("POLICY_DENIED", never, { checkId: data.check_id });
         const res = applyAmendment(current, proposal, {
           snapshot: snapshot2,
-          approvedBy: answerId,
+          approvedBy: answerId2,
           policyHash: row2.policy_hash,
           history: amendmentHistory(ctx.db, ctx.runId),
           ...baseline ? { baselineFailures: baseline.failures.map((f) => ({ checkId: f.checkId, fingerprint: f.fingerprint })) } : {}
@@ -54214,7 +54246,7 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
         } catch {
           rejected = { field: "baseline_exceptions", old_value: null, new_value: null, evidence: proposal.evidence, reason: proposal.reason, approval_required: true, affected_verification: [`check:${data.check_id}`] };
         }
-        insertAmendment(ctx.db, { runId: ctx.runId, record: rejected, change: proposal.change, status: "rejected", approvedBy: answerId, note: err.message }, ctx.clock, "controller");
+        insertAmendment(ctx.db, { runId: ctx.runId, record: rejected, change: proposal.change, status: "rejected", approvedBy: answerId2, note: err.message }, ctx.clock, "controller");
         outcome("refused", err.message);
         break;
       }
@@ -54223,9 +54255,9 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
       const wrote = ctx.db.tx(() => {
         const res = ctx.db.run("UPDATE runs SET contract_json = ?, contract_hash = ? WHERE id = ? AND contract_json = ?", JSON.stringify(next), after, ctx.runId, row2.contract_json);
         if (res.changes !== 1) return false;
-        insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
+        insertAmendment(ctx.db, { runId: ctx.runId, record, change: proposal.change, status: "applied", approvedBy: answerId2, contractBefore: before, contractAfter: after }, ctx.clock, "controller");
         invalidateEvidence(ctx.db, ctx.runId, `the contract now accepts a baseline exception for check ${data.check_id}`, ctx.clock, { exceptVerdict: "PASS" });
-        appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId }, ctx.clock.now());
+        appendEvent(ctx.db, ctx.runId, "contract.amended", "controller", { field: record.field, check_id: data.check_id, approved_by: answerId2 }, ctx.clock.now());
         return true;
       });
       if (!wrote) continue;
@@ -54237,8 +54269,8 @@ function applyBaselineExceptionAnswers(ctx, opts = {}) {
           id: `dec-${ctx.runId}-baseline-exception-applied-${keyOf(ctx.runId, data.check_id, data.fingerprint)}`,
           runId: ctx.runId,
           kind: "contract.baseline-exception",
-          summary: `the contract accepts the pre-existing failure of check ${data.check_id} (fingerprint ${data.fingerprint}) as a baseline exception, approved by ${answeredBy} in ${answerId}`,
-          data: { check_id: data.check_id, fingerprint: data.fingerprint, approved_by: answeredBy, answer_decision: answerId, question_id: data.question_id }
+          summary: `the contract accepts the pre-existing failure of check ${data.check_id} (fingerprint ${data.fingerprint}) as a baseline exception, approved by ${answeredBy} in ${answerId2}`,
+          data: { check_id: data.check_id, fingerprint: data.fingerprint, approved_by: answeredBy, answer_decision: answerId2, question_id: data.question_id }
         },
         ctx.clock,
         { actor: "controller" }
@@ -56573,7 +56605,7 @@ function nextAction2(run, refs, pr, openMaterial = [], fresh = null, pruned = fa
       return DELIVERY_MODES.has(run.mode) ? `Review ${pr !== null ? `pull request #${pr}` : branch !== null ? `branch ${branch}` : candidate} and merge it if you accept it; Orbit does not merge.` : branch !== null ? `Inspect the local branch ${branch} (the reviewed candidate) and merge it yourself if you accept it.` : `Inspect ${candidate}${ref3 !== null ? ` (git log ${ref3})` : ""} and merge it yourself if you accept it.`;
     case "BLOCKED": {
       const why = run.outcomeReason ?? "The run is blocked.";
-      if (outcomeHas(run, "frozen_policy") || heldVerifiedCandidate(run) !== null) return why;
+      if (outcomeHas(run, "frozen_policy") || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       if (fresh !== null) return /start a new run/.test(why) ? why : `${sentence} Resuming would only block again (${fresh}): cancel this run (orbit cancel ${run.id}) and start a new run with orbit run.`;
       if (/orbit resume/.test(why)) return why;
@@ -57164,8 +57196,8 @@ function selectionSignals(config) {
 }
 function walkSuite(suite, parents, isFile, out) {
   if (!isObj(suite)) return;
-  const title = str6(suite.title);
-  const path = isFile || title === null || title === "" ? parents : [...parents, title];
+  const title2 = str6(suite.title);
+  const path = isFile || title2 === null || title2 === "" ? parents : [...parents, title2];
   for (const spec of arr(suite.specs)) {
     if (!isObj(spec)) continue;
     for (const test of arr(spec.tests)) {
@@ -57816,19 +57848,19 @@ function tail(text2, max = 600) {
 function buildJourney(test, ctx, checkDir2, cwd) {
   const { checkoutDir } = ctx;
   const file = relativeTo2(test.file, checkoutDir);
-  const title = test.titlePath[test.titlePath.length - 1] ?? "";
+  const title2 = test.titlePath[test.titlePath.length - 1] ?? "";
   const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
-  const slug2 = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const slug2 = `${sha256(id).slice(0, 8)}-${title2.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
   const artifactDir = join52(checkDir2, "artifacts", slug2);
   const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join52(checkDir2, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
   const projectFlag = `--project=${test.projectName}`;
-  const grep = ["-g", escapeRegExp4(title)];
+  const grep = ["-g", escapeRegExp4(title2)];
   const reproFlags = ["--update-snapshots=none", "--trace=retain-on-failure", "--reporter=list", projectFlag, ...grep];
   const reproArgv = buildArgv(ctx.check, reproFlags);
   const reproduction = {
@@ -57841,7 +57873,7 @@ function buildJourney(test, ctx, checkDir2, cwd) {
   const browser = declared ? { name: declared.name, version: declared.version } : fallbackBrowser(checkoutDir, ctx.input.uiConfig.browsers);
   return {
     id,
-    title,
+    title: title2,
     titlePath: test.titlePath,
     file,
     line: test.line,
@@ -60892,11 +60924,11 @@ async function finishRun(ctx, to, reason, opts = {}) {
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note2(ctx, "workers.stop-failed", { workers: unstoppable });
   ctx.refresh();
-  const offered = to === "EXHAUSTED" && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  const offered = (to === "EXHAUSTED" || to === "BLOCKED") && !ctx.run.cancelRequested && ctx.policyVerified ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
   if (offered) {
-    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    advice = `${heldSentence(offered)} ${offerAdvice(offered, to === "EXHAUSTED")}`;
     reason = withSentence(reason, advice);
-    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: "EXHAUSTED", verified_candidate: offered } };
+    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: to, verified_candidate: offered } };
     to = "BLOCKED";
   }
   const outcome = { state: to, reason, ...opts.outcome ?? {}, ...unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {} };
@@ -62165,13 +62197,13 @@ async function deliver(input) {
     prSkipped = prAuth.reason;
   } else {
     requireAllowed(apiAuth, "reaching the pull request API");
-    const title = redact(firstLine(input.report.title || run.goal || `Orbit run ${run.id}`)).slice(0, TITLE_MAX) || `Orbit run ${run.id}`;
+    const title2 = redact(firstLine(input.report.title || run.goal || `Orbit run ${run.id}`)).slice(0, TITLE_MAX) || `Orbit run ${run.id}`;
     const body = pullRequestBody({ run, report: input.report, commit, tree, evidence: input.evidence });
     const draft = prMode === "draft";
     await ledger.performAction(
       { runId: run.id, kind: "pr_create", idempotencyKey: `deliver:${run.id}:pr-create:${branch}`, target: { head: branch, base: baseBranch, draft } },
       {
-        execute: async () => await client.findPullRequest(branch) ?? client.createPullRequest({ head: branch, base: baseBranch, title, body, draft }),
+        execute: async () => await client.findPullRequest(branch) ?? client.createPullRequest({ head: branch, base: baseBranch, title: title2, body, draft }),
         reconcile: () => client.findPullRequest(branch)
       },
       { authorization: prAuth, precheck: gate }
@@ -62184,17 +62216,17 @@ async function deliver(input) {
       throw new OrbitError("DELIVERY_FAILED", `pull request #${pr.number} targets ${pr.baseRefName}, not ${baseBranch}`, { number: pr.number, definitive: true });
     }
     if (pr.isDraft !== draft) warnings.push(`pull request #${pr.number} is ${pr.isDraft ? "a draft" : "ready for review"}; the configured mode is ${prMode}`);
-    if (pr.title !== title || pr.body !== body) {
+    if (pr.title !== title2 || pr.body !== body) {
       const number = pr.number;
       const updated = await ledger.performAction(
         // Keyed by the content too: the same commit re-delivered with a newer report is a new update, not a key collision.
-        { runId: run.id, kind: "pr_update", idempotencyKey: `deliver:${run.id}:pr-update:${number}:${commit}:${sha256(`${title}
-${body}`).slice(0, 16)}`, target: { number, title, bodyLength: body.length }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
+        { runId: run.id, kind: "pr_update", idempotencyKey: `deliver:${run.id}:pr-update:${number}:${commit}:${sha256(`${title2}
+${body}`).slice(0, 16)}`, target: { number, title: title2, bodyLength: body.length }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
         {
-          execute: () => client.updatePullRequest(number, { title, body }),
+          execute: () => client.updatePullRequest(number, { title: title2, body }),
           reconcile: async () => {
             const now = await client.findPullRequest(branch);
-            return now && now.title === title && now.body === body ? now : null;
+            return now && now.title === title2 && now.body === body ? now : null;
           }
         },
         { authorization: prAuth, precheck: gate }
@@ -66089,7 +66121,10 @@ async function reviewingStep(ctx) {
   const focuses = reviewFocuses(ctx, cand);
   const fresh = freshReviewOf(ctx, cand.treeHash);
   if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
-  if (uncoveredUnits(ctx, cand).length === 0) return resolveAndDecide(ctx, cand);
+  if (uncoveredUnits(ctx, cand).length === 0) {
+    const asked = askedReReview(ctx, cand, reReviewRecords(ctx));
+    return asked ? reReview(ctx, cand, asked) : resolveAndDecide(ctx, cand);
+  }
   const usable = await usableReviewer(ctx, cand);
   if (!usable.ok) return usable.step;
   const sel = usable.sel;
@@ -66394,6 +66429,8 @@ async function resolveAndDecide(ctx, cand) {
   const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
+  const reReviews = reReviewRecords(ctx);
+  const { present: stillPresent, gone: droppedHere } = settleReReviews(ctx, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -66421,7 +66458,8 @@ async function resolveAndDecide(ctx, cand) {
   const askedHere = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === "REPAIR_REQUIRED")).map((f) => f.id));
   const toRepair = routed.length === 0 ? routed : open2.filter((d) => routed.includes(d) || d.memberIds.some((id) => askedHere.has(id)));
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
-  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && !freshReviewOf(ctx, cand.treeHash)) {
+  const freshAsked = freshReviewOf(ctx, cand.treeHash);
+  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && (!freshAsked || freshAsked.reason === "rereview")) {
     toRepair.push(...resolution.dispositions.filter((d) => d.status === "advisory" && d.recordedClassification === void 0 && d.memberIds.some((id) => askedHere.has(id))));
   }
   if (toRepair.length > 0) {
@@ -66439,7 +66477,9 @@ async function resolveAndDecide(ctx, cand) {
       });
       if (blocked) return blocked;
     }
-    const stalled = stalledReviewRepair(ctx, cand, repairable);
+    const reReview2 = await reReviewCarried(ctx, cand, repairable, state, reReviews);
+    if (reReview2) return reReview2;
+    const stalled = stalledReviewRepair(ctx, cand, repairable, stillPresent);
     if (stalled) {
       settleRouteOutcome(ctx, cand, { outcome: "rejected", evidenceRef: `review-gate:${cand.treeHash}` });
       const outcome = { non_progress: stalled, open_findings: openFindings(toRepair) };
@@ -66495,6 +66535,18 @@ async function resolveAndDecide(ctx, cand) {
     if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
     fresh = {
       text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
+      outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
+    };
+  } else if (gate.passed && droppedHere.size > 0) {
+    const rounds = ctx.ledger.state("review_rounds");
+    const dropped = resolution.dispositions.filter((d) => droppedHere.has(d.fingerprint)).map((d) => d.externalId ?? d.findingId);
+    if (rounds.used < rounds.allowance) {
+      const rec2 = { reason: "rereview", tree_hash: cand.treeHash, candidate_id: cand.id, base: `review-fresh:${cand.id}`, superseded: [], noted: [] };
+      decide2(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: its one re-review dropped ${dropped.join(", ") || "a finding"}, which left no review of the tree with an open finding or an approval; a re-review approves nothing, so only an APPROVE from the fresh review clears the tree`, data: rec2 });
+      return freshReview(ctx, cand, rec2);
+    }
+    fresh = {
+      text: `; a re-review dropped ${dropped.join(", ") || "a finding"} and approves nothing, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
       outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
     };
   }
@@ -66577,16 +66629,132 @@ async function freshReview(ctx, cand, rec2) {
 function describeFreshReview(ctx, rec2, resolution, state) {
   const earlier = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
   const review = recordedFreshReview(ctx, rec2);
-  if (!review) return { text: `; the fresh review of the tree asked after review(s) ${rec2.superseded.join(", ")} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
+  const after = rec2.reason === "rereview" ? "a re-review dropped the last finding open on it" : `review(s) ${rec2.superseded.join(", ")}`;
+  if (!review) return { text: `; the fresh review of the tree asked after ${after} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
-  const why = rec2.reason === "shallow" ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
+  const why = rec2.reason === "rereview" ? "" : rec2.reason === "shallow" ? " approved it without inspecting anything" : ` raised only the note(s) ${earlier}`;
   const verdict = review.verdict === "APPROVE" ? "stands only for the review(s) it replaced" : `did not approve it either: ${named2}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, ${verdict}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after ${after}${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
   };
+}
+function reReviewRecords(ctx) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_KIND }).map((d) => d.data);
+}
+async function reReviewCarried(ctx, cand, going, state, recs) {
+  const asked = askedReReview(ctx, cand, recs);
+  if (asked) return reReview(ctx, cand, asked);
+  const rounds = ctx.ledger.state("review_rounds");
+  if (rounds.used >= rounds.allowance) return null;
+  const carried = new Set(reviewRepairs(ctx).filter((r) => r.tree_hash !== cand.treeHash).flatMap((r) => r.findings.map((f) => f.fingerprint)));
+  const d = going.find((x) => x.blocking && x.status !== "accepted" && carried.has(x.fingerprint) && !recs.some((r) => r.fingerprint === x.fingerprint));
+  if (!d) return null;
+  const all = [...state.findings, ...state.previousFindings];
+  const raisedBy = [...new Set(all.filter((f) => d.memberIds.includes(f.id)).map((f) => f.provider))];
+  const rec2 = {
+    fingerprint: d.fingerprint,
+    finding_id: d.findingId,
+    member_ids: d.memberIds,
+    external_id: d.externalId,
+    severity: d.severity,
+    claim: clipAtWord(d.claim, 500),
+    evidence: findingTexts(state).get(d.findingId)?.evidence ?? null,
+    raised_by: raisedBy,
+    tree_hash: cand.treeHash,
+    candidate_id: cand.id,
+    base: `review-finding:${cand.id}:${d.fingerprint}`
+  };
+  decide2(ctx, { id: `dec-${ctx.run.id}-rereview-${d.fingerprint}`, kind: REREVIEW_KIND, summary: `one re-review of finding ${findingLabel(ctx.db, { id: d.findingId, externalId: d.externalId })} (${d.severity}) on tree ${cand.treeHash.slice(0, 12)}: it was sent to repair from an earlier tree and no test or check settles it`, data: rec2 });
+  return reReview(ctx, cand, rec2);
+}
+async function reReviewer(ctx, rec2) {
+  const failures = listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_FAILED_KIND }).map((d) => d.data).filter((f) => f.fingerprint === rec2.fingerprint);
+  const id = `dec-${ctx.run.id}-rereview-select-${rec2.fingerprint}-${failures.length}`;
+  const prior = getDecision(ctx.db, id);
+  if (prior) return prior.data.reviewer;
+  const failed = Object.fromEntries([...activeReviewerFailures(ctx), ...failures].map((f) => [f.provider, f.reason]));
+  const others = { ...failed };
+  for (const p of rec2.raised_by) others[p] ??= "it raised the finding under re-review";
+  const env = await checkEnvironment(ctx);
+  const usable = (s) => s.decision === "SELECT" && s.needsApproval !== true ? s : null;
+  const other = usable(fallbackSelection(ctx, env, others));
+  const reviewer = other?.independent ? other : usable(fallbackSelection(ctx, env, failed));
+  const name = reReviewId(rec2);
+  const summary = !reviewer ? `no reviewer is left to re-review finding ${name}` : `re-reviewer of finding ${name}: ${reviewerLabel(reviewer)}${rec2.raised_by.includes(reviewer.provider) ? `, which raised it: no other reviewer is eligible` : `, not ${rec2.raised_by.join(", ")}, which raised it`}`;
+  decide2(ctx, { id, kind: REREVIEW_SELECT_KIND, summary, data: { fingerprint: rec2.fingerprint, reviewer } });
+  return reviewer;
+}
+async function reReview(ctx, cand, rec2) {
+  const name = reReviewId(rec2);
+  const answer = (a, summary) => void decide2(ctx, { id: answerId(ctx, rec2), kind: REREVIEW_ANSWER_KIND, summary, data: { fingerprint: rec2.fingerprint, ...a } });
+  const sel = await reReviewer(ctx, rec2);
+  if (!sel) {
+    answer({ worker_id: null, provider: null, verdict: null, findings: [] }, `finding ${name} keeps its status: no reviewer was left to re-review it`);
+    return resolveAndDecide(ctx, cand);
+  }
+  const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
+  const got = await obtain(ctx, {
+    base: `${rec2.base}~${sel.provider}`,
+    maxAttempts: MAX_REGENERATIONS,
+    what: `the ${sel.provider} re-reviewer of finding ${name}`,
+    // A re-reviewer that fails is chosen again without it; the tree's reviews stand as they are.
+    exhausted: async (failed) => {
+      const reason = `${failed.status}${failed.error ? `: ${clipAtWord(failed.error.replace(/\s+/g, " ").trim(), 300)}` : ""} after ${MAX_REGENERATIONS} attempt(s)`;
+      decide2(ctx, { kind: REREVIEW_FAILED_KIND, summary: `re-reviewer ${sel.provider} of finding ${name} failed: ${reason}; choosing again without it`, data: { fingerprint: rec2.fingerprint, provider: sel.provider, reason } });
+      return MOVED;
+    },
+    beforeStart: () => ctx.ledger.consume("review_rounds", 1),
+    request: (purpose) => ({ role: "reviewer", purpose, candidateId: cand.id, provider: sel.provider, model: sel.model, effort: reviewEffort(ctx, sel), cwd: checkout, readOnly: true, phase: "final", prompt: () => reviewerPrompt(ctx, cand, reviewDir, "general", null, sel.provider, rec2) }),
+    accept: (r) => {
+      try {
+        return ingestFindings({ output: r.structured, candidate: cand });
+      } catch (err) {
+        if (isOrbitError(err, "STALE_EVIDENCE")) throw new OrbitError("MALFORMED_OUTPUT", err.message);
+        throw err;
+      }
+    }
+  }).catch(async (err) => {
+    await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {
+    });
+    throw err;
+  });
+  if (!got.ok) return got.step;
+  await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {
+  });
+  const findings = got.value.findings.map((f) => ({ id: f.externalId, severity: f.severity, claim: clipAtWord(f.claim, 300), evidence: clipAtWord(f.evidence, 500) }));
+  answer({ worker_id: got.worker.id, provider: got.worker.provider, verdict: got.value.verdict, findings }, `re-review of finding ${name} by ${got.worker.provider}: ${got.value.verdict}`);
+  return resolveAndDecide(ctx, cand);
+}
+function settleReReviews(ctx, resolution, recs) {
+  const present = /* @__PURE__ */ new Set();
+  const dropped = /* @__PURE__ */ new Set();
+  for (const rec2 of recs) {
+    const answer = rec2.tree_hash === resolution.treeHash ? reReviewAnswer(ctx, rec2) : null;
+    if (!answer || answer.verdict === null) continue;
+    const gone = answer.verdict === "APPROVE" && answer.findings.every((f) => f.severity === "info");
+    (gone ? dropped : present).add(rec2.fingerprint);
+    const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
+    for (const d of resolution.dispositions) {
+      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id))) continue;
+      if (!UNRESOLVED_FINDING_STATUSES.includes(d.status)) continue;
+      if (d.memberIds.some((id) => !rec2.member_ids.includes(id))) continue;
+      if (!gone) {
+        d.disagreement = null;
+        d.reason += `; its one ${who} found it still present (${answer.verdict})`;
+        continue;
+      }
+      d.status = "rejected";
+      d.blocking = false;
+      d.evidenceRefs = [...d.evidenceRefs, `rereview:${answer.worker_id}`];
+      const evidence = answer.findings.find((f) => f.id === reReviewId(rec2))?.evidence ?? "it approved without raising it again";
+      d.reason = `dropped: its one ${who}, told it by id with the candidate's diff and evidence, found the defect gone: ${clipAtWord(evidence, 300)}`;
+    }
+  }
+  refreshLists(resolution);
+  return { present, gone: dropped };
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -66867,6 +67035,10 @@ ${a.record.reason}`));
       d.reason = `the Inquisition (inquiry ${key2}) neither supported nor refuted it; a repair attempt runs its discriminating test: the reviewer's validation fails on this tree and is fixed, or passes and refutes it`;
     }
   }
+  refreshLists(resolution);
+  return undecided;
+}
+function refreshLists(resolution) {
   resolution.accepted = resolution.dispositions.filter((d) => d.status === "accepted");
   resolution.rejected = resolution.dispositions.filter((d) => d.status === "rejected");
   resolution.blocking = resolution.dispositions.filter((d) => d.blocking);
@@ -66878,7 +67050,6 @@ ${a.record.reason}`));
       c.blocking = d.blocking;
     }
   }
-  return undecided;
 }
 function markRepaired(resolution, repaired, repairedBy) {
   for (const d of resolution.dispositions) {
@@ -66899,7 +67070,7 @@ function blockedCriteriaIn(d, t, blocked) {
   const text2 = [d.claim, d.location ?? "", t?.evidence ?? "", t?.suggestedValidation ?? ""].join("\n");
   return blocked.filter((id) => namesId(text2, id));
 }
-function stalledReviewRepair(ctx, cand, going) {
+function stalledReviewRepair(ctx, cand, going, stillPresent) {
   const latest = currentAttempt(ctx);
   if (latest === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
   const resumedSince = (id) => ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, id) !== void 0;
@@ -66911,7 +67082,7 @@ function stalledReviewRepair(ctx, cand, going) {
   }
   const last = ctx.db.get("SELECT id, data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT);
   const prev = last?.data_json ? JSON.parse(last.data_json) : null;
-  if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id)) return null;
+  if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id) || going.some((d) => stillPresent.has(d.fingerprint))) return null;
   const asked = prev.findings.filter((f) => going.some((d) => d.fingerprint === f.fingerprint));
   const shared = (id) => prev.findings.filter((f) => f.external_id === id).length > 1;
   const namesUniquely = (text2, f) => namesId(text2, f.fingerprint) || typeof f.external_id === "string" && f.external_id.length > 0 && !shared(f.external_id) && namesId(text2, f.external_id);
@@ -67145,7 +67316,7 @@ function inspectionText(provider) {
   if (family === "muse") return "Inspect the checkout with your file reading and search tools; the session is read-only, so never try to write, install anything or reach the network.";
   return "Inspect the checkout with Read, Grep and Glob; you have no shell.";
 }
-function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, provider = null) {
+function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, provider = null, reReview2 = null) {
   const text2 = readText(join69(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
@@ -67154,9 +67325,12 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, p
     inspectionText(provider),
     ...focus === "general" ? [] : [FOCUS_TEXT[focus]],
     ...fresh ? freshReviewText(fresh) : [],
+    ...reReview2 ? reReviewText(reReview2) : [],
     `Echo the candidate revision ${cand.commitSha} in candidate_revision.`
   ].join("\n");
   const noted = fresh && fresh.noted.length > 0 ? [{ label: "findings noted in the earlier review", content: fresh.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity}): ${n2.claim}`).join("\n") }] : [];
+  if (reReview2) noted.push({ label: "the finding under re-review", content: `${reReviewId(reReview2)} (${reReview2.severity}): ${reReview2.claim}${reReview2.evidence ? `
+Evidence given: ${reReview2.evidence}` : ""}` });
   return renderWorkerPrompt({
     role: "reviewer",
     task,
@@ -67169,6 +67343,7 @@ function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, p
   });
 }
 function freshReviewText(rec2) {
+  if (rec2.reason === "rereview") return [];
   if (rec2.reason === "shallow") {
     return [
       `This is a fresh review of a tree that an earlier review (${rec2.superseded.join(", ")}) approved from the review packet alone, without opening any file or running any command.`,
@@ -67186,6 +67361,14 @@ function freshReviewText(rec2) {
     `Whether the new tests fail on the base revision is Orbit's to establish through verification.fail_before (under advisory and off it is reported to the person). A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual. A finding that disputes only that promise uses the category ${EVIDENCE_CLASSIFICATION_CATEGORY}.`
   ];
 }
+function reReviewText(rec2) {
+  const id = reReviewId(rec2);
+  return [
+    `This is a re-review of one finding, ${id} (${rec2.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
+    "Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout. Your answer decides only this finding: it neither approves the candidate nor raises other findings, so do not report any.",
+    `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id} whose evidence names what in the candidate shows that it is gone.`
+  ];
+}
 async function prepareReview(ctx, cand, provider) {
   const reviewDir = join69(ctx.runDir, "reviews", String(cand.seq));
   const checkout = join69(runWorktreeRoot(ctx), `review-${cand.seq}`);
@@ -67193,7 +67376,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync49(checkout) || readdirSync15(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
+var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, REREVIEW_SELECT_KIND, REREVIEW_FAILED_KIND, REREVIEW_ANSWER_KIND, reReviewId, answerId, reReviewAnswer, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -67248,6 +67431,14 @@ var init_reviewing = __esm({
     };
     FRESH_REVIEW_KIND = "review.fresh";
     SHALLOW_REVIEW_EFFORT = "high";
+    REREVIEW_KIND = "review.finding-rereview";
+    REREVIEW_SELECT_KIND = "review.finding-rereview.select";
+    REREVIEW_FAILED_KIND = "review.finding-rereview.failed";
+    REREVIEW_ANSWER_KIND = "review.finding-rereview.answer";
+    reReviewId = (rec2) => rec2.external_id ?? "FINDING-1";
+    answerId = (ctx, rec2) => `dec-${ctx.run.id}-rereview-answer-${rec2.fingerprint}`;
+    reReviewAnswer = (ctx, rec2) => getDecision(ctx.db, answerId(ctx, rec2))?.data ?? null;
+    askedReReview = (ctx, cand, recs) => recs.find((r) => r.tree_hash === cand.treeHash && !reReviewAnswer(ctx, r));
     REVIEW_REPAIR_EVENT = "review.repair";
     UNDECIDED = /\b(ambiguous|ambiguity|unclear|unspecified|not specified|undecided|undefined behaviou?r|product decision|needs? a decision|not decided)\b/i;
     NOT_APART = "the repair's test passes on the pre-repair tree too, so it does not tell the trees apart";
@@ -69451,7 +69642,7 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? "");
       const next = safeContinue(db, run.id, ctx);
       const fresh = safeNewRunNeeded(db, run);
-      const offered = heldVerifiedCandidate(run);
+      const offered = heldVerifiedCandidate(run, { exhausted: true });
       if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would continue the run under the limits that stopped it`);
       else if (open2.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
@@ -74945,7 +75136,7 @@ function awaitedMerges(l) {
 }
 function describePlan(l, q) {
   const lines = [];
-  const name = (n2, title) => `#${n2} ${flat(title).slice(0, 80)}`;
+  const name = (n2, title2) => `#${n2} ${flat(title2).slice(0, 80)}`;
   lines.push(l.plan.frontier.length === 0 ? "frontier: none" : `frontier (${l.plan.frontier.length}, in priority order):`);
   for (const f of l.plan.frontier) lines.push(`  ${name(f.number, f.title)}`);
   if (l.plan.held.length > 0) {
@@ -75180,7 +75371,8 @@ async function workIssue(ctx, q, record, issue, o) {
       if (result2.terminated) return { ...entry, outcome: "interrupted", reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
       const ended = db.get("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
       const outOfMoney = ended === "cost_usd" || ended === null && result2.run.failureClass === "budget";
-      if ((result2.run.state === "EXHAUSTED" || held) && capped && outOfMoney) {
+      const ranOut = heldVerifiedCandidate(result2.run, { exhausted: true }) !== null;
+      if ((result2.run.state === "EXHAUSTED" || ranOut) && capped && outOfMoney) {
         return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ""}` };
       }
       if (result2.run.state === "SUCCEEDED") {
@@ -75755,7 +75947,7 @@ function workerSummary(w) {
 }
 function stageOf(db, run) {
   if (!run.resumeState || !(run.state === "INQUISITION" || run.state === "BLOCKED" || run.state === "RECOVERING")) return run.state;
-  const offered = heldVerifiedCandidate(run);
+  const offered = heldVerifiedCandidate(run, { exhausted: true });
   if (offered) return `${run.state} (holding verified candidate ${offered.seq}: deliver it or discard it)`;
   const fresh = run.state === "BLOCKED" ? newRunNeeded(db, run) : null;
   return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;

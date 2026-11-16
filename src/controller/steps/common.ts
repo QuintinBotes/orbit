@@ -94,7 +94,8 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  *
  * A run that would end EXHAUSTED while it holds a candidate that passed verification ends BLOCKED instead and offers
  * that candidate (issue #169, verified-candidate.ts): the outcome names it beside `decided: 'EXHAUSTED'`, and the reason
- * says why the run stopped, what it holds, and how to deliver or discard it.
+ * says why the run stopped, what it holds, and how to deliver or discard it. A run that stops BLOCKED while it holds one
+ * offers it too (`decided: 'BLOCKED'`), and the block keeps its own way forward.
  */
 export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
   let advice = '';
@@ -113,13 +114,15 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note(ctx, 'workers.stop-failed', { workers: unstoppable });
   ctx.refresh();
-  // After the cancellation is read: a cancelled run is offered nothing, so it records the EXHAUSTED the step decided.
-  const offered = to === 'EXHAUSTED' && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  // After the cancellation is read: a cancelled run is offered nothing, so it records the end the step decided. A run that
+  // stops BLOCKED holding a verified candidate offers it too, beside the block's own way forward.
+  // Only from a verified policy: a block on a tampered or unreadable snapshot reads nothing from it, the offered commands included.
+  const offered = (to === 'EXHAUSTED' || to === 'BLOCKED') && !ctx.run.cancelRequested && ctx.policyVerified ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
   if (offered) {
     // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
-    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    advice = `${heldSentence(offered)} ${offerAdvice(offered, to === 'EXHAUSTED')}`;
     reason = withSentence(reason, advice);
-    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: 'EXHAUSTED', verified_candidate: offered } };
+    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: to, verified_candidate: offered } };
     to = 'BLOCKED';
   }
   const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };

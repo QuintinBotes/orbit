@@ -13,7 +13,7 @@ const { complete, deliveringStep, githubClient, githubClientFor, releaseDelivere
 const { OrbitError } = await import('../../../src/core/errors.ts');
 const { snapshotCandidate } = await import('../../../src/evidence/candidate.ts');
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
-const { getCandidate } = await import('../../../src/evidence/store.ts');
+const { getCandidate, setCandidateStatus } = await import('../../../src/evidence/store.ts');
 const { insertQuestion } = await import('../../../src/inquisition/store.ts');
 const { listDecisions } = await import('../../../src/storage/decisions.ts');
 const { recordReview } = await import('../../../src/review/store.ts');
@@ -237,7 +237,8 @@ describe('a delivery mode', () => {
     hooks.deliver.mockRejectedValue(new OrbitError('DELIVERY_FAILED', 'the remote rejected the push', { definitive: true }));
     await run();
     expect(state()).toBe('BLOCKED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toBe('delivery failed: the remote rejected the push');
+    // Nothing was delivered, so the block offers the verified candidate beside its own way forward (#169).
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^delivery failed: the remote rejected the push\. The run holds a verified candidate: candidate 1 /);
     cleanup();
     await delivering();
     lab.deps.github = () => ({}) as never;
@@ -287,7 +288,12 @@ describe('the GitHub client', () => {
 });
 
 describe('releaseDelivered', () => {
-  const release = () => setup({ mode: 'release', tweak: (c) => void ((c as unknown as { release: unknown }).release = { environments: { staging: {}, production: {} } }) });
+  // As in a run: release follows delivery, which marked the candidate delivered (a block then offers no candidate, #169).
+  const release = async () => {
+    const s = await setup({ mode: 'release', tweak: (c) => void ((c as unknown as { release: unknown }).release = { environments: { staging: {}, production: {} } }) });
+    setCandidateStatus(lab.db, s.cand.id, 'DELIVERED');
+    return s;
+  };
   const record = (cand: CandidateRecord) => ({ commit: cand.commitSha, tree: cand.treeHash, branch: `orbit/${lab.runId}`, pr: { number: 7 } });
   const released = (over: object = {}) => ({ status: 'released', pending: null, merge: { number: 7, headSha: 'a'.repeat(40), mergeCommitSha: 'b'.repeat(40), method: 'squash' }, mergeSkipped: null, deploy: null, deploys: [{ environment: 'staging', sha: 'b'.repeat(40), branch: 'main' }], deploySkipped: null, actions: [], ...over });
 
