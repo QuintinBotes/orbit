@@ -32,6 +32,8 @@ export interface DraftContractInput {
   policyHash?: string;
   /** The release environment the run names (`orbit run --environment`); carried into `delivery.environment`. */
   environment?: string | null;
+  /** The issue the run was started from; recorded as the contract's `source`. */
+  source?: GoalContract['source'] | null;
 }
 
 export type DraftAdjustmentKind = 'check-dropped' | 'check-added' | 'path-dropped' | 'path-narrowed' | 'path-added' | 'topic-added' | 'decision-recorded' | 'authority-mismatch' | 'practice-selected';
@@ -211,6 +213,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
       merge: false,
       ...(input.environment ? { environment: input.environment } : {}),
     },
+    ...(input.source ? { source: input.source } : {}),
     policy_hash: input.policyHash ?? policyHashOf(snapshot),
     baseline_revision: input.baselineRevision,
     escalation: { material_topics: topics },

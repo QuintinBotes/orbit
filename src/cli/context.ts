@@ -22,6 +22,8 @@ import type { ControllerOptions } from '../controller/loop.ts';
 import type { CommandRunner } from '../controller/service.ts';
 import type { EvalRunner } from '../knowledge/evals.ts';
 import type { NotifyDeps } from '../notify/channels.ts';
+import type { IssueReader } from '../intake/github.ts';
+import type { OrbitConfig } from '../policy/types.ts';
 import { createIo, type Io } from './io.ts';
 import type { AdmissionCheck } from './admission.ts';
 
@@ -52,6 +54,8 @@ export interface CliSeams {
   admission?: AdmissionCheck;
   /** Notification and comment collaborators for `orbit notify test` and the remote answers `orbit resume` reads; tests inject fakes. */
   notify?: Partial<NotifyDeps>;
+  /** Reads the issue `orbit run --issue` and `orbit spec check` name; tests inject a fake. */
+  issues?: (repoRoot: string, config: OrbitConfig) => Promise<IssueReader>;
 }
 
 export interface CliContext {

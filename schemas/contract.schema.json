@@ -95,6 +95,19 @@
         "environment": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" }
       }
     },
+    "source": {
+      "type": "object",
+      "description": "Where the goal came from when it was not typed: the issue, the hash of the body the run was started with and the time of the issue's last update then. A record only; it grants nothing.",
+      "additionalProperties": false,
+      "required": ["kind", "repo", "number", "body_sha256", "updated_at"],
+      "properties": {
+        "kind": { "const": "github-issue" },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "number": { "type": "integer", "minimum": 1 },
+        "body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "updated_at": { "type": "string", "maxLength": 40 }
+      }
+    },
     "policy_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "baseline_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "escalation": {
