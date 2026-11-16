@@ -95,12 +95,13 @@ async function settle(max = 12) {
 /**
  * A reviewer that approves, except in a finding's one re-review (ADR 0015, amendment of 2026-11-16), where it answers by
  * the finding's id: `gone` (APPROVE with an info finding giving its evidence), `other` (REPAIR_REQUIRED naming only another
- * finding) or, by default, still present (the finding raised again).
+ * finding) or, by default, still present (the finding raised again). A full review raises `full`, and approves without any.
  */
-function answers(how: Record<string, 'gone' | 'other'> = {}): NonNullable<Setup['reviewer']> {
+function answers(how: Record<string, 'gone' | 'other'> = {}, full: IngestedFinding[] = []): NonNullable<Setup['reviewer']> {
   return ({ spec }) => {
     const candidate_revision = spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
     const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(spec.prompt)?.[1];
+    if (!id && full.length > 0) return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: full.map((x) => ({ id: x.externalId, severity: x.severity, category: x.category, location: x.location, claim: x.claim, evidence: x.evidence, suggested_validation: x.suggestedValidation })) });
     if (!id) return okResult({ verdict: 'APPROVE', candidate_revision, findings: [] });
     const f = (fid: string, severity: string, claim: string) => ({ id: fid, severity, category: 'correctness', location: 'apps/calc.mjs:2', claim, evidence: `tests/mul.test.mjs:3 covers ${fid}`, suggested_validation: null });
     if (how[id] === 'gone') return okResult({ verdict: 'APPROVE', candidate_revision, findings: [f(id, 'info', `${id} no longer holds`)] });
@@ -617,6 +618,24 @@ describe("a carried finding's one re-review (ADR 0015, amendment of 2026-11-16)"
     const fresh = reviewer.specs.at(-1)!.prompt;
     expect(fresh).not.toContain('This is a re-review');
     expect(fresh).not.toContain('This is a fresh review');
+  });
+
+  it('a dropped finding the fresh review of the tree raises again is a new claim: it takes the normal paths, to repair', async () => {
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    // Attempt 2 names a test for TEST-1, so sending it to repair again is no non-progress (#156).
+    const named = { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] }, text: null, error: null, exitCode: 0, usage: USAGE, durationMs: 1 } } as Parameters<typeof finishWorker>[2];
+    const { cand, repo } = await setup({ reviewer: answers({ 'TEST-1': 'gone' }, [finding('TEST-1')]) });
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    await repairAttempt(cand.parentSha, repo, 2, named, [finding('TEST-1')]);
+    await settle(20);
+    expect(decisions('review.fresh')).toHaveLength(1);
+    expect(state()).toBe('REPAIRING');
+    const test1 = listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1');
+    // Dropped as the re-review answered; raised again by the fresh review, the new finding is open and goes to repair.
+    expect(test1.map((f) => f.status)).toEqual(['rejected', 'rejected', 'claim_pending']);
+    const brief = JSON.parse(readFileSync(briefPath(lab.ctx(), 3), 'utf8')) as { refs: string[] };
+    expect(brief.refs).toContain(test1[2]!.id);
   });
 
   it("dropping the tree's only finding with no review round left ends BLOCKED offering the verified candidate", async () => {

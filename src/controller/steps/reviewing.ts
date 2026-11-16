@@ -926,6 +926,9 @@ function settleReReviews(ctx: RunContext, resolution: Resolution, recs: readonly
     for (const d of resolution.dispositions) {
       if (d.fingerprint !== rec.fingerprint && !d.memberIds.some((id) => rec.member_ids.includes(id))) continue;
       if (!(UNRESOLVED_FINDING_STATUSES as readonly string[]).includes(d.status)) continue;
+      // The answer is about the findings it was asked about. One a review raised after it (the fresh review of the tree
+      // raising the defect again) is a new claim on the tree, which takes the normal paths.
+      if (d.memberIds.some((id) => !rec.member_ids.includes(id))) continue;
       if (!gone) {
         // The re-review settled whether it holds: another review's approval is no dispute for the Inquisition; it goes to repair.
         d.disagreement = null;

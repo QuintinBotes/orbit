@@ -34046,9 +34046,9 @@ function checkSpec(body) {
       if (!m) continue;
       const number = Number(m[1]);
       const priority = PRIORITY.exec(m[2])?.[1]?.toUpperCase() ?? null;
-      const title = m[2].replace(/\(\s*Priority\b[^()]*\)\s*$/i, "").trim() || `story ${number}`;
+      const title2 = m[2].replace(/\(\s*Priority\b[^()]*\)\s*$/i, "").trim() || `story ${number}`;
       const [a, b] = sectionRange(headings, h, lines.length);
-      const name = `User Story ${number} (${quote(title)})`;
+      const name = `User Story ${number} (${quote(title2)})`;
       const why = labelled(lines, a, b, /^Why this priority\s*:?\s*(.*)$/i);
       const independentTest = labelled(lines, a, b, /^Independent Test\s*:?\s*(.*)$/i);
       if (stories.some((s) => s.number === number)) problems.push(`${name}: the story number ${number} is used twice`);
@@ -34062,13 +34062,13 @@ function checkSpec(body) {
       for (const item of items) {
         const statement = plain(item.text);
         if (isGivenWhenThen(statement)) {
-          scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
+          scenarios.push({ key: `S${number}-${scenarios.length + 1}`, story: number, storyTitle: title2, statement: statement.length > SCENARIO_MAX_CHARS ? `${statement.slice(0, SCENARIO_MAX_CHARS)}...` : statement });
         } else if (start !== a && item.ordered) {
           problems.push(`${name}: the acceptance scenario on line ${item.index + 1} is not a Given/When/Then line: "${quote(statement)}"`);
         }
       }
       if (scenarios.length === 0) problems.push(`${name} has no Given/When/Then line`);
-      stories.push({ number, title, priority, why: why || null, independentTest: independentTest || null, scenarios });
+      stories.push({ number, title: title2, priority, why: why || null, independentTest: independentTest || null, scenarios });
     }
     if (stories.length === 0) problems.push('"User Scenarios & Testing" has no user story (a heading such as "### User Story 1 - Title (Priority: P1)")');
   }
@@ -52313,14 +52313,24 @@ var init_run_refs = __esm({
 
 // src/controller/verified-candidate.ts
 import { join as join43 } from "node:path";
+function shellWord2(v) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
+}
+function title(runId, seq2) {
+  const t = `Orbit run ${runId}: verified candidate ${seq2}`;
+  return /^[A-Za-z0-9_.-]+$/.test(runId) ? `"${t}"` : shellWord2(t);
+}
 function findVerifiedCandidate(db, run, snapshot2) {
   const candidates = listCandidates(db, run.id);
   if (candidates.some((c) => c.status === "DELIVERED")) return null;
+  if (db.get("SELECT 1 AS x FROM actions WHERE run_id = ? AND kind = 'push' AND state = 'SUCCEEDED'", run.id)) return null;
   for (const cand of candidates.reverse()) {
     const ev = currentEvidenceReport(db, run.id, cand.id);
     if (ev?.verdict !== "PASS") continue;
-    const rounds = new Map(listReviews(db, run.id, { includeInvalidated: true }).map((r) => [r.id, r.round]));
+    const reviews = listReviews(db, run.id, { includeInvalidated: true });
+    const rounds = new Map(reviews.map((r) => [r.id, r.round]));
     const open2 = listFindings(db, run.id, { statuses: OPEN_STATUSES }).map((f) => ({ id: f.externalId ?? f.id, review_round: rounds.get(f.reviewId) ?? null, severity: f.severity, status: f.status, claim: clipAtWord(f.claim, 300) }));
+    const approved = reviews.find((r) => r.treeHash === cand.treeHash && r.verdict === "APPROVE" && r.invalidatedAt === null) ?? null;
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot2.config.repository;
     const branch = run.branch ?? `${prefix}${run.id}`;
     const body = `.orbit/runs/${run.id}/${VERIFIED_CANDIDATE_BODY}`;
@@ -52334,8 +52344,9 @@ function findVerifiedCandidate(db, run, snapshot2) {
       checks_passed: ev.report.checks.filter((c) => c.status === "PASSED").map((c) => c.id),
       open_findings: open2,
       branch,
-      deliver_command: `git push ${remote} ${cand.commitSha}:refs/heads/${branch} && gh pr create --draft --base ${base} --head ${branch} --title "Orbit run ${run.id}: verified candidate ${cand.seq}" --body-file ${body}`,
-      discard_command: `orbit cancel ${run.id}`
+      approved_by: approved?.id ?? null,
+      deliver_command: `git push ${shellWord2(remote)} ${shellWord2(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord2(base)} --head ${shellWord2(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord2(body)}`,
+      discard_command: `orbit cancel ${shellWord2(run.id)}`
     };
   }
   return null;
@@ -52365,7 +52376,7 @@ function writeOfferBody(runDir2, runId, vc, contract, stopped) {
     contract ? `Orbit run ${runId}: ${contract.objective}` : `Orbit run ${runId}`,
     "",
     `Candidate ${vc.seq} (commit ${vc.commit}) passed verification, then the run stopped before delivery: ${clipAtWord(stopped, 300)}`,
-    "No review approved it: a person chose to deliver it with its open findings.",
+    vc.approved_by ? `Review ${vc.approved_by} approved its tree; Orbit did not deliver it, and a person chose to deliver it with any open findings below.` : "No review approved it: a person chose to deliver it with its open findings.",
     "",
     `Checks passed: ${vc.checks_passed.join(", ") || "none"}`,
     "",
@@ -56974,8 +56985,8 @@ function selectionSignals(config) {
 }
 function walkSuite(suite, parents, isFile, out) {
   if (!isObj(suite)) return;
-  const title = str6(suite.title);
-  const path = isFile || title === null || title === "" ? parents : [...parents, title];
+  const title2 = str6(suite.title);
+  const path = isFile || title2 === null || title2 === "" ? parents : [...parents, title2];
   for (const spec of arr(suite.specs)) {
     if (!isObj(spec)) continue;
     for (const test of arr(spec.tests)) {
@@ -57626,19 +57637,19 @@ function tail(text2, max = 600) {
 function buildJourney(test, ctx, checkDir2, cwd) {
   const { checkoutDir } = ctx;
   const file = relativeTo2(test.file, checkoutDir);
-  const title = test.titlePath[test.titlePath.length - 1] ?? "";
+  const title2 = test.titlePath[test.titlePath.length - 1] ?? "";
   const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
-  const slug2 = `${sha256(id).slice(0, 8)}-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const slug2 = `${sha256(id).slice(0, 8)}-${title2.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
   const artifactDir = join52(checkDir2, "artifacts", slug2);
   const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join52(checkDir2, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
   const rootDir = checkoutDir;
   const error = firstError && status2 !== "PASSED" ? describeError(firstError, rootDir) : null;
   const projectFlag = `--project=${test.projectName}`;
-  const grep = ["-g", escapeRegExp4(title)];
+  const grep = ["-g", escapeRegExp4(title2)];
   const reproFlags = ["--update-snapshots=none", "--trace=retain-on-failure", "--reporter=list", projectFlag, ...grep];
   const reproArgv = buildArgv(ctx.check, reproFlags);
   const reproduction = {
@@ -57651,7 +57662,7 @@ function buildJourney(test, ctx, checkDir2, cwd) {
   const browser = declared ? { name: declared.name, version: declared.version } : fallbackBrowser(checkoutDir, ctx.input.uiConfig.browsers);
   return {
     id,
-    title,
+    title: title2,
     titlePath: test.titlePath,
     file,
     line: test.line,
@@ -60702,7 +60713,7 @@ async function finishRun(ctx, to, reason, opts = {}) {
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note2(ctx, "workers.stop-failed", { workers: unstoppable });
   ctx.refresh();
-  const offered = (to === "EXHAUSTED" || to === "BLOCKED") && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  const offered = (to === "EXHAUSTED" || to === "BLOCKED") && !ctx.run.cancelRequested && ctx.policyVerified ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
   if (offered) {
     advice = `${heldSentence(offered)} ${offerAdvice(offered, to === "EXHAUSTED")}`;
     reason = withSentence(reason, advice);
@@ -61975,13 +61986,13 @@ async function deliver(input) {
     prSkipped = prAuth.reason;
   } else {
     requireAllowed(apiAuth, "reaching the pull request API");
-    const title = redact(firstLine(input.report.title || run.goal || `Orbit run ${run.id}`)).slice(0, TITLE_MAX) || `Orbit run ${run.id}`;
+    const title2 = redact(firstLine(input.report.title || run.goal || `Orbit run ${run.id}`)).slice(0, TITLE_MAX) || `Orbit run ${run.id}`;
     const body = pullRequestBody({ run, report: input.report, commit, tree, evidence: input.evidence });
     const draft = prMode === "draft";
     await ledger.performAction(
       { runId: run.id, kind: "pr_create", idempotencyKey: `deliver:${run.id}:pr-create:${branch}`, target: { head: branch, base: baseBranch, draft } },
       {
-        execute: async () => await client.findPullRequest(branch) ?? client.createPullRequest({ head: branch, base: baseBranch, title, body, draft }),
+        execute: async () => await client.findPullRequest(branch) ?? client.createPullRequest({ head: branch, base: baseBranch, title: title2, body, draft }),
         reconcile: () => client.findPullRequest(branch)
       },
       { authorization: prAuth, precheck: gate }
@@ -61994,17 +62005,17 @@ async function deliver(input) {
       throw new OrbitError("DELIVERY_FAILED", `pull request #${pr.number} targets ${pr.baseRefName}, not ${baseBranch}`, { number: pr.number, definitive: true });
     }
     if (pr.isDraft !== draft) warnings.push(`pull request #${pr.number} is ${pr.isDraft ? "a draft" : "ready for review"}; the configured mode is ${prMode}`);
-    if (pr.title !== title || pr.body !== body) {
+    if (pr.title !== title2 || pr.body !== body) {
       const number = pr.number;
       const updated = await ledger.performAction(
         // Keyed by the content too: the same commit re-delivered with a newer report is a new update, not a key collision.
-        { runId: run.id, kind: "pr_update", idempotencyKey: `deliver:${run.id}:pr-update:${number}:${commit}:${sha256(`${title}
-${body}`).slice(0, 16)}`, target: { number, title, bodyLength: body.length }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
+        { runId: run.id, kind: "pr_update", idempotencyKey: `deliver:${run.id}:pr-update:${number}:${commit}:${sha256(`${title2}
+${body}`).slice(0, 16)}`, target: { number, title: title2, bodyLength: body.length }, candidateId: candidate.id, treeHash: tree, commitSha: commit },
         {
-          execute: () => client.updatePullRequest(number, { title, body }),
+          execute: () => client.updatePullRequest(number, { title: title2, body }),
           reconcile: async () => {
             const now = await client.findPullRequest(branch);
-            return now && now.title === title && now.body === body ? now : null;
+            return now && now.title === title2 && now.body === body ? now : null;
           }
         },
         { authorization: prAuth, precheck: gate }
@@ -66518,6 +66529,7 @@ function settleReReviews(ctx, resolution, recs) {
     for (const d of resolution.dispositions) {
       if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id))) continue;
       if (!UNRESOLVED_FINDING_STATUSES.includes(d.status)) continue;
+      if (d.memberIds.some((id) => !rec2.member_ids.includes(id))) continue;
       if (!gone) {
         d.disagreement = null;
         d.reason += `; its one ${who} found it still present (${answer.verdict})`;

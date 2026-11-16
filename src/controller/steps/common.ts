@@ -116,7 +116,8 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   ctx.refresh();
   // After the cancellation is read: a cancelled run is offered nothing, so it records the end the step decided. A run that
   // stops BLOCKED holding a verified candidate offers it too, beside the block's own way forward.
-  const offered = (to === 'EXHAUSTED' || to === 'BLOCKED') && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  // Only from a verified policy: a block on a tampered or unreadable snapshot reads nothing from it, the offered commands included.
+  const offered = (to === 'EXHAUSTED' || to === 'BLOCKED') && !ctx.run.cancelRequested && ctx.policyVerified ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
   if (offered) {
     // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
     advice = `${heldSentence(offered)} ${offerAdvice(offered, to === 'EXHAUSTED')}`;

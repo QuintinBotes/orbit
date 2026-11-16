@@ -123,6 +123,8 @@ and nothing that could close the finding (#156, #144 D3). The maintainer decided
    included. When the drop leaves no open finding and no approval on the tree, the tree gets one full fresh review,
    the normal review of a candidate and a review round under the usual limits, whose APPROVE alone clears it and whose
    findings take the normal paths. With no review round left the run ends BLOCKED, offering the verified candidate.
+   The answer is about the findings it was asked about: a review that raises the defect again afterwards (the fresh
+   review, say) makes a new finding, which the drop does not touch and which takes the normal paths.
 4. Still present (any other answer, whether or not it names the finding): the finding's reason says so and it goes
    to repair as usual, within the review round and attempt budgets. A re-review that confirms the finding is new
    information, so the #162 stop does not end the run on this tree. Since it settled whether the finding holds,

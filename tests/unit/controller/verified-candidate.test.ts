@@ -5,11 +5,13 @@
  * the one that discards it.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { finishRun } from '../../../src/controller/steps/common.ts';
-import { VERIFIED_CANDIDATE_BODY } from '../../../src/controller/verified-candidate.ts';
+import { step } from '../../../src/controller/steps/index.ts';
+import { findVerifiedCandidate, VERIFIED_CANDIDATE_BODY } from '../../../src/controller/verified-candidate.ts';
 import { setCandidateStatus } from '../../../src/evidence/store.ts';
 import type { FinalReport } from '../../../src/controller/report.ts';
 import { addCandidate, addEvidence, addReview, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
@@ -157,5 +159,60 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     expect(outcomeOf()).toMatchObject({ state: 'CANCELLED', decided: 'EXHAUSTED' });
     expect(outcomeOf().verified_candidate).toBeUndefined();
     expect(getRun(lab.db, lab.runId).outcomeReason).not.toContain(VERIFIED_CANDIDATE_BODY);
+  });
+});
+
+describe('what the offer may say, and when it is made', () => {
+  it('a block on a tampered policy snapshot offers nothing: no command is built from it, and the run blocks rather than throw', async () => {
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    addEvidence(lab, addCandidate(lab), { checks: PASSED });
+    const policy = getRun(lab.db, lab.runId).policyPath;
+    chmodSync(policy, 0o644);
+    writeFileSync(policy, '{}');
+    expect(await step(lab.deps, lab.runId, new AbortController().signal)).toEqual({ progressed: true, done: true });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.state).toBe('BLOCKED');
+    expect(run.outcomeReason).toMatch(/^POLICY_TAMPERED: /);
+    expect(run.outcomeReason).not.toContain('verified candidate');
+    expect(outcomeOf().verified_candidate).toBeUndefined();
+  });
+
+  it('every policy value in the offered commands is one shell word: a remote or base branch holding a command runs nothing', async () => {
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    const cand = addCandidate(lab);
+    addEvidence(lab, cand, { checks: PASSED });
+    const marker = join(lab.base, 'pwned');
+    const snap = lab.ctx().snapshot;
+    const repository = { ...snap.config.repository, remote: `origin; touch ${marker}`, base_branch: `main$(touch ${marker})` };
+    const vc = findVerifiedCandidate(lab.db, getRun(lab.db, lab.runId), { ...snap, config: { ...snap.config, repository } })!;
+    expect(vc.deliver_command.startsWith(`git push 'origin; touch ${marker}' ${cand.commitSha}:refs/heads/orbit/${lab.runId} && `)).toBe(true);
+    expect(vc.deliver_command).toContain(`--base 'main$(touch ${marker})' `);
+    // Run through a shell with printf in place of git and gh: each value comes back as one argument and nothing else runs.
+    const words = execFileSync('sh', ['-c', vc.deliver_command.replace(/^git push /, "printf '%s\\n' ").replace(' && gh pr create ', " && printf '%s\\n' ")], { cwd: lab.base, encoding: 'utf8' }).split('\n');
+    expect(words).toContain(`origin; touch ${marker}`);
+    expect(words).toContain(`main$(touch ${marker})`);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('a run that pushed its delivery commit offers no candidate when a later step of the delivery fails: that push would not fast-forward', async () => {
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    const cand = addCandidate(lab);
+    addEvidence(lab, cand, { checks: PASSED });
+    lab.db.run("INSERT INTO actions (id, run_id, kind, idempotency_key, target_json, candidate_id, tree_hash, commit_sha, state, created_at, updated_at) VALUES ('act-1', ?, 'push', 'deliver:push', '{}', ?, ?, ?, 'SUCCEEDED', 1, 1)", lab.runId, cand.id, cand.treeHash, 'd'.repeat(40));
+    await finishRun(lab.ctx(), 'BLOCKED', 'delivery failed: pull request #7 for orbit/x is CLOSED; Orbit does not reopen or replace it');
+    expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
+    expect(outcomeOf().verified_candidate).toBeUndefined();
+    expect(existsSync(join(lab.ctx().runDir, VERIFIED_CANDIDATE_BODY))).toBe(false);
+  });
+
+  it('the pull request body says a review approved the candidate when one did, and that none did otherwise', async () => {
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    const cand = addCandidate(lab);
+    addEvidence(lab, cand, { checks: PASSED });
+    const review = addReview(lab, cand, { verdict: 'APPROVE' });
+    await finishRun(lab.ctx(), 'BLOCKED', 'delivery failed: the remote rejected the push');
+    const body = readFileSync(join(lab.ctx().runDir, VERIFIED_CANDIDATE_BODY), 'utf8');
+    expect(body).toContain(`Review ${review.id} approved its tree; Orbit did not deliver it`);
+    expect(body).not.toContain('No review approved it');
   });
 });

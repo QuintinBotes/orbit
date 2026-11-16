@@ -381,8 +381,10 @@ A run that runs out (a budget, a cap, non-progress: anything that would end it
 instead, and offers that candidate (issue #169). A run that stops `BLOCKED` for
 any other reason while it holds one offers it the same way (`decided: BLOCKED`
 in the outcome), beside the block's own way forward, which a resume still
-takes. A run that delivered a candidate
-ends `EXHAUSTED` as before: it has its pull request. The
+takes. A run that delivered a candidate, or pushed its delivery commit before
+the delivery failed, offers none: its branch holds that commit. A run that
+delivered ends `EXHAUSTED` as before: it has its pull request. A block on a
+policy snapshot that no longer verifies offers none either. The
 newest candidate whose standing evidence is PASS is the one offered. The outcome
 reason says why the run stopped, then names the candidate (its number, commit
 and ref, the checks it passed, and each open review finding with its review round,
@@ -391,8 +393,10 @@ has a "Verified candidate" section and `verified_candidate` in `final.json` with
 the same facts and two commands. `deliver_command`, run from the repository root,
 pushes the candidate commit to `<repository.branch_prefix><run-id>` and opens a
 draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
-lists the checks it passed and every open finding; it needs `gh`, and you run
-it, because no review approved the candidate. `discard_command` is
+lists the checks it passed and every open finding, and says whether a review
+approved it; it needs `gh`, and you run it, because Orbit did not deliver it.
+Every value it takes from the policy (remote, branch, paths) is one shell word,
+quoted where needed. `discard_command` is
 `orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
 mode, and `orbit resume` would continue the run under the limits that stopped
 it. The failure
