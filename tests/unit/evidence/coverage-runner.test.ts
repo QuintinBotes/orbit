@@ -15,6 +15,7 @@ import { CHECK_TOKEN_ENV, isCheckShimCommandLine, shimPath } from '../../../src/
 import { openDb } from '../../../src/storage/db.ts';
 import { checkDef, nodeCheck, write } from './fixtures.ts';
 import { checkDirOf, pidGone, readText, runnerEnv, waitFor, type RunnerEnv } from '../../integration/evidence/harness.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const envs: RunnerEnv[] = [];
 async function setup(checks: Parameters<typeof runnerEnv>[0], opts?: Parameters<typeof runnerEnv>[1]): Promise<RunnerEnv> {
@@ -303,7 +304,8 @@ describe('bookkeeping that fails once the shim is spawned', () => {
     expect(listCheckRuns(e.run.db, { runId: e.run.runId }).map((x) => x.status)).toEqual(['PASSED']);
   });
 
-  it('stops the spawned shim and its check, and confirms both gone, before it records ERROR and cleans up the wrapper', async () => {
+  it('stops the spawned shim and its check, and confirms both gone, before it records ERROR and cleans up the wrapper', async (ctx) => {
+    skipWithoutPs(ctx);
     const marker = `RUNNER-${process.pid}-${Date.now()}`;
     const c = counting();
     const e = await setup([nodeCheck('long', `setInterval(()=>{},1000) /* ${marker} */`, { timeout_seconds: 120 })], { isolation: c.provider });
@@ -358,7 +360,8 @@ describe('a reattached check whose shim is gone and whose check group no record 
     return { rowId: row.id, token };
   }
 
-  it('leaves the row open, and says why, while a process carries its token in the environment; records it lost once none does', async () => {
+  it('leaves the row open, and says why, while a process carries its token in the environment; records it lost once none does', async (ctx) => {
+    skipWithoutPs(ctx);
     const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 120 })]);
     const { rowId, token } = orphaned(e, 'long', { registered: true });
     const check = inEnvironment(token);
@@ -379,7 +382,8 @@ describe('a reattached check whose shim is gone and whose check group no record 
     expect(result).toMatchObject({ id: rowId, status: 'ERROR' });
   });
 
-  it('does not take a launch for lost while a process carries its token on a check shim command line before any record names it', async () => {
+  it('does not take a launch for lost while a process carries its token on a check shim command line before any record names it', async (ctx) => {
+    skipWithoutPs(ctx);
     const clock = new ManualClock();
     const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 1 })], { clock });
     const row = planCheckRun(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: 'long', kind: 'command', treeHash: e.candidate.treeHash, checkConfigHash: e.run.snapshot.check_config_hashes.long!, policyHash: e.run.policyHash, command: ['node'], cwd: e.checkoutDir, isolation: 'none', limitations: [] }, clock);
@@ -457,7 +461,8 @@ describe('reattaching with a partly written shim record', () => {
 });
 
 describe('the check shim command line', () => {
-  it('carries its check directory and the intent token, so recovery finds a shim that launch.json does not name yet', async () => {
+  it('carries its check directory and the intent token, so recovery finds a shim that launch.json does not name yet', async (ctx) => {
+    skipWithoutPs(ctx);
     const e = await setup([nodeCheck('long', 'setInterval(()=>{},1000)', { timeout_seconds: 120 })]);
     const ac = new AbortController();
     const pending = run(e, ['long'], { detachSignal: ac.signal });

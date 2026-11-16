@@ -12,6 +12,7 @@ import type { CheckDefinition } from '../../../src/policy/types.ts';
 import { repoKeyFor } from '../../../src/storage/retention.ts';
 import { checkDef, nodeCheck } from '../../unit/evidence/fixtures.ts';
 import { hostRustupHome, hostTool, runnerEnv, type RunnerEnv } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Toolchain sandbox profiles (docs/decisions/0009-toolchain-profiles.md) under Orbit's real srt check profile: each
@@ -21,7 +22,7 @@ import { hostRustupHome, hostTool, runnerEnv, type RunnerEnv } from './harness.t
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const absent: Record<string, string> = {};
 /** A tool the host has, started with its version argument outside any sandbox (harness.ts hostTool), or null. */
 function tool(name: string, args: string[], ...fallbacks: string[]): string | null {

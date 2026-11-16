@@ -28,13 +28,14 @@ import { LAUNCH_STATUS_FILE, UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION, re
 import type { UiRunResult } from '../../../src/ui/types.ts';
 import { chromiumAvailable, copyExample } from '../../../scripts/demo/lib/example.ts';
 import { freePort } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const DEMO = join(ROOT, 'examples/demo-app');
 const SRT = join(ROOT, 'node_modules/.bin/srt');
 const onLinux = process.platform === 'linux';
 const srt = new SandboxRuntimeIsolation({ srtPath: SRT });
-const srtStatus = onLinux ? await srt.available() : { ok: false, detail: 'not Linux (srt shares the host loopback on macOS)' };
+const srtStatus = onLinux ? requiredOnCi(await srt.available()) : { ok: false, detail: 'not Linux (srt shares the host loopback on macOS)' };
 const hasChromium = onLinux && chromiumAvailable(ROOT);
 const ready = srtStatus.ok && hasChromium;
 const why = !srtStatus.ok ? srtStatus.detail : "Playwright's Chromium is not installed";

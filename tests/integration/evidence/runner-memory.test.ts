@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runChecks } from '../../../src/evidence/runner.ts';
 import { listFailures } from '../../../src/evidence/store.ts';
 import { findPs, RESOURCE_LIMIT_EXIT_CODE, withMemoryWatchdog } from '../../../src/isolation/memory.ts';
@@ -7,6 +7,7 @@ import { NoIsolation } from '../../../src/isolation/none.ts';
 import type { IsolationProvider, SandboxProfile, WrappedCommand } from '../../../src/isolation/types.ts';
 import { nodeCheck } from '../../unit/evidence/fixtures.ts';
 import { runnerEnv, type RunnerEnv } from './harness.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 /** NoIsolation with the memory watchdog around the command, as sandbox-runtime does with isolation.limits.memory_mb. */
 class WatchedIsolation implements IsolationProvider {
@@ -31,6 +32,7 @@ afterEach(async () => {
 });
 
 describe.skipIf(!findPs())('check runner and the memory watchdog (G24)', () => {
+  beforeEach(skipWithoutPs);
   it('records a check stopped for memory as a resource-limit failure that names the limit', async () => {
     const e = await runnerEnv([nodeCheck('hog', "const a=[];for(let i=0;i<40;i++)a.push(Buffer.alloc(10*1024*1024,1));setTimeout(()=>{},20000)")], { isolation: new WatchedIsolation(150) });
     envs.push(e);

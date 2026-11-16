@@ -11,6 +11,7 @@ import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.
 import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, withHarnessLoopback, type Fixture } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Review of issue #31. A running IDE extension (VS Code, JetBrains) writes <config dir>/ide/<port>.lock, which holds the
@@ -32,7 +33,7 @@ const which = spawnSync('/bin/sh', ['-c', 'command -v claude'], { encoding: 'utf
 const CLAUDE = which.status === 0 ? which.stdout.trim() : null;
 const ORBIT_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: ORBIT_ROOT });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 const TOKEN = 'ide-lock-token-5f1c0e9a7b';
 
 let api: Awaited<ReturnType<typeof startFakeAnthropicApi>>;
@@ -118,7 +119,7 @@ describe.skipIf(!CLAUDE)('a worker cannot read the token of an IDE extension on 
   });
 
   // srt on Linux gives the whole CLI a loopback of its own, where the host's fake API is out of reach.
-  it.skipIf(!srtStatus.ok || process.platform !== 'darwin')('os-sandbox tier: neither the Read tool nor Bash reads the lock, and the session still succeeds', async () => {
+  it.skipIf(!srtStatus.ok || process.platform !== 'darwin')(`os-sandbox tier: neither the Read tool nor Bash reads the lock, and the session still succeeds${srtStatus.ok ? '' : ` skipped: ${srtStatus.detail}`}`, async () => {
     const { result, seen, stderr } = await session('os-sandbox');
     expect(result.status, `${result.error ?? ''} ${stderr}`).toBe('succeeded');
     expect(seen.join('\n')).not.toContain(TOKEN);
@@ -150,7 +151,7 @@ describe.skipIf(!CLAUDE)('a worker cannot read the token of an IDE extension on 
     expect(accepted).toBe(0);
   });
 
-  it.skipIf(!srtStatus.ok || process.platform !== 'darwin')('os-sandbox tier, CLAUDE_CONFIG_DIR set elsewhere: the sandbox refuses ~/.claude/ide to both', async () => {
+  it.skipIf(!srtStatus.ok || process.platform !== 'darwin')(`os-sandbox tier, CLAUDE_CONFIG_DIR set elsewhere: the sandbox refuses ~/.claude/ide to both${srtStatus.ok ? '' : ` skipped: ${srtStatus.detail}`}`, async () => {
     const { result, seen, stderr } = await session('os-sandbox', { home: fakeHome });
     expect(result.status, `${result.error ?? ''} ${stderr}`).toBe('succeeded');
     expect(seen.join('\n')).not.toContain(TOKEN);

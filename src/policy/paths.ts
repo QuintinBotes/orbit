@@ -16,9 +16,10 @@
  * This is a check at one instant; a symlink swapped in afterwards is the OS
  * sandbox's and the diff inspection's problem, not this function's.
  */
-import { lstatSync, readlinkSync, realpathSync, existsSync, type Stats } from 'node:fs';
+import { accessSync, constants, lstatSync, readlinkSync, realpathSync, existsSync, type Stats } from 'node:fs';
 import { isAbsolute, parse, sep, dirname, join, basename } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
+import { CHECK_TOKEN_ENV } from '../evidence/check-shim.ts';
 
 const MAX_SYMLINK_HOPS = 40;
 
@@ -129,13 +130,52 @@ export function isCaseInsensitiveFs(dir: string): boolean {
 const caseCache = new Map<string, boolean>();
 
 /**
- * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same shape Claude Code uses for its own
- * /tmp/claude-<uid>. It is short on purpose: Claude Code and srt create Unix sockets in temp directories, and a socket
- * path over 104 bytes (macOS) fails. Only /tmp is resolved (a link on macOS): a link planted at the root itself must be
- * seen by lstat, not followed (review of #140).
+ * Longest temp root, in bytes, that Orbit takes from the environment: a worker's temp directory below it (13 bytes
+ * more) then stays under 60, so a Unix socket path in it stays under macOS's 104.
  */
-export function orbitTmpRoot(uid: number | undefined = process.getuid?.()): string {
-  return join(canonicalize('/tmp'), uid === undefined ? 'orbit' : `orbit-${uid}`);
+const MAX_ENV_TMP_ROOT = 46;
+
+/**
+ * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same shape Claude Code uses for its own
+ * /tmp/claude-<uid>, so that every Orbit process of a user (a foreground run, the service, `orbit gc`) agrees on it
+ * whatever its TMPDIR. It is short on purpose: Claude Code and srt create Unix sockets in temp directories, and a socket
+ * path over 104 bytes (macOS) fails. Inside an Orbit check (CHECK_TOKEN_ENV set), whose sandbox may write only the
+ * check's own temp directory, Orbit code under test (Orbit's own suite as a check) nests its root there instead (#203).
+ * Only the temp directory is resolved (/tmp is a link on macOS): a link planted at the root itself must be seen by
+ * lstat, not followed (review of #140).
+ */
+export function orbitTmpRoot(uid: number | undefined = process.getuid?.(), env: Readonly<Record<string, string | undefined>> = process.env): string {
+  return (env[CHECK_TOKEN_ENV] ? envTmpRoot(uid, env) : null) ?? fixedTmpRoot(uid);
+}
+
+/**
+ * Every root a process of this user may have used: /tmp/orbit-<uid>, and orbit-<uid> in this process's TMPDIR when it
+ * qualifies. Read-denials and `orbit gc` cover them all, so a process with another TMPDIR is covered too.
+ */
+export function orbitTmpRoots(uid: number | undefined = process.getuid?.(), env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+  const fixed = fixedTmpRoot(uid);
+  const nested = envTmpRoot(uid, env);
+  return nested === null || nested === fixed ? [fixed] : [fixed, nested];
+}
+
+function fixedTmpRoot(uid: number | undefined): string {
+  return join(canonicalize('/tmp'), tmpRootName(uid));
+}
+
+/** orbit-<uid> in TMPDIR when that directory is writable here and the root is at most MAX_ENV_TMP_ROOT bytes; else null. */
+function envTmpRoot(uid: number | undefined, env: Readonly<Record<string, string | undefined>>): string | null {
+  const temp = env.TMPDIR || '/tmp';
+  try {
+    accessSync(temp, constants.W_OK);
+    const root = join(canonicalize(temp), tmpRootName(uid));
+    return Buffer.byteLength(root) <= MAX_ENV_TMP_ROOT ? root : null;
+  } catch {
+    return null; // missing, relative or not writable here
+  }
+}
+
+function tmpRootName(uid: number | undefined): string {
+  return uid === undefined ? 'orbit' : `orbit-${uid}`;
 }
 
 /** Repository-relative POSIX path when `abs` is `root` or below it, else null. */

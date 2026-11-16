@@ -6,6 +6,7 @@ import { runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { nodeCheck } from '../../unit/evidence/fixtures.ts';
 import { checkDirOf, pidGone, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The same runner through the real OS sandbox. Skipped, with the probe's
@@ -13,7 +14,7 @@ import { checkDirOf, pidGone, runnerEnv, waitFor, type RunnerEnv } from './harne
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 
 const envs: RunnerEnv[] = [];
 afterEach(async () => {

@@ -151,6 +151,18 @@ describe('pruneExpiredRuns (retention.keep_runs_days)', () => {
       for (const t of tmps) removeScratch(t);
     }
   });
+  // Review of #204: a process with another TMPDIR may have used another root, so gc sweeps every one.
+  it('removes the workers\' temp directories from every temp root', async () => {
+    const old = run('orb-old', 'SUCCEEDED', 31);
+    const workerDir = join(old.runDir, 'workers', 'w0');
+    mkdirSync(workerDir, { recursive: true });
+    db.run("INSERT INTO workers (id, run_id, role, provider, state, worker_dir, cwd, created_at) VALUES ('w0', 'orb-old', 'implementer', 'claude', 'SUCCEEDED', ?, ?, ?)", workerDir, old.worktree, clock.now());
+    const roots = ['root-a', 'root-b'].map((n) => join(top, n));
+    const tmps = roots.map((root) => prepareWorkerTmpDir(workerDir, root));
+    const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home, tmpRoots: roots });
+    expect(r.pruned[0]!.removed).toEqual(expect.arrayContaining(tmps));
+    for (const t of tmps) expect(existsSync(t), t).toBe(false);
+  });
   // Review of #140: gc runs outside any sandbox, so a link at the temp root or at a worker's directory in it must never
   // lead it to delete what the link points at.
   it('deletes nothing through a temp root or a worker temp directory that is a link, and reports the run', async () => {
@@ -172,7 +184,7 @@ describe('pruneExpiredRuns (retention.keep_runs_days)', () => {
         chmodSync(tmpRoot, 0o700);
         symlinkSync(victim, workerTmpDir(workerDir, tmpRoot));
       }
-      const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home, tmpRoot });
+      const r = await pruneExpiredRuns(db, { repoRoot: repo, keepDays: 30, clock, orbitHome: home, tmpRoots: [tmpRoot] });
       expect(existsSync(join(victim, 'keep.txt')), plant).toBe(true);
       expect(r.pruned.map((x) => x.runId), plant).not.toContain(`orb-${plant}`);
       expect(r.skipped, plant).toContainEqual({ runId: `orb-${plant}`, reason: expect.stringMatching(plant === 'root' ? /is not a private directory owned by this user/ : /is not a directory owned by this user/) });

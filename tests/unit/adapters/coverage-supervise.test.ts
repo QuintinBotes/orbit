@@ -390,6 +390,17 @@ describe('cancelShim', () => {
     await cancelShim(handle(dir), 50, new ManualClock());
     expect(procMock.terminateGroup).not.toHaveBeenCalled();
   });
+
+  // Review of #204: a shim recorded without a start time (ps refused, #203) is unknown, never proof that the pid is it.
+  it('signals nothing for a live pid whose start time was never recorded', async () => {
+    const dir = tmp();
+    writeJson(dir, PID_FILE, pidRecord({ shimStart: null, childPid: null, childStart: null }));
+    procMock.isAlive.mockReturnValue(true);
+    procMock.isGroupAlive.mockReturnValue(true);
+    await cancelShim({ ...handle(dir), procStart: null }, 50, new ManualClock());
+    expect(procMock.terminateGroup).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, CANCEL_FILE))).toBe(true);
+  });
 });
 
 describe('log reading', () => {

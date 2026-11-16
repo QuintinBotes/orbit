@@ -30,7 +30,7 @@
  * run of the shim in tests), so it uses no parameter properties or enums.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { tmpdir } from 'node:os';
@@ -119,8 +119,8 @@ export interface ShimHost {
   signalGroup(pgid: number, signal: NodeJS.Signals): void;
   /** Send `signal` to one process; used for a descendant inside a group the shim does not own. */
   signalProcess?(pid: number, signal: NodeJS.Signals): void;
-  /** Process ids currently in group `pgid`. */
-  groupMembers(pgid: number): number[];
+  /** Process ids currently in group `pgid`; null when they cannot be listed, which never means none. */
+  groupMembers(pgid: number): number[] | null;
   /**
    * macOS process-table snapshot, or null when it cannot be read. The shim
    * uses this to remember a worker child that creates another process group
@@ -132,7 +132,7 @@ export interface ShimHost {
 }
 
 const DEFAULT_HOST: ShimHost = {
-  pgidOf: (pid) => readPgid(pid),
+  pgidOf: (pid) => pgidOf(pid),
   signalGroup: (pgid, signal) => {
     process.kill(-pgid, signal);
   },
@@ -429,11 +429,27 @@ class Shim {
     await this.sweepEscapedDescendants();
     // Helpers the provider left behind (MCP servers, background shells) still
     // hold the group; give them a moment, then the group goes.
-    if (this.leftovers().length > 0) {
+    const leftovers = this.leftovers();
+    if (leftovers === null) {
+      // ps refused (a sandbox on macOS, #203): helpers cannot be told from none, so the group is killed, the shim last,
+      // once the exit is recorded. Not recorded as an escalation: nothing is known to have been stopped, and a recorded
+      // signal would make a provider that ended without a result read as interrupted.
+      this.closeOutput();
+      const rec = this.record(code, signal, null);
+      this.persist(rec);
+      try {
+        this.host.signalGroup(this.pgid, 'SIGKILL');
+      } catch {
+        /* group already gone */
+      }
+      this.finish(rec, false);
+      return;
+    }
+    if (leftovers) {
       this.signalGroup('SIGTERM');
       const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
-      while (this.clock.now() < deadline && this.leftovers().length > 0) await this.clock.sleep(50);
-      if (this.leftovers().length > 0) {
+      while (this.clock.now() < deadline && this.leftovers() !== false) await this.clock.sleep(50);
+      if (this.leftovers() !== false) {
         await this.killGroupAndFinish(code, signal);
         return;
       }
@@ -668,8 +684,10 @@ class Shim {
     }
   }
 
-  private leftovers(): number[] {
-    return this.host.groupMembers(this.pgid).filter((p) => p !== process.pid);
+  /** Whether anything besides the shim is in its group; null when the members cannot be listed (ps refused). */
+  private leftovers(): boolean | null {
+    const members = this.host.groupMembers(this.pgid);
+    return members === null ? null : members.some((p) => p !== process.pid);
   }
 
   private later(ms: number, fn: () => void): void {
@@ -1074,10 +1092,23 @@ function validEntry(entry: ProcessEntry): boolean {
   );
 }
 
-/** Process ids in group `pgid`, from `ps -A -o pid=,pgid=` (macOS and Linux procps). */
-export function groupMembers(pgid: number): number[] {
+/**
+ * Process ids in group `pgid`: from /proc on Linux, from `ps -A -o pid=,pgid=` elsewhere. Null when they cannot be
+ * listed (a sandbox refuses ps on macOS, #203): unknown, never "none".
+ */
+export function groupMembers(pgid: number, opts: { platform?: NodeJS.Platform; procDir?: string } = {}): number[] | null {
+  if ((opts.platform ?? process.platform) === 'linux') {
+    const procDir = opts.procDir ?? '/proc';
+    let names: string[];
+    try {
+      names = readdirSync(procDir);
+    } catch {
+      return null;
+    }
+    return names.filter((n) => /^\d+$/.test(n)).map(Number).filter((pid) => readPgid(pid, { platform: 'linux', procDir }) === pgid);
+  }
   const r = spawnSync('ps', ['-A', '-o', 'pid=,pgid='], { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
-  if (r.status !== 0 || typeof r.stdout !== 'string') return [];
+  if (r.status !== 0 || typeof r.stdout !== 'string') return null;
   const out: number[] = [];
   for (const line of r.stdout.split('\n')) {
     const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
@@ -1100,6 +1131,25 @@ export function readPgid(pid: number, opts: { platform?: NodeJS.Platform; procDi
     return r.status === 0 && Number.isSafeInteger(n) && n > 0 ? n : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Process group of `pid` for the shim's own-group check: from ps or /proc (readPgid), and, where ps is refused (a sandbox
+ * on macOS, #203), for this process only: its own pid when a group with that id exists, which only it can have made.
+ * Null otherwise, and the shim then refuses to run, so it never signals a group it does not lead.
+ */
+export function pgidOf(pid: number, opts: { platform?: NodeJS.Platform; procDir?: string } = {}): number | null {
+  return readPgid(pid, opts) ?? (pid === process.pid && groupExists(pid) ? pid : null);
+}
+
+/** Whether process group `pgid` exists, by signal 0 (no ps). */
+function groupExists(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 

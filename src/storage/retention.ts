@@ -6,7 +6,7 @@ import { execCapture } from '../core/exec.ts';
 import { sha256 } from '../core/hash.ts';
 import type { OrbitDb } from './db.ts';
 import { appendEvent } from './events.ts';
-import { orbitTmpRoot, privateRootProblem, workerTmpDir } from '../isolation/profiles.ts';
+import { orbitTmpRoots, privateRootProblem, workerTmpDir } from '../isolation/profiles.ts';
 import { releaseRunCheckouts } from '../recovery/release.ts';
 
 /**
@@ -14,7 +14,7 @@ import { releaseRunCheckouts } from '../recovery/release.ts';
  * ended longer ago than the retention period loses its artifacts: the run
  * directory `.orbit/runs/<id>/` (snapshot, evidence, worker logs, final.md),
  * its worktrees under `<orbit home>/worktrees/<repo key>/<id>/` and its
- * workers' private temp directories under `/tmp/orbit-<uid>/`. The
+ * workers' private temp directories under every temp root (orbitTmpRoots). The
  * SQLite rows stay, so `orbit status` and the statistics still know the run,
  * and the run is marked with a `run.artifacts_pruned` event, which is also
  * what makes a second pass skip it.
@@ -51,8 +51,8 @@ export interface PruneOptions {
   orbitHome?: string;
   /** Report what would be pruned without removing anything or writing events. */
   dryRun?: boolean;
-  /** Root of the workers' private temp directories; orbitTmpRoot() by default. */
-  tmpRoot?: string;
+  /** Roots of the workers' private temp directories; every one this user's Orbit may use (orbitTmpRoots) by default. */
+  tmpRoots?: string[];
 }
 
 export interface PrunedRun {
@@ -109,7 +109,7 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
     ARTIFACTS_PRUNED_EVENT,
   );
 
-  const tmpRoot = opts.tmpRoot ?? orbitTmpRoot();
+  const tmpRoots = opts.tmpRoots ?? orbitTmpRoots();
   const result: PruneResult = { cutoff, pruned: [], skipped: [] };
   let removedWorktree = false;
   for (const row of rows) {
@@ -138,8 +138,8 @@ export async function pruneExpiredRuns(db: OrbitDb, opts: PruneOptions): Promise
     }
     const worktree = join(worktreesRoot, row.id);
     // Each worker's private temp directory holds its build state (issue #140) and lives outside the run directory.
-    const workerTmps = db.all<{ worker_dir: string }>('SELECT worker_dir FROM workers WHERE run_id = ?', row.id).filter((w) => isAbsolute(w.worker_dir)).map((w) => workerTmpDir(w.worker_dir, tmpRoot));
-    const tmpProblem = workerTmps.length === 0 ? null : (tmpRootProblem(tmpRoot) ?? workerTmps.map(workerTmpProblem).find((p) => p !== null) ?? null);
+    const workerTmps = db.all<{ worker_dir: string }>('SELECT worker_dir FROM workers WHERE run_id = ?', row.id).filter((w) => isAbsolute(w.worker_dir)).flatMap((w) => tmpRoots.map((root) => workerTmpDir(w.worker_dir, root)));
+    const tmpProblem = workerTmps.length === 0 ? null : (tmpRoots.map(tmpRootProblem).find((p) => p !== null) ?? workerTmps.map(workerTmpProblem).find((p) => p !== null) ?? null);
     if (tmpProblem !== null) {
       result.skipped.push({ runId: row.id, reason: `${tmpProblem}, so nothing of the run was removed` });
       continue;

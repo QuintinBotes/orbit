@@ -24,6 +24,7 @@ export {
   prepareWorkerTmpDir,
   workerTmpDir,
   orbitTmpRoot,
+  orbitTmpRoots,
   providerDirs,
   repoParentDenial,
   PROVIDER_HOSTS,

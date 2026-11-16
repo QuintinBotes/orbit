@@ -35,13 +35,14 @@ import { chromiumAvailable, copyExample } from '../../../scripts/demo/lib/exampl
 import { browserIsolationCheck } from '../../../src/cli/commands/doctor.ts';
 import { freePort } from './helpers.ts';
 import { QUARANTINED } from '../../support/quarantine.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const DEMO = join(ROOT, 'examples/demo-app');
 const SRT = join(ROOT, 'node_modules/.bin/srt');
 const onMac = process.platform === 'darwin';
 const srt = new SandboxRuntimeIsolation({ srtPath: SRT });
-const srtStatus = onMac ? await srt.available() : { ok: false, detail: 'not macOS (Linux has no Mach and needs no rule)' };
+const srtStatus = onMac ? requiredOnCi(await srt.available()) : { ok: false, detail: 'not macOS (Linux has no Mach and needs no rule)' };
 const hasChromium = onMac && chromiumAvailable(ROOT);
 const hasCc = onMac && spawnSync('cc', ['--version'], { stdio: 'ignore' }).status === 0;
 const ready = srtStatus.ok && hasChromium && hasCc;

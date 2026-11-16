@@ -9,6 +9,7 @@ import { transition } from '../../../src/controller/run-store.ts';
 import { getWorker, markWorkerRunning } from '../../../src/storage/workers.ts';
 import { reconcileOnStart, stopWorker } from '../../../src/recovery/reconcile.ts';
 import { OWNER, alive, canStripTypes, cleanupAll, clock, makeEnv, makeRun, planImplementer, seedCounters, waitFor, workerRow, type Env } from './helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 /**
  * Regression tests from the adversarial review: process identity for check
@@ -33,7 +34,8 @@ function planCheck(env: Env, name: string): { id: string; dir: string; token: st
 const checkStatus = (env: Env, id: string) => env.db.get<{ status: string }>('SELECT status FROM check_runs WHERE id = ?', id)!.status;
 
 describe.skipIf(!canStripTypes)('reconcileOnStart: check shims known only from pid.json', () => {
-  it('an unrelated process that now holds the recorded shim pid is not signalled when the run is over', async () => {
+  it('an unrelated process that now holds the recorded shim pid is not signalled when the run is over', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     const c = planCheck(env, 'lint');
@@ -52,7 +54,8 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: check shims known only from p
     expect(checkStatus(env, c.id)).toBe('CANCELLED');
   });
 
-  it('the real shim, identified by when it wrote pid.json, is still stopped when the run is over', async () => {
+  it('the real shim, identified by when it wrote pid.json, is still stopped when the run is over', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     const c = planCheck(env, 'test');
@@ -86,7 +89,8 @@ describe('reconcileOnStart: a RUNNING worker whose files are gone', () => {
     return { pid: p.pid, pgid: p.pgid, start: processStartTime(p.pid)! };
   }
 
-  it('the process the row records is stopped before a restart is planned, so no second worker runs beside it', async () => {
+  it('the process the row records is stopped before a restart is planned, so no second worker runs beside it', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     seedCounters(env, { recovery_attempts: 3 });
@@ -99,7 +103,8 @@ describe('reconcileOnStart: a RUNNING worker whose files are gone', () => {
     expect(workerRow(env).state).toBe('PLANNED');
   });
 
-  it('a recorded pid with another start time is a recycled pid: left alone, and the restart still planned', async () => {
+  it('a recorded pid with another start time is a recycled pid: left alone, and the restart still planned', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     seedCounters(env, { recovery_attempts: 3 });
@@ -111,7 +116,8 @@ describe('reconcileOnStart: a RUNNING worker whose files are gone', () => {
     expect(alive(proc.pid)).toBe(true);
   });
 
-  it('stopWorker does not record CANCELLED while a process it cannot verify may still be the worker', async () => {
+  it('stopWorker does not record CANCELLED while a process it cannot verify may still be the worker', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     const proc = recordedProcess(env);

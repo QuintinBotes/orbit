@@ -18,10 +18,11 @@ import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.
 import { removeScratch, toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { which } from '../../../src/isolation/util.ts';
 import { makeLab, type Lab } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const srt = probe.ok ? null : `srt unavailable: ${probe.detail}`;
 const go = which('go', process.env.PATH);
 const cargo = which('cargo', process.env.PATH);
