@@ -187,7 +187,8 @@ describe.skipIf(!canStripTypes)('controller: a reviewer that fails at run time',
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    // The candidates passed verification, so the run that ran out offers one instead of ending EXHAUSTED (#169).
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toContain('review_rounds hard cap reached (4 of 4, including 2 for replaced reviewers) with 1 open finding(s)');
     expect(rawCap(l, run.id)).toBe(2);
   }, 120_000);

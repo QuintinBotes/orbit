@@ -10,6 +10,7 @@ import { findController } from '../../storage/controllers.ts';
 import { listWorkers, type WorkerRecord } from '../../storage/workers.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
 import { newRunNeeded } from '../../controller/resume.ts';
+import { heldVerifiedCandidate } from '../../controller/verified-candidate.ts';
 import { createdBranch, currentCandidateRef } from '../../controller/run-refs.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { stateDbPath } from '../../controller/start.ts';
@@ -94,6 +95,9 @@ function workerSummary(w: WorkerRecord): WorkerSummary {
  */
 function stageOf(db: OrbitDb, run: RunRecord): string {
   if (!run.resumeState || !(run.state === 'INQUISITION' || run.state === 'BLOCKED' || run.state === 'RECOVERING')) return run.state;
+  // A run that ran out holding a verified candidate (issue #169): a resume continues under the limits that stopped it.
+  const offered = heldVerifiedCandidate(run);
+  if (offered) return `${run.state} (holding verified candidate ${offered.seq}: deliver it or discard it)`;
   const fresh = run.state === 'BLOCKED' ? newRunNeeded(db, run) : null;
   return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;
 }

@@ -215,11 +215,14 @@ Plugin skills need the service for runs that outlive the Claude Code session.
 Make credentials visible to it as described in
 [operations](docs/operations.md#installing-the-service).
 
-A run ends in `SUCCEEDED`, `BLOCKED` (a question or a missing capability),
-`EXHAUSTED` (a hard cap was reached), `IMPOSSIBLE` or `CANCELLED`. A blocked run
-is continued with `orbit decide` and `orbit resume`, except when the block comes
-from the run's frozen policy: then fix the config, cancel the run and start a new
-one ([troubleshooting](docs/troubleshooting.md#run-problems)).
+A run ends in `SUCCEEDED`, `BLOCKED` (a question, a missing capability, or a
+hard cap reached while it holds a verified candidate), `EXHAUSTED` (a hard cap was
+reached with no verified candidate to offer), `IMPOSSIBLE` or `CANCELLED`. A
+blocked run is continued with `orbit decide` and `orbit resume`, except in two
+cases. When it holds a verified candidate, deliver or discard that candidate with
+the commands its reason gives. When the block comes from the run's frozen policy,
+fix the config, cancel the run and start a new one
+([troubleshooting](docs/troubleshooting.md#run-problems)).
 
 ## Commands
 

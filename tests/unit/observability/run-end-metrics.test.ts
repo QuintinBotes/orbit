@@ -106,6 +106,22 @@ describe('failure classes as counts (US1)', () => {
   });
 });
 
+describe('runs that stopped holding a verified candidate (issue #169, FR-004)', () => {
+  it('are counted on their own, apart from the other blocked and failed runs', () => {
+    const db = openDb(':memory:');
+    const clock = new ManualClock(T0);
+    finish(db, clock, 'ok', '0.4.0', 'SUCCEEDED');
+    finish(db, clock, 'held', '0.4.0', 'BLOCKED', { outcome: { decided: 'EXHAUSTED', verified_candidate: { candidate_id: 'c1', seq: 1 } }, data: { counter: 'cost_usd' } });
+    finish(db, clock, 'env', '0.4.0', 'BLOCKED', { outcome: { environment_failures: [{ check_id: 'unit' }] } });
+    finish(db, clock, 'spent', '0.4.0', 'EXHAUSTED', { data: { counter: 'cost_usd' } });
+    const m = metricsFor(db);
+    expect(m.runs).toMatchObject({ total: 4, finished: 4, accepted: 1, verified_undelivered: 1, by_state: { SUCCEEDED: 1, BLOCKED: 2, EXHAUSTED: 1 } });
+    // Why it stopped is still a class: it ran out of budget, as the plain EXHAUSTED run did.
+    expect(m.failure_classes.by_class.budget).toBe(2);
+    expect(renderStats(m)).toMatch(/\(4 finished, 1 accepted, 1 stopped holding a verified candidate\)/);
+  });
+});
+
 describe('statistics by Orbit version (US2)', () => {
   function twoVersions(db: OrbitDb): void {
     const clock = new ManualClock(T0);

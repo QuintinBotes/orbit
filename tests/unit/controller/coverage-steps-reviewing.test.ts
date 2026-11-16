@@ -164,12 +164,12 @@ describe('a review that is already recorded', () => {
     expect(JSON.parse(repairs[0]!.data_json).findings.map((f: { external_id: string }) => f.external_id).sort()).toEqual(['STY-1', 'STY-2']);
   });
 
-  it('an advisory finding of a REPAIR_REQUIRED review ends EXHAUSTED when no review round is left for the repaired tree', async () => {
+  it('an advisory finding of a REPAIR_REQUIRED review stops the run when no review round is left for the repaired tree (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand } = await setup();
     record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'codex');
     lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): STY-1 \(review 1\) \(low\)/);
   });
 
@@ -259,21 +259,24 @@ describe('a review that is already recorded', () => {
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('independent review does not clear tree');
   });
 
-  it('ends EXHAUSTED when no review round is left for the repaired tree, naming the open findings', async () => {
+  it('stops when no review round is left for the repaired tree, naming the open findings, BLOCKED with the verified candidate offered (#169)', async () => {
     const { cand } = await setup();
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
     lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): COR-1 \(review 1\) \(high\)/);
+    // The candidate passed verification: the run that ran out offers it instead of ending EXHAUSTED.
+    expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!)).toMatchObject({ decided: 'EXHAUSTED', verified_candidate: { candidate_id: cand.id, commit: cand.commitSha } });
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('review-dispute');
   });
 
-  it('ends EXHAUSTED when no implementation attempt is left under the hard cap', async () => {
+  it('stops when no implementation attempt is left under the hard cap (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand } = await setup();
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'implementation_attempts'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('implementation attempts hard cap reached');
   });
 
@@ -310,7 +313,7 @@ describe('a review that is already recorded', () => {
     record(cand, 'REPAIR_REQUIRED', [finding('BILL-1', { severity: 'high', category: 'billing', claim: 'The invoice total rounds a refund in an undecided way; the product decision on partial refunds is not specified', evidence: 'refund amount is ambiguous' })]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     expect(await run()).toMatchObject({ done: true });
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(review \d+\) \(high\)/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
@@ -320,7 +323,7 @@ describe('a review that is already recorded', () => {
     record(cand, 'BLOCK', [finding('CLM-1', { severity: 'medium', category: 'correctness', claim: 'calc may overflow for very large operands in some environments', evidence: 'maybe' })]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1 \(review \d+\) \(/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
@@ -430,7 +433,7 @@ describe('a review that is already recorded', () => {
   });
 
   // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
-  it('a carried finding going to repair again after a repair whose implementer named no test for it ends EXHAUSTED as non-progress, not with another brief', async () => {
+  it('a carried finding going to repair again after a repair whose implementer named no test for it ends as non-progress, not with another brief (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand, repo } = await setup();
     const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
     routed(1);
@@ -461,7 +464,7 @@ describe('a review that is already recorded', () => {
     // The second ends at its turn cap without a report: it named no test, and TEST-1 would go to repair unchanged.
     await attempt(3, { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' });
     expect(await run()).toMatchObject({ done: true });
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(existsSync(briefPath(lab.ctx(), 4))).toBe(false);
     expect(lab.db.all('SELECT 1 FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT)).toHaveLength(2);
     expect(decisions('repair.non-progress')).toHaveLength(1);
@@ -497,7 +500,7 @@ describe('a review that is already recorded', () => {
     record(c, 'REPAIR_REQUIRED', []);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     expect(await run()).toMatchObject({ done: true });
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(decisions('repair.non-progress')).toHaveLength(1);
   });
 });

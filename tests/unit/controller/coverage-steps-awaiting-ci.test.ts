@@ -27,7 +27,7 @@ const { briefPath } = await import('../../../src/controller/steps/implementing.t
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { snapshotCandidate } = await import('../../../src/evidence/candidate.ts');
 const { BASELINE_FILE, runBaseline } = await import('../../../src/evidence/baseline.ts');
-const { currentEvidenceReport, listCheckRuns } = await import('../../../src/evidence/store.ts');
+const { currentEvidenceReport, listCheckRuns, setCandidateStatus } = await import('../../../src/evidence/store.ts');
 const { listDecisions } = await import('../../../src/storage/decisions.ts');
 const { recordReview } = await import('../../../src/review/store.ts');
 const { OrbitError } = await import('../../../src/core/errors.ts');
@@ -305,8 +305,10 @@ describe('a failing CI', () => {
     expect(lab.db.get<{ candidate_id: string | null }>("SELECT candidate_id FROM failures WHERE run_id = ? AND source = 'ci'", lab.runId)?.candidate_id).toBeNull();
   });
 
-  it('with the repair budget spent the run is EXHAUSTED', async () => {
-    await setup();
+  it('with the repair budget spent the run is EXHAUSTED: the delivered candidate is on its pull request already (#169)', async () => {
+    const { cand } = await setup();
+    // As the delivering step leaves it.
+    setCandidateStatus(lab.db, cand.id, 'DELIVERED');
     failing();
     lab.db.run("UPDATE budget_counters SET used = hard_cap, allowance = hard_cap WHERE counter = 'ci_repair_cycles'");
     await run();

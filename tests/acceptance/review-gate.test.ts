@@ -116,21 +116,20 @@ describe.skipIf(!READY)('acceptance: the review gate always has a way forward (i
     expect(listEvidenceReports(db, run.id).map((e) => e.report.verdict)).toEqual(['PASS', 'PASS']);
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
     expect(listReviews(db, run.id, { includeInvalidated: true })).toHaveLength(2);
-    // A terminal state that says why, not a stall: the findings are named by id and review round, with their text.
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    // A terminal state that says why, not a stall: the findings are named by id and review round, with their text. It
+    // holds verified candidate 2, so it ends BLOCKED offering it (issue #169), not EXHAUSTED.
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toMatch(/^non-progress: the review repair brief of attempt 2 was sent TEST-1, DOC-1, and no implementer report since names a test for any of them/);
     expect(done.outcomeReason).toMatch(/open findings: .*TEST-1 \(review 2\) \(high\): The assertions do not establish/);
     expect(done.outcomeReason).toMatch(/DOC-1 \(review 2\) \(medium\)/);
     expect(listDecisions(db, run.id, { kind: 'repair.non-progress' })).toHaveLength(1);
-    expect(transitions(db, run.id).at(-1)).toBe('EXHAUSTED');
+    expect(transitions(db, run.id).at(-1)).toBe('BLOCKED');
     const report = finalReport(l, run.id);
-    expect(report.outcome).toBe('EXHAUSTED');
+    expect(report.outcome).toBe('BLOCKED');
     expect(report.next_action.length).toBeGreaterThan(0);
     // The verified candidate is kept for a person; nothing was delivered on an unapproved tree.
     expect(listCandidates(db, run.id)).toHaveLength(2);
     expect(l.github().state.prs).toEqual([]);
-    // Issue #166, SC-003, a known expected failure: the run ends EXHAUSTED holding verified candidate 2. The decided
-    // behaviour is BLOCKED naming the candidate (issue #169), and User Story 3, scenario 2 follows this pull request.
-    assertRunInvariants(l, run.id, { knownExhaustedWithVerifiedCandidate: '#169' });
+    assertRunInvariants(l, run.id);
   }, 300_000);
 });

@@ -61,7 +61,7 @@ class Seed {
 describe('metricsFor on an empty database', () => {
   it('has null rates, zero counts, and says there were no runs', () => {
     const m = metricsFor(openDb(':memory:'));
-    expect(m.runs).toEqual({ total: 0, finished: 0, accepted: 0, by_state: {} });
+    expect(m.runs).toEqual({ total: 0, finished: 0, accepted: 0, verified_undelivered: 0, by_state: {} });
     expect(m.verified_pass_rate.rate).toBeNull();
     expect(m.false_pass_rate.rate).toBeNull();
     expect(m.escalation_quality.rate).toBeNull();

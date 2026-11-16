@@ -81,7 +81,7 @@ export function renderStats(m: Metrics): string {
   ];
   const span = `${m.window.from === null ? 'the beginning' : new Date(m.window.from).toISOString()} to ${m.window.to === null ? 'now' : new Date(m.window.to).toISOString()}`;
   const started = m.window.orbit_version === null ? '' : ` started by Orbit ${m.window.orbit_version},`;
-  const out = [`Orbit stats for ${m.runs.total} run(s)${started} created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted)`, '', table(rows, ['METRIC', 'VALUE', 'DETAIL']).trimEnd()];
+  const out = [`Orbit stats for ${m.runs.total} run(s)${started} created from ${span} (${m.runs.finished} finished, ${m.runs.accepted} accepted${m.runs.verified_undelivered > 0 ? `, ${m.runs.verified_undelivered} stopped holding a verified candidate` : ''})`, '', table(rows, ['METRIC', 'VALUE', 'DETAIL']).trimEnd()];
   // Why runs ended: one line per class that has a run, as its first or its second cause, then the runs with none.
   const fc = m.failure_classes;
   const classRows = FAILURE_CLASSES.filter((c) => (fc.by_class[c] ?? 0) > 0 || (fc.secondary[c] ?? 0) > 0).map((c) => [c, String(fc.by_class[c] ?? 0), String(fc.secondary[c] ?? 0)]);

@@ -65,7 +65,7 @@ describe.skipIf(!canStripTypes)('fault: resume after the cause of a block was fi
     expect(sessions.map((w) => w.resultStatus)).toEqual(['auth_failed', 'succeeded']);
   }, 120_000);
 
-  it('resets are bounded by recovery_attempts: with the budget spent, resume ends the run EXHAUSTED instead of looping', async () => {
+  it('resets are bounded by recovery_attempts: with the budget spent, resume stops the run instead of looping (BLOCKED, offering its verified candidate: #169)', async () => {
     const l = t.lab({
       tweak: (c) => {
         c.scheduler.hard_limits.recovery_attempts = 1;
@@ -85,8 +85,10 @@ describe.skipIf(!canStripTypes)('fault: resume after the cause of a block was fi
     expect((await resume(l, run.id)).code).toBe(0);
     await drive(l, run.id);
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
-    expect(done.outcomeReason).toMatch(/recovery_attempts/);
+    // The candidate passed verification, so the run that ran out offers it rather than ending EXHAUSTED (#169).
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/^recovery_attempts exhausted/);
+    expect(JSON.parse(done.outcomeJson!)).toMatchObject({ decided: 'EXHAUSTED', verified_candidate: { seq: 1 } });
     expect(calls(l, 'reviewer')).toHaveLength(4);
   }, 180_000);
 });
