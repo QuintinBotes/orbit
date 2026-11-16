@@ -33762,6 +33762,10 @@ async function fastForwardBase(o) {
   if (merged.exitCode !== 0) {
     throw new OrbitError("POLICY_DENIED", `${o.branch} cannot fast-forward to ${o.remote}/${o.branch} (${tip.slice(0, 12)}): it has commits the remote does not have, or local changes in the way. Push or reset ${o.branch}, then start the queue again: ${redact(merged.stderr.trim()).slice(0, 300)}`, { definitive: true });
   }
+  const now = (await git(o.repoRoot, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], o)).stdout.trim();
+  if (now !== tip) {
+    throw new OrbitError("POLICY_DENIED", `${o.branch} has commits ${o.remote}/${o.branch} does not have (here ${now.slice(0, 12)}, there ${tip.slice(0, 12)}); they would go into every pull request the queue opens. Push them, or reset ${o.branch} to ${o.remote}/${o.branch}, then start the queue again`, { definitive: true });
+  }
   return { from, to: tip };
 }
 var OBJECT_ID, REF_FORBIDDEN2, AUTH_PATTERN, TRANSIENT_PATTERN;
@@ -33953,7 +33957,11 @@ ${res.stdout}`) };
     GhIssueTracker = class extends GhIssueReader {
       async write(what, method, path, body) {
         const r = await this.call(what, ["-X", method, path, "--input", "-"], JSON.stringify(body));
-        if (!r.ok) throw r.error;
+        if (r.ok) return;
+        if (isOrbitError(r.error, "AUTH_MISSING")) {
+          throw new OrbitError("AUTH_MISSING", `${r.error.message}; the queue labels, comments on and closes issues with GH_TOKEN (else your gh login), which needs Issues: read and write on ${this.repo}`, { ...r.error.details, definitive: true });
+        }
+        throw r.error;
       }
       async addLabel(number, label) {
         assertIssueNumber(number);
@@ -69182,7 +69190,9 @@ interrupt: pausing the run (not cancelling it). Workers keep running; continue w
     }
     void controller.stop("paused by Ctrl-C");
   };
+  let terminated = false;
   const onTerm = () => {
+    terminated = true;
     void controller.stop("received SIGTERM");
   };
   signals.on("SIGINT", onInterrupt);
@@ -69214,7 +69224,7 @@ interrupt: pausing the run (not cancelling it). Workers keep running; continue w
   else if (run.paused || interrupted) exitCode = EXIT.PAUSED;
   else exitCode = EXIT.FAILURE;
   announceEnd(ctx, db, run, exitCode, wantJson);
-  return { run, interrupted: interrupted || run.paused, exitCode };
+  return { run, interrupted: interrupted || run.paused, terminated, exitCode };
 }
 function safeContinue(db, runId, ctx) {
   try {
@@ -74896,7 +74906,7 @@ async function queueRunCommand(args, ctx) {
         break;
       }
       if (entry.outcome === "interrupted") {
-        record.stop = { kind: "interrupted", reason: `interrupted during #${entry.number}; its run is paused` };
+        record.stop = { kind: "interrupted", reason: `interrupted during #${entry.number}: ${entry.reason}` };
         break;
       }
       const failed = failedRunsInARow(record.issues.flatMap((i) => i.attempts));
@@ -74991,7 +75001,8 @@ async function workIssue(ctx, q, record, issue, o) {
       const open2 = listQuestions(db, run.id, { status: "open" }).length;
       entry.attempts.push({ run_id: run.id, state: result2.run.state, failure_class: failureClass(result2.run), open_questions: open2, cost_usd: typeof cost === "number" && Number.isFinite(cost) ? cost : null });
       if (result2.interrupted) return { ...entry, outcome: "interrupted", reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
-      if (result2.run.state === "EXHAUSTED" && capped) {
+      if (result2.terminated) return { ...entry, outcome: "interrupted", reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
+      if (result2.run.state === "EXHAUSTED" && capped && result2.run.failureClass === "budget") {
         return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
       }
       if (result2.run.state === "SUCCEEDED") {

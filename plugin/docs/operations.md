@@ -100,8 +100,9 @@ orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minut
   reported as a cycle and none of them runs.
 - Before each issue the checkout, which must be on the base branch (`--base`,
   default `repository.base_branch`) with a clean tree, is fast-forwarded to the
-  remote's base branch, so each issue starts after the last merge. Every pull
-  request targets that branch.
+  remote's base branch, so each issue starts after the last merge. A base
+  with commits the remote does not have stops the queue, since they would go
+  into every pull request. Every pull request targets that branch.
 - A dependant starts only once its blocker is closed. GitHub closes an issue
   from `Closes #n` only for the default branch; for another base the queue
   closes an issue itself, with a comment, once its pull request has merged.
@@ -119,14 +120,18 @@ orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minut
   `--budget-usd` (each run is capped at what is left), after two runs in a
   row, on one issue or across issues, end without a delivered change (a
   delivered run resets the count; the issue still goes to a person as above),
-  or on Ctrl-C (the run is paused). It prints what it
+  or on Ctrl-C (the run is paused) or SIGTERM (`timeout`, a systemd or docker
+  stop: the run stops where it is, no failed run is counted and the issue keeps
+  its labels; continue it with `orbit resume <run> --foreground`). It prints what it
   did and what is left, and keeps the same in `.orbit/queue/<id>.json`: per
   issue the outcome, pull request and every attempt. Exit 0, 10 when an issue
   went to a person, 20 when interrupted.
 
 The queue reads and writes issues (a label, a comment, a close) through `gh`
 with `GH_TOKEN` or your own login; a delivering mode needs `GH_TOKEN` for the
-runs, as `orbit run` does.
+runs, as `orbit run` does. The token (or login) needs Issues: read and write on
+the repository: without it GitHub refuses the label, the comment and the close
+that lets a dependant in, and the queue's message names that permission.
 
 A foreground run exits with a code that names the state it ended in: 0
 `SUCCEEDED`, 10 `BLOCKED`, 11 `EXHAUSTED`, 12 `IMPOSSIBLE`, 13 `CANCELLED`, 20

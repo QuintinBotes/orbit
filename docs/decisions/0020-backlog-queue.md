@@ -53,8 +53,11 @@ issue it blocks.
   frontier is empty but held issues wait on deliveries, the queue looks again
   every minute for up to `--wait-minutes` (default 60). A delivery without a
   pull request (a mode that does not deliver) waits for a person to merge it
-  and close the issue. Orbit merges nothing here; a run in `release` mode with
-  `actions.merge` merges its own pull request, as before.
+  and close the issue. The queue merges nothing: a person merges each pull
+  request, and the queue waits. A run in `release` mode with `actions.merge`
+  does not merge on its own either: its contract starts with `merge: false`,
+  and only a person's approval for that run turns merge on
+  (`src/contract/draft.ts`).
 - **Attempts and a person.** An issue gets up to `--attempts` runs (default 2).
   A run that ends waiting on an answer is not tried again: a new run would only
   guess. An issue whose runs did not deliver, or whose body fails the spec
@@ -66,11 +69,15 @@ issue it blocks.
   wait), at `--max-issues`, at `--budget-usd`, after two runs in a row end
   without a delivered change (FR-004: on one issue or across issues, a
   delivered run resetting the count; the issue still goes to a person as
-  above, and no further run starts), on Ctrl-C (the run is paused, as in a foreground run), and on
-  an error that is the queue's rather than an issue's (admission, the base
-  branch). Each run's `scheduler.hard_limits.model_cost_usd` is lowered to what
-  is left of the budget; a run that this cap ends stops the queue and does not
-  hand its issue to a person.
+  above, and no further run starts), on Ctrl-C (the run is paused, as in a
+  foreground run) or SIGTERM (the run stops where it is; no failed run is
+  counted and the issue keeps its labels), and on an error that is the
+  queue's rather than an issue's (admission, the base branch). Each run's
+  `scheduler.hard_limits.model_cost_usd` is lowered to what is left of the
+  budget; a run that ends EXHAUSTED with the failure class `budget` under that
+  lowered cap stops the queue and does not hand its issue to a person. A run
+  that review rounds or the attempt cap ended is the issue's, as without a
+  budget.
 - **A record.** `.orbit/queue/<id>.json` is rewritten after every issue:
   per issue the outcome (delivered, person, skipped, budget, interrupted), the
   pull request or branch, and every attempt with its run id, state, failure
@@ -80,8 +87,9 @@ issue it blocks.
 - **GitHub access.** Reads and the three writes (a label, a comment, closing
   an issue) go through `gh api` with array argv and the body on stdin
   (`GhIssueTracker`), with `GH_TOKEN` or the person's own `gh` login, since a
-  person starts the queue. The runs themselves deliver with `GH_TOKEN` as
-  before. With `delivery.provider: fake` everything lives in
+  person starts the queue. That token or login needs Issues: read and write
+  on the repository; a refused write names the permission. The runs
+  themselves deliver with `GH_TOKEN` as before. With `delivery.provider: fake` everything lives in
   `.orbit/fake-github-issues.json` and `.orbit/fake-github.json`.
 
 ## Consequences

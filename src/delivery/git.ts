@@ -441,5 +441,10 @@ export async function fastForwardBase(o: RemoteOptions & { branch: string }): Pr
   if (merged.exitCode !== 0) {
     throw new OrbitError('POLICY_DENIED', `${o.branch} cannot fast-forward to ${o.remote}/${o.branch} (${tip.slice(0, 12)}): it has commits the remote does not have, or local changes in the way. Push or reset ${o.branch}, then start the queue again: ${redact(merged.stderr.trim()).slice(0, 300)}`, { definitive: true });
   }
+  // `merge --ff-only` also succeeds when the base is ahead of the remote; those commits would go into every pull request.
+  const now = (await git(o.repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], o)).stdout.trim();
+  if (now !== tip) {
+    throw new OrbitError('POLICY_DENIED', `${o.branch} has commits ${o.remote}/${o.branch} does not have (here ${now.slice(0, 12)}, there ${tip.slice(0, 12)}); they would go into every pull request the queue opens. Push them, or reset ${o.branch} to ${o.remote}/${o.branch}, then start the queue again`, { definitive: true });
+  }
   return { from, to: tip };
 }

@@ -4,6 +4,7 @@
  * pull requests and comments live in the fake GitHub files the fake delivery provider selects; a "person" merging a
  * pull request is the test, through the queue's wait seam. Nothing here reaches GitHub or a model.
  */
+import { EventEmitter } from 'node:events';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -17,7 +18,7 @@ import { FakeGitHub } from '../../../src/delivery/github.ts';
 import { FakeIssueReader, FAKE_ISSUES_FILE, type FakeIssue } from '../../../src/intake/github.ts';
 import { readIssueGoal } from '../../../src/intake/issue.ts';
 import { failureClass } from '../../../src/intake/comment.ts';
-import type { PolicySnapshot } from '../../../src/policy/types.ts';
+import type { OrbitConfig, PolicySnapshot } from '../../../src/policy/types.ts';
 import { argvCalls, baseScenario, DIAGNOSIS, git, IMPLEMENTER_OUTPUT, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
@@ -33,12 +34,13 @@ interface QueueLab extends Lab {
 const labs: Lab[] = [];
 afterEach(() => labs.splice(0).forEach((l) => l.close()));
 
-function lab(mode: 'autonomous-delivery' | 'autonomous' | 'supervised' = 'autonomous-delivery'): QueueLab {
+function lab(mode: 'autonomous-delivery' | 'autonomous' | 'supervised' = 'autonomous-delivery', tweak?: (c: OrbitConfig) => void): QueueLab {
   const l = makeLab({
     tweak: (c) => {
       c.mode = mode;
       c.delivery = { ...c.delivery, provider: 'fake', require_ci: false };
       if (mode === 'autonomous-delivery') c.actions = { ...c.actions, commit: true, push_task_branch: true, open_pull_request: true, read_ci_logs: true, repair_ci: true };
+      tweak?.(c);
     },
   });
   labs.push(l);
@@ -406,6 +408,56 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
     expect(issues(l).writes).toEqual([]);
     expect(r.out).toMatch(/frontier \(2, in priority order\):\n  #1 Add sub\n  #2 Add div/);
+  }, 300_000);
+
+  it('with --budget-usd, a run its attempt cap ended is the issue\'s, not the budget\'s: it goes to a person and the queue goes on', async () => {
+    const l = lab('autonomous', (c) => {
+      c.scheduler.hard_limits.implementation_attempts = 1;
+      c.scheduler.initial_allowances = { ...c.scheduler.initial_allowances, simple_attempts: 1, medium_attempts: 1, complex_attempts: 1 };
+    });
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('div')], implementer: [implement('sub', true), implement('div')] }));
+    // Under the policy's $30, so the queue lowers every run's cap: that alone no longer makes an EXHAUSTED run the budget's.
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--budget-usd', '20', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(10);
+    const all = runs(l);
+    expect(all.map((x) => [x.issue, x.state])).toEqual([
+      [1, 'EXHAUSTED'],
+      [2, 'SUCCEEDED'],
+    ]);
+    expect(failureClass(all[0]!)).not.toMatch(/^budget/);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([
+      [1, 'person', 1],
+      [2, 'delivered', 1],
+    ]);
+    expect(rec.stop).toMatchObject({ kind: 'empty' });
+    expect(issues(l).issue(1)!.labels).toEqual(['spec', 'ready-for-agent', 'ready-for-human']);
+  }, 300_000);
+
+  it('SIGTERM during a run stops the queue: no further run, no failed run counted, and the issue keeps its labels', async () => {
+    const l = lab('autonomous');
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('div')], implementer: [implement('sub'), implement('div')] }));
+    const signals = new EventEmitter();
+    // `timeout`, systemd stop or docker stop: SIGTERM once the first run is under way.
+    const timer = setInterval(() => {
+      if (signals.listenerCount('SIGTERM') > 0 && runs(l).some((x) => x.state !== 'CREATED')) {
+        clearInterval(timer);
+        signals.emit('SIGTERM');
+      }
+    }, 20);
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--policy', l.configPath], { signals }).finally(() => clearInterval(timer));
+    expect(r.code, `${r.out}\n${r.err}`).toBe(20);
+    const all = runs(l);
+    expect(all.map((x) => x.issue)).toEqual([1]);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([[1, 'interrupted', 1]]);
+    expect(rec.stop).toEqual({ kind: 'interrupted', reason: `interrupted during #1: run ${all[0]!.id} was stopped by SIGTERM; continue it with orbit resume ${all[0]!.id} --foreground` });
+    expect(issues(l).issue(1)!.labels).toEqual(READY);
+    expect(issues(l).writes).toEqual([]);
   }, 300_000);
 });
 

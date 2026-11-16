@@ -83,6 +83,13 @@ describe('reading a backlog through gh', () => {
     ]);
   });
 
+  it('names the permission the token lacks when GitHub refuses a label, comment or close', async () => {
+    const refused = { exitCode: 1, stdout: '', stderr: 'HTTP 403: Resource not accessible by personal access token' };
+    const { t } = tracker([refused, refused]);
+    await expect(t.close(7)).rejects.toMatchObject({ code: 'AUTH_MISSING', message: expect.stringContaining('needs Issues: read and write on acme/app') });
+    await expect(t.addLabel(7, 'ready-for-human')).rejects.toMatchObject({ message: expect.stringContaining('Issues: read and write') });
+  });
+
   it('says what failed in one line', async () => {
     const { t } = tracker([{ exitCode: 1, stdout: '', stderr: 'HTTP 404: Not Found' }]);
     await expect(t.listIssues({ parent: 9, label: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' });

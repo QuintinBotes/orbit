@@ -255,7 +255,11 @@ export class GhIssueReader implements IssueReader {
 export class GhIssueTracker extends GhIssueReader implements IssueTracker {
   private async write(what: string, method: 'POST' | 'PATCH', path: string, body: unknown): Promise<void> {
     const r = await this.call(what, ['-X', method, path, '--input', '-'], JSON.stringify(body));
-    if (!r.ok) throw r.error;
+    if (r.ok) return;
+    if (isOrbitError(r.error, 'AUTH_MISSING')) {
+      throw new OrbitError('AUTH_MISSING', `${r.error.message}; the queue labels, comments on and closes issues with GH_TOKEN (else your gh login), which needs Issues: read and write on ${this.repo}`, { ...r.error.details, definitive: true });
+    }
+    throw r.error;
   }
 
   async addLabel(number: number, label: string): Promise<void> {

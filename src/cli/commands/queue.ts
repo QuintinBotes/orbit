@@ -442,7 +442,7 @@ export async function queueRunCommand(args: Args, ctx: CliContext): Promise<numb
         break;
       }
       if (entry.outcome === 'interrupted') {
-        record.stop = { kind: 'interrupted', reason: `interrupted during #${entry.number}; its run is paused` };
+        record.stop = { kind: 'interrupted', reason: `interrupted during #${entry.number}: ${entry.reason}` };
         break;
       }
       const failed = failedRunsInARow(record.issues.flatMap((i) => i.attempts));
@@ -550,7 +550,11 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       const open = listQuestions(db, run.id, { status: 'open' }).length;
       entry.attempts.push({ run_id: run.id, state: result.run.state, failure_class: failureClass(result.run), open_questions: open, cost_usd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null });
       if (result.interrupted) return { ...entry, outcome: 'interrupted', reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
-      if (result.run.state === 'EXHAUSTED' && capped) {
+      // SIGTERM (timeout, systemd or docker stop) stops the queue as Ctrl-C does: no further run, and the issue keeps its labels.
+      if (result.terminated) return { ...entry, outcome: 'interrupted', reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
+      // Only a run that ran out of money under the queue's lowered cap is the queue's; review rounds or attempt caps are the issue's.
+      // shortcut: a run that hit its wall-time cap is also class budget and counts here; read the ending counter if that matters.
+      if (result.run.state === 'EXHAUSTED' && capped && result.run.failureClass === 'budget') {
         return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
       }
       if (result.run.state === 'SUCCEEDED') {
