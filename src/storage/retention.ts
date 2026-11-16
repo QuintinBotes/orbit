@@ -14,7 +14,7 @@ import { releaseRunCheckouts } from '../recovery/release.ts';
  * ended longer ago than the retention period loses its artifacts: the run
  * directory `.orbit/runs/<id>/` (snapshot, evidence, worker logs, final.md),
  * its worktrees under `<orbit home>/worktrees/<repo key>/<id>/` and its
- * workers' private temp directories under `/tmp/orbit-<uid>/`. The
+ * workers' private temp directories under the temp root (orbitTmpRoot). The
  * SQLite rows stay, so `orbit status` and the statistics still know the run,
  * and the run is marked with a `run.artifacts_pruned` event, which is also
  * what makes a second pass skip it.

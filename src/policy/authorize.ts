@@ -172,7 +172,8 @@ function authorizeRead(c: Compiled, path: unknown, ctx: AuthorizeContext): Autho
  * one that keeps a worker's Read out of another worker's temp files.
  */
 function otherWorkerTmp(canonical: string, own: string | undefined): boolean {
-  const root = canonicalize(orbitTmpRoot());
+  // The root `own` was made in: inside the worker's sandbox TMPDIR is `own` itself, so orbitTmpRoot() would nest in it.
+  const root = canonicalize(own === undefined ? orbitTmpRoot() : dirname(own));
   const ci = isCaseInsensitiveFs(dirname(root));
   if (relativeInside(root, canonical, ci) === null) return false;
   return own === undefined || relativeInside(canonicalize(own), canonical, ci) === null;

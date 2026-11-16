@@ -149,7 +149,13 @@ export class Controller {
     if (this.started) throw new Error('controller already started');
     this.started = true;
     const { db, clock } = this.deps;
-    registerController(db, { id: this.ownerId, pid: process.pid, host: hostname(), procStart: processStartTime(process.pid), mode: this.opts.mode }, clock);
+    let procStart: string | null = null;
+    try {
+      procStart = processStartTime(process.pid);
+    } catch {
+      // ps refused (a sandbox on macOS, #203): without a start time, liveness is the pid and the heartbeat, never "dead" while the pid lives.
+    }
+    registerController(db, { id: this.ownerId, pid: process.pid, host: hostname(), procStart, mode: this.opts.mode }, clock);
     this.log.info('controller started', { mode: this.opts.mode, run: this.opts.runId ?? null });
     if (this.opts.handleSignals) {
       this.signalHandler = (sig) => void this.stop(`received ${sig}`);

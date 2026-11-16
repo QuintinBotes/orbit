@@ -8,6 +8,7 @@ import { atomicWriteJson } from '../../../src/core/fsx.ts';
 import { isGroupAlive } from '../../../src/core/proc.ts';
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { assertBaseUrl, isLoopbackHost, isReadyStatus, reconcileApp, startApp, stopApp, type AppState, type StartAppOptions } from '../../../src/ui/app-fixture.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const isolation = { provider: new NoIsolation(), profile: { writablePaths: [], denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 1000, memoryMb: null, cpus: null, pids: null }, allowLocalBinding: true } };
 // A process that stays up until it is stopped; readiness is decided by the injected probe.
@@ -55,7 +56,8 @@ describe('startApp', () => {
   });
   const state = (file: string) => JSON.parse(readFileSync(file, 'utf8')) as AppState;
 
-  it('records intent, waits for readiness, and stops the whole group', async () => {
+  it('records intent, waits for readiness, and stops the whole group', async (ctx) => {
+    skipWithoutPs(ctx);
     let calls = 0;
     // First call is the "is something already there" check; then not ready twice; then ready.
     const probe = async () => (++calls <= 3 ? null : 200);
@@ -210,7 +212,8 @@ describe('reconcileApp', () => {
     expect(await reconcileApp(h.stateFile)).toBe('already-stopped');
   });
 
-  it('leaves a process alone when the pid now belongs to something else', async () => {
+  it('leaves a process alone when the pid now belongs to something else', async (ctx) => {
+    skipWithoutPs(ctx);
     // This test process stands in for an unrelated process that was handed the recorded pid.
     const file = write({ ...base(), pid: process.pid, pgid: process.pid, start: 'Thu Jan 1 00:00:00 1970' });
     expect(await reconcileApp(file)).toBe('foreign-process');

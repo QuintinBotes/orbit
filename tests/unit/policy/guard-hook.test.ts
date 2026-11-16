@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { orbitTmpRoot } from '../../../src/isolation/profiles.ts';
@@ -149,7 +149,9 @@ describe('reads in the workers\' temp root', () => {
   it('allows a worker its own temp directory and denies every other one, by any spelling', () => {
     const mine = { ...opts, workerTmpDir: own };
     expect(handlePreToolUse(input('Read', { file_path: join(own, 'cargo', 'out.log') }), mine)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
-    for (const p of [join(other, 'cargo', 'out.log'), join('/tmp', `orbit-${uid}`, 'bbbbbbbbbbbb', 'x'), join(own, '..', 'bbbbbbbbbbbb', 'x'), root]) {
+    // The root spelled through the /tmp link of macOS, as Bash would name it.
+    const linked = join(root.replace(/^\/private\/tmp\//, '/tmp/'), 'bbbbbbbbbbbb', 'x');
+    for (const p of [join(other, 'cargo', 'out.log'), linked, join(own, '..', 'bbbbbbbbbbbb', 'x'), root]) {
       expect(denial(handlePreToolUse(input('Read', { file_path: p }), mine)).rule, p).toBe('read.worker-tmp');
     }
     expect(denial(handlePreToolUse(input('Bash', { command: `cat ${join(other, 'x')}` }), mine)).rule).toBe('bash.worker-tmp-read');
@@ -161,5 +163,25 @@ describe('reads in the workers\' temp root', () => {
     const env = { ORBIT_POLICY_PATH: opts.snapshotPath, ORBIT_POLICY_HASH: opts.expectedHash, ORBIT_WORKTREE: wt, ORBIT_WORKER_TMPDIR: own };
     expect(runGuardHook(input('Read', { file_path: join(own, 'x') }), env)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
     expect(denial(runGuardHook(input('Read', { file_path: join(other, 'x') }), env)).rule).toBe('read.worker-tmp');
+  });
+
+  // #203: in the worker's sandbox TMPDIR is its own directory, short enough for Orbit code there to nest a root in it.
+  it('judges the root from the worker\'s own directory, whatever TMPDIR the hook runs with', () => {
+    let base: string;
+    try {
+      base = realpathSync(mkdtempSync('/tmp/o-'));
+    } catch {
+      base = realpathSync(mkdtempSync(join(tmpdir(), 'o-'))); // /tmp is not writable under Orbit's check sandbox
+    }
+    const mine = join(base, 'aaaaaaaaaaaa');
+    mkdirSync(mine);
+    vi.stubEnv('TMPDIR', mine);
+    try {
+      const d = handlePreToolUse(input('Read', { file_path: join(base, 'bbbbbbbbbbbb', 'x') }), { ...opts, workerTmpDir: mine });
+      expect(denial(d).rule).toBe('read.worker-tmp');
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

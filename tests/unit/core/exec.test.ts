@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrbitError } from '../../../src/core/errors.ts';
 import { execCapture, spawnDetached, TRUNCATION_MARKER } from '../../../src/core/exec.ts';
 import { isAlive, killGroup } from '../../../src/core/proc.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const NODE = process.execPath;
 const node = (code: string, ...args: string[]): string[] => [NODE, '-e', code, ...args];
@@ -188,7 +189,8 @@ describe('spawnDetached', () => {
     expect(statSync(join(dir, 'w')).mode & 0o777).toBe(0o700);
   });
 
-  it('is the leader of a new group, so a group kill reaches its children', async () => {
+  it('is the leader of a new group, so a group kill reaches its children', async (ctx) => {
+    skipWithoutPs(ctx);
     const out = join(dir, 'out.log');
     const { pid, pgid } = spawnDetached(['sh', '-c', 'sleep 30 & echo $!; wait'], { stdoutPath: out, stderrPath: out });
     leftovers.push(pid);

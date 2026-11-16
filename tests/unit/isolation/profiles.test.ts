@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isOrbitError } from '../../../src/core/errors.ts';
@@ -31,6 +31,18 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
 });
+
+/**
+ * A writable temp directory other than /tmp, short enough to hold a root: the check's own TMPDIR under Orbit's check
+ * sandbox, a new one in /tmp elsewhere.
+ */
+function shortTemp(): string {
+  const env = realpathSync(tmpdir());
+  if (env.length <= 38 && env !== realpathSync('/tmp')) return env;
+  const made = realpathSync(mkdtempSync('/tmp/o-'));
+  cleanups.push(() => rmSync(made, { recursive: true, force: true }));
+  return made;
+}
 
 /**
  * The layout Orbit uses: projects side by side, worktrees under ~/.orbit,
@@ -547,7 +559,7 @@ describe('provider directories and the worker tmp dir', () => {
   it('keeps worker temp directories short, stable and under a per-user root', () => {
     const l = layout();
     const uid = process.getuid!();
-    expect(orbitTmpRoot(uid)).toBe(canonicalPath(`/tmp/orbit-${uid}`));
+    expect(orbitTmpRoot(uid)).toMatch(new RegExp(`/orbit-${uid}$`));
     const dir = workerTmpDir(l.workerDir);
     expect(dir).toMatch(new RegExp(`^${orbitTmpRoot(uid)}/[0-9a-f]{12}$`));
     expect(workerTmpDir(l.workerDir)).toBe(dir);
@@ -584,19 +596,38 @@ describe('provider directories and the worker tmp dir', () => {
     expect(isOrbitError(caught, 'ISOLATION_UNAVAILABLE')).toBe(true);
   });
 
-  // Review of #140: only /tmp is resolved, so a link planted at /tmp/orbit-<uid> is seen and refused, never followed to a
-  // private directory of this user's that it points at.
+  // #203: the root follows the environment's temp directory (a check's own TMPDIR) when it is writable and short enough
+  // for socket paths; otherwise it is /tmp/orbit-<uid> (the macOS per-user /var/folders/.../T is too long).
+  it('nests the temp root in a short, writable temp directory of the environment, and keeps /tmp otherwise', () => {
+    const l = layout();
+    const fixed = join(realpathSync('/tmp'), 'orbit-7');
+    const short = shortTemp();
+    expect(orbitTmpRoot(7, short)).toBe(join(short, 'orbit-7'));
+    vi.stubEnv('TMPDIR', short);
+    cleanups.push(() => vi.unstubAllEnvs());
+    expect(orbitTmpRoot(7)).toBe(join(short, 'orbit-7'));
+    const long = join(l.r, 'a'.repeat(50));
+    mkdirSync(long);
+    expect(orbitTmpRoot(7, long)).toBe(fixed);
+    expect(orbitTmpRoot(7, join(l.r, 'missing'))).toBe(fixed);
+    expect(orbitTmpRoot(7, 'relative')).toBe(fixed);
+    expect(workerTmpDir(l.workerDir, orbitTmpRoot(4_294_967_294, short)).length).toBeLessThan(60);
+  });
+
+  // Review of #140: only the temp directory is resolved, so a link planted at the root itself is seen and refused, never
+  // followed to a private directory of this user's that it points at.
   it('leaves a link planted at the default temp root unresolved, so preparing a worker refuses it', () => {
     const l = layout();
     const target = join(l.r, 'private-target');
     mkdirSync(target, { mode: 0o700 });
     chmodSync(target, 0o700);
-    const uid = 900_000_000 + (process.pid % 100_000);
-    const link = join(realpathSync('/tmp'), `orbit-${uid}`);
+    // Four digits: short enough to nest in a check's TMPDIR (#203), and no account of this machine's.
+    const uid = 9_000 + (process.pid % 1_000);
+    const link = orbitTmpRoot(uid);
     symlinkSync(target, link);
     try {
       expect(orbitTmpRoot(uid)).toBe(link);
-      expect(() => prepareWorkerTmpDir(l.workerDir, orbitTmpRoot(uid))).toThrow(/not a private directory/);
+      expect(() => prepareWorkerTmpDir(l.workerDir, link)).toThrow(/not a private directory/);
       expect(readdirSync(target)).toEqual([]);
     } finally {
       unlinkSync(link);

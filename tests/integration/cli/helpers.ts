@@ -108,6 +108,8 @@ export function makeSandbox(opts: { config?: string | null; fakes?: { claude?: R
     ORBIT_HOME: join(home, '.orbit'),
     USER: 'alice',
     LANG: 'C',
+    // The suite's temp directory: under Orbit's check sandbox it is the only one the CLI may write (#203).
+    ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
     // A clean environment does not inherit the suite's kill switch: no test pops a desktop notification.
     ORBIT_NOTIFICATIONS: 'off',
     ...GIT_ENV,
