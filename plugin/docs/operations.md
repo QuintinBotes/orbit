@@ -112,8 +112,10 @@ orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minut
   `release` run merges its own pull request only when a person has approved
   turning merge on for that run (every contract starts with `merge: false`),
   so no mode yet works a blocking chain without a person.
-- An issue gets up to `--attempts` runs (default 2); a run waiting on an answer
-  is not tried again. An issue whose runs did not deliver, or whose body fails
+- An issue gets up to `--attempts` runs (default 2); a run waiting on an answer,
+  or one that stopped holding a verified candidate (`BLOCKED` with an offer to
+  deliver or discard it), is not tried again and counts as a failed run. An
+  issue whose runs did not deliver, or whose body fails
   `orbit spec check`, is labelled `ready-for-human` with one comment that says
   why, and its dependants wait.
 - The queue stops when the frontier is empty, at `--max-issues`, at

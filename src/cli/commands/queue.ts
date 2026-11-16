@@ -19,6 +19,7 @@ import { startRun, stateDbPath } from '../../controller/index.ts';
 import { orbitDir } from '../../controller/start.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
 import { isTerminal } from '../../controller/states.ts';
+import { heldVerifiedCandidate } from '../../controller/verified-candidate.ts';
 import { DELIVERY_FILE, githubClientForConfig } from '../../controller/steps/delivering.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
@@ -292,6 +293,8 @@ export interface QueueAttempt {
   failure_class: string;
   /** Questions the run left open for a person: such a run is not tried again. */
   open_questions: number;
+  /** The run stopped holding a candidate that passed verification (#169): a person delivers or discards it, so it is not tried again. */
+  verified_candidate: boolean;
   cost_usd: number | null;
 }
 
@@ -352,6 +355,7 @@ function personComment(entry: QueueIssueRecord, q: Queue, problems: string[]): s
   for (const a of entry.attempts) lines.push(`- Run \`${a.run_id}\`: ${a.state}, failure class ${a.failure_class}${a.cost_usd !== null ? `, spend $${a.cost_usd.toFixed(4)}` : ''}`);
   const last = entry.attempts[entry.attempts.length - 1]!;
   if (last.open_questions > 0) lines.push('', `The last run waits on an answer from a person: \`orbit questions ${last.run_id}\`.`);
+  if (last.verified_candidate) lines.push('', `The last run holds a candidate that passed verification: \`orbit report ${last.run_id}\` gives the commands that deliver it as a draft pull request or discard it.`);
   lines.push('', `The reports are on the machine that ran them: \`orbit report ${last.run_id}\`.`);
   return lines.join('\n');
 }
@@ -548,7 +552,9 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       const report = readJsonIfExists<ReportForComment>(join(runDir, 'final.json'));
       const cost = report?.budget?.cost_usd;
       const open = listQuestions(db, run.id, { status: 'open' }).length;
-      entry.attempts.push({ run_id: run.id, state: result.run.state, failure_class: failureClass(result.run), open_questions: open, cost_usd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null });
+      // A run that would have ended EXHAUSTED while holding a verified candidate ends BLOCKED with an offer instead (#169).
+      const held = heldVerifiedCandidate(result.run) !== null;
+      entry.attempts.push({ run_id: run.id, state: result.run.state, failure_class: failureClass(result.run), open_questions: open, verified_candidate: held, cost_usd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null });
       if (result.interrupted) return { ...entry, outcome: 'interrupted', reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
       // SIGTERM (timeout, systemd or docker stop) stops the queue as Ctrl-C does: no further run, and the issue keeps its labels.
       if (result.terminated) return { ...entry, outcome: 'interrupted', reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
@@ -558,15 +564,16 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       // shortcut: an unfunded-session ending names no counter, so in a run with an earlier cause (a turn cap) it reads as the issue's; record the counter there if that matters.
       const ended = db.get<{ counter: string | null }>("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
       const outOfMoney = ended === 'cost_usd' || (ended === null && result.run.failureClass === 'budget');
-      if (result.run.state === 'EXHAUSTED' && capped && outOfMoney) {
-        return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
+      if ((result.run.state === 'EXHAUSTED' || held) && capped && outOfMoney) {
+        return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ''}` };
       }
       if (result.run.state === 'SUCCEEDED') {
         const d = deliveryOf(runDir);
         return { ...entry, outcome: 'delivered', reason: '', pull_request: d.pr, branch: d.branch ?? result.run.branch };
       }
-      // A run that waits on a person's answer is not tried again: a new run would only guess.
-      if (open > 0) break;
+      // A run that waits on a person's answer, or holds a verified candidate a person delivers or discards, is not tried
+      // again: a new run would only guess, or pay again for work that passed verification.
+      if (open > 0 || held) break;
     } finally {
       db.close();
     }

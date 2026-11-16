@@ -19,7 +19,7 @@ import { FakeIssueReader, FAKE_ISSUES_FILE, type FakeIssue } from '../../../src/
 import { readIssueGoal } from '../../../src/intake/issue.ts';
 import { failureClass } from '../../../src/intake/comment.ts';
 import type { OrbitConfig, PolicySnapshot } from '../../../src/policy/types.ts';
-import { argvCalls, baseScenario, DIAGNOSIS, git, IMPLEMENTER_OUTPUT, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
+import { APPROVE, argvCalls, baseScenario, DIAGNOSIS, git, IMPLEMENTER_OUTPUT, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 const READY = ['spec', 'ready-for-agent'];
@@ -451,6 +451,54 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     const rec = record(l);
     expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
     expect(rec.stop).toMatchObject({ kind: 'budget' });
+    expect(issues(l).writes).toEqual([]);
+  }, 300_000);
+
+  // A review that asks for a repair the review_rounds cap leaves no round for: the run stops holding a verified candidate.
+  const REPAIR_REQUIRED = {
+    structured: {
+      verdict: 'REPAIR_REQUIRED',
+      candidate_revision: '$CANDIDATE',
+      findings: [{ id: 'COR-1', severity: 'high', category: 'correctness', location: 'apps/sub.mjs:1', claim: 'sub accepts non-numeric arguments and returns NaN instead of throwing a TypeError.', evidence: 'sub("a", 2) evaluates "a" - 2, which is NaN.', suggested_validation: 'Add a test asserting that sub("a", 2) throws a TypeError.' }],
+    },
+  };
+
+  it('a run that stops holding a verified candidate (BLOCKED with an offer, #169) is a failed run for FR-004, is not tried again, and goes to a person with the offer', async () => {
+    const l = lab('autonomous', (c) => void (c.scheduler.hard_limits.review_rounds = 1));
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    put(l, 3, 'pow');
+    writeScenario(l, baseScenario({ planner: [planner('sub'), planner('div')], implementer: [implement('sub'), implement('div', true)], verifier: [RULED_OUT], reviewer: [REPAIR_REQUIRED] }));
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(10);
+    const all = runs(l);
+    expect(all.map((x) => [x.issue, x.state])).toEqual([
+      [1, 'BLOCKED'],
+      [2, 'IMPOSSIBLE'],
+    ]);
+    const rec = record(l);
+    // One run of #1 (no second attempt), then #2's failed run is the second in a row: the queue stops before #3.
+    expect(outcomes(rec)).toEqual([
+      [1, 'person', 1],
+      [2, 'person', 1],
+    ]);
+    expect(rec.issues[0]!.attempts[0]).toMatchObject({ state: 'BLOCKED', verified_candidate: true });
+    expect(rec.stop).toMatchObject({ kind: 'failed-runs' });
+    expect(issues(l).comments(1)[0]).toContain(`The last run holds a candidate that passed verification: \`orbit report ${all[0]!.id}\` gives the commands that deliver it as a draft pull request or discard it.`);
+  }, 300_000);
+
+  it('a run that runs out of the queue\'s money while holding a verified candidate stops the queue as budget, and the issue keeps its labels', async () => {
+    const l = lab('autonomous');
+    put(l, 1, 'sub');
+    put(l, 2, 'div');
+    // The candidate passes verification; the repair the review asks for then costs more than the whole budget.
+    writeScenario(l, baseScenario({ planner: [planner('sub')], implementer: [implement('sub'), { ...implement('sub'), usage: { costUSD: 1.6 } }], reviewer: [REPAIR_REQUIRED] }));
+    const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--budget-usd', '1.5', '--policy', l.configPath]);
+    expect(r.code, `${r.out}\n${r.err}`).toBe(0);
+    expect(runs(l).map((x) => [x.issue, x.state])).toEqual([[1, 'BLOCKED']]);
+    const rec = record(l);
+    expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
+    expect(rec.stop).toMatchObject({ kind: 'budget', reason: expect.stringContaining('the run holds a verified candidate') });
     expect(issues(l).writes).toEqual([]);
   }, 300_000);
 

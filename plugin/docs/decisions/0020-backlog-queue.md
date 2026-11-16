@@ -60,7 +60,12 @@ issue it blocks.
   (`src/contract/draft.ts`).
 - **Attempts and a person.** An issue gets up to `--attempts` runs (default 2).
   A run that ends waiting on an answer is not tried again: a new run would only
-  guess. An issue whose runs did not deliver, or whose body fails the spec
+  guess. Nor is a run that stopped holding a verified candidate (#169: `BLOCKED`
+  with an offer where it would have ended `EXHAUSTED`): a person delivers or
+  discards it, and a new run would pay again for verified work. Such a run is a
+  failed run for the stop rule below, and when the money ran out it is the
+  budget's, as an `EXHAUSTED` run would be. An issue whose runs did not
+  deliver, or whose body fails the spec
   check (refused before any run), is labelled `ready-for-human` and gets one
   comment built from the controller's records (each run's id, state, failure
   class and spend; for a spec, the check's problems). The label keeps every

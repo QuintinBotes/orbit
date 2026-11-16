@@ -74930,6 +74930,7 @@ function personComment(entry, q, problems) {
   for (const a of entry.attempts) lines.push(`- Run \`${a.run_id}\`: ${a.state}, failure class ${a.failure_class}${a.cost_usd !== null ? `, spend $${a.cost_usd.toFixed(4)}` : ""}`);
   const last = entry.attempts[entry.attempts.length - 1];
   if (last.open_questions > 0) lines.push("", `The last run waits on an answer from a person: \`orbit questions ${last.run_id}\`.`);
+  if (last.verified_candidate) lines.push("", `The last run holds a candidate that passed verification: \`orbit report ${last.run_id}\` gives the commands that deliver it as a draft pull request or discard it.`);
   lines.push("", `The reports are on the machine that ran them: \`orbit report ${last.run_id}\`.`);
   return lines.join("\n");
 }
@@ -75110,19 +75111,20 @@ async function workIssue(ctx, q, record, issue, o) {
       const report2 = readJsonIfExists(join91(runDir2, "final.json"));
       const cost = report2?.budget?.cost_usd;
       const open2 = listQuestions(db, run.id, { status: "open" }).length;
-      entry.attempts.push({ run_id: run.id, state: result2.run.state, failure_class: failureClass(result2.run), open_questions: open2, cost_usd: typeof cost === "number" && Number.isFinite(cost) ? cost : null });
+      const held = heldVerifiedCandidate(result2.run) !== null;
+      entry.attempts.push({ run_id: run.id, state: result2.run.state, failure_class: failureClass(result2.run), open_questions: open2, verified_candidate: held, cost_usd: typeof cost === "number" && Number.isFinite(cost) ? cost : null });
       if (result2.interrupted) return { ...entry, outcome: "interrupted", reason: `run ${run.id} is paused; continue it with orbit resume ${run.id}` };
       if (result2.terminated) return { ...entry, outcome: "interrupted", reason: `run ${run.id} was stopped by SIGTERM; continue it with orbit resume ${run.id} --foreground` };
       const ended = db.get("SELECT json_extract(data_json, '$.data.counter') AS counter FROM events WHERE run_id = ? AND type = 'state.transition' ORDER BY id DESC LIMIT 1", run.id)?.counter ?? null;
       const outOfMoney = ended === "cost_usd" || ended === null && result2.run.failureClass === "budget";
-      if (result2.run.state === "EXHAUSTED" && capped && outOfMoney) {
-        return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person` };
+      if ((result2.run.state === "EXHAUSTED" || held) && capped && outOfMoney) {
+        return { ...entry, outcome: "budget", reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ""}` };
       }
       if (result2.run.state === "SUCCEEDED") {
         const d = deliveryOf(runDir2);
         return { ...entry, outcome: "delivered", reason: "", pull_request: d.pr, branch: d.branch ?? result2.run.branch };
       }
-      if (open2 > 0) break;
+      if (open2 > 0 || held) break;
     } finally {
       db.close();
     }
@@ -75149,6 +75151,7 @@ var init_queue = __esm({
     init_start();
     init_run_store();
     init_states();
+    init_verified_candidate();
     init_delivering();
     init_errors();
     init_fsx();
