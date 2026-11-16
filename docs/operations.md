@@ -396,7 +396,8 @@ draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
 lists the checks it passed and every open finding, and says whether a review
 approved it; it needs `gh`, and you run it, because Orbit did not deliver it.
 Every value it takes from the policy (remote, branch, paths) is one shell word,
-quoted where needed. `discard_command` is
+quoted where needed, `git push` reads its arguments after `--`, and a value
+with a leading `-` is refused, so none can act as an option. `discard_command` is
 `orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
 mode, and `orbit resume` would continue the run under the limits that stopped
 it. The failure

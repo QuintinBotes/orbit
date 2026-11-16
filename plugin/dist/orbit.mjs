@@ -52314,6 +52314,7 @@ var init_run_refs = __esm({
 // src/controller/verified-candidate.ts
 import { join as join43 } from "node:path";
 function shellWord2(v) {
+  if (v.startsWith("-")) throw new OrbitError("CONFIG_INVALID", `"${v}" starts with '-', so a command would read it as an option`);
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
 }
 function title(runId, seq2) {
@@ -52334,6 +52335,13 @@ function findVerifiedCandidate(db, run, snapshot2) {
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot2.config.repository;
     const branch = run.branch ?? `${prefix}${run.id}`;
     const body = `.orbit/runs/${run.id}/${VERIFIED_CANDIDATE_BODY}`;
+    let deliver2;
+    try {
+      deliver2 = `git push -- ${shellWord2(remote)} ${shellWord2(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord2(base)} --head ${shellWord2(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord2(body)}`;
+    } catch (err) {
+      if (isOrbitError(err, "CONFIG_INVALID")) return null;
+      throw err;
+    }
     return {
       candidate_id: cand.id,
       seq: cand.seq,
@@ -52345,7 +52353,7 @@ function findVerifiedCandidate(db, run, snapshot2) {
       open_findings: open2,
       branch,
       approved_by: approved?.id ?? null,
-      deliver_command: `git push ${shellWord2(remote)} ${shellWord2(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord2(base)} --head ${shellWord2(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord2(body)}`,
+      deliver_command: deliver2,
       discard_command: `orbit cancel ${shellWord2(run.id)}`
     };
   }
@@ -52401,6 +52409,7 @@ var VERIFIED_CANDIDATE_BODY, OPEN_STATUSES, findingLine;
 var init_verified_candidate = __esm({
   "src/controller/verified-candidate.ts"() {
     "use strict";
+    init_errors();
     init_fsx();
     init_redact();
     init_text2();

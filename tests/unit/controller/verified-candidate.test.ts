@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { finishRun } from '../../../src/controller/steps/common.ts';
 import { step } from '../../../src/controller/steps/index.ts';
-import { findVerifiedCandidate, VERIFIED_CANDIDATE_BODY } from '../../../src/controller/verified-candidate.ts';
+import { findVerifiedCandidate, shellWord, VERIFIED_CANDIDATE_BODY } from '../../../src/controller/verified-candidate.ts';
 import { setCandidateStatus } from '../../../src/evidence/store.ts';
 import type { FinalReport } from '../../../src/controller/report.ts';
 import { addCandidate, addEvidence, addReview, makeUnitLab, type UnitLab } from './coverage-helpers.ts';
@@ -51,7 +51,7 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     ]);
     // One command delivers it as a draft pull request whose body lists the open findings; one discards it.
     expect(held.deliver_command).toBe(
-      `git push origin ${cand.commitSha}:refs/heads/orbit/${lab.runId} && gh pr create --draft --base main --head orbit/${lab.runId} --title "Orbit run ${lab.runId}: verified candidate 1" --body-file .orbit/runs/${lab.runId}/${VERIFIED_CANDIDATE_BODY}`,
+      `git push -- origin ${cand.commitSha}:refs/heads/orbit/${lab.runId} && gh pr create --draft --base main --head orbit/${lab.runId} --title "Orbit run ${lab.runId}: verified candidate 1" --body-file .orbit/runs/${lab.runId}/${VERIFIED_CANDIDATE_BODY}`,
     );
     expect(held.discard_command).toBe(`orbit cancel ${lab.runId}`);
     const body = readFileSync(join(lab.ctx().runDir, VERIFIED_CANDIDATE_BODY), 'utf8');
@@ -185,13 +185,26 @@ describe('what the offer may say, and when it is made', () => {
     const snap = lab.ctx().snapshot;
     const repository = { ...snap.config.repository, remote: `origin; touch ${marker}`, base_branch: `main$(touch ${marker})` };
     const vc = findVerifiedCandidate(lab.db, getRun(lab.db, lab.runId), { ...snap, config: { ...snap.config, repository } })!;
-    expect(vc.deliver_command.startsWith(`git push 'origin; touch ${marker}' ${cand.commitSha}:refs/heads/orbit/${lab.runId} && `)).toBe(true);
+    expect(vc.deliver_command.startsWith(`git push -- 'origin; touch ${marker}' ${cand.commitSha}:refs/heads/orbit/${lab.runId} && `)).toBe(true);
     expect(vc.deliver_command).toContain(`--base 'main$(touch ${marker})' `);
     // Run through a shell with printf in place of git and gh: each value comes back as one argument and nothing else runs.
-    const words = execFileSync('sh', ['-c', vc.deliver_command.replace(/^git push /, "printf '%s\\n' ").replace(' && gh pr create ', " && printf '%s\\n' ")], { cwd: lab.base, encoding: 'utf8' }).split('\n');
+    const words = execFileSync('sh', ['-c', vc.deliver_command.replace(/^git push -- /, "printf '%s\\n' ").replace(' && gh pr create ', " && printf '%s\\n' ")], { cwd: lab.base, encoding: 'utf8' }).split('\n');
     expect(words).toContain(`origin; touch ${marker}`);
     expect(words).toContain(`main$(touch ${marker})`);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it('no value of the offered commands can be an option: git push reads its arguments after --, and a word with a leading - is refused', async () => {
+    expect(() => shellWord('-f')).toThrow(/starts with '-'/);
+    expect(() => shellWord('--receive-pack=/tmp/x')).toThrow(/starts with '-'/);
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    const cand = addCandidate(lab);
+    addEvidence(lab, cand, { checks: PASSED });
+    const snap = lab.ctx().snapshot;
+    expect(findVerifiedCandidate(lab.db, getRun(lab.db, lab.runId), snap)!.deliver_command).toMatch(/^git push -- origin /);
+    // A snapshot that slipped past validation with an option for a remote gets no offer at all, not an option in a command.
+    const repository = { ...snap.config.repository, remote: '--receive-pack=/tmp/x' };
+    expect(findVerifiedCandidate(lab.db, getRun(lab.db, lab.runId), { ...snap, config: { ...snap.config, repository } })).toBeNull();
   });
 
   it('a run that pushed its delivery commit offers no candidate when a later step of the delivery fails: that push would not fast-forward', async () => {

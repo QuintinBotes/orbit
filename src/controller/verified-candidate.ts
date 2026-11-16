@@ -12,6 +12,7 @@
  * would have had (failure-class.ts).
  */
 import { join } from 'node:path';
+import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { atomicWrite } from '../core/fsx.ts';
 import { redact } from '../core/redact.ts';
 import { clipAtWord } from '../core/text.ts';
@@ -57,8 +58,12 @@ export interface VerifiedCandidate {
   discard_command: string;
 }
 
-/** A value as one shell word: as it is when it holds only characters a shell leaves alone, else single-quoted. */
+/**
+ * A value as one shell word: as it is when it holds only characters a shell leaves alone, else single-quoted. A value
+ * with a leading '-' is refused: quoted or not, a command reads it as an option.
+ */
 export function shellWord(v: string): string {
+  if (v.startsWith('-')) throw new OrbitError('CONFIG_INVALID', `"${v}" starts with '-', so a command would read it as an option`);
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -87,10 +92,18 @@ export function findVerifiedCandidate(db: OrbitDb, run: Pick<RunRecord, 'id' | '
     const rounds = new Map(reviews.map((r) => [r.id, r.round] as const));
     const open = listFindings(db, run.id, { statuses: OPEN_STATUSES }).map((f) => ({ id: f.externalId ?? f.id, review_round: rounds.get(f.reviewId) ?? null, severity: f.severity, status: f.status, claim: clipAtWord(f.claim, 300) }));
     const approved = reviews.find((r) => r.treeHash === cand.treeHash && r.verdict === 'APPROVE' && r.invalidatedAt === null) ?? null;
-    // Every value from the policy is one shell word in the commands a person runs, so none can start a second command.
+    // Every value from the policy is one shell word in the commands a person runs, so none can start a second command,
+    // and none is an option: git push reads its arguments after `--`, and a value with a leading '-' offers nothing.
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot.config.repository;
     const branch = run.branch ?? `${prefix}${run.id}`;
     const body = `.orbit/runs/${run.id}/${VERIFIED_CANDIDATE_BODY}`;
+    let deliver: string;
+    try {
+      deliver = `git push -- ${shellWord(remote)} ${shellWord(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord(base)} --head ${shellWord(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord(body)}`;
+    } catch (err) {
+      if (isOrbitError(err, 'CONFIG_INVALID')) return null;
+      throw err;
+    }
     return {
       candidate_id: cand.id,
       seq: cand.seq,
@@ -102,7 +115,7 @@ export function findVerifiedCandidate(db: OrbitDb, run: Pick<RunRecord, 'id' | '
       open_findings: open,
       branch,
       approved_by: approved?.id ?? null,
-      deliver_command: `git push ${shellWord(remote)} ${shellWord(`${cand.commitSha}:refs/heads/${branch}`)} && gh pr create --draft --base ${shellWord(base)} --head ${shellWord(branch)} --title ${title(run.id, cand.seq)} --body-file ${shellWord(body)}`,
+      deliver_command: deliver,
       discard_command: `orbit cancel ${shellWord(run.id)}`,
     };
   }

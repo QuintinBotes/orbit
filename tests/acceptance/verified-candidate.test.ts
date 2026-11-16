@@ -120,7 +120,7 @@ describe.skipIf(!READY)('acceptance: a verified candidate is always offered, eve
     // One command: push the candidate commit to the run's branch, then open a draft pull request from it with the body
     // Orbit wrote. The lab has no gh, so the push runs as the person would run it and the body is read as gh would send it.
     const [push, pr] = offered.deliver_command.split(' && ');
-    expect(push).toBe(`git push origin ${offered.commit}:refs/heads/${offered.branch}`);
+    expect(push).toBe(`git push -- origin ${offered.commit}:refs/heads/${offered.branch}`);
     expect(pr).toMatch(new RegExp(`^gh pr create --draft --base main --head ${offered.branch} --title "Orbit run ${run.id}: verified candidate 1" --body-file (\\S+)$`));
     execFileSync('sh', ['-c', push!], { cwd: l.repo, stdio: 'pipe' });
     expect(git(l.remote, 'rev-parse', `refs/heads/${offered.branch}`)).toBe(offered.commit);
