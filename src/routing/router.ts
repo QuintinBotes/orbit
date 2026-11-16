@@ -404,7 +404,7 @@ function calibrate(ctx: Ctx, tier: number, chosen: ModelEntry, byTier: Map<numbe
   // The tier an earlier attempt of this run ran on (escalated or held there): outcomes measured on other runs never
   // send the work below it.
   const floorTier = ctx.previousTier;
-  const describe =(m: ModelEntry, verdict: string): void => {
+  const describe = (m: ModelEntry, verdict: string): void => {
     const st = statFor(ctx, m);
     if (!st) return;
     const judged = st.verified + st.failed + st.rejected;
