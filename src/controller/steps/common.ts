@@ -99,14 +99,7 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
 export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
   let advice = '';
   const stopped = reason;
-  const offered = to === 'EXHAUSTED' ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
-  if (offered) {
-    // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
-    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
-    reason = withSentence(reason, advice);
-    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: 'EXHAUSTED', verified_candidate: offered } };
-    to = 'BLOCKED';
-  } else if (to === 'BLOCKED') {
+  if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
     // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
     // `resumable`: the step knows from its records that a resume can clear this, whatever the reason's text names.
@@ -119,8 +112,17 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   }
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note(ctx, 'workers.stop-failed', { workers: unstoppable });
-  const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };
   ctx.refresh();
+  // After the cancellation is read: a cancelled run is offered nothing, so it records the EXHAUSTED the step decided.
+  const offered = to === 'EXHAUSTED' && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  if (offered) {
+    // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
+    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    reason = withSentence(reason, advice);
+    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: 'EXHAUSTED', verified_candidate: offered } };
+    to = 'BLOCKED';
+  }
+  const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };
   // A durable cancellation outranks every other outcome: only CANCELLED is reachable once it is recorded.
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
   if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);

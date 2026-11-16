@@ -63,7 +63,7 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     expect(run.outcomeReason).toContain(`candidate 1 (commit ${cand.commitSha.slice(0, 12)}, ref refs/orbit/${lab.runId}/candidates/1) passed verification (checks lint, unit)`);
     expect(run.outcomeReason).toContain('2 open review finding(s): COR-1 (review 1, high, open), DOC-1 (review 1, low, open)');
     expect(run.outcomeReason).toContain(held.deliver_command as string);
-    expect(run.outcomeReason).toMatch(new RegExp(`orbit cancel ${lab.runId}\\. Resuming would stop again on the same limit\\.$`));
+    expect(run.outcomeReason).toMatch(new RegExp(`orbit cancel ${lab.runId}\\. Resuming would continue the run under the limits that stopped it\\.$`));
 
     // The report carries it, in JSON and in its own section, and its next action is to deliver or discard it.
     const report = finalJson();
@@ -120,6 +120,18 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
   });
 
+  it('a run that delivered ends EXHAUSTED even when a later candidate passed: its pull request branch does not take that candidate', async () => {
+    lab = makeUnitLab({ path: [...TO_REVIEWING] });
+    const delivered = addCandidate(lab, { commit: 'd1'.repeat(20), tree: 'e1'.repeat(20) });
+    addEvidence(lab, delivered, { checks: PASSED });
+    setCandidateStatus(lab.db, delivered.id, 'DELIVERED');
+    // A CI repair after delivery: its commit's parent is the base, not the delivery commit at the branch tip.
+    addEvidence(lab, addCandidate(lab, { commit: 'd2'.repeat(20), tree: 'e2'.repeat(20), attempt: 2 }), { checks: PASSED });
+    await finishRun(lab.ctx(), 'EXHAUSTED', 'CI failed and the CI repair budget is spent: 2 of 2', {});
+    expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
+    expect(outcomeOf().verified_candidate).toBeUndefined();
+  });
+
   it('a long reason gives way on the run row before the candidate and the way forward do, and many findings are counted, not all named', async () => {
     lab = makeUnitLab({ path: [...TO_REVIEWING] });
     const cand = addCandidate(lab);
@@ -131,7 +143,7 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     expect(run.outcomeReason).toMatch(/^review_rounds hard cap reached/);
     expect(run.outcomeReason).toContain('7 open review finding(s): COR-A (review 1, medium, open), COR-B');
     expect(run.outcomeReason).toContain('COR-E (review 1, medium, open) and 2 more (orbit report lists every one)');
-    expect(run.outcomeReason).toMatch(/Resuming would stop again on the same limit\.$/);
+    expect(run.outcomeReason).toMatch(/Resuming would continue the run under the limits that stopped it\.$/);
     expect((outcomeOf().verified_candidate as { open_findings: unknown[] }).open_findings).toHaveLength(7);
   });
 
@@ -141,5 +153,9 @@ describe('a run that runs out while it holds a verified candidate (issue #169)',
     requestCancel(lab.db, lab.runId, 'person', lab.clock);
     await finishRun(lab.ctx(), 'EXHAUSTED', 'out of budget', { data: { counter: 'cost_usd' } });
     expect(getRun(lab.db, lab.runId)).toMatchObject({ state: 'CANCELLED', failureClass: 'cancelled' });
+    // Nothing is offered: the outcome keeps the step's decision, and the reason names no body file that was never written.
+    expect(outcomeOf()).toMatchObject({ state: 'CANCELLED', decided: 'EXHAUSTED' });
+    expect(outcomeOf().verified_candidate).toBeUndefined();
+    expect(getRun(lab.db, lab.runId).outcomeReason).not.toContain(VERIFIED_CANDIDATE_BODY);
   });
 });

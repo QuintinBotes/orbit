@@ -23193,8 +23193,8 @@ var init_exit = __esm({
       { code: EXIT.CONFIG, name: "CONFIG", meaning: "configuration, policy snapshot, contract or input failed validation, or an action was refused by policy" },
       { code: EXIT.CONFLICT, name: "CONFLICT", meaning: "the run is in a state that does not allow this (owned by a live controller, open questions, already finished)" },
       { code: EXIT.ENVIRONMENT, name: "ENVIRONMENT", meaning: "a provider CLI, credential, isolation provider or other capability is missing" },
-      { code: EXIT.BLOCKED, name: "BLOCKED", meaning: "a foreground run ended BLOCKED; resolve the reason, then orbit resume" },
-      { code: EXIT.EXHAUSTED, name: "EXHAUSTED", meaning: "a foreground run ended EXHAUSTED (a hard budget cap was reached)" },
+      { code: EXIT.BLOCKED, name: "BLOCKED", meaning: "a foreground run ended BLOCKED; resolve the reason, then orbit resume, or, when it holds a verified candidate, deliver or discard it as the reason says" },
+      { code: EXIT.EXHAUSTED, name: "EXHAUSTED", meaning: "a foreground run ended EXHAUSTED (a hard budget cap was reached and it holds no verified candidate to offer)" },
       { code: EXIT.IMPOSSIBLE, name: "IMPOSSIBLE", meaning: "a foreground run ended IMPOSSIBLE (the goal cannot be met under the policy)" },
       { code: EXIT.CANCELLED, name: "CANCELLED", meaning: "a foreground run ended CANCELLED" },
       { code: EXIT.VERIFY_FAILED, name: "VERIFY_FAILED", meaning: "orbit verify: the evidence verdict is FAIL; orbit repair hands the failure to a repair" },
@@ -50392,10 +50392,11 @@ var init_run_refs = __esm({
 // src/controller/verified-candidate.ts
 import { join as join41 } from "node:path";
 function findVerifiedCandidate(db, run, snapshot2) {
-  for (const cand of listCandidates(db, run.id).reverse()) {
+  const candidates = listCandidates(db, run.id);
+  if (candidates.some((c) => c.status === "DELIVERED")) return null;
+  for (const cand of candidates.reverse()) {
     const ev = currentEvidenceReport(db, run.id, cand.id);
     if (ev?.verdict !== "PASS") continue;
-    if (cand.status === "DELIVERED") return null;
     const rounds = new Map(listReviews(db, run.id, { includeInvalidated: true }).map((r) => [r.id, r.round]));
     const open2 = listFindings(db, run.id, { statuses: OPEN_STATUSES }).map((f) => ({ id: f.externalId ?? f.id, review_round: rounds.get(f.reviewId) ?? null, severity: f.severity, status: f.status, claim: clipAtWord(f.claim, 300) }));
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot2.config.repository;
@@ -50434,7 +50435,7 @@ function offerSection(vc) {
   ];
 }
 function offerAdvice(vc) {
-  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would stop again on the same limit.`;
+  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would continue the run under the limits that stopped it.`;
 }
 function writeOfferBody(runDir2, runId, vc, contract, stopped) {
   const lines = [
@@ -59737,13 +59738,7 @@ function decide2(ctx, input) {
 async function finishRun(ctx, to, reason, opts = {}) {
   let advice = "";
   const stopped = reason;
-  const offered = to === "EXHAUSTED" ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
-  if (offered) {
-    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
-    reason = withSentence(reason, advice);
-    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: "EXHAUSTED", verified_candidate: offered } };
-    to = "BLOCKED";
-  } else if (to === "BLOCKED") {
+  if (to === "BLOCKED") {
     const setting = opts.resumable === true ? null : frozenPolicyCause(reason, typeof opts.data?.code === "string" ? opts.data.code : void 0);
     if (setting !== null) {
       advice = opts.frozenAdvice ?? frozenPolicyAdvice(ctx.run.id, setting);
@@ -59753,8 +59748,15 @@ async function finishRun(ctx, to, reason, opts = {}) {
   }
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note2(ctx, "workers.stop-failed", { workers: unstoppable });
-  const outcome = { state: to, reason, ...opts.outcome ?? {}, ...unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {} };
   ctx.refresh();
+  const offered = to === "EXHAUSTED" && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  if (offered) {
+    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    reason = withSentence(reason, advice);
+    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: "EXHAUSTED", verified_candidate: offered } };
+    to = "BLOCKED";
+  }
+  const outcome = { state: to, reason, ...opts.outcome ?? {}, ...unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {} };
   const target = ctx.run.cancelRequested && to !== "CANCELLED" ? "CANCELLED" : to;
   if (target === "SUCCEEDED") closeMootBaselineQuestions(ctx);
   if (target === "CANCELLED") closeQuestionsOfCancelledRun(ctx);
@@ -68205,7 +68207,7 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
       const next = safeContinue(db, run.id, ctx);
       const fresh = safeNewRunNeeded(db, run);
       const offered = heldVerifiedCandidate(run);
-      if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would only stop again on the same limit`);
+      if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would continue the run under the limits that stopped it`);
       else if (open2.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);

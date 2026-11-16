@@ -61,7 +61,7 @@ export function sanitizeReason(text: string | null | undefined): string | null {
 function nextAction(input: PayloadInput): string {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
-  // A run that ran out holding a verified candidate (issue #169): a resume stops again on the same limit; a person
+  // A run that ran out holding a verified candidate (issue #169): a resume continues under the limits that stopped it; a person
   // delivers the candidate or discards it. The commands are in the report, not in a notification.
   const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null });
   if (offered) return `Read orbit report ${run.id}: candidate ${offered.seq} passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${run.id}.`;

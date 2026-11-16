@@ -253,9 +253,10 @@ A review repair, once one goes, is also briefed every unresolved finding a
 the tree does not change. When every finding about to go to repair
 was in the previous review repair and no implementer report since names a test
 for any of them (an implementer that ended at its turn cap without a report
-names none), the run ends `EXHAUSTED` as non-progress (`repair.non-progress`)
-naming the open findings, since only such a test can close them and the same
-brief would end the same way.
+names none), the run stops as non-progress (`repair.non-progress`) naming the
+open findings, since only such a test can close them and the same brief would
+end the same way. The reviewed candidate passed verification, so the run ends
+`BLOCKED` and offers it (see below), unless the run delivered a candidate.
 
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
@@ -306,8 +307,9 @@ on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
 A run that runs out (a budget, a cap, non-progress: anything that would end it
-`EXHAUSTED`) while it holds a candidate that passed verification and was not
-delivered ends `BLOCKED` instead, and offers that candidate (issue #169). The
+`EXHAUSTED`) while it holds a candidate that passed verification ends `BLOCKED`
+instead, and offers that candidate (issue #169). A run that delivered a candidate
+ends `EXHAUSTED` as before: it has its pull request. The
 newest candidate whose standing evidence is PASS is the one offered. The outcome
 reason says why the run stopped, then names the candidate (its number, commit
 and ref, the checks it passed, and each open review finding with its review round,
@@ -319,7 +321,8 @@ draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
 lists the checks it passed and every open finding; it needs `gh`, and you run
 it, because no review approved the candidate. `discard_command` is
 `orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
-mode, and `orbit resume` would only stop again on the same limit. The failure
+mode, and `orbit resume` would continue the run under the limits that stopped
+it. The failure
 class is the one the `EXHAUSTED` end would have had (ADR 0018), and
 `orbit stats` counts these runs on their own as well.
 
@@ -843,7 +846,8 @@ Resuming a run that blocked on a worker failure you have since fixed (a login,
 a broken provider wrapper) starts a fresh series of attempts for that worker
 instead of replaying the stored failure. Each such restart spends one of
 `recovery_attempts`, so a loop of resumes is bounded, and with none left the
-run ends `EXHAUSTED`. A foreground `resume` after `kill -9` of the controller
+run ends `EXHAUSTED`, or `BLOCKED` when it holds a verified candidate (issue
+#169). A foreground `resume` after `kill -9` of the controller
 does not wait for the dead controller's lease to expire: when the owner is a
 controller of this machine whose process is gone, the lease is expired for you
 and recorded as a takeover.

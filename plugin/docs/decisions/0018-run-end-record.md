@@ -81,7 +81,7 @@ its header, on the entry that created the run and on the entry that ended it.
 ## Addendum (2026-11-15): a run that stops holding a verified candidate (issue #169)
 
 A run that would end `EXHAUSTED` while it holds a candidate that passed
-verification and was not delivered now ends `BLOCKED`, so a person can deliver
+verification, and that delivered no candidate, now ends `BLOCKED`, so a person can deliver
 or discard that candidate (`src/controller/verified-candidate.ts`). Its outcome
 records `decided: "EXHAUSTED"` and the candidate (`verified_candidate`).
 

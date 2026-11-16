@@ -56,14 +56,16 @@ export interface VerifiedCandidate {
 
 /**
  * The candidate a run that runs out now offers: the newest one whose standing evidence passed verification. Null when no
- * candidate passed, when its evidence was invalidated, or when it was delivered already (it is on a pull request, and
- * what stopped the run is the CI that judged it there).
+ * candidate passed, when its evidence was invalidated, or when the run delivered any candidate: it has its pull request,
+ * and what stopped the run is the CI that judged it there. A later candidate (a CI repair) is not offered either: its
+ * parent is the base, not the delivery commit at the tip of the run's branch, so the push would be rejected.
  */
 export function findVerifiedCandidate(db: OrbitDb, run: Pick<RunRecord, 'id' | 'branch'>, snapshot: PolicySnapshot): VerifiedCandidate | null {
-  for (const cand of listCandidates(db, run.id).reverse()) {
+  const candidates = listCandidates(db, run.id);
+  if (candidates.some((c) => c.status === 'DELIVERED')) return null;
+  for (const cand of candidates.reverse()) {
     const ev = currentEvidenceReport(db, run.id, cand.id);
     if (ev?.verdict !== 'PASS') continue;
-    if (cand.status === 'DELIVERED') return null;
     const rounds = new Map(listReviews(db, run.id, { includeInvalidated: true }).map((r) => [r.id, r.round] as const));
     const open = listFindings(db, run.id, { statuses: OPEN_STATUSES }).map((f) => ({ id: f.externalId ?? f.id, review_round: rounds.get(f.reviewId) ?? null, severity: f.severity, status: f.status, claim: clipAtWord(f.claim, 300) }));
     const { remote, base_branch: base, branch_prefix: prefix } = snapshot.config.repository;
@@ -111,7 +113,7 @@ export function offerSection(vc: VerifiedCandidate): string[] {
 
 /** The way forward, which ends the outcome reason: deliver it or discard it. */
 export function offerAdvice(vc: VerifiedCandidate): string {
-  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would stop again on the same limit.`;
+  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would continue the run under the limits that stopped it.`;
 }
 
 /**
