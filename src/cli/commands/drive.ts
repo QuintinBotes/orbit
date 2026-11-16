@@ -76,6 +76,8 @@ export interface DriveOptions {
 export interface DriveResult {
   run: RunRecord;
   interrupted: boolean;
+  /** SIGTERM stopped the controller: the run is neither paused nor ended. */
+  terminated: boolean;
   exitCode: number;
 }
 
@@ -136,7 +138,9 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
     }
     void controller.stop('paused by Ctrl-C');
   };
+  let terminated = false;
   const onTerm = (): void => {
+    terminated = true;
     void controller.stop('received SIGTERM');
   };
   signals.on('SIGINT', onInterrupt);
@@ -173,7 +177,7 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
   else if (run.paused || interrupted) exitCode = EXIT.PAUSED;
   else exitCode = EXIT.FAILURE;
   announceEnd(ctx, db, run, exitCode, wantJson);
-  return { run, interrupted: interrupted || run.paused, exitCode };
+  return { run, interrupted: interrupted || run.paused, terminated, exitCode };
 }
 
 /** The command that continues the run, as it is right now: with no service a plain resume would leave the run idle. */
