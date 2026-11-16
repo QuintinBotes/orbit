@@ -3,8 +3,9 @@
  * holds a candidate that passed verification, and that was not delivered, ends BLOCKED instead and names that candidate:
  * its commit and ref, the checks it passed, and every review finding still open with its status, with one command that
  * delivers it as a draft pull request and one that discards it. The work was done and paid for; one of the run's own
- * limits stopped it, and a person decides whether the open findings matter. Orbit never delivers such a candidate
- * itself: nothing after the block takes an external action, whatever the mode.
+ * limits stopped it, and a person decides whether the open findings matter. A run that stops BLOCKED for any other reason
+ * while it holds one offers it the same way, beside the block's own way forward (`decided: 'BLOCKED'`). Orbit never
+ * delivers such a candidate itself: nothing after the block takes an external action, whatever the mode.
  *
  * The candidate is recorded in the run's outcome (`verified_candidate`, beside `decided: 'EXHAUSTED'`), so the report,
  * `orbit status`, the CLI and a notification read the same record, and the failure class stays the one the EXHAUSTED end
@@ -111,9 +112,13 @@ export function offerSection(vc: VerifiedCandidate): string[] {
   ];
 }
 
-/** The way forward, which ends the outcome reason: deliver it or discard it. */
-export function offerAdvice(vc: VerifiedCandidate): string {
-  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would continue the run under the limits that stopped it.`;
+/**
+ * The way forward, which ends the outcome reason: deliver it or discard it. A run that ran out (`exhausted`) would only
+ * continue under the limits that stopped it; a block keeps its own way forward, and the offer stands beside it.
+ */
+export function offerAdvice(vc: VerifiedCandidate, exhausted = true): string {
+  const commands = `to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}.`;
+  return exhausted ? `Deliver it or discard it: ${commands} Resuming would continue the run under the limits that stopped it.` : `Instead of clearing the block, you can deliver it or discard it: ${commands}`;
 }
 
 /**
@@ -136,11 +141,14 @@ export function writeOfferBody(runDir: string, runId: string, vc: VerifiedCandid
 }
 
 /** The verified candidate a BLOCKED run holds, as finishRun recorded it; null for every other run and an unreadable record. */
-export function heldVerifiedCandidate(run: Pick<RunRecord, 'state' | 'outcomeJson'>): VerifiedCandidate | null {
+export function heldVerifiedCandidate(run: Pick<RunRecord, 'state' | 'outcomeJson'>, opts: { exhausted?: boolean } = {}): VerifiedCandidate | null {
   if (run.state !== 'BLOCKED' || !run.outcomeJson) return null;
   try {
-    const o = JSON.parse(run.outcomeJson) as { verified_candidate?: unknown };
+    const o = JSON.parse(run.outcomeJson) as { verified_candidate?: unknown; decided?: unknown };
     const vc = o.verified_candidate;
+    // `exhausted`: only a run that ran out holding it, which a resume would continue under the limits that stopped it;
+    // a block that offers it (decided BLOCKED) keeps the block's own way forward.
+    if (opts.exhausted === true && o.decided !== 'EXHAUSTED') return null;
     return vc !== null && typeof vc === 'object' && typeof (vc as { seq?: unknown }).seq === 'number' ? (vc as VerifiedCandidate) : null;
   } catch {
     return null;

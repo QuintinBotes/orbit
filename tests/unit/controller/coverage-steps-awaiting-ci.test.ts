@@ -102,6 +102,8 @@ async function setup(o: Setup = {}): Promise<{ cand: CandidateRecord }> {
   recordReview(lab.db, { id: 'rev-1', runId: lab.runId, candidateId: cand.id, treeHash: cand.treeHash, round: 1, provider: 'codex', model: null, workerId: null, verdict: 'APPROVE', packetSha256: null, findings: [] }, lab.clock);
   const pr = o.pr === undefined ? 7 : o.pr;
   writeFileSync(join(lab.ctx().runDir, DELIVERY_FILE), JSON.stringify({ commit: cand.commitSha, tree: cand.treeHash, branch: `orbit/${lab.runId}`, pr: pr === null ? null : { number: pr }, delivered_at: lab.clock.now() }));
+  // As delivering does with the delivery record: the run has its pull request, so a CI block offers no candidate (#169).
+  setCandidateStatus(lab.db, cand.id, 'DELIVERED');
   return { cand };
 }
 

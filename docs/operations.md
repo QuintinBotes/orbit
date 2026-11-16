@@ -313,7 +313,9 @@ eligible, is told the finding by id with the candidate's review packet and
 answers only whether the defect is still present. It is no review of the tree:
 it never approves it. Gone, the finding is dropped with the re-reviewer's
 evidence (`review.finding-rereview.answer`, then `review.finding.rejected`) and
-the tree is decided on its own reviews without it. Still present, it goes to
+the tree is decided on its own reviews without it; when that leaves no open
+finding and no approval, the tree gets one full fresh review (`review.fresh`),
+whose APPROVE alone clears it. Still present, it goes to
 repair within the budgets. A run asks one re-review per finding, at the cost of
 a review round.
 
@@ -376,7 +378,10 @@ on exactly the reviewed tree, pushes the task branch and opens a pull request
 
 A run that runs out (a budget, a cap, non-progress: anything that would end it
 `EXHAUSTED`) while it holds a candidate that passed verification ends `BLOCKED`
-instead, and offers that candidate (issue #169). A run that delivered a candidate
+instead, and offers that candidate (issue #169). A run that stops `BLOCKED` for
+any other reason while it holds one offers it the same way (`decided: BLOCKED`
+in the outcome), beside the block's own way forward, which a resume still
+takes. A run that delivered a candidate
 ends `EXHAUSTED` as before: it has its pull request. The
 newest candidate whose standing evidence is PASS is the one offered. The outcome
 reason says why the run stopped, then names the candidate (its number, commit

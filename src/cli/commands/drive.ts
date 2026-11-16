@@ -249,7 +249,7 @@ function announceEnd(ctx: CliContext, db: OrbitDb, run: RunRecord, exitCode: num
       // implementation attempt used), no answer to an open question makes "then resume" the way forward (issue #33).
       const fresh = safeNewRunNeeded(db, run);
       // A run that ran out holding a verified candidate (issue #169): the reason above ends with both commands.
-      const offered = heldVerifiedCandidate(run);
+      const offered = heldVerifiedCandidate(run, { exhausted: true });
       if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would continue the run under the limits that stopped it`);
       else if (open.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       // A missing target the contract does not name has three causes and a fix of the config is only one of them: the reason above ends with the advice by cause.

@@ -453,7 +453,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   const reReviews = reReviewRecords(ctx);
-  const stillPresent = settleReReviews(ctx, resolution, reReviews);
+  const { present: stillPresent, gone: droppedHere } = settleReReviews(ctx, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -495,7 +495,9 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
   // Issue #130: a tree the gate cleared, that no review approves, whose REPAIR_REQUIRED review asked only through advisory
   // findings, has nothing else that can move it. Those findings go to a repair; the repaired tree still needs an APPROVE.
   // A review that raised a note, and a fresh review, keep their own route below.
-  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && !freshReviewOf(ctx, cand.treeHash)) {
+  // The fresh review a re-review's drop asked for is a normal review: its advisory findings take this path too.
+  const freshAsked = freshReviewOf(ctx, cand.treeHash);
+  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && (!freshAsked || freshAsked.reason === 'rereview')) {
     toRepair.push(...resolution.dispositions.filter((d) => d.status === 'advisory' && d.recordedClassification === undefined && d.memberIds.some((id) => askedHere.has(id))));
   }
   if (toRepair.length > 0) {
@@ -594,6 +596,20 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
       text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
       outcome: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } },
     };
+  } else if (gate.passed && droppedHere.size > 0) {
+    // A re-review dropped what kept the tree from clearing (ADR 0015, amended), and a re-review approves nothing: the tree
+    // gets one full fresh review, a review round like any other, whose APPROVE alone clears it.
+    const rounds = ctx.ledger!.state('review_rounds');
+    const dropped = resolution.dispositions.filter((d) => droppedHere.has(d.fingerprint)).map((d) => d.externalId ?? d.findingId);
+    if (rounds.used < rounds.allowance) {
+      const rec: FreshReviewRecord = { reason: 'rereview', tree_hash: cand.treeHash, candidate_id: cand.id, base: `review-fresh:${cand.id}`, superseded: [], noted: [] };
+      decide(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: its one re-review dropped ${dropped.join(', ') || 'a finding'}, which left no review of the tree with an open finding or an approval; a re-review approves nothing, so only an APPROVE from the fresh review clears the tree`, data: rec });
+      return freshReview(ctx, cand, rec);
+    }
+    fresh = {
+      text: `; a re-review dropped ${dropped.join(', ') || 'a finding'} and approves nothing, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
+      outcome: { started: false, reason: 'review_rounds hard cap reached', review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } },
+    };
   }
   return finishRun(ctx, 'BLOCKED', `${gate.details.independent ? 'independent review' : 'review'} does not clear tree ${cand.treeHash}: ${gate.reasons.join('; ') || 'no approving review'}${notes}${fresh?.text ?? ''}`.slice(0, 2000), {
     outcome: { review_gate: gate.reasons, open_findings: openFindings(open), ...(noted.length > 0 ? { noted_findings: openFindings(noted) } : {}), ...(fresh ? { fresh_review: fresh.outcome } : {}) },
@@ -609,9 +625,10 @@ const FRESH_REVIEW_KIND = 'review.fresh';
 interface FreshReviewRecord {
   /**
    * Why the tree gets its one fresh review: an earlier review asked for repair only through notes (`notes`, the
-   * default for records written before the field), or approved it without inspecting anything (`shallow`, ADR 0016).
+   * default for records written before the field), approved it without inspecting anything (`shallow`, ADR 0016), or
+   * a finding's re-review dropped what kept the tree from clearing and nothing approves it (`rereview`, ADR 0015).
    */
-  reason?: 'notes' | 'shallow';
+  reason?: 'notes' | 'shallow' | 'rereview';
   tree_hash: string;
   candidate_id: string;
   /** The purpose base of the fresh reviewer's sessions. */
@@ -725,14 +742,15 @@ async function freshReview(ctx: RunContext, cand: CandidateRecord, rec: FreshRev
 function describeFreshReview(ctx: RunContext, rec: FreshReviewRecord, resolution: Resolution, state: ReturnType<typeof loadResolverState>): { text: string; outcome: Record<string, unknown> } {
   const earlier = rec.noted.map((n) => `${n.external_id ?? n.id} (${n.severity})`).join(', ');
   const review = recordedFreshReview(ctx, rec);
-  if (!review) return { text: `; the fresh review of the tree asked after review(s) ${rec.superseded.join(', ')} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec.noted } };
+  const after = rec.reason === 'rereview' ? 'a re-review dropped the last finding open on it' : `review(s) ${rec.superseded.join(', ')}`;
+  if (!review) return { text: `; the fresh review of the tree asked after ${after} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named = findings.length === 0 ? 'it named no finding' : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== undefined ? 'a note' : d.status})`).join(', ');
-  const why = rec.reason === 'shallow' ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
+  const why = rec.reason === 'rereview' ? '' : rec.reason === 'shallow' ? ' approved it without inspecting anything' : ` raised only the note(s) ${earlier}`;
   const verdict = review.verdict === 'APPROVE' ? 'stands only for the review(s) it replaced' : `did not approve it either: ${named}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec.superseded.join(', ')} ${why}, ${verdict}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after ${after}${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec.noted },
   };
 }
@@ -893,16 +911,17 @@ async function reReview(ctx: RunContext, cand: CandidateRecord, rec: ReReviewRec
 /**
  * What each answered re-review of this tree says of its finding. Gone only on an APPROVE that raises nothing above info:
  * the finding is dropped (rejected) with the re-reviewer's evidence, and the tree is decided on its own reviews as if it
- * had not been raised. Any other answer, naming the finding or not, keeps it as still present: its reason says so and
- * its fingerprint is returned. No answer leaves it as it is.
+ * had not been raised. Any other answer, naming the finding or not, keeps it as still present: its reason says so. No
+ * answer leaves it as it is. Returns the fingerprints found still present, and those dropped, on this tree.
  */
-function settleReReviews(ctx: RunContext, resolution: Resolution, recs: readonly ReReviewRecord[]): Set<string> {
+function settleReReviews(ctx: RunContext, resolution: Resolution, recs: readonly ReReviewRecord[]): { present: Set<string>; gone: Set<string> } {
   const present = new Set<string>();
+  const dropped = new Set<string>();
   for (const rec of recs) {
     const answer = rec.tree_hash === resolution.treeHash ? reReviewAnswer(ctx, rec) : null;
     if (!answer || answer.verdict === null) continue;
     const gone = answer.verdict === 'APPROVE' && answer.findings.every((f) => f.severity === 'info');
-    if (!gone) present.add(rec.fingerprint);
+    (gone ? dropped : present).add(rec.fingerprint);
     const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
     for (const d of resolution.dispositions) {
       if (d.fingerprint !== rec.fingerprint && !d.memberIds.some((id) => rec.member_ids.includes(id))) continue;
@@ -921,7 +940,7 @@ function settleReReviews(ctx: RunContext, resolution: Resolution, recs: readonly
     }
   }
   refreshLists(resolution);
-  return present;
+  return { present, gone: dropped };
 }
 
 // ---------------------------------------------------------------------------
@@ -1780,6 +1799,8 @@ function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: strin
 
 /** The fresh reviewer's task: which notes it follows, and why none of them is a finding a repair could answer. */
 function freshReviewText(rec: FreshReviewRecord): string[] {
+  // After a re-review's drop the fresh review is the normal review of the tree, with nothing to follow.
+  if (rec.reason === 'rereview') return [];
   if (rec.reason === 'shallow') {
     return [
       `This is a fresh review of a tree that an earlier review (${rec.superseded.join(', ')}) approved from the review packet alone, without opening any file or running any command.`,

@@ -604,6 +604,33 @@ describe("a carried finding's one re-review (ADR 0015, amendment of 2026-11-16)"
     expect(listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['rejected', 'rejected']);
   });
 
+  it("dropping the tree's only finding asks one full fresh review of the tree, and its APPROVE delivers", async () => {
+    const { cand, repo, reviewer } = await setup({ reviewer: answers({ 'TEST-1': 'gone' }) });
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    await repairAttempt(cand.parentSha, repo, 2, TURN_CAPPED, [finding('TEST-1')]);
+    await settle(20);
+    expect(state()).toBe('DELIVERING');
+    expect(decisions('review.fresh').map((d) => (d.data as { reason: string }).reason)).toEqual(['rereview']);
+    expect(listReviews(lab.db, lab.runId).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'REPAIR_REQUIRED', 'APPROVE']);
+    // The fresh review is the normal review of the tree: told no finding, no note, nothing to follow.
+    const fresh = reviewer.specs.at(-1)!.prompt;
+    expect(fresh).not.toContain('This is a re-review');
+    expect(fresh).not.toContain('This is a fresh review');
+  });
+
+  it("dropping the tree's only finding with no review round left ends BLOCKED offering the verified candidate", async () => {
+    await carried([finding('TEST-1')], [finding('TEST-1')], { reviewer: answers({ 'TEST-1': 'gone' }), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 1) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(decisions('review.fresh')).toEqual([]);
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason).toMatch(/no fresh review of the tree was started: review_rounds hard cap reached \(1 of 1\)/);
+    expect(run.outcomeReason).toMatch(/The run holds a verified candidate: candidate 2 \(commit \w+, ref refs\/orbit\/\S+\/candidates\/2\)/);
+    const outcome = JSON.parse(run.outcomeJson!) as { decided?: string; verified_candidate?: { seq: number } };
+    expect(outcome).toMatchObject({ decided: 'BLOCKED', verified_candidate: { seq: 2 } });
+  });
+
   it('an answer that asks for repair without naming the finding keeps it: it is not read as gone', async () => {
     await carried([finding('TEST-1')], [finding('TEST-1')], { reviewer: answers({ 'TEST-1': 'other' }) });
     await settle();

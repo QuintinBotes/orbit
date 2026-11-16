@@ -52356,8 +52356,9 @@ function offerSection(vc) {
     `- discard it: ${vc.discard_command}`
   ];
 }
-function offerAdvice(vc) {
-  return `Deliver it or discard it: to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}. Resuming would continue the run under the limits that stopped it.`;
+function offerAdvice(vc, exhausted2 = true) {
+  const commands = `to open a draft pull request that lists its open findings, run from the repository root ${vc.deliver_command}; to discard it, run ${vc.discard_command}.`;
+  return exhausted2 ? `Deliver it or discard it: ${commands} Resuming would continue the run under the limits that stopped it.` : `Instead of clearing the block, you can deliver it or discard it: ${commands}`;
 }
 function writeOfferBody(runDir2, runId, vc, contract, stopped) {
   const lines = [
@@ -52374,11 +52375,12 @@ function writeOfferBody(runDir2, runId, vc, contract, stopped) {
   atomicWrite(join43(runDir2, VERIFIED_CANDIDATE_BODY), `${redact(lines.join("\n"))}
 `);
 }
-function heldVerifiedCandidate(run) {
+function heldVerifiedCandidate(run, opts = {}) {
   if (run.state !== "BLOCKED" || !run.outcomeJson) return null;
   try {
     const o = JSON.parse(run.outcomeJson);
     const vc = o.verified_candidate;
+    if (opts.exhausted === true && o.decided !== "EXHAUSTED") return null;
     return vc !== null && typeof vc === "object" && typeof vc.seq === "number" ? vc : null;
   } catch {
     return null;
@@ -52415,7 +52417,7 @@ function sanitizeReason(text2) {
 function nextAction(input) {
   const { run, questionIds, pullRequest, remote, refs } = input;
   const [first] = questionIds;
-  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null });
+  const offered = heldVerifiedCandidate({ state: run.state, outcomeJson: run.outcomeJson ?? null }, { exhausted: true });
   if (offered) return `Read orbit report ${run.id}: candidate ${offered.seq} passed verification before the run stopped; deliver it as a draft pull request with the command the report gives, or discard it with orbit cancel ${run.id}.`;
   if (run.state === "BLOCKED" && declinedLedger({ outcomeJson: run.outcomeJson ?? null }).length > 0) {
     return `Read orbit report ${run.id}; a person declined a decision this run made, so resuming alone would only block again: start a new run whose goal states the decision.`;
@@ -56381,7 +56383,7 @@ function nextAction2(run, refs, pr, openMaterial = [], fresh = null, pruned = fa
       return DELIVERY_MODES.has(run.mode) ? `Review ${pr !== null ? `pull request #${pr}` : branch !== null ? `branch ${branch}` : candidate} and merge it if you accept it; Orbit does not merge.` : branch !== null ? `Inspect the local branch ${branch} (the reviewed candidate) and merge it yourself if you accept it.` : `Inspect ${candidate}${ref3 !== null ? ` (git log ${ref3})` : ""} and merge it yourself if you accept it.`;
     case "BLOCKED": {
       const why = run.outcomeReason ?? "The run is blocked.";
-      if (outcomeHas(run, "frozen_policy") || heldVerifiedCandidate(run) !== null) return why;
+      if (outcomeHas(run, "frozen_policy") || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       if (fresh !== null) return /start a new run/.test(why) ? why : `${sentence} Resuming would only block again (${fresh}): cancel this run (orbit cancel ${run.id}) and start a new run with orbit run.`;
       if (/orbit resume/.test(why)) return why;
@@ -60700,11 +60702,11 @@ async function finishRun(ctx, to, reason, opts = {}) {
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note2(ctx, "workers.stop-failed", { workers: unstoppable });
   ctx.refresh();
-  const offered = to === "EXHAUSTED" && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  const offered = (to === "EXHAUSTED" || to === "BLOCKED") && !ctx.run.cancelRequested ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
   if (offered) {
-    advice = `${heldSentence(offered)} ${offerAdvice(offered)}`;
+    advice = `${heldSentence(offered)} ${offerAdvice(offered, to === "EXHAUSTED")}`;
     reason = withSentence(reason, advice);
-    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: "EXHAUSTED", verified_candidate: offered } };
+    opts = { ...opts, outcome: { ...opts.outcome ?? {}, decided: to, verified_candidate: offered } };
     to = "BLOCKED";
   }
   const outcome = { state: to, reason, ...opts.outcome ?? {}, ...unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {} };
@@ -66206,7 +66208,7 @@ async function resolveAndDecide(ctx, cand) {
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
   const reReviews = reReviewRecords(ctx);
-  const stillPresent = settleReReviews(ctx, resolution, reReviews);
+  const { present: stillPresent, gone: droppedHere } = settleReReviews(ctx, resolution, reReviews);
   noteUnresolvedRepairTests(resolution, unresolved);
   persistResolution(ctx.db, ctx.runDir, ctx.run.id, resolution, ctx.clock);
   const gate = independentReviewGate(ctx.db, { runId: ctx.run.id, treeHash: cand.treeHash, snapshot: ctx.snapshot, implementerProvider: implementerProvider(ctx), now: ctx.clock.now(), whyNotIndependent: recordedWhyNotIndependent(ctx), selectionIndependent: recordedSelectionIndependent(ctx), uncoveredUnits: uncoveredUnits(ctx, cand) });
@@ -66234,7 +66236,8 @@ async function resolveAndDecide(ctx, cand) {
   const askedHere = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === "REPAIR_REQUIRED")).map((f) => f.id));
   const toRepair = routed.length === 0 ? routed : open2.filter((d) => routed.includes(d) || d.memberIds.some((id) => askedHere.has(id)));
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
-  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && !freshReviewOf(ctx, cand.treeHash)) {
+  const freshAsked = freshReviewOf(ctx, cand.treeHash);
+  if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && (!freshAsked || freshAsked.reason === "rereview")) {
     toRepair.push(...resolution.dispositions.filter((d) => d.status === "advisory" && d.recordedClassification === void 0 && d.memberIds.some((id) => askedHere.has(id))));
   }
   if (toRepair.length > 0) {
@@ -66310,6 +66313,18 @@ async function resolveAndDecide(ctx, cand) {
     if (rounds.used < rounds.allowance) return startFreshReview(ctx, cand, state, noted);
     fresh = {
       text: `; no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
+      outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
+    };
+  } else if (gate.passed && droppedHere.size > 0) {
+    const rounds = ctx.ledger.state("review_rounds");
+    const dropped = resolution.dispositions.filter((d) => droppedHere.has(d.fingerprint)).map((d) => d.externalId ?? d.findingId);
+    if (rounds.used < rounds.allowance) {
+      const rec2 = { reason: "rereview", tree_hash: cand.treeHash, candidate_id: cand.id, base: `review-fresh:${cand.id}`, superseded: [], noted: [] };
+      decide2(ctx, { id: freshReviewDecisionId(ctx, cand.treeHash), kind: FRESH_REVIEW_KIND, summary: `one fresh review of tree ${cand.treeHash.slice(0, 12)}: its one re-review dropped ${dropped.join(", ") || "a finding"}, which left no review of the tree with an open finding or an approval; a re-review approves nothing, so only an APPROVE from the fresh review clears the tree`, data: rec2 });
+      return freshReview(ctx, cand, rec2);
+    }
+    fresh = {
+      text: `; a re-review dropped ${dropped.join(", ") || "a finding"} and approves nothing, and no fresh review of the tree was started: review_rounds hard cap reached (${rounds.used} of ${rounds.hard_cap}${grantNote(rounds)})`,
       outcome: { started: false, reason: "review_rounds hard cap reached", review_rounds: { used: rounds.used, hard_cap: rounds.hard_cap } }
     };
   }
@@ -66392,14 +66407,15 @@ async function freshReview(ctx, cand, rec2) {
 function describeFreshReview(ctx, rec2, resolution, state) {
   const earlier = rec2.noted.map((n2) => `${n2.external_id ?? n2.id} (${n2.severity})`).join(", ");
   const review = recordedFreshReview(ctx, rec2);
-  if (!review) return { text: `; the fresh review of the tree asked after review(s) ${rec2.superseded.join(", ")} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
+  const after = rec2.reason === "rereview" ? "a re-review dropped the last finding open on it" : `review(s) ${rec2.superseded.join(", ")}`;
+  if (!review) return { text: `; the fresh review of the tree asked after ${after} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
   const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
   const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
-  const why = rec2.reason === "shallow" ? `approved it without inspecting anything` : `raised only the note(s) ${earlier}`;
+  const why = rec2.reason === "rereview" ? "" : rec2.reason === "shallow" ? " approved it without inspecting anything" : ` raised only the note(s) ${earlier}`;
   const verdict = review.verdict === "APPROVE" ? "stands only for the review(s) it replaced" : `did not approve it either: ${named2}`;
   return {
-    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after review(s) ${rec2.superseded.join(", ")} ${why}, ${verdict}`,
+    text: `; the one fresh review of this tree (${review.id}, ${review.verdict}), asked after ${after}${why}, ${verdict}`,
     outcome: { started: true, review_id: review.id, verdict: review.verdict, findings: openFindings(findings), earlier_noted: rec2.noted }
   };
 }
@@ -66492,11 +66508,12 @@ async function reReview(ctx, cand, rec2) {
 }
 function settleReReviews(ctx, resolution, recs) {
   const present = /* @__PURE__ */ new Set();
+  const dropped = /* @__PURE__ */ new Set();
   for (const rec2 of recs) {
     const answer = rec2.tree_hash === resolution.treeHash ? reReviewAnswer(ctx, rec2) : null;
     if (!answer || answer.verdict === null) continue;
     const gone = answer.verdict === "APPROVE" && answer.findings.every((f) => f.severity === "info");
-    if (!gone) present.add(rec2.fingerprint);
+    (gone ? dropped : present).add(rec2.fingerprint);
     const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
     for (const d of resolution.dispositions) {
       if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id))) continue;
@@ -66514,7 +66531,7 @@ function settleReReviews(ctx, resolution, recs) {
     }
   }
   refreshLists(resolution);
-  return present;
+  return { present, gone: dropped };
 }
 function reviewRepairs(ctx) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", ctx.run.id, REVIEW_REPAIR_EVENT).map((r) => r.data_json ? JSON.parse(r.data_json) : null).filter((r) => r !== null && Array.isArray(r.findings));
@@ -67103,6 +67120,7 @@ Evidence given: ${reReview2.evidence}` : ""}` });
   });
 }
 function freshReviewText(rec2) {
+  if (rec2.reason === "rereview") return [];
   if (rec2.reason === "shallow") {
     return [
       `This is a fresh review of a tree that an earlier review (${rec2.superseded.join(", ")}) approved from the review packet alone, without opening any file or running any command.`,
@@ -69392,7 +69410,7 @@ function announceEnd(ctx, db, run, exitCode, wantJson) {
       const frozen = /"frozen_policy"/.test(run.outcomeJson ?? "");
       const next = safeContinue(db, run.id, ctx);
       const fresh = safeNewRunNeeded(db, run);
-      const offered = heldVerifiedCandidate(run);
+      const offered = heldVerifiedCandidate(run, { exhausted: true });
       if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would continue the run under the limits that stopped it`);
       else if (open2.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
@@ -75157,7 +75175,7 @@ function workerSummary(w) {
 }
 function stageOf(db, run) {
   if (!run.resumeState || !(run.state === "INQUISITION" || run.state === "BLOCKED" || run.state === "RECOVERING")) return run.state;
-  const offered = heldVerifiedCandidate(run);
+  const offered = heldVerifiedCandidate(run, { exhausted: true });
   if (offered) return `${run.state} (holding verified candidate ${offered.seq}: deliver it or discard it)`;
   const fresh = run.state === "BLOCKED" ? newRunNeeded(db, run) : null;
   return fresh !== null ? `${run.state} (a new run is needed: ${fresh})` : `${run.state} (will return to ${run.resumeState})`;
