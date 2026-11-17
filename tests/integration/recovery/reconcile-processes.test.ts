@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnDetached } from '../../../src/core/exec.ts';
@@ -9,8 +9,11 @@ import { transition } from '../../../src/controller/run-store.ts';
 import { reconcileOnStart } from '../../../src/recovery/reconcile.ts';
 import { APP_STATE_FILE } from '../../../src/ui/app-fixture.ts';
 import { OWNER, alive, canStripTypes, cleanupAll, clock, makeEnv, makeRun, waitFor, type Env } from './helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 afterEach(cleanupAll);
+// Every test records a process's start time, which macOS gives only through ps.
+beforeEach(skipWithoutPs);
 
 const run = (env: Env, extra: object = {}) => reconcileOnStart({ db: env.db, ownerId: OWNER, clock, adapters: env.adapters, graceMs: 300, ...extra });
 

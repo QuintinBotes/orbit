@@ -12,6 +12,7 @@ import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, dotnetFirstRun, nugetGlobalPackages, type LoopbackRunner } from '../isolation/loopback-runners.ts';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, type Fixture } from './helpers.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 /**
  * Issue #31, in the tier the retest ran in: the REAL claude CLI against a fake API, with the settings file Orbit writes
@@ -121,7 +122,8 @@ describe.skipIf(!CLAUDE || !canStripTypes)('claude-sandbox tier: test runners th
     for (const f of fixtures) rmSync(f.base, { recursive: true, force: true });
   });
 
-  it(`${process.platform === 'darwin' ? 'refuses them on macOS: the settings never let Bash listen' : 'runs them on Linux, on the sandbox\'s own loopback'}: ${RUNNERS.map((r: LoopbackRunner) => r.name).join('; ')}`, async () => {
+  it(`${process.platform === 'darwin' ? 'refuses them on macOS: the settings never let Bash listen' : 'runs them on Linux, on the sandbox\'s own loopback'}: ${RUNNERS.map((r: LoopbackRunner) => r.name).join('; ')}`, async (ctx) => {
+    skipWithoutSandbox(ctx);
     const { outputs, settings } = await session();
     expect(settings.sandbox.network).toEqual({ allowedDomains: [], strictAllowlist: true, allowLocalBinding: false });
     RUNNERS.forEach((runner, i) => {

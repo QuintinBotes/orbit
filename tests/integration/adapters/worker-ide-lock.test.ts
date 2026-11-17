@@ -12,6 +12,7 @@ import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, withHarnessLoopback, type Fixture } from './helpers.ts';
 import { requiredOnCi } from '../../support/skip.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 /**
  * Review of issue #31. A running IDE extension (VS Code, JetBrains) writes <config dir>/ide/<port>.lock, which holds the
@@ -129,7 +130,8 @@ describe.skipIf(!CLAUDE)('a worker cannot read the token of an IDE extension on 
     expect(accepted).toBe(0);
   });
 
-  it('claude-sandbox tier: the Read tool is denied by permission and Bash cannot read the lock', async () => {
+  it('claude-sandbox tier: the Read tool is denied by permission and Bash cannot read the lock', async (ctx) => {
+    skipWithoutSandbox(ctx);
     const { result, seen, stderr } = await session('claude-sandbox');
     expect(result.status, `${result.error ?? ''} ${stderr}`).toBe('succeeded');
     expect(seen.join('\n')).not.toContain(TOKEN);
@@ -141,7 +143,8 @@ describe.skipIf(!CLAUDE)('a worker cannot read the token of an IDE extension on 
 
   // Final review: CLAUDE_CONFIG_DIR is another directory (a second login), and the IDE extension wrote its lock to
   // ~/.claude/ide, where Claude Code looks whatever CLAUDE_CONFIG_DIR says. The Read tool returned the token there.
-  it('claude-sandbox tier, CLAUDE_CONFIG_DIR set elsewhere: neither the Read tool nor Bash reads ~/.claude/ide', async () => {
+  it('claude-sandbox tier, CLAUDE_CONFIG_DIR set elsewhere: neither the Read tool nor Bash reads ~/.claude/ide', async (ctx) => {
+    skipWithoutSandbox(ctx);
     const { result, seen, stderr } = await session('claude-sandbox', { home: fakeHome });
     expect(result.status, `${result.error ?? ''} ${stderr}`).toBe('succeeded');
     expect(seen.join('\n')).not.toContain(TOKEN);

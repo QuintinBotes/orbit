@@ -978,7 +978,9 @@ macOS's 104-byte limit. Only Orbit code running inside an Orbit check (its own
 test suite as a check) puts it in the check's private temp directory, the one
 temp location the check may write, when the root there is at most 46 bytes
 long. Read-denials and `orbit gc` cover `/tmp/orbit-<uid>` and `orbit-<uid>`
-in `$TMPDIR` both. Orbit makes a new one for every session of the
+in `$TMPDIR` both; inside an Orbit check that nests its root, only that root,
+since the check's own temp directory lies in `/tmp/orbit-<uid>` (#206). Orbit
+makes a new one for every session of the
 worker and removes the earlier one, so a restarted worker compiles again. No
 check and no other Claude worker can read it: their sandboxed commands are
 read-denied the whole temp root (but for a worker's own directory), and the

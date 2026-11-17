@@ -7,6 +7,7 @@ import { ClaudeAdapter } from '../../../src/adapters/claude.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { implementerSpec, makeFixture, waitFor, type Fixture } from './helpers.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 // NM2, with the REAL claude CLI against a local fake Messages API (no model spend): a read-only diagnosis
 // worker runs a test command, and still cannot write the worktree.
@@ -62,7 +63,8 @@ describe.skipIf(!CLAUDE || !canStripTypes)('a diagnosis worker runs experiments 
     return { f, results: toolResults(f) };
   }
 
-  it('runs a test command and writes scratch files, but cannot write the worktree', async () => {
+  it('runs a test command and writes scratch files, but cannot write the worktree', async (ctx) => {
+    skipWithoutSandbox(ctx);
     const { f, results } = await diagnose(true);
     expect(results[0]).toContain('experiment ran: pass');
     expect(results[1]).toContain('scratch');
