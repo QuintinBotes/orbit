@@ -12,6 +12,7 @@ import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { IMPLEMENTER_OUTPUT, alive, implementerSpec, makeFixture, waitFor, withHarnessLoopback, type Fixture } from './helpers.ts';
 import { requiredOnCi } from '../../support/skip.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 /**
  * Review of issue #31. `claude -p` writes its result and then does not exit while a background task of the session is
@@ -95,7 +96,8 @@ describe.skipIf(!CLAUDE)('a long command a worker starts does not hold its sessi
       expect(s.pid).toBeNull();
     }, 180_000);
 
-    it(`${tier} tier: a foreground command ends at its Bash timeout instead of moving to the background, and is gone afterwards`, async () => {
+    it(`${tier} tier: a foreground command ends at its Bash timeout instead of moving to the background, and is gone afterwards`, async (ctx) => {
+      skipWithoutSandbox(ctx);
       const s = await session(tier, { command: 'node long.cjs', timeout: 3_000 });
       expect(s.result.status, s.result.error ?? '').toBe('succeeded');
       expect(s.exit).toMatchObject({ timedOut: false, escalation: [] });

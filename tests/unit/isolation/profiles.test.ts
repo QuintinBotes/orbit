@@ -620,6 +620,9 @@ describe('provider directories and the worker tmp dir', () => {
     // Every root a process of this user may have used, for read-denials and gc.
     expect(orbitTmpRoots(7, { TMPDIR: short })).toEqual([fixed, join(short, 'orbit-7')]);
     expect(orbitTmpRoots(7, { TMPDIR: long })).toEqual([fixed]);
+    // #206: a check's TMPDIR lies in /tmp/orbit-<uid>, the root of the Orbit running the check, not of the code inside it.
+    expect(orbitTmpRoots(7, check)).toEqual([join(short, 'orbit-7')]);
+    expect(orbitTmpRoots(7, { ...check, TMPDIR: long })).toEqual([fixed]);
   });
 
   it('read-denies every temp root this user may have used, not only its own', () => {

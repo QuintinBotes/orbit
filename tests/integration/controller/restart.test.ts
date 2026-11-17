@@ -6,6 +6,7 @@ import { isTerminal } from '../../../src/controller/states.ts';
 import { listCheckRuns } from '../../../src/evidence/store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import { alive, argvCalls, baseScenario, implementMul, makeLab, runState, spawnController, startLabRun, waitFor, writeScenario, type Lab } from './harness.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -89,7 +90,8 @@ describe.skipIf(!canStripTypes)('controller restarts (real controller processes)
     expect(listCheckRuns(l.db(), { runId: run.id })).toHaveLength(checksBefore);
   });
 
-  it('scenario 20: a cancellation recorded while the controller dies is carried out by the next one', async () => {
+  it('scenario 20: a cancellation recorded while the controller dies is carried out by the next one', async (ctx) => {
+    skipWithoutPs(ctx); // the next controller signals the check it inherits only once ps establishes its shim's identity
     const l = lab();
     writeScenario(l, baseScenario({ implementer: [implementMul('*', [{ op: 'write', path: 'tests/slow.flag', content: '1\n' }])] }));
     const run = startLabRun(l);

@@ -9,6 +9,7 @@ import { profileForWorker } from '../../../src/isolation/profiles.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { IMPLEMENTER_OUTPUT, implementerSpec, makeFixture, waitFor, type Fixture } from './helpers.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 // P14: in the claude-sandbox tier the worktree lives under ~/.orbit, which
 // every worker profile read-denies (it holds every run). Claude Code's Bash
@@ -47,7 +48,8 @@ describe.skipIf(!CLAUDE || !canStripTypes)('claude-sandbox tier with a worktree 
     for (const f of fixtures) rmSync(f.base, { recursive: true, force: true });
   });
 
-  it('runs node, npm and git in the worktree while credentials, the checkout and other runs stay unreadable', async () => {
+  it('runs node, npm and git in the worktree while credentials, the checkout and other runs stay unreadable', async (ctx) => {
+    skipWithoutSandbox(ctx);
     const f = makeFixture('version: 1\nmode: supervised\nscope: {allowed_paths: ["apps/**"]}\nnetwork: {allowed_hosts: []}\n');
     fixtures.push(f);
     const home = join(f.base, 'home');

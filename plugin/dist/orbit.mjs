@@ -2953,6 +2953,7 @@ function orbitTmpRoot(uid = process.getuid?.(), env = process.env) {
 function orbitTmpRoots(uid = process.getuid?.(), env = process.env) {
   const fixed = fixedTmpRoot(uid);
   const nested = envTmpRoot(uid, env);
+  if (nested !== null && env[CHECK_TOKEN_ENV]) return [nested];
   return nested === null || nested === fixed ? [fixed] : [fixed, nested];
 }
 function fixedTmpRoot(uid) {

@@ -150,11 +150,15 @@ export function orbitTmpRoot(uid: number | undefined = process.getuid?.(), env: 
 
 /**
  * Every root a process of this user may have used: /tmp/orbit-<uid>, and orbit-<uid> in this process's TMPDIR when it
- * qualifies. Read-denials and `orbit gc` cover them all, so a process with another TMPDIR is covered too.
+ * qualifies. Read-denials and `orbit gc` cover them all, so a process with another TMPDIR is covered too. Inside an
+ * Orbit check that nests its root (orbitTmpRoot), that root alone: the check's TMPDIR lies in /tmp/orbit-<uid>, which
+ * is then the root of the Orbit running the check, and counting it made every file in the check's own temp directory
+ * another worker's (#206). The check's sandbox read-denies the rest of /tmp/orbit-<uid> itself.
  */
 export function orbitTmpRoots(uid: number | undefined = process.getuid?.(), env: Readonly<Record<string, string | undefined>> = process.env): string[] {
   const fixed = fixedTmpRoot(uid);
   const nested = envTmpRoot(uid, env);
+  if (nested !== null && env[CHECK_TOKEN_ENV]) return [nested];
   return nested === null || nested === fixed ? [fixed] : [fixed, nested];
 }
 

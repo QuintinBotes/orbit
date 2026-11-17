@@ -27,6 +27,7 @@ import { NoIsolation } from '../../../src/isolation/none.ts';
 import { isTestOwnedPath } from '../../../src/policy/test-files.ts';
 import type { CheckDefinition, OrbitConfig } from '../../../src/policy/types.ts';
 import { addWorktree, checkDef, makeRepo, makeRun, tempRoot, write, type TestRun } from '../../unit/evidence/fixtures.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const RUNNER = "import { readdirSync } from 'node:fs';\nconst here = new URL('.', import.meta.url);\nfor (const f of readdirSync(here).filter((n) => n.endsWith('.test.mjs')).sort()) await import(new URL(f, here));\nconsole.log('all tests passed');\n";
 const BASE = { '.gitignore': 'node_modules/\n', 'apps/calc.mjs': 'export const add = (a, b) => a + b;\n', 'tests/run.mjs': RUNNER, 'tests/add.test.mjs': "import { add } from '../apps/calc.mjs';\nif (add(2, 3) !== 5) process.exit(1);\n" };
@@ -203,7 +204,8 @@ describe('runFailBeforeProbe', () => {
 });
 
 describe('closeInterruptedProbes', () => {
-  it('stops the check a stopped controller left running and closes its attempt as interrupted', async () => {
+  it('stops the check a stopped controller left running and closes its attempt as interrupted', async (ctx) => {
+    skipWithoutPs(ctx); // the left-running check is known by its start time
     const e = await env([unit()], addMul);
     const records = probeRecords('probe-crashed');
     const row = records.plan(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: 'unit', kind: 'command', treeHash: 'tree-x', checkConfigHash: 'h', policyHash: e.run.policyHash, command: ['node'], cwd: '.', isolation: 'none', limitations: [] }, systemClock);

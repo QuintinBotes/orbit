@@ -12,6 +12,7 @@ import { isOrbitError } from '../../../src/core/errors.ts';
 import { sh } from '../../unit/evidence/fixtures.ts';
 import { nodeCheck, checkDef, write } from '../../unit/evidence/fixtures.ts';
 import { checkDirOf, pidGone, readText, recordingIsolation, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH_TOKEN = `ghp_${'a1B2'.repeat(9)}`;
@@ -487,7 +488,8 @@ describe('reattach after the controller dies', () => {
     expect(fresh!.id).not.toBe(lost!.id);
   });
 
-  it('takes an unstarted intent with no process as a lost launch rather than waiting forever', async () => {
+  it('takes an unstarted intent with no process as a lost launch rather than waiting forever', async (ctx) => {
+    skipWithoutPs(ctx); // only a search of the process table shows that no process carries the token
     const e = await setup([nodeCheck('x', '')]);
     const { planCheckRun } = await import('../../../src/evidence/store.ts');
     const { atomicWriteJson } = await import('../../../src/core/fsx.ts');
