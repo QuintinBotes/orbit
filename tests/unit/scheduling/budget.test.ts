@@ -281,6 +281,21 @@ describe('BudgetLedger.consume', () => {
     clock.advance(5 * 60_000);
     expect(ledger.syncWall().used).toBe(900_000);
   });
+
+  it('does not subtract a block that ended before the budget was initialized', () => {
+    // The budget starts in PLANNING, so a run can block in PREFLIGHT or CONTRACTING before it exists.
+    const db = openDb(':memory:');
+    const clock = new ManualClock();
+    createRun(db, { id: 'run-1', repoRoot: '/repo/acme', goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, clock);
+    acquireLease(db, 'run-1', 'ctl', 2 * HOURS_45, clock);
+    transition(db, { runId: 'run-1', to: 'PREFLIGHT', ownerId: 'ctl', reason: 'start' }, clock);
+    transition(db, { runId: 'run-1', to: 'BLOCKED', ownerId: 'ctl', reason: 'a material question' }, clock);
+    clock.advance(HOURS_45);
+    resumeAnsweredRun(db, clock, 'run-1', 'ctl', 'person', 'answered');
+    const ledger = new BudgetLedger(db, clock).init('run-1', { config: policy() }, 'medium');
+    clock.advance(10 * 60_000);
+    expect(ledger.syncWall().used).toBe(600_000);
+  });
 });
 
 describe('cost measurement and admission control', () => {
