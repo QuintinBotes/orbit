@@ -460,7 +460,7 @@ Use transactions, owner leases, heartbeats, process reconciliation, and atomic a
 | CI repair cycles | Candidate changes prompted by remote CI |
 | Infrastructure retries | Transient service/process retries |
 
-API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets.
+API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets. Time a run spends paused, or BLOCKED waiting for a person, is not charged to the wall-time budget.
 
 ### Initial allowance
 

@@ -220,7 +220,7 @@ sometimes shortened.
 | ID | Requirement | Implementation | Tests | Status |
 |---|---|---|---|---|
 | S7.1 | Separate counters: turns, attempts, experiments, review rounds, CI cycles, infrastructure retries | `scheduling/types.ts:BUDGET_COUNTERS`, `BudgetLedger` | U/scheduling/budget.test.ts "creates every counter..." | done |
-| S7.2 | API retries do not use attempts; they use wall time and spend | `BudgetLedger.consume` | U/scheduling/budget.test.ts "keeps infrastructure retries apart from implementation attempts" | done |
+| S7.2 | API retries do not use attempts; they use wall time and spend; time paused or BLOCKED on a person is not charged to wall time (#208) | `BudgetLedger.consume`, `BudgetLedger.syncWall` | U/scheduling/budget.test.ts "keeps infrastructure retries apart from implementation attempts", "does not charge wall time for a pause longer than the cap (#208)", "does not charge wall time while BLOCKED on a question longer than the cap (#208)", "excludes a pause that overlaps a block only once", "does not subtract a block that ended before the budget was initialized" | done |
 | S7.3 | Difficulty from nine factors | `scheduling/difficulty.ts:classifyDifficulty` | U/scheduling/difficulty.test.ts "scores each spec section 7 factor" | done |
 | S7.4 | Record why an allowance was selected | `BudgetLedger` bind | U/scheduling/budget.test.ts "records the difficulty assessment..." | done |
 | S7.5 | Extend only with a remaining failure, new hypothesis, authorized scope, budget | `BudgetLedger.requestExtension` | U/scheduling/budget.test.ts "requires a new hypothesis, authorized scope and a remaining failure" | done |
