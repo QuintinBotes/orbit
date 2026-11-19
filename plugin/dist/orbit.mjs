@@ -44746,12 +44746,25 @@ var init_budget = __esm({
         });
         return { charged: ceiling, basis: "ceiling", state: r.state };
       }
-      /** Bring wall_ms up to the time elapsed since the budget was initialized. */
+      /** Bring wall_ms up to the time elapsed since the budget was initialized, less the time the run was paused or BLOCKED. */
       syncWall(opts = {}) {
         const { runId } = this.bound();
         const init = this.db.get("SELECT ts FROM events WHERE run_id = ? AND type = 'budget.initialized' ORDER BY id LIMIT 1", runId);
         if (!init) throw new OrbitError("NOT_FOUND", `run ${runId} has no budget.initialized event`);
-        const elapsed = Math.max(0, this.clock.now() - init.ts);
+        const now = this.clock.now();
+        let paused = false;
+        let blocked = false;
+        let since = 0;
+        let waited = 0;
+        for (const e of this.db.all("SELECT ts, type, to_state FROM events WHERE run_id = ? AND type IN ('run.paused', 'run.unpaused', 'state.transition') ORDER BY id", runId)) {
+          const wasWaiting = paused || blocked;
+          if (e.type === "state.transition") blocked = e.to_state === "BLOCKED";
+          else paused = e.type === "run.paused";
+          if (!wasWaiting && (paused || blocked)) since = Math.max(e.ts, init.ts);
+          if (wasWaiting && !paused && !blocked) waited += Math.max(0, e.ts - since);
+        }
+        if (paused || blocked) waited += Math.max(0, now - since);
+        const elapsed = Math.max(0, now - init.ts - waited);
         const delta = Math.max(0, elapsed - this.state("wall_ms").used);
         return this.consumeMeasured("wall_ms", delta, opts.phase ?? "work").state;
       }
