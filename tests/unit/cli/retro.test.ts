@@ -5,7 +5,7 @@
  * is not made again.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -223,6 +223,19 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('sent');
   });
 
+  it('sends nothing the publication guard holds back: the draft stays pending and the exit is non-zero', async () => {
+    const l = lab();
+    endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK);
+    mkdirSync(join(l.home, 'pg'), { recursive: true });
+    writeFileSync(join(l.home, 'pg', 'terms.txt'), 'orb-dead-1\n');
+    const yes = fake(true);
+    const r = await retro(l, [], yes, { env: { ...process.env, HOME: l.home, PUBLISH_GUARD_CONFIG: join(l.home, 'pg', 'config.json') } });
+    expect(r.code).toBe(1);
+    expect(yes.sent).toEqual([]);
+    expect(r.out).toContain('not sent: the publication guard holds the draft back');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
+  });
+
   it('keeps the draft and reports the error when sending fails, and exits non-zero', async () => {
     const l = lab();
     endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK);
@@ -432,6 +445,16 @@ describe('orbit retro: an approved check is added to the configuration on a bran
     expect(findDecision(d.db(), 'check:review-dispute:open_findings')).toMatchObject({ decision: 'applied', decidedBy: 'alice', runIds: ['orb-rd-1', 'orb-rd-2'] });
     const again = await run(d, fake(true));
     expect(again.out).toContain('1 proposal(s) were answered before and are not repeated');
+  });
+
+  it('runs no hook of the repository: a reference-transaction hook that refuses every ref update does not stop it', async () => {
+    const d = disputed();
+    const hook = join(d.repo, '.git', 'hooks', 'reference-transaction');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+    chmodSync(hook, 0o755);
+    const r = await run(d, fake(true));
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain('added on branch orbit/retro/check-lint');
   });
 
   it('builds the branch from the base branch tip and its committed configuration, wherever the checkout stands', async () => {

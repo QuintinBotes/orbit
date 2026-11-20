@@ -843,8 +843,8 @@ Do not expose sensitive content in logs. Make missing usage measurements explici
   - every other class is a policy change.
 - Each proposal is written to a draft file in `.orbit/runs/retro-drafts/`. The draft is built from run records only: run ids, states, classes, the names of markers and rules, and the states each run went through. Paths are redacted, and no goal, reason, finding text, source code or secret reaches it.
 - Each proposal is one question at a terminal, and only an explicit yes acts:
-  - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`;
-  - a yes to a check commits `.orbit/config.yaml` with the check added, on a new branch `orbit/retro/check-<id>` from the tip of `repository.base_branch`. The base branch, the checkout and its index are not touched, and an existing branch is never replaced;
+  - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`, once the publication guard clears it;
+  - a yes to a check commits `.orbit/config.yaml` with the check added, on a new branch `orbit/retro/check-<id>` from the tip of `repository.base_branch`, with the repository's hooks off. The base branch, the checkout and its index are not touched, and an existing branch is never replaced; one that already holds the check counts as applied;
   - a yes to a reviewer standard or a policy change records it as accepted, and the person makes the change.
 - Without a terminal, or with `--json`, nobody is asked and nothing is sent or applied. The proposal stays a draft, and the next retro makes it again with the runs it then cites.
 - Every proposal and answer is recorded in the state database, keyed by kind, class and signature. A proposal that was declined, sent, applied or accepted is not made again.

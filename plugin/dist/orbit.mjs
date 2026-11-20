@@ -76265,6 +76265,16 @@ function ghSend(ctx) {
     return res.stdout.trim().split("\n").pop() ?? "";
   };
 }
+function assertPublishable(ctx, repo, text2) {
+  let guard = { terms_file: null, allowed_emails: [] };
+  try {
+    guard = loadConfig(repo).guard;
+  } catch {
+  }
+  const g = loadPublicationGuard(guard.terms_file ? { termsPath: guard.terms_file, env: ctx.env } : { env: ctx.env });
+  const res = checkPublication(text2, { ...g.options, allowedEmails: [...g.options.allowedEmails ?? [], ...guard.allowed_emails] });
+  if (!res.ok) throw new OrbitError("POLICY_DENIED", `the publication guard holds the draft back (${res.violations.length} match(es) of a private term or an email address)`);
+}
 function withCheck(text2, check) {
   const doc = parseDocument(text2);
   const def = doc.createNode({ command: check.command, category: check.category, timeout_seconds: check.timeout_seconds });
@@ -76287,7 +76297,7 @@ async function applyCheckOnBranch(ctx, repo, baseBranch, check) {
   const branch = checkBranch(check);
   const scratch = mkdtempSync11(join92(tmpdir16(), "orbit-retro-"));
   const git6 = async (args, input) => {
-    const res = await execCapture(["git", ...args], { cwd: repo, env: gitEnv({ ...ctx.env, GIT_INDEX_FILE: join92(scratch, "index") }), timeoutMs: 3e4, ...input === void 0 ? {} : { input } });
+    const res = await execCapture(["git", "-c", "core.hooksPath=/dev/null", ...args], { cwd: repo, env: gitEnv({ ...ctx.env, GIT_INDEX_FILE: join92(scratch, "index") }), timeoutMs: 3e4, ...input === void 0 ? {} : { input } });
     if (res.exitCode !== 0) throw new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${flat(res.stderr).slice(0, 300)}`);
     return res.stdout.trim();
   };
@@ -76372,6 +76382,8 @@ async function runRetro(args, ctx, deps) {
       try {
         let decision = "declined";
         if (yes && p.kind === "issue-draft") {
+          assertPublishable(ctx, repo, `${p.title}
+${p.body}`);
           item.issue_url = await deps.send({ repo: issueRepo, title: p.title, body: bodyWithoutTitle(p), cwd: repo });
           decision = "sent";
         } else if (yes && p.kind === "check" && p.check && declared) {
@@ -76432,6 +76444,7 @@ var init_retro2 = __esm({
     init_errors();
     init_git();
     init_config();
+    init_publication();
     init_retro();
     init_start();
     init_check_detect();

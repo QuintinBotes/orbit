@@ -20,6 +20,7 @@ import { execCapture } from '../../core/exec.ts';
 import { OrbitError } from '../../core/errors.ts';
 import { gitEnv } from '../../delivery/git.ts';
 import { CONFIG_RELATIVE_PATH, loadConfig, parseConfig } from '../../policy/config.ts';
+import { checkPublication, loadPublicationGuard } from '../../guard/publication.ts';
 import { findDecision, draftFileName, recordAnswer, recordProposal, redactPaths, retroProposals, type DeclaredCheck, type ProposalKind, type RetroDecision, type RetroProposal } from '../../observability/retro.ts';
 import { orbitDir } from '../../controller/start.ts';
 import { detectChecks } from '../check-detect.ts';
@@ -87,6 +88,19 @@ export function ghSend(ctx: CliContext): RetroDeps['send'] {
   };
 }
 
+/** Text bound for another repository passes the publication guard first (docs/architecture.md), loaded as doctor loads it. */
+function assertPublishable(ctx: CliContext, repo: string, text: string): void {
+  let guard: { terms_file: string | null; allowed_emails: readonly string[] } = { terms_file: null, allowed_emails: [] };
+  try {
+    guard = loadConfig(repo).guard;
+  } catch {
+    /* no valid Orbit configuration: publish-guard's own settings alone */
+  }
+  const g = loadPublicationGuard(guard.terms_file ? { termsPath: guard.terms_file, env: ctx.env } : { env: ctx.env });
+  const res = checkPublication(text, { ...g.options, allowedEmails: [...(g.options.allowedEmails ?? []), ...guard.allowed_emails] });
+  if (!res.ok) throw new OrbitError('POLICY_DENIED', `the publication guard holds the draft back (${res.violations.length} match(es) of a private term or an email address)`);
+}
+
 /** The branch an approved check is committed on. */
 export const checkBranch = (check: DeclaredCheck): string => `orbit/retro/check-${check.id}`;
 
@@ -111,16 +125,15 @@ export function withCheck(text: string, check: DeclaredCheck): string {
 }
 
 /**
- * AC-2: commit the configuration with `check` added on a new branch from the tip of the base branch. Plumbing only: no
- * commit hook runs (a reference-transaction hook still does), the checkout, its index and the base branch are not
- * touched, and an existing branch is never replaced:
- * one that already holds the check is where it was applied, any other fails the apply.
+ * AC-2: commit the configuration with `check` added on a new branch from the tip of the base branch. Plumbing only, with
+ * hooks off: no hook runs, the checkout, its index and the base branch are not touched, and an existing branch is never
+ * replaced: one that already holds the check is where it was applied, any other fails the apply.
  */
 export async function applyCheckOnBranch(ctx: CliContext, repo: string, baseBranch: string, check: DeclaredCheck): Promise<{ branch: string; commit: string }> {
   const branch = checkBranch(check);
   const scratch = mkdtempSync(join(tmpdir(), 'orbit-retro-'));
   const git = async (args: string[], input?: string): Promise<string> => {
-    const res = await execCapture(['git', ...args], { cwd: repo, env: gitEnv({ ...ctx.env, GIT_INDEX_FILE: join(scratch, 'index') }), timeoutMs: 30_000, ...(input === undefined ? {} : { input }) });
+    const res = await execCapture(['git', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: repo, env: gitEnv({ ...ctx.env, GIT_INDEX_FILE: join(scratch, 'index') }), timeoutMs: 30_000, ...(input === undefined ? {} : { input }) });
     if (res.exitCode !== 0) throw new OrbitError('GIT_FAILED', `git ${args[0]} failed: ${flat(res.stderr).slice(0, 300)}`);
     return res.stdout.trim();
   };
@@ -241,6 +254,7 @@ export async function runRetro(args: Args, ctx: CliContext, deps: RetroDeps): Pr
       try {
         let decision: Exclude<RetroDecision, 'drafted'> = 'declined';
         if (yes && p.kind === 'issue-draft') {
+          assertPublishable(ctx, repo, `${p.title}\n${p.body}`);
           item.issue_url = await deps.send({ repo: issueRepo, title: p.title, body: bodyWithoutTitle(p), cwd: repo });
           decision = 'sent';
         } else if (yes && p.kind === 'check' && p.check && declared) {
