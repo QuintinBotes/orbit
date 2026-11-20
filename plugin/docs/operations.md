@@ -226,6 +226,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit verify [run-id]` | see below |
 | `orbit repair <run-id \| description \| ->` | `--foreground` or `--detach`, `--mode <mode>`, `--policy <path>`; `-` reads the description from stdin |
 | `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w`; `--orbit-version <version>`: only runs that version started (`unknown` for runs from before the version was recorded) |
+| `orbit retro` | `--since <when>` (as for `orbit stats`), `--issue-repo <owner/repo>` (where an approved Orbit issue draft is filed, default `QuintinBotes/orbit`), `--json` (asks nothing, so applies and sends nothing); see spec section 16, Retro |
 | `orbit bench` | `--tier lab\|live`; lab: `--without <stage>`; live: `--budget <usd>` and `--approved-by <name>` (both required), `--baseline`, `--catalog <file>`; both: `--only <ids>`, `--false-dones <file>`, `--out <dir>`. See [Benchmark](#benchmark) |
 | `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |

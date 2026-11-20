@@ -131,6 +131,20 @@ test suite):
 3. Cite that scorecard wherever the README states a result, and set I172.SC2
    and I172.SC3 to done in `docs/traceability.md`.
 
+### G59. Retro: reviewer standards, false dones and the replay (should)
+
+Covers S16.20 and S16.21 (#174 FR-004, FR-006, SC-001, SC-003). `orbit retro`
+groups runs, proposes, and applies an approved check on a branch. What remains:
+
+- FR-004: a file of reviewer standards that the reviewer prompt includes from
+  the base revision and that implementers cannot read (a guard rule), with an
+  accepted standard committed to it on a branch as a check is. Test: a reviewer
+  prompt carries the standard and an implementer's read of the file is denied.
+- FR-006 and SC-003: once false dones are recorded (#172), make each one retro
+  input on its own and propose a check that fails on the reverted candidate.
+- SC-001: replay the runs behind #132, #133 and #156 and compare the proposals
+  with the issues a maintainer filed by hand.
+
 ## Nice
 
 ### G24. Memory hard cap under sandbox-runtime on Linux (nice)
