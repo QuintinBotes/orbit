@@ -197,6 +197,7 @@ orbit pause <run-id>
 orbit resume <run-id>
 orbit cancel <run-id>
 orbit report <run-id>
+orbit bench --tier lab
 ```
 
 `orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly.
@@ -886,6 +887,15 @@ Kill worker during edit; kill controller mid-transition; lose PR response; malfo
 18. Visual baseline changes cannot hide regressions.
 19. Security findings follow severity/exception policy.
 20. Cancellation remains effective after restart.
+
+### Benchmark
+
+`orbit bench` scores one Orbit version on a fixed set of goals and stores a scorecard per version and tier, `docs/scorecards/orbit-<version>-<tier>.json`: stable JSON (sorted keys, one value per line), so two versions diff line by line, and the same results give the same bytes apart from `generated_at`. It runs from an Orbit source checkout. Workers cannot start it.
+
+- **Lab tier** (`--tier lab`): the regression suite. Each scenario replays an issue Orbit fixed, on `examples/demo-app` with the fake providers and the real controller, and states how the run ends now: the terminal state, the failure class, and where they show the fix, the implementation attempts, a phrase of the outcome reason or a recorded decision. A scenario passes when the run ends that way. Each reports pass or fail, the state and failure class the run ended with, its attempts and its simulated spend (the fake providers' reported cost). No model is called, and two runs give the same scorecard. A scenario that fails makes the command exit 1 and name it with its issue; CI runs the whole lab on every change. Every issue fixed from #172 on adds a scenario (`src/bench/scenarios.ts`). A scenario whose expectation cannot be judged (a state that is not terminal, an unknown failure class, no provider steps) is invalid: it is listed and left out of every count.
+- **Live tier** (`--tier live`): the capability suite. Goals come from a catalog file (`data/bench/live-goals.json`, checked as a whole before anything runs) and pin a commit of one of the owner's repositories (QuintinBotes/orbit, claude-stack, proofmesh, review-voice) where a real failure happened; no third-party code. Each goal carries a held-out acceptance check the worker never sees: test files of the accepted fix (`reference`), laid over the tree the run delivered, and a command that must pass. A goal whose check does not fail on its commit and pass on the fix is invalid and excluded. Each goal runs three times and every result is kept. The report gives the pass rate over the runs, the cost per accepted task and the time. With `--baseline` each goal is also attempted three times by one plain `claude -p` session, and the report gives the difference. The live tier spends money: it refuses to start without `--budget <usd>`, which has no default, and without the owner's approval, `--approved-by <name>`, both recorded in the scorecard. Every session is capped at an equal share of the budget, and no session starts once less than one share is left.
+- **Stages** (`--without <stage>`, lab tier): the suite runs again with one stage off, and the report shows the pass rate and spend with and without it and names each scenario that changed. Stages that can be turned off: `diagnosis` (no verifier session; the repair brief is the failure records as they are) and `fail-before` (new tests are not run on the base revision). The gates scope, secrets and verification cannot be turned off.
+- **False dones**: the headline of every scorecard starts with the false-done rate of its Orbit version: the share of its runs reported done (SUCCEEDED) that were later found defective. A person records each false done in `docs/scorecards/false-dones.json` with the Orbit version, what was reported done, what found it (`hidden-check`, `review-finding`, `reopened-issue` or `revert`) and a link to it; the scorecard lists each with its link. Nothing is collected automatically, and a malformed record is an error, never skipped.
 
 ## 18. Implementation milestones
 

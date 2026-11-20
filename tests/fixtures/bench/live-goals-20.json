@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "goals": [
+    {
+      "id": "goal-1",
+      "repository": "QuintinBotes/orbit",
+      "commit": "a000000000000000000000000000000000000000",
+      "reference": "b000000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/1",
+      "goal": "Fix the failure reported in issue 1.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-1.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-2",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "a100000000000000000000000000000000000000",
+      "reference": "b100000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/2",
+      "goal": "Fix the failure reported in issue 2.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-2.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-3",
+      "repository": "QuintinBotes/proofmesh",
+      "commit": "a200000000000000000000000000000000000000",
+      "reference": "b200000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/proofmesh/issues/3",
+      "goal": "Fix the failure reported in issue 3.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-3.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-4",
+      "repository": "QuintinBotes/review-voice",
+      "commit": "a300000000000000000000000000000000000000",
+      "reference": "b300000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/review-voice/issues/4",
+      "goal": "Fix the failure reported in issue 4.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-4.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-5",
+      "repository": "QuintinBotes/orbit",
+      "commit": "a400000000000000000000000000000000000000",
+      "reference": "b400000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/5",
+      "goal": "Fix the failure reported in issue 5.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-5.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-6",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "a500000000000000000000000000000000000000",
+      "reference": "b500000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/6",
+      "goal": "Fix the failure reported in issue 6.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-6.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-7",
+      "repository": "QuintinBotes/proofmesh",
+      "commit": "a600000000000000000000000000000000000000",
+      "reference": "b600000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/proofmesh/issues/7",
+      "goal": "Fix the failure reported in issue 7.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-7.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-8",
+      "repository": "QuintinBotes/review-voice",
+      "commit": "a700000000000000000000000000000000000000",
+      "reference": "b700000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/review-voice/issues/8",
+      "goal": "Fix the failure reported in issue 8.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-8.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-9",
+      "repository": "QuintinBotes/orbit",
+      "commit": "a800000000000000000000000000000000000000",
+      "reference": "b800000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/9",
+      "goal": "Fix the failure reported in issue 9.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-9.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-10",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "a900000000000000000000000000000000000000",
+      "reference": "b900000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/10",
+      "goal": "Fix the failure reported in issue 10.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-10.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-11",
+      "repository": "QuintinBotes/proofmesh",
+      "commit": "aa00000000000000000000000000000000000000",
+      "reference": "ba00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/proofmesh/issues/11",
+      "goal": "Fix the failure reported in issue 11.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-11.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-12",
+      "repository": "QuintinBotes/review-voice",
+      "commit": "ab00000000000000000000000000000000000000",
+      "reference": "bb00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/review-voice/issues/12",
+      "goal": "Fix the failure reported in issue 12.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-12.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-13",
+      "repository": "QuintinBotes/orbit",
+      "commit": "ac00000000000000000000000000000000000000",
+      "reference": "bc00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/13",
+      "goal": "Fix the failure reported in issue 13.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-13.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-14",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "ad00000000000000000000000000000000000000",
+      "reference": "bd00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/14",
+      "goal": "Fix the failure reported in issue 14.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-14.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-15",
+      "repository": "QuintinBotes/proofmesh",
+      "commit": "ae00000000000000000000000000000000000000",
+      "reference": "be00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/proofmesh/issues/15",
+      "goal": "Fix the failure reported in issue 15.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-15.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-16",
+      "repository": "QuintinBotes/review-voice",
+      "commit": "af00000000000000000000000000000000000000",
+      "reference": "bf00000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/review-voice/issues/16",
+      "goal": "Fix the failure reported in issue 16.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-16.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-17",
+      "repository": "QuintinBotes/orbit",
+      "commit": "a100000000000000000000000000000000000000",
+      "reference": "b100000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/17",
+      "goal": "Fix the failure reported in issue 17.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-17.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-18",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "a110000000000000000000000000000000000000",
+      "reference": "b110000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/18",
+      "goal": "Fix the failure reported in issue 18.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-18.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-19",
+      "repository": "QuintinBotes/proofmesh",
+      "commit": "a120000000000000000000000000000000000000",
+      "reference": "b120000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/proofmesh/issues/19",
+      "goal": "Fix the failure reported in issue 19.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-19.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    },
+    {
+      "id": "goal-20",
+      "repository": "QuintinBotes/review-voice",
+      "commit": "a130000000000000000000000000000000000000",
+      "reference": "b130000000000000000000000000000000000000",
+      "issue": "https://github.com/QuintinBotes/review-voice/issues/20",
+      "goal": "Fix the failure reported in issue 20.",
+      "acceptance": {
+        "paths": [
+          "tests/held-out-20.test.ts"
+        ],
+        "command": [
+          "npm",
+          "test"
+        ]
+      },
+      "setup": null
+    }
+  ]
+}
