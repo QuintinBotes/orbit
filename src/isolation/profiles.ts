@@ -347,7 +347,8 @@ export function codexReviewerProfile(profile: SandboxProfile, input: CodexReview
   return {
     writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...(defaultCodexHome === codexHome ? [] : [defaultCodexHome])]),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
+    // A writable worktree is not listed as readable too: srt would write-deny it as a read-only path.
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout]), ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits },
   };
@@ -380,7 +381,7 @@ export function museReviewerProfile(profile: SandboxProfile, input: MuseReviewer
   return {
     writablePaths: input.writable ? [workerDir, checkout] : [workerDir],
     denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout])]),
     allowedHosts: [...PROVIDER_HOSTS.muse],
     limits: { ...profile.limits },
   };

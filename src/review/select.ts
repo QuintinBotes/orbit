@@ -266,13 +266,19 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
 }
 
 /**
- * Why a cross-model reviewer is below its provider's top tier, or null. Claude models qualify only at the opus-class
- * floor, so a Claude reviewer never is. Another provider's model is when the registry knows that provider's recommended
- * model, this is not it, and no recorded safety-review evaluation qualifies it; a provider without a catalog (Muse) has
- * only the model its configuration names.
+ * Why a cross-model reviewer is below its provider's top tier, or null. A Claude model is when it is below the
+ * opus-class floor, which only providers.claude.model can name (qualifiedModel applies the floor to every other).
+ * Another provider's model is when the registry knows that provider's recommended model, this is not it, and no
+ * recorded safety-review evaluation qualifies it; a provider without a catalog (Muse) has only the model its
+ * configuration names.
  */
 function belowTopTier(u: Usable, input: SelectReviewerInput): string | null {
-  if (providerFamily(u.provider) === 'claude' || u.model === null || u.basis !== 'configured' || !input.registry) return null;
+  if (u.model === null || u.basis !== 'configured' || !input.registry) return null;
+  if (providerFamily(u.provider) === 'claude') {
+    const entry = input.registry.get(u.model);
+    const tier = entry ? tierOf(entry) : null;
+    return tier !== null && tier < REVIEW_QUALITY_FLOOR_TIER ? `"${u.provider}" reviews with ${u.model}, below the opus-class floor, and a weak cross-model reviewer adds nothing to a risky change` : null;
+  }
   const surface = PROVIDER_SURFACE[providerFamily(u.provider) ?? ''];
   if (!surface) return null;
   const a = input.registry.assess({ surface, provider: u.provider, allowedModels: [`${u.provider}:*`] });

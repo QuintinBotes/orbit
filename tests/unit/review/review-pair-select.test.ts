@@ -71,6 +71,15 @@ describe('issue #176: one fresh same-family pass plus one cross-model pass', () 
     expect(sel.reason).toMatch(/"claude" has no model qualified for review at its top tier/);
   });
 
+  it('scenario 2: a configured Claude reviewer model below the opus-class floor is not the cross-model pass of a risky change', () => {
+    const sel = select({ implementer: { provider: 'codex', model: 'codex-alpha' }, risky: true, patch: (c) => void (c.providers.claude!.model = SONNET) });
+    expect(sel.decision).toBe('BLOCK');
+    if (sel.decision !== 'BLOCK') return;
+    expect(sel.reason).toMatch(new RegExp(`"claude" reviews with ${SONNET}, below the opus-class floor`));
+    // The same configured model still reviews a change that is not risky.
+    expect(select({ implementer: { provider: 'codex', model: 'codex-alpha' }, patch: (c) => void (c.providers.claude!.model = SONNET) })).toMatchObject({ provider: 'claude', model: SONNET, independent: true });
+  });
+
   it('FR-003: independence is computed from every provider that implemented in the run', () => {
     // A Codex implementer is reviewed by Claude, which review.providers does not list.
     expect(select({ implementer: { provider: 'codex', model: 'codex-alpha' } })).toMatchObject({ provider: 'claude', independent: true });

@@ -192,7 +192,7 @@ export const CODEX_MODEL_MIN_CLI_VERSIONS: Readonly<Record<string, string>> = {
 
 const NO_OS_ISOLATION = 'No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.';
 /** The codex-sandbox tier of an implementer (issue #176): Codex's own workspace-write sandbox is the boundary. */
-const NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and keeps the network off; reads are unrestricted.";
+const NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and the worker's private temp directory and keeps the network off; reads are unrestricted, so a credential file it can read is kept out of the candidate only by the secret scan.";
 
 /** The reviewer's temp directory under srt: inside the worker directory, which it may write anyway, so its write set stays at two directories. */
 const REVIEWER_TMP_DIR = 'tmp';
@@ -497,6 +497,8 @@ export function buildCodexArgv(i: CodexArgvInput): string[] {
     ...(i.effort ? ['-c', `model_reasoning_effort="${i.effort}"`] : []),
     '-c',
     'web_search="disabled"',
+    // workspace-write would also let the commands write the shared /tmp, and a managed config could open the network.
+    ...(tier !== 'os-sandbox' && i.writable ? ['-c', 'sandbox_workspace_write.exclude_slash_tmp=true', '-c', 'sandbox_workspace_write.network_access=false'] : []),
     '--disable',
     'multi_agent',
     '-C',

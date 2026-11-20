@@ -11,6 +11,7 @@ import { classifyMuseTranscript } from '../../../src/adapters/muse-events.ts';
 import type { ExitRecord } from '../../../src/adapters/shim.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { codexReviewerProfile, museReviewerProfile } from '../../../src/isolation/profiles.ts';
+import { buildSrtSettings } from '../../../src/isolation/sandbox-runtime.ts';
 import type { SandboxProfile } from '../../../src/isolation/types.ts';
 
 const IMPLEMENTER = MODEL_OUTPUT_SCHEMAS.implementer;
@@ -30,12 +31,26 @@ describe('Codex writable tier (FR-002)', () => {
     expect(buildCodexArgv(input)[buildCodexArgv(input).indexOf('--sandbox') + 1]).toBe('read-only');
   });
 
+  it('workspace-write keeps the commands it runs off the shared /tmp and off the network, whatever a managed config says', () => {
+    const argv = buildCodexArgv({ ...input, writable: true });
+    expect(argv).toContain('sandbox_workspace_write.exclude_slash_tmp=true');
+    expect(argv).toContain('sandbox_workspace_write.network_access=false');
+    expect(buildCodexArgv(input).join(' ')).not.toContain('sandbox_workspace_write');
+  });
+
   it('inside srt the profile adds the worktree to what may be written, and nothing else', () => {
     const review = codexReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w', codexHome: '/tmp/orbit-codex', homeDir: '/tmp/orbit-home' });
     const impl = codexReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w', codexHome: '/tmp/orbit-codex', homeDir: '/tmp/orbit-home', writable: true });
     expect(impl.writablePaths.filter((p) => !review.writablePaths.includes(p))).toEqual([expect.stringMatching(/orbit-wt$/)]);
     expect(impl.allowedHosts).toEqual(review.allowedHosts);
     expect(impl.denyReadPaths).toEqual(review.denyReadPaths);
+  });
+
+  it('srt accepts the writable profile and lets it write the worktree', () => {
+    const impl = codexReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w', codexHome: '/tmp/orbit-codex', homeDir: '/tmp/orbit-home', writable: true });
+    const fs = buildSrtSettings(impl).filesystem;
+    expect(fs.allowWrite).toContainEqual(expect.stringMatching(/orbit-wt$/));
+    expect(fs.denyWrite.filter((p) => /orbit-wt$/.test(p))).toEqual([]);
   });
 });
 
@@ -64,6 +79,10 @@ describe('Muse writable tier (FR-002)', () => {
   it('inside srt the profile adds the worktree to what may be written', () => {
     expect(museReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w', writable: true }).writablePaths).toEqual([expect.stringMatching(/orbit-w$/), expect.stringMatching(/orbit-wt$/)]);
     expect(museReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w' }).writablePaths).toEqual([expect.stringMatching(/orbit-w$/)]);
+    // The profile the real srt builds its settings from: the worktree is writable, not write-denied as read-only.
+    const fs = buildSrtSettings(museReviewerProfile(base, { checkout: '/tmp/orbit-wt', workerDir: '/tmp/orbit-w', writable: true })).filesystem;
+    expect(fs.allowWrite).toContainEqual(expect.stringMatching(/orbit-wt$/));
+    expect(fs.denyWrite.filter((p) => /orbit-wt$/.test(p))).toEqual([]);
   });
 });
 

@@ -26191,7 +26191,8 @@ function codexReviewerProfile(profile, input) {
   return {
     writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...defaultCodexHome === codexHome ? [] : [defaultCodexHome]]),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join10(codexHome, rel))]),
+    // A writable worktree is not listed as readable too: srt would write-deny it as a read-only path.
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...input.writable ? [] : [checkout], ...CODEX_HOME_READ_ONLY.map((rel) => join10(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits }
   };
@@ -26205,7 +26206,7 @@ function museReviewerProfile(profile, input) {
   return {
     writablePaths: input.writable ? [workerDir, checkout] : [workerDir],
     denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...input.writable ? [] : [checkout]]),
     allowedHosts: [...PROVIDER_HOSTS.muse],
     limits: { ...profile.limits }
   };
@@ -31005,6 +31006,8 @@ function buildCodexArgv(i) {
     ...i.effort ? ["-c", `model_reasoning_effort="${i.effort}"`] : [],
     "-c",
     'web_search="disabled"',
+    // workspace-write would also let the commands write the shared /tmp, and a managed config could open the network.
+    ...tier !== "os-sandbox" && i.writable ? ["-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.network_access=false"] : [],
     "--disable",
     "multi_agent",
     "-C",
@@ -31111,7 +31114,7 @@ var init_codex = __esm({
       "gpt-6.1-sol": "0.160.0"
     };
     NO_OS_ISOLATION = "No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.";
-    NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and keeps the network off; reads are unrestricted.";
+    NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and the worker's private temp directory and keeps the network off; reads are unrestricted, so a credential file it can read is kept out of the candidate only by the secret scan.";
     REVIEWER_TMP_DIR = "tmp";
     CodexAdapter = class {
       id;
@@ -44233,7 +44236,12 @@ function selectReviewer(input) {
   return input.risky ? { ...sel, sameFamily: null, crossModelSkipped: detail } : sel;
 }
 function belowTopTier(u, input) {
-  if (providerFamily(u.provider) === "claude" || u.model === null || u.basis !== "configured" || !input.registry) return null;
+  if (u.model === null || u.basis !== "configured" || !input.registry) return null;
+  if (providerFamily(u.provider) === "claude") {
+    const entry = input.registry.get(u.model);
+    const tier = entry ? tierOf(entry) : null;
+    return tier !== null && tier < REVIEW_QUALITY_FLOOR_TIER ? `"${u.provider}" reviews with ${u.model}, below the opus-class floor, and a weak cross-model reviewer adds nothing to a risky change` : null;
+  }
   const surface = PROVIDER_SURFACE[providerFamily(u.provider) ?? ""];
   if (!surface) return null;
   const a = input.registry.assess({ surface, provider: u.provider, allowedModels: [`${u.provider}:*`] });
