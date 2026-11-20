@@ -31,7 +31,7 @@ describe('Codex writable tier (FR-002)', () => {
     expect(buildCodexArgv(input)[buildCodexArgv(input).indexOf('--sandbox') + 1]).toBe('read-only');
   });
 
-  it('workspace-write keeps the commands it runs off the shared /tmp and off the network, whatever a managed config says', () => {
+  it('workspace-write keeps the commands it runs off the shared /tmp and off the network, whatever a project config says', () => {
     const argv = buildCodexArgv({ ...input, writable: true });
     expect(argv).toContain('sandbox_workspace_write.exclude_slash_tmp=true');
     expect(argv).toContain('sandbox_workspace_write.network_access=false');

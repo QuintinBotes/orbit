@@ -58,7 +58,9 @@ role, in its own worktree. Partner output is untrusted: it is shaped by
 schema, as a review is; anything else is malformed output.
 
 - **Codex.** The codex-sandbox tier runs `--sandbox workspace-write` (Codex's
-  own sandbox: the commands it runs write only the worktree, the network off);
+  own sandbox: the commands it runs write only the worktree and their private
+  `$TMPDIR`, with `/tmp` excluded and the network pinned off on the command
+  line);
   the os-sandbox tier runs inside `srt` with `danger-full-access` and a profile
   that adds the worktree to the reviewer's write set. The data-sharing switches
   the CLI has stay as for a review: `--ephemeral`, `--ignore-user-config`,

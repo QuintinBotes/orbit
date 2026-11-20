@@ -31008,7 +31008,7 @@ function buildCodexArgv(i) {
     ...i.effort ? ["-c", `model_reasoning_effort="${i.effort}"`] : [],
     "-c",
     'web_search="disabled"',
-    // workspace-write would also let the commands write the shared /tmp, and a managed config could open the network.
+    // workspace-write would also let the commands write the shared /tmp, and a project config could open the network.
     ...tier !== "os-sandbox" && i.writable ? ["-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.network_access=false"] : [],
     "--disable",
     "multi_agent",

@@ -444,9 +444,14 @@ invocation of section 0 with `--sandbox workspace-write` (section 1: writes of
 the commands it runs confined to `-C` and `$TMPDIR`, the worker's private temp
 directory), `-c sandbox_workspace_write.exclude_slash_tmp=true` (the shared
 `/tmp` is writable by default) and `-c sandbox_workspace_write.network_access=false`
-(so no managed config can open the network), and `-C <the run's worktree>`.
+(so a project `.codex/config.toml` cannot open the network; a CLI override
+outranks it), and `-C <the run's worktree>`.
 Reads stay unrestricted in this tier, so a credential file the commands read is
-kept out of the candidate only by the secret scan. Or it runs inside srt with `danger-full-access` and the
+kept out of the candidate only by the secret scan. Open (not probed): whether
+a project `.codex/config.toml` the implementer writes (its `writable_roots`,
+MCP servers or hooks) is loaded by a later Codex session in the same worktree.
+`.codex/**` is not a built-in protected path, as `.claude/settings*.json` and
+`.mcp.json` are. Or it runs inside srt with `danger-full-access` and the
 worktree added to the profile's writes (ADR 0022). The final message is shaped
 by the implementer schema and validated against Orbit's copy of it. A turn that
 fails with a used-up allowance ("usage limit", `insufficient_quota`, "exceeded

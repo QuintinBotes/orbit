@@ -6,6 +6,8 @@
  *   codex exec --sandbox <mode> --ephemeral --ignore-user-config --json
  *     --output-schema <workerDir>/schema.json -o <workerDir>/last-message.json
  *     -m <model> [-c model_reasoning_effort="<e>"] -c web_search="disabled"
+ *     [implementer, codex-sandbox tier: -c sandbox_workspace_write.exclude_slash_tmp=true
+ *      -c sandbox_workspace_write.network_access=false]
  *     --disable multi_agent -C <checkout or worktree> -          (prompt on stdin)
  *
  * in one of two tiers (ADR 0001, "Codex reviewer tiers"). os-sandbox: inside
@@ -15,8 +17,8 @@
  * the worker directory and Codex's state directory only, never the checkout;
  * an implementer's profile adds its worktree). codex-sandbox: no srt,
  * unwrapped, with <mode> `read-only` for a reviewer and `workspace-write` for
- * an implementer (writes of the commands it runs confined to the worktree,
- * network off); reads are then unrestricted and the handle says so.
+ * an implementer (writes of the commands it runs confined to the worktree and
+ * its private $TMPDIR, network off); reads are then unrestricted and the handle says so.
  * `danger-full-access` is passed only together with the sandbox-runtime
  * wrapper, and the adapter refuses it in any other combination. The data
  * sharing switches the CLI has stay off for both roles: `--ephemeral` keeps no
@@ -497,7 +499,7 @@ export function buildCodexArgv(i: CodexArgvInput): string[] {
     ...(i.effort ? ['-c', `model_reasoning_effort="${i.effort}"`] : []),
     '-c',
     'web_search="disabled"',
-    // workspace-write would also let the commands write the shared /tmp, and a managed config could open the network.
+    // workspace-write would also let the commands write the shared /tmp, and a project config could open the network.
     ...(tier !== 'os-sandbox' && i.writable ? ['-c', 'sandbox_workspace_write.exclude_slash_tmp=true', '-c', 'sandbox_workspace_write.network_access=false'] : []),
     '--disable',
     'multi_agent',
