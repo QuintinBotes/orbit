@@ -59,6 +59,7 @@ import { currentCandidate, type ControllerDeps, type RunContext } from './contex
 import { assertLeaseHeld } from './run-store.ts';
 import { accountWorkerTurns, finishAndSettle, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
+import { PROOF_RESULT_KIND, type ProofResult } from '../review/proof.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
@@ -86,6 +87,12 @@ export interface FinalReport {
    */
   criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[]; check_wide?: string; fail_before?: ReportFailBefore }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
+  /**
+   * Whether the candidate is done (issue #200, FR-012): per criterion its audit verdict and reason and its own fail-before
+   * outcome, per MUST its quotes or why it is unmet, and each caller and artifact finding. The latest proof result of the
+   * candidate's tree (or of any tree when it has none); absent when the proof gate never ran.
+   */
+  proof?: ProofResult;
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
   /**
@@ -316,6 +323,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
   const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
   const offered = heldVerifiedCandidate(run);
+  const proofs = listDecisions(db, run.id, { kind: PROOF_RESULT_KIND }).map((d) => d.data as ProofResult);
+  const proof = proofs.filter((p) => cand !== null && p.tree_hash === cand.treeHash).at(-1) ?? proofs.at(-1) ?? null;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -329,6 +338,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     objective: contract?.objective ?? null,
     criteria,
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
+    ...(proof ? { proof } : {}),
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
@@ -603,6 +613,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
   out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');
+  if (r.proof) out.push('## Proof', '', ...proofSection(r.proof), '');
   out.push('## Checks', '', list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ''}${c.flaky ? ', flaky' : ''}, log ${c.log}`)), '');
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
@@ -652,6 +663,24 @@ function criterionLine(c: FinalReport['criteria'][number]): string {
     ...(fb ? [`fail-before (${fb.mode}): ${fb.outcome}${fb.cause ? ` (cause ${fb.cause})` : ''}: ${fb.reason}`] : []),
     ...(wide ? [wide] : []),
   ].join('; ');
+}
+
+/** The proof result (issue #200, FR-012): each criterion, each MUST and each finding, one line each. */
+export function proofSection(p: ProofResult): string[] {
+  const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`) : ['- none']);
+  const criteria = p.criteria.map((c) => {
+    if (c.status === 'waiting-on-person') return `${c.criterion_id} [waiting on a person]: person-checked, never proven by a test`;
+    const audit = c.audit ? `audit: ${c.audit.answer ?? 'no answer'} (${c.audit.reason})` : 'audit: none';
+    const fb = c.fail_before ? `fail-before: ${c.fail_before.outcome}${c.fail_before.accepted_by ? `, accepted by ${c.fail_before.accepted_by}` : ''} (${c.fail_before.reason})` : 'fail-before: none of its own';
+    return `${c.criterion_id} [${c.status}] (${c.kind}; tests: ${c.tests.join(', ') || 'none'}): ${audit}; ${fb}`;
+  });
+  const requirements = p.requirements.map((r) => {
+    const quotes = r.quotes.map((q) => `${q.path}:${q.start}-${q.end}`).join(', ');
+    const callers = r.callers.map((c) => `${c.function} called from ${c.callers.join(', ') || 'nowhere found'}`).join('; ');
+    return `${r.id} [${r.status}]: "${r.wording}"${quotes ? `; quoted: ${quotes}` : ''}${r.status === 'unmet' ? `; ${r.reason}` : ''}${callers ? `; callers: ${callers}` : ''}`;
+  });
+  const findings = [...p.caller_findings, ...p.artifact_findings].map((f) => `${f.id}${f.location ? ` at ${f.location}` : ''}: "${f.sentence}": ${f.claim}`);
+  return [`Tree ${p.tree_hash}: ${p.open.length === 0 ? 'done' : `${p.open.length} open result(s)`}.`, '', 'Criteria:', ...list(criteria), '', 'Requirements (MUST):', ...list(requirements), '', 'Findings:', ...list(findings)];
 }
 
 /** The depth fields of a report review line; empty for a review with no record (an older run). */

@@ -22,7 +22,7 @@ const PLANNER = {
     objective: 'Add mul to the calculator and a shout helper.',
     criteria: [
       { ...PLANNER_OUTPUT.criteria[0]!, changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] },
-      { key: 'shout', statement: 'shout(s) returns s in upper case followed by an exclamation mark.', mandatory: true, ui: false, proof: ['tests/shout.test.mjs asserts shout("hi") === "HI!"'], check_ids: ['unit'], changes: [{ path: 'apps/strings.mjs', summary: 'add shout' }] },
+      { key: 'shout', statement: 'shout(s) returns s in upper case followed by an exclamation mark.', mandatory: true, ui: false, proof: ['tests/shout.test.mjs asserts shout("hi") === "HI!"'], check_ids: ['unit'], changes: [{ path: 'apps/strings.mjs', summary: 'add shout' }], kind: 'change', tests: ['tests/shout.test.mjs'] },
     ],
     expected_changed_files: [...PLANNER_OUTPUT.expected_changed_files, { path: 'apps/strings.mjs', change: 'add', reason: 'shout' }, { path: 'tests/shout.test.mjs', change: 'add', reason: 'behaviour test' }],
   },

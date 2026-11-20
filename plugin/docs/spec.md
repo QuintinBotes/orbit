@@ -408,7 +408,7 @@ Store original goal, normalized objective, mandatory/optional criteria, non-goal
 }
 ```
 
-Command definitions belong in trusted configuration. A command supplied by a model in a contract is not automatically authorized executable code.
+Command definitions belong in trusted configuration. A command supplied by a model in a contract is not automatically authorized executable code. A criterion's mapped `tests` are repository paths, never commands: each becomes one argument of its check's trusted `tests_command`, and a path that is absolute, contains `..` or starts with `-` makes the contract invalid. A criterion's `kind` (`change`, `keep` or `person`) says how it is proven (section 11, "Completion proof").
 
 ### Preflight
 
@@ -666,6 +666,15 @@ If creating a commit changes only Git metadata, retain the tested tree identity 
 ### Completion proof
 
 Every mandatory criterion needs explicit evidence. Passing unit tests alone does not prove an entire user journey. Model review cannot replace reproducible checks. Missing execution evidence must be labeled unverified.
+
+A run is done only when each criterion's proof would fail without it (issue #200; ADR 0014, addendum of 2026-11-20). Under `verification.fail_before: required`, the default, for a contract whose plan maps tests to criteria:
+
+- **Mapped tests.** The plan maps each criterion to its own test files (`tests`) and marks its `kind`: `change` (the default), `keep` for behaviour that must still hold, or `person` for what only a person can satisfy (a decision, an approval, a merge). Each mapped test runs alone, through its check's trusted `tests_command` with the path appended, so its outcome is read from exit status alone.
+- **Fail-before per criterion.** A change criterion is proven only when each of its mapped tests fails on the base tree with the candidate's test-owned files and passes on the candidate; a keep criterion only when each passes on both. One test that does not do so leaves the criterion unproven whatever the other criteria showed, and it goes to repair; a test that cannot run alone (no mapped test, no `tests_command`, a probe not established) blocks for a person, as ADR 0014 says.
+- **Criterion audit.** Before delivery, a fresh reviewer session sees only the criterion's text and its mapped tests with the test-owned files they import, never the implementation, the plan or the worker's report, and answers whether the tests would still pass if the criterion were false. "Yes", or no answer, leaves the criterion unproven.
+- **Conformance.** Each MUST of the goal (the issue spec a run started from, the goal and the objective) gets one fresh session that quotes the file and line range implementing its exact wording or marks it unmet. Orbit checks every quote against the candidate byte for byte, lists the callers of each changed function holding a quoted line (by search), and a changed behaviour at a caller no requirement covers is a finding.
+- **Artifacts.** One fresh session checks the pull request body and every documentation file the candidate adds or changes against the candidate; each sentence describing behaviour the candidate does not have is a finding. Generated files are skipped.
+- **Done.** An unproven criterion, an unmet MUST, a caller finding or an artifact finding is an open result. Delivery waits: the candidate goes to repair with a brief naming each, and every check runs again on the repaired candidate. No run is delivered or succeeds while one is open. A person-checked criterion is neither audited nor probed, never counts as proven by a test, and is listed as waiting on that person. The final report shows, per criterion, the audit verdict and reason and its own fail-before outcome; per MUST, the quotes or why it is unmet; and each finding.
 
 ## 12. Cross-provider verification
 

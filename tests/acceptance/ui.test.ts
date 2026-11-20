@@ -98,7 +98,7 @@ describe.skipIf(!CHROMIUM)('acceptance: UI verification in a real browser', () =
 
       // The worker makes the CSS change; while it works, the re-recorded baselines land in its worktree as its own writes.
       const plan = (scenarioFor('ui').roles.planner![0] as { structured: Record<string, unknown> }).structured;
-      const planner = { structured: { ...plan, objective: 'Tidy the reports table styles.', criteria: [{ key: 'style', statement: 'The reports table keeps its layout on desktop and mobile.', mandatory: true, ui: true, proof: ['The visual journey passes against the stored baseline'], check_ids: ['lint', 'unit', 'ui'], changes: [{ path: 'src/public/styles.css', summary: 'styles' }] }], expected_changed_files: [{ path: 'src/public/styles.css', change: 'modify', reason: 'styles' }] } };
+      const planner = { structured: { ...plan, objective: 'Tidy the reports table styles.', criteria: [{ key: 'style', statement: 'The reports table keeps its layout on desktop and mobile.', mandatory: true, ui: true, proof: ['The visual journey passes against the stored baseline'], check_ids: ['lint', 'unit', 'ui'], changes: [{ path: 'src/public/styles.css', summary: 'styles' }], kind: 'keep', tests: [] }], expected_changed_files: [{ path: 'src/public/styles.css', change: 'modify', reason: 'styles' }] } };
       writeScenario(lab18, scenario({ planner: [planner], implementer: [implementer([regress], { extra: { sleepMs: 4_000 }, tests: [], changed: [['src/public/styles.css', 'modify']] })] }));
       const run = startLabRun(lab18, 'Tidy the reports table styles without changing its layout.');
       const driving = drive(lab18, run.id);

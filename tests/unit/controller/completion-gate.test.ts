@@ -7,6 +7,8 @@ import { recordReview } from '../../../src/review/store.ts';
 import { insertQuestion, setQuestionAnswer } from '../../../src/inquisition/store.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
 import { COMMIT_A, TREE_A, TREE_B, candidateOf, dbFixture, evidenceReport, snapshotOf } from '../review/fixtures.ts';
+import { recordDecision } from '../../../src/storage/decisions.ts';
+import { PROOF_RESULT_KIND, proofResultId, type ProofResult } from '../../../src/review/proof.ts';
 
 const CANDIDATE = { id: candidateOf(TREE_A), runId: 'run-1', seq: 1, treeHash: TREE_A, commitSha: COMMIT_A };
 
@@ -104,5 +106,19 @@ describe('completion gate', () => {
     const { gate } = setup();
     expect(gate(TREE_B).reasons).toContain(`the delivered tree ${TREE_B} is not the reviewed tree ${TREE_A}`);
     expect(gate(null).reasons).toContain('no delivered commit to compare with the reviewed tree');
+  });
+
+  // Issue #200, FR-010: no run is done while a criterion audit, a MUST or a document check of its tree is open.
+  it('refuses a tree whose proof result is missing or open when the proof gate applies, and passes one that is done', () => {
+    const fx = setup();
+    const withProof = () => completionGate(fx.db, { run: { id: 'run-1' }, snapshot: fx.snapshot, candidate: CANDIDATE, implementerProvider: 'claude', deliveredTree: TREE_A, now: fx.clock.now(), proofRequired: true });
+    expect(withProof().reasons).toEqual([`tree ${TREE_A} has no proof result: the criterion audits, the conformance checks and the artifact check have not all run on it`]);
+    const result = (open: string[]): ProofResult => ({ tree_hash: TREE_A, criteria: [], requirements: [], caller_findings: [], artifact_findings: [], open });
+    recordDecision(fx.db, fx.runDir, { id: proofResultId('run-1', TREE_A), runId: 'run-1', kind: PROOF_RESULT_KIND, summary: 'not done', data: result(['AC-1 is unproven: the auditor answered yes']) }, fx.clock);
+    expect(withProof().reasons).toEqual([`tree ${TREE_A} is not done: AC-1 is unproven: the auditor answered yes`]);
+    // Without the gate (advisory, or a contract that maps no tests) the same records pass, as before.
+    expect(fx.gate().passed).toBe(true);
+    fx.db.run('UPDATE decisions SET data_json = ? WHERE id = ?', JSON.stringify(result([])), proofResultId('run-1', TREE_A));
+    expect(withProof().passed).toBe(true);
   });
 });

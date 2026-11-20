@@ -175,7 +175,7 @@ const THROWING_APP = "throw new SyntaxError('Unexpected token } in tools/app-thr
 function withUiCriterion(scenario: object): object {
   const s = scenario as { roles: { planner: { structured: typeof PLANNER_OUTPUT }[] } };
   const plan = s.roles.planner[0]!.structured;
-  const criterion = { key: 'ui', statement: 'The calculator page shows the product of 2 and 3 as 6.', mandatory: true, ui: true, proof: ['journeys/mul.spec.ts asserts the page shows 6'], check_ids: ['ui'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] };
+  const criterion = { key: 'ui', statement: 'The calculator page shows the product of 2 and 3 as 6.', mandatory: true, ui: true, proof: ['journeys/mul.spec.ts asserts the page shows 6'], check_ids: ['ui'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }], kind: 'change', tests: ['journeys/mul.spec.ts'] };
   return { ...s, roles: { ...s.roles, planner: [{ structured: { ...plan, criteria: [...plan.criteria, criterion] } }] } };
 }
 

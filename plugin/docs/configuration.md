@@ -675,6 +675,7 @@ checks:
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 | `category` | what the check evidences: `test` (default), `lint`, `typecheck`, `build`, `sast`, `ui` (the default of a `playwright` check) or `other`. Only a command check of category `test` is run by the [fail-before probe](#verification) and by the repair probe, so only such a check can show that a test a repair wrote for a review finding tells the repaired tree from the one before; `sast` checks feed the static security gate |
+| `tests_command` | argv, run without a shell, that runs only the test files appended to it (one argument each, relative to `cwd`): `[node, --test]`, `[npx, vitest, run]`, `[pytest]`. Under `verification.fail_before: required` each criterion's mapped tests run alone with it, so that each criterion's fail-before is its own (issue #200). Without it, a criterion citing only this check cannot be probed on its own, and its fail-before is not established |
 
 Set `category` on every check that is not a test suite.
 A check without a category is treated as `test` and is probed: a lint or
@@ -1396,7 +1397,7 @@ guard:
 
 verification:
   allow_flaky_pass: false
-  fail_before: advisory
+  fail_before: required
   fail_before_timeout_seconds: 900
 ```
 
@@ -1409,7 +1410,7 @@ are described in [verification](#verification).
 ```yaml
 verification:
   allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
-  fail_before: advisory               # off | advisory | required
+  fail_before: required               # off | advisory | required
   fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
 ```
 
@@ -1447,8 +1448,22 @@ change", not "an assertion failed".
 | `fail_before` | What it does |
 |---|---|
 | `off` | No probe; `unverified` says it was not run. |
-| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
-| `required` | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+| `advisory` | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
+| `required` (default) | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+
+Under `required`, a plan that maps tests to criteria (every plan a planner
+writes since issue #200) is judged per criterion, not per check: each
+criterion's mapped test files run alone with their check's `tests_command`, on
+the probe tree, where a change criterion's tests must fail and a keep
+criterion's must pass, and on the candidate, where both must pass. One mapped
+test that does not leaves the criterion unproven, whatever the others showed. A
+UI criterion keeps the browser probe. Before delivery, the
+[proof gate](spec.md#completion-proof) then audits each criterion in a fresh
+reviewer session that sees only the criterion and its tests, checks each MUST of
+the goal against quoted lines of the candidate, and checks the pull request body
+and the changed documents against the candidate; an open result goes to repair,
+and nothing is delivered before it closes. Under `advisory` and `off` neither the
+per-criterion probe nor the proof gate runs.
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
