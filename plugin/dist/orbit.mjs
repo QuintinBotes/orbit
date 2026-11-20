@@ -641,6 +641,21 @@ var init_builtin = __esm({
         why: "Project MCP servers are spawned without asking in -p mode, so writing one is code execution on the host."
       },
       {
+        glob: ".codex/**",
+        credential: false,
+        why: "Codex project config (config.toml MCP servers, hooks, writable roots) and skills, which a later Codex session in this tree loads."
+      },
+      {
+        glob: ".muse/**",
+        credential: false,
+        why: "Muse project hooks (.muse/hooks.json) and state, which a later Muse session in this tree loads."
+      },
+      {
+        glob: ".agents/**",
+        credential: false,
+        why: "Skills, workflows and plugins that Muse and Codex load from the workspace."
+      },
+      {
         glob: "**/.env*",
         credential: true,
         why: "Environment files conventionally hold secrets (.env, .env.local, .envrc)."

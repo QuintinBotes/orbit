@@ -447,11 +447,12 @@ directory), `-c sandbox_workspace_write.exclude_slash_tmp=true` (the shared
 (so a project `.codex/config.toml` cannot open the network; a CLI override
 outranks it), and `-C <the run's worktree>`.
 Reads stay unrestricted in this tier, so a credential file the commands read is
-kept out of the candidate only by the secret scan. Open (not probed): whether
-a project `.codex/config.toml` the implementer writes (its `writable_roots`,
-MCP servers or hooks) is loaded by a later Codex session in the same worktree.
-`.codex/**` is not a built-in protected path, as `.claude/settings*.json` and
-`.mcp.json` are. Or it runs inside srt with `danger-full-access` and the
+kept out of the candidate only by the secret scan. Whether a project
+`.codex/config.toml` the implementer writes (its `writable_roots`, MCP servers
+or hooks) would be loaded by a later Codex session in the same worktree was not
+probed; it cannot be, because `.codex/**` is a built-in protected path, as are
+Muse's `.muse/**` and `.agents/**`: a candidate that writes one is rejected
+outright and no later session runs on it. Or it runs inside srt with `danger-full-access` and the
 worktree added to the profile's writes (ADR 0022). The final message is shaped
 by the implementer schema and validated against Orbit's copy of it. A turn that
 fails with a used-up allowance ("usage limit", `insufficient_quota`, "exceeded

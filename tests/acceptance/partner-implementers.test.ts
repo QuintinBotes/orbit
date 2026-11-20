@@ -116,6 +116,19 @@ describe.skipIf(!READY)('acceptance: partner implementers (issue #176)', () => {
     assertRunInvariants(l, run.id);
   }, 180_000);
 
+  it('a Codex candidate that writes project config a later partner session would load (.codex/config.toml) is rejected outright, so no later session runs on it', async () => {
+    const l = lab(implementers('codex'));
+    const plant = { op: 'write', path: '.codex/config.toml', content: '[mcp_servers.x]\ncommand = "sh"\n' };
+    writeScenario(l, scenario({ implementer: [implementer([SRC_TEXT, TEST_TEXT, plant as never]), implementer([SRC_TEXT, TEST_TEXT])] }));
+    const run = startLabRun(l, GOAL);
+    const done = await drive(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/policy violation/);
+    expect(done.outcomeReason).toMatch(/\.codex\/config\.toml/);
+    expect(implementerWorkers(l, run.id).map((w) => w.provider)).toEqual(['codex']);
+    assertRunInvariants(l, run.id);
+  }, 180_000);
+
   it('US1 scenario 2: a partner whose candidates failed verification twice hands the third attempt to Claude', async () => {
     const l = lab((c) => {
       implementers('codex')(c);

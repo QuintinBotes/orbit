@@ -78,7 +78,8 @@ in, because the tests a worker adds are changes too.
 A worker may change only `allowed_paths`; anything else fails the scope gate.
 A goal contract can narrow the scope but never widen it. Protected paths win
 over allowed ones. Built-in protections you cannot remove: `.orbit/**`, `.git`,
-nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, `**/.env*`,
+nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, the partner
+CLIs' project config `.codex/**`, `.muse/**` and `.agents/**`, `**/.env*`,
 `**/*.pem`, SSH keys, `**/.npmrc` and `**/.netrc`.
 
 ## actions
