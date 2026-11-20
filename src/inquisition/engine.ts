@@ -313,7 +313,8 @@ export function renderInquisitorPrompt(trigger: Trigger, ctx: InquisitionContext
     block('trigger-evidence', redact(trigger.evidence.join('\n'))),
     block('contract', JSON.stringify(contract, null, 1)),
   ];
-  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, d.content.slice(0, DEFAULT_BLOCK_CHARS)));
+  // Redacted before the cut, so a secret the cap splits is still recognised.
+  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, redactForProvider(d.content).slice(0, DEFAULT_BLOCK_CHARS)));
   if (ctx.ambiguities && ctx.ambiguities.length > 0) {
     parts.push(block('ambiguities', redact(JSON.stringify(ctx.ambiguities.map((a) => ({ id: a.id, description: a.description, kind: a.kind, affects: a.affects, evidence: a.evidence, options: a.options })), null, 1))));
   }

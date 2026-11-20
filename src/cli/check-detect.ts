@@ -14,6 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { execCapture } from '../core/exec.ts';
 import { which } from '../isolation/util.ts';
 import { REPO_INSTRUCTION_FILES } from '../adapters/prompt.ts';
+import { withOneMsbuildNode } from '../evidence/msbuild.ts';
 
 export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build';
 export type Ecosystem = 'node' | 'dotnet' | 'python' | 'go' | 'rust';
@@ -94,6 +95,9 @@ const CATEGORY_WORDS: readonly [CheckCategory, ReadonlySet<string>][] = [
   ['build', new Set(['build'])],
 ];
 
+/** Words that make a command set up dependencies, not check anything: `pnpm add -D vitest` is no test. */
+const SETUP_WORDS: ReadonlySet<string> = new Set(['install', 'i', 'add', 'ci', 'get', 'sync', 'remove', 'uninstall', 'update', 'upgrade']);
+
 const DRAFT_NAME: Readonly<Record<CheckCategory, string>> = { test: 'unit-tests', lint: 'lint', typecheck: 'typecheck', build: 'build' };
 const CATEGORY_TIMEOUT: Readonly<Record<CheckCategory, number>> = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
 
@@ -121,6 +125,7 @@ export function documentedCommands(repo: string, files: readonly string[]): { re
         const cmd = raw.trim().replace(/^\$\s+/, '');
         if (cmd === '' || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
         const argv = cmd.split(/\s+/);
+        if (argv.some((a) => SETUP_WORDS.has(a))) continue;
         const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv[0]!) ? TOOL_ECOSYSTEM[argv[0]!] : undefined;
         if (ecosystem === undefined) continue;
         const words = new Set(argv.flatMap((a) => a.toLowerCase().split(':')));
@@ -410,14 +415,18 @@ export async function detectChecks(input: DetectInput): Promise<CheckProposal> {
     }
     taken.add(key);
     const drafts = groups.find(([e]) => e === d.ecosystem)![1];
-    const i = drafts.findIndex((x) => x.category === d.category);
+    // The check sandbox needs one MSBuild node, as for the derived .NET commands; unchanged for every other tool.
+    const command = d.ecosystem === 'dotnet' ? withOneMsbuildNode(d.command) : d.command;
+    const same = drafts.flatMap((x, j) => (x.category === d.category ? [j] : []));
+    // Several drafts of one kind are per target (.NET without one solution): replace the one whose target it names.
+    const i = same.length === 1 ? same[0]! : (same.find((j) => drafts[j]!.command.every((w) => w.startsWith('-') || command.includes(w))) ?? -1);
     const derived = i >= 0 ? drafts[i]! : null;
     const draft: Draft = {
       name: derived?.name ?? DRAFT_NAME[d.category],
-      command: d.command,
+      command,
       category: d.category,
       timeout_seconds: derived?.timeout_seconds ?? CATEGORY_TIMEOUT[d.category],
-      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(' ')} from the manifests` : ''}`,
+      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(' ')} from the manifests` : ''}${command.join(' ') !== d.command.join(' ') ? `; ${ONE_NODE_REASON}` : ''}`,
     };
     if (derived) drafts[i] = draft;
     else drafts.push(draft);

@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { exportRunOtel, OTEL_SCHEMA_URL, type OtlpSpan } from '../../../src/observability/otel.ts';
+import { recordUsage } from '../../../src/routing/usage.ts';
 import { makeLab, type Lab } from '../cli/lab.ts';
 import { buildFullRun, startFixture, T0, worker } from '../cli/timeline-fixture.ts';
 
@@ -58,5 +59,15 @@ describe('exportRunOtel', () => {
     expect(plan.status).toEqual({ code: 2 });
     expect(attr(plan, 'error.type')).toEqual({ stringValue: 'max_turns' });
     expect(attr(plan, 'gen_ai.agent.name')).toEqual({ stringValue: 'planner' });
+  });
+
+  it('counts cached prompt tokens once for a provider id of the codex family, whose input already holds them', () => {
+    const l = lab();
+    const fx = startFixture(l);
+    worker(fx, 'w-rev-1', 'reviewer', 'codex-fast', 'gpt-6.1-sol', null, 10, 'SUCCEEDED', null);
+    recordUsage(fx.db, { runId: fx.runId, workerId: 'w-rev-1', usage: { provider: 'codex-fast', model: 'gpt-6.1-sol', inputTokens: 1000, outputTokens: 10, cacheReadTokens: 800, cacheWriteTokens: 0, costUsd: null, costSource: 'unavailable' }, durationMs: 1000, pricing: null }, fx.clock);
+    const [, rev] = exportRunOtel(fx.db, getRun(fx.db, fx.runId), T0 + 600_000).resourceSpans[0]!.scopeSpans[0]!.spans as [OtlpSpan, OtlpSpan];
+    expect(attr(rev, 'gen_ai.provider.name')).toEqual({ stringValue: 'openai' });
+    expect(attr(rev, 'gen_ai.usage.input_tokens')).toEqual({ intValue: '2200' });
   });
 });

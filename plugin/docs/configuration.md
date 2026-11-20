@@ -747,9 +747,12 @@ a tool init knows (`npm`, `pnpm`, `yarn`, `npx`, `dotnet`, `pytest`, `python`,
 `ruff`, `mypy`, `uv`, `go`, `cargo` and the like), needs no shell (no pipe,
 redirection, quote, variable or leading `NAME=value`), and names a check
 (`test`, `vitest`, `pytest`, `lint`, `clippy`, `vet`, `typecheck`, `tsc`,
-`mypy`, `build`). It takes the place of the command derived from the manifests
-for the same ecosystem and kind of check, or is added when the manifests give
-none; the first one documented wins, so `AGENTS.md` comes before `CLAUDE.md`.
+`mypy`, `build`), and sets up nothing (`install`, `add`, `ci`, `sync` and the
+like mean it is no check). It takes the place of the command derived from the
+manifests for the same ecosystem and kind of check (for .NET projects without
+one solution, the one for the project it names), or is added when the manifests
+give none; the first one documented wins, so `AGENTS.md` comes before
+`CLAUDE.md`. A documented `dotnet` command gets `-m:1`, as the derived ones do.
 Its reason says where it was read (`documented in AGENTS.md line 7, in place of
 pnpm test from the manifests`), and init lists the files it read in its output
 and in `checks.read_docs` in `--json`. A documented command whose tool is not

@@ -81,7 +81,7 @@ function workerSpan(w: WorkerRecord, u: WorkerUsage | undefined, traceId: string
     str('gen_ai.agent.id', w.id),
   ];
   if (w.model) attributes.push(str('gen_ai.request.model', w.model));
-  const input = u ? inputTokens(w.provider, u) : null;
+  const input = u ? inputTokens(family ?? w.provider, u) : null;
   if (input !== null) attributes.push(int('gen_ai.usage.input_tokens', input));
   if (u?.output != null) attributes.push(int('gen_ai.usage.output_tokens', u.output));
   if (u?.cost != null) attributes.push({ key: 'orbit.cost_usd', value: { doubleValue: u.cost } });

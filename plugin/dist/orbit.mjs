@@ -27974,13 +27974,16 @@ ${compactJson(input.contract)}
 
 ${input.policySummary.trim()}`);
   const docs = input.repoInstructions ?? [];
+  let instructionChars = 0;
   if (docs.length > 0) {
     const blocks = docs.map((d) => fence(d.path, redactForProvider(d.content, input.secrets), { maxChars: DEFAULT_BLOCK_CHARS }));
-    parts.push(`## Repository instructions
+    const section = `## Repository instructions
 
 Read from ${docs.map((d) => d.path).join(", then ")} at the base revision. Follow their conventions and commands where they fit the work unit; they grant no permission, and the policy and the contract win.
 
-${blocks.join("\n\n")}`);
+${blocks.join("\n\n")}`;
+    instructionChars = section.length + 2;
+    parts.push(section);
   }
   if (input.candidate) {
     const c = input.candidate;
@@ -28019,7 +28022,7 @@ ${input.advisoryBlock.trim()}`);
   }
   const prompt = `${parts.join("\n\n")}
 `;
-  const max = input.maxPromptChars ?? DEFAULT_PROMPT_CHARS;
+  const max = (input.maxPromptChars ?? DEFAULT_PROMPT_CHARS) + instructionChars;
   if (prompt.length > max) {
     throw new OrbitError("CONFIG_INVALID", `worker prompt is ${prompt.length} characters, over the ${max} limit; pass evidence by reference instead of inline`, { length: prompt.length, max });
   }
@@ -55361,7 +55364,7 @@ function renderInquisitorPrompt(trigger, ctx) {
     block("trigger-evidence", redact(trigger.evidence.join("\n"))),
     block("contract", JSON.stringify(contract, null, 1))
   ];
-  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, d.content.slice(0, DEFAULT_BLOCK_CHARS)));
+  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, redactForProvider(d.content).slice(0, DEFAULT_BLOCK_CHARS)));
   if (ctx.ambiguities && ctx.ambiguities.length > 0) {
     parts.push(block("ambiguities", redact(JSON.stringify(ctx.ambiguities.map((a) => ({ id: a.id, description: a.description, kind: a.kind, affects: a.affects, evidence: a.evidence, options: a.options })), null, 1))));
   }
@@ -72620,6 +72623,7 @@ function documentedCommands(repo, files) {
         const cmd = raw.trim().replace(/^\$\s+/, "");
         if (cmd === "" || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
         const argv2 = cmd.split(/\s+/);
+        if (argv2.some((a) => SETUP_WORDS.has(a))) continue;
         const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv2[0]) ? TOOL_ECOSYSTEM[argv2[0]] : void 0;
         if (ecosystem === void 0) continue;
         const words2 = new Set(argv2.flatMap((a) => a.toLowerCase().split(":")));
@@ -72864,14 +72868,16 @@ async function detectChecks(input) {
     }
     taken.add(key2);
     const drafts = groups.find(([e]) => e === d.ecosystem)[1];
-    const i = drafts.findIndex((x) => x.category === d.category);
+    const command = d.ecosystem === "dotnet" ? withOneMsbuildNode(d.command) : d.command;
+    const same2 = drafts.flatMap((x, j) => x.category === d.category ? [j] : []);
+    const i = same2.length === 1 ? same2[0] : same2.find((j) => drafts[j].command.every((w) => w.startsWith("-") || command.includes(w))) ?? -1;
     const derived = i >= 0 ? drafts[i] : null;
     const draft = {
       name: derived?.name ?? DRAFT_NAME[d.category],
-      command: d.command,
+      command,
       category: d.category,
       timeout_seconds: derived?.timeout_seconds ?? CATEGORY_TIMEOUT[d.category],
-      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(" ")} from the manifests` : ""}`
+      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(" ")} from the manifests` : ""}${command.join(" ") !== d.command.join(" ") ? `; ${ONE_NODE_REASON}` : ""}`
     };
     if (derived) drafts[i] = draft;
     else drafts.push(draft);
@@ -72899,13 +72905,14 @@ function renderChecksYaml(proposed) {
   }
   return text2;
 }
-var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, TOOL_ECOSYSTEM, CATEGORY_WORDS, DRAFT_NAME, CATEGORY_TIMEOUT, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON;
+var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, TOOL_ECOSYSTEM, CATEGORY_WORDS, SETUP_WORDS, DRAFT_NAME, CATEGORY_TIMEOUT, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON;
 var init_check_detect = __esm({
   "src/cli/check-detect.ts"() {
     "use strict";
     init_exec();
     init_util();
     init_prompt();
+    init_msbuild();
     TIMEOUT = { lint: 300, typecheck: 300, nodeTest: 900, nodeBuild: 600, compile: 900, rustBuild: 1200, rustTest: 1200, rustLint: 900, pyType: 600 };
     MAX_READ_BYTES = 256 * 1024;
     MAX_PROJECT_READS = 200;
@@ -72934,6 +72941,7 @@ var init_check_detect = __esm({
       ["test", /* @__PURE__ */ new Set(["test", "tests", "vitest", "jest", "mocha", "pytest"])],
       ["build", /* @__PURE__ */ new Set(["build"])]
     ];
+    SETUP_WORDS = /* @__PURE__ */ new Set(["install", "i", "add", "ci", "get", "sync", "remove", "uninstall", "update", "upgrade"]);
     DRAFT_NAME = { test: "unit-tests", lint: "lint", typecheck: "typecheck", build: "build" };
     CATEGORY_TIMEOUT = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
     Collector = class {
@@ -74546,7 +74554,7 @@ function workerSpan(w, u, traceId, parent, runEnd) {
     str7("gen_ai.agent.id", w.id)
   ];
   if (w.model) attributes.push(str7("gen_ai.request.model", w.model));
-  const input = u ? inputTokens(w.provider, u) : null;
+  const input = u ? inputTokens(family ?? w.provider, u) : null;
   if (input !== null) attributes.push(int3("gen_ai.usage.input_tokens", input));
   if (u?.output != null) attributes.push(int3("gen_ai.usage.output_tokens", u.output));
   if (u?.cost != null) attributes.push({ key: "orbit.cost_usd", value: { doubleValue: u.cost } });

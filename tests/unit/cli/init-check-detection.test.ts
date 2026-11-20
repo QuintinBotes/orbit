@@ -317,10 +317,17 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
   });
 
   it('ignores prose, commands that need a shell, and commands that are no check', async () => {
-    const agents = 'Run pnpm test --maxWorkers=2 before pushing.\n\n```sh\n$ pnpm install\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
+    const agents = 'Run pnpm test --maxWorkers=2 before pushing.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
     const r = await init(repoWith({ ...files, 'AGENTS.md': agents }), ['pnpm']);
     expect(r.json.checks.read_docs).toEqual(['AGENTS.md']);
     expect(r.json.checks.proposed).toEqual([expect.objectContaining({ id: 'unit-tests', command: ['pnpm', 'test'], reason: expect.stringContaining('package.json declares a test script') })]);
+  });
+
+  it('pins a documented dotnet command to one MSBuild node, in place of the derived check of the project it names', async () => {
+    const tests = '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" /></ItemGroup></Project>\n';
+    const r = await init(repoWith({ 'A.Tests/A.Tests.csproj': tests, 'B.Tests/B.Tests.csproj': tests, 'AGENTS.md': 'Test with `dotnet test B.Tests/B.Tests.csproj`.\n' }), ['dotnet']);
+    expect(r.json.checks.proposed.filter((c) => c.category === 'test').map((c) => c.command.join(' '))).toEqual(['dotnet test A.Tests/A.Tests.csproj -m:1', 'dotnet test B.Tests/B.Tests.csproj -m:1']);
+    expect(r.json.checks.proposed.find((c) => c.id === 'unit-tests-b-tests')?.reason).toBe('documented in AGENTS.md line 1, in place of dotnet test B.Tests/B.Tests.csproj -m:1 from the manifests; -m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe');
   });
 
   it('does not read AGENTS.override.md, and says so', async () => {

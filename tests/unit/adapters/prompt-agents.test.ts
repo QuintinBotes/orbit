@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import { AGENT_ROLES, OPERATING_PROMPT, REPO_INSTRUCTION_FILES, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, fence, outputBudgetFor, outputBudgetInstruction, readRolePrompt, renderSystemPrompt, renderWorkerPrompt, stripFrontmatter, type WorkerPromptInput } from '../../../src/adapters/prompt.ts';
+import { AGENT_ROLES, DEFAULT_PROMPT_CHARS, OPERATING_PROMPT, REPO_INSTRUCTION_FILES, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, fence, outputBudgetFor, outputBudgetInstruction, readRolePrompt, renderSystemPrompt, renderWorkerPrompt, stripFrontmatter, type WorkerPromptInput } from '../../../src/adapters/prompt.ts';
 import { validateModelOutput } from '../../../src/contract/model-outputs.ts';
 import { renderOverlay } from '../../../src/knowledge/overlays.ts';
 import type { Lesson } from '../../../src/knowledge/types.ts';
@@ -193,6 +193,14 @@ describe('renderWorkerPrompt', () => {
     expect(section.indexOf('Untrusted data (AGENTS.md)')).toBeLessThan(section.indexOf('Untrusted data (CLAUDE.md)'));
     expect(section).toContain('Run tests with pnpm exec vitest run.');
     expect(p).not.toContain(`ghp_${'A'.repeat(36)}`);
+  });
+
+  it('adds the instructions on top of the prompt limit, so a prompt that fit without them still renders', () => {
+    const full = { ...base, task: `${base.task}${'x'.repeat(DEFAULT_PROMPT_CHARS - renderWorkerPrompt(base).length)}` };
+    expect(renderWorkerPrompt(full)).toHaveLength(DEFAULT_PROMPT_CHARS);
+    const docs = REPO_INSTRUCTION_FILES.map((path) => ({ path, content: 'y'.repeat(10_000) }));
+    expect(renderWorkerPrompt({ ...full, repoInstructions: docs })).toContain('## Repository instructions');
+    expect(() => renderWorkerPrompt({ ...full, task: `${full.task}x`, repoInstructions: docs })).toThrow(/over the/);
   });
 });
 
