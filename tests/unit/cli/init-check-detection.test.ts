@@ -353,10 +353,10 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
   });
 
   it('omits the note when no checks are proposed', async () => {
-    const r = await init(repoWith({ ...files, 'CLAUDE.md': '' }), []);
+    const r = await init(repoWith({ ...files, 'AGENTS.override.md': '' }), []);
     expect(r.ids).toEqual([]);
     expect(r.json.checks).not.toHaveProperty('unread_docs');
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+    expect(r.json.warnings.some((w) => w.includes('init does not read'))).toBe(false);
   });
 });
 
@@ -418,7 +418,7 @@ describe('init proposes checks: several ecosystems, existing configs, output', (
     const r = await init(l, ['npm']);
     expect(r.json.config.status).toBe('exists');
     expect(r.json.checks).toEqual({ proposed: [], not_proposed: [] });
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+    expect(r.json.warnings.some((w) => w.includes('init does not read'))).toBe(false);
     expect(r.text).toBe(mine);
   });
 

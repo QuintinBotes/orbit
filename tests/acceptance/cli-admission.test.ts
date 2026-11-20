@@ -30,7 +30,7 @@ function jsonOf<T>(out: string): T {
 }
 
 describe.skipIf(!READY)('acceptance: admission and setup say what they did not check (issue #166, FR-002)', () => {
-  it('issue #138: init proposes checks from the manifests and says it did not read the CLAUDE.md that documents other commands', async () => {
+  it('issue #138: init proposes the test command CLAUDE.md documents and says where it read it (issue #178, FR-001)', async () => {
     // Given a repository whose CLAUDE.md documents its test command, and no Orbit config yet.
     const l = lab({ files: { 'CLAUDE.md': '# Commands\n\nRun the tests with `npm test -- --test-concurrency=4`: an uncapped run starves on a loaded machine.\n' } });
     git(l.repo, 'rm', '-q', '.orbit/config.yaml');
@@ -39,16 +39,14 @@ describe.skipIf(!READY)('acceptance: admission and setup say what they did not c
     // When init writes the config.
     const r = await orbitOnce(l, ['init', '--json']);
     expect(r.code, r.out).toBe(0);
-    const j = jsonOf<{ config: { status: string }; checks: { proposed: { command: string[] }[]; unread_docs?: string[] }; warnings: string[] }>(r.out);
+    const j = jsonOf<{ config: { status: string }; checks: { proposed: { command: string[]; reason: string }[]; read_docs?: string[]; unread_docs?: string[] }; warnings: string[] }>(r.out);
 
-    // Then it proposed checks from the manifest alone, and says which instruction file it did not read.
+    // Then it proposed the documented command in place of the manifest's, says where it read it, and records the file.
     expect(j.config.status).toBe('created');
-    expect(j.checks.proposed.length).toBeGreaterThan(0);
-    expect(j.checks.proposed.some((c) => c.command.join(' ').includes('--test-concurrency'))).toBe(false);
-    expect(j.checks.unread_docs).toEqual(['CLAUDE.md']);
-    const warning = j.warnings.find((w) => w.includes('init did not read'));
-    expect(warning).toContain('CLAUDE.md');
-    expect(warning).toContain('compare the commands documented there and edit .orbit/config.yaml');
+    const documented = j.checks.proposed.find((c) => c.command.join(' ') === 'npm test -- --test-concurrency=4');
+    expect(documented?.reason, JSON.stringify(j.checks)).toMatch(/^documented in CLAUDE\.md line 3/);
+    expect(j.checks.read_docs).toEqual(['CLAUDE.md']);
+    expect(j.checks).not.toHaveProperty('unread_docs');
   }, 120_000);
 
   it('issue #139: submitting a goal an unfinished run already has is refused, naming that run and how to continue it', async () => {
