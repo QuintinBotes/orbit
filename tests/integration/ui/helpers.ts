@@ -18,15 +18,23 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 export const FIXTURE_APP = join(ROOT, 'tests/fixtures/ui-app');
 export const TEMPLATE = join(ROOT, 'templates/playwright/orbit-fixtures.ts');
 
+/**
+ * A loopback port for an application a test starts, drawn below the ephemeral range (Linux 32768-60999, macOS 49152-65535).
+ * A port from listen(0) is free only at that instant: until the application binds it, any other listen(0) on the machine
+ * can get it, and the run ends ERROR ("something already answers", or EADDRINUSE) before any journey runs (#185).
+ */
 export async function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      srv.close(() => (addr && typeof addr === 'object' ? resolve(addr.port) : reject(new Error('no port'))));
+  for (let i = 0; i < 100; i++) {
+    // shortcut: two tests drawing in the same second can still get the same port (1 in 12,000); claim ports across processes if that ever shows up.
+    const port = 20_000 + Math.floor(Math.random() * 12_000);
+    const free = await new Promise<boolean>((resolve) => {
+      const srv = createServer();
+      srv.once('error', () => resolve(false));
+      srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(true)));
     });
-  });
+    if (free) return port;
+  }
+  throw new Error('no free port in 20000-31999');
 }
 
 export function git(cwd: string, ...args: string[]): string {

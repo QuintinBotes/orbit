@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { toEvidenceUi } from '../../../src/ui/runner.ts';
-import { QUARANTINED } from '../../support/quarantine.ts';
 import { candidateAt, commitAll, freePort, harness, makeUiRepo, resetTo, runUi, updateBaselines, type UiRepo } from './helpers.ts';
 import { skipWithoutChromium } from '../../support/chromium.ts';
 
@@ -84,8 +83,7 @@ describe('visual baselines (scenario 18)', () => {
     expect(v.expected).toContain(r.outDir);
   }, 90_000);
 
-  // Quarantined (issue #185): once on CI the run ended ERROR, not BLOCKED, and the log did not say why.
-  it.skipIf(QUARANTINED)('a candidate that re-records the baselines to match the regression is flagged and cannot pass', async () => {
+  it('a candidate that re-records the baselines to match the regression is flagged and cannot pass', async () => {
     await updateBaselines(repo.dir, { APP_DEFECT_VISUAL: '1' });
     const cand = commitAll(repo.dir, 'update screenshots');
     const port = await freePort();

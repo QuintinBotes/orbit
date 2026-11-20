@@ -150,4 +150,4 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Quarantined tests
-        run: npx vitest run tests/integration/isolation/container.int.test.ts tests/integration/ui/runner-baselines.test.ts tests/integration/ui/browser-isolation-srt.test.ts
+        run: npx vitest run tests/integration/isolation/container.int.test.ts tests/integration/ui/browser-isolation-srt.test.ts
