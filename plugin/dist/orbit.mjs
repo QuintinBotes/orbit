@@ -52807,6 +52807,7 @@ function judgeRequirement(r) {
   if (r.answer.missing !== null) return unmet(`no conformance answer: ${r.answer.missing}`);
   const mine = r.answer.findings.filter((f) => f.id === r.id);
   if (mine.length === 0) return unmet(`the conformance answer has no finding ${r.id}`);
+  if (r.answer.verdict !== "APPROVE" && r.answer.findings.every((f) => f.severity === "info")) return unmet(`the conformance answer's verdict ${r.answer.verdict ?? "none"} disagrees with its info findings`);
   const quotes = [];
   const callers = [];
   for (const f of mine) {
@@ -67898,7 +67899,7 @@ function extractRequirements(texts) {
   for (const text2 of texts) {
     let fenced2 = false;
     for (const line3 of text2.split(/\r?\n/)) {
-      const raw = line3.replace(/(\*\*|__|\*|_)(MUST(?:\s+NOT)?)\1/g, "$2");
+      const raw = line3.replace(/(?<![\w*])(\*\*|__|\*|_)(MUST(?:\s+NOT)?)\1(?![\w*])/g, "$2");
       if (/^\s*(```|~~~)/.test(raw)) {
         fenced2 = !fenced2;
         continue;

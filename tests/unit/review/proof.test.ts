@@ -175,6 +175,11 @@ describe('conformance records (FR-005 to FR-008)', () => {
     expect(judgeRequirement(requirement({ verdict: 'APPROVE', findings: [{ ...quote('info', 'x').findings[0]!, location: 'src/queue.ts' }], missing: null })).reason).toBe('the answer quotes no file and line range');
   });
 
+  it('a MUST whose answer says BLOCK or REPAIR_REQUIRED with only info findings is unmet, even with a matching quote', () => {
+    const matched = quote('info', '  return failedIssues >= 2;').findings;
+    expect(judgeRequirement(requirement({ verdict: 'BLOCK', findings: matched, missing: null }))).toMatchObject({ status: 'unmet', reason: "the conformance answer's verdict BLOCK disagrees with its info findings" });
+  });
+
   it('US2.3: a changed behaviour at a caller no requirement covers is an open finding, raised once however many answers name it', () => {
     const caller = { id: 'CALLER-1', severity: 'high', category: 'scope', location: 'src/planner.ts:9', claim: 'the planner now routes bug goals to the inquisitor', evidence: 'route(goal)' };
     const answer: ProofAnswer = { verdict: 'REPAIR_REQUIRED', findings: [...quote('info', '  return failedIssues >= 2;').findings, caller], missing: null };

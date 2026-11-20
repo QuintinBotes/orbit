@@ -232,6 +232,8 @@ export function judgeRequirement(r: RequirementInput): RequirementProof {
   if (r.answer.missing !== null) return unmet(`no conformance answer: ${r.answer.missing}`);
   const mine = r.answer.findings.filter((f) => f.id === r.id);
   if (mine.length === 0) return unmet(`the conformance answer has no finding ${r.id}`);
+  // A verdict that asks for repair with nothing above info names nothing to repair: it is no answer, never met.
+  if (r.answer.verdict !== 'APPROVE' && r.answer.findings.every((f) => f.severity === 'info')) return unmet(`the conformance answer's verdict ${r.answer.verdict ?? 'none'} disagrees with its info findings`);
   const quotes: RequirementProof['quotes'] = [];
   const callers: RequirementProof['callers'] = [];
   for (const f of mine) {

@@ -34,6 +34,7 @@ describe('extractRequirements (issue #200, FR-005)', () => {
       { id: 'MUST-1', wording: 'The service MUST redirect legacy URLs.' },
       { id: 'FR-009', wording: 'Logs MUST NOT hold tokens.' },
     ]);
+    expect(extractRequirements(['Set ALLOW_MUST_FAIL; the job MUST stop.'])).toEqual([{ id: 'MUST-1', wording: 'Set ALLOW_MUST_FAIL; the job MUST stop.' }]);
   });
 
   it('does not end a sentence at a full stop inside a quotation', () => {

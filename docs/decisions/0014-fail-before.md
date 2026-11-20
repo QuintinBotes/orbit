@@ -270,7 +270,8 @@ records and the person-only setting stay as they are.
 4. **Conformance.** Each MUST of the goal (MUST as a verb, in the issue spec a run started from, the goal and the
    objective; a labelled line keeps its id, such as FR-004) gets one fresh session that quotes the lines implementing
    its exact wording (`path:start-end` and the lines themselves) or marks it unmet. Orbit checks each quote against the
-   candidate byte for byte; a quote that does not match makes the MUST unmet. Counting something else, another number
+   candidate byte for byte; a quote that does not match makes the MUST unmet, and so does an answer other than `APPROVE`
+   with no finding above info. Counting something else, another number
    or a lost negation is unmet by the session's judgement, as the prompt asks. For each function the candidate changes
    that holds a quoted line, the record lists its callers in the candidate, found by search
    (`git grep` of its name, the function found by its declaration); the session is shown every changed function with
