@@ -1,6 +1,6 @@
 import type { CredentialStatus, ProviderCapabilities } from '../adapters/types.ts';
 import { OrbitError, type OrbitErrorCode } from '../core/errors.ts';
-import { isIndependentReviewer } from '../policy/config.ts';
+import { isIndependentReviewer, providerFamily } from '../policy/config.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
 import { preferredReviewProvider, reviewFallback, reviewProviderOrder, type ReviewAvailabilitySettings } from '../policy/review.ts';
 import { allowMatch, tierOf } from '../routing/registry.ts';
@@ -19,6 +19,13 @@ import type { EligibilityAssessment, EligibilityRequirements, ModelEntry, Surfac
  * "If another provider is mandatory and unavailable, block or report incomplete verification; do not silently
  * substitute an equivalent label." A same-provider review is never presented as independent: `independent` is
  * false and `independentUnavailable` names why the independent reviewer could not be used.
+ *
+ * Independence is computed per run from who implemented (issue #176): every provider that implemented in the run, and
+ * Claude counts as an independent reviewer of a partner's work. A risky change gets two passes: one from a strong
+ * model of another provider (the cross-model pass, this selection) and one fresh session from the implementer's own
+ * family (`sameFamily`). A cross-model reviewer below its provider's top tier adds nothing, so for a risky change it
+ * is not used: the cross-model pass is skipped, `crossModelSkipped` says why, and review.when_unavailable decides
+ * whether the same-family review stands alone.
  */
 
 /** The decision a person's yes to a same-provider review becomes (review.when_unavailable: ask). */
@@ -47,6 +54,10 @@ export interface SelectReviewerInput {
   failed?: Readonly<Record<string, string>>;
   /** Needed to qualify models and to pick a different tier; without it only a model named in providers.<id>.model can be chosen. */
   registry?: ReviewerRegistry;
+  /** Every provider that implemented in this run, besides `implementer` (issue #176): an independent reviewer differs from each. */
+  implementers?: readonly string[];
+  /** The change is risky (the planning assessment classed it complex): a cross-model pass plus a fresh same-family pass (issue #176). */
+  risky?: boolean;
 }
 
 /** A reviewer that used every regeneration on a candidate without a usable review (#116). */
@@ -92,6 +103,19 @@ export interface ReviewerSelected {
   readOnlySandbox: boolean;
   reason: string;
   alternatives: RejectedReviewer[];
+  /** A risky change (issue #176): the fresh same-family pass that runs after this cross-model one; null when none can. Absent otherwise. */
+  sameFamily?: SameFamilyPass | null;
+  /** A risky change whose cross-model pass was skipped, with why: no strong reviewer of another provider is usable. Absent otherwise. */
+  crossModelSkipped?: string | null;
+}
+
+/** The second review of a risky change: the implementer's family, in a session of its own (issue #176). */
+export interface SameFamilyPass {
+  provider: string;
+  model: string | null;
+  effort: string | null;
+  basis: QualificationBasis;
+  reason: string;
 }
 
 export interface ReviewerBlocked {
@@ -160,12 +184,16 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
     return null;
   };
 
-  // The listed independent providers that are configured, in their order. Only listed providers are asked.
-  const independentIds = order.filter((p) => isIndependentReviewer(p, impl) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== undefined));
+  // The listed independent providers that are configured, in their order, then Claude for a partner's work (issue #176).
+  const implementers = [impl, ...(input.implementers ?? [])];
+  const independentOf = (p: string): boolean => implementers.every((i) => isIndependentReviewer(p, i));
+  const asked = providerFamily(impl) === 'claude' || order.includes('claude') ? order : [...order, 'claude'];
+  const independentIds = asked.filter((p) => independentOf(p) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== undefined));
   const problems = new Map<string, { reason: string; code: OrbitErrorCode }>();
   const unusable = new Map<string, string>();
   for (const p of independentIds) {
-    const prob = providerProblem(p);
+    // Claude, reviewing a partner's work, is judged as it is when it implements: its login cannot be verified until a request succeeds.
+    const prob = providerProblem(p, providerFamily(p) === 'claude');
     if (prob) {
       problems.set(p, prob);
       unusable.set(p, prob.reason);
@@ -174,17 +202,22 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
     }
     const m = qualifiedModel(p, input, alternatives);
     if (!m) {
-      unusable.set(p, `"${p}" has no model qualified for review`);
+      unusable.set(p, `"${p}" has no model qualified for review${input.risky ? ' at its top tier' : ''}`);
+      continue;
+    }
+    // A weak cross-model reviewer adds nothing (issue #176): a risky change takes only another provider's top tier.
+    const weak = input.risky ? belowTopTier(m, input) : null;
+    if (weak) {
+      unusable.set(p, weak);
+      alternatives.push({ provider: p, model: m.model, reason: weak });
       continue;
     }
     const substituted = p !== preferred;
-    return finish(
-      input,
-      m,
-      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
-      alternatives,
-      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? '')?.reason ?? 'not selected'}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`,
-    );
+    const why = substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? '')?.reason ?? 'not selected'}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`;
+    const sel = finish(input, m, { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false }, alternatives, why);
+    if (!input.risky) return sel;
+    const same = sameFamilyPass(input, providerProblem, alternatives);
+    return { ...sel, sameFamily: same.pass, crossModelSkipped: null, reason: `${why}; risky change: ${same.pass ? `a fresh ${same.pass.provider}/${same.pass.model ?? 'default'} session reviews it too (${same.pass.reason})` : `no fresh same-family pass: ${same.why}`}` };
   }
 
   // No independent reviewer is usable: why, in one line, for every report that follows.
@@ -221,13 +254,52 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
     return { decision: 'BLOCK', code: 'PROVIDER_UNAVAILABLE', reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same.reason}`, alternatives };
   }
   const why = `no independent reviewer was usable: ${detail}`;
-  return finish(
+  const sel = finish(
     input,
     same.usable,
     { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === 'ask' },
     alternatives,
     `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same.usable.model} in a separate reviewer session (${same.usable.detail})${fallback === 'ask' ? ' once a person says yes' : ''}. This review is not independent.`,
   );
+  // A risky change keeps its fresh same-family pass, and the report says why the cross-model one is missing.
+  return input.risky ? { ...sel, sameFamily: null, crossModelSkipped: detail } : sel;
+}
+
+/**
+ * Why a cross-model reviewer is below its provider's top tier, or null. Claude models qualify only at the opus-class
+ * floor, so a Claude reviewer never is. Another provider's model is when the registry knows that provider's recommended
+ * model, this is not it, and no recorded safety-review evaluation qualifies it; a provider without a catalog (Muse) has
+ * only the model its configuration names.
+ */
+function belowTopTier(u: Usable, input: SelectReviewerInput): string | null {
+  if (providerFamily(u.provider) === 'claude' || u.model === null || u.basis !== 'configured' || !input.registry) return null;
+  const surface = PROVIDER_SURFACE[providerFamily(u.provider) ?? ''];
+  if (!surface) return null;
+  const a = input.registry.assess({ surface, provider: u.provider, allowedModels: [`${u.provider}:*`] });
+  const known = [...a.eligible, ...a.excluded.map((e) => e.model)];
+  const top = known.find((e) => e.eligibility.providerDefault);
+  const own = known.find((e) => e.modelId === u.model);
+  if (!top || top.modelId === u.model || own?.evaluation.qualifiedFor.includes('safety-review')) return null;
+  return `"${u.provider}" reviews with ${u.model}, below its top tier (${top.modelId} is ${u.provider}'s recommended model), and a weak cross-model reviewer adds nothing to a risky change`;
+}
+
+/**
+ * The fresh same-family pass of a risky change: the implementer's provider in a reviewer session of its own, at the
+ * quality floor for Claude (sameProviderModel), or the partner's own qualified review model.
+ */
+function sameFamilyPass(
+  input: SelectReviewerInput,
+  providerProblem: (p: string, unverifiedOk?: boolean) => { reason: string } | null,
+  alternatives: RejectedReviewer[],
+): { pass: SameFamilyPass; why: null } | { pass: null; why: string } {
+  const impl = input.implementer.provider;
+  const problem = providerProblem(impl, true);
+  if (problem) return { pass: null, why: problem.reason };
+  const effort = input.snapshot.config.providers[impl]?.reasoning_effort ?? null;
+  // A partner's family reviews with the model it qualifies for review, as it reviews Claude's work.
+  const partner = providerFamily(impl) === 'claude' ? null : qualifiedModel(impl, input, alternatives);
+  const same = partner ? { ok: true as const, usable: partner } : providerFamily(impl) === 'claude' ? sameProviderModel(input, alternatives) : { ok: false as const, reason: `"${impl}" has no model qualified for review` };
+  return same.ok ? { pass: { provider: impl, model: same.usable.model, effort, basis: same.usable.basis, reason: same.usable.detail }, why: null } : { pass: null, why: same.reason };
 }
 
 interface Independence {

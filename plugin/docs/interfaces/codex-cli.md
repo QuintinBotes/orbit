@@ -437,6 +437,20 @@ How these reach the exec JSONL (presumably a `turn.failed` message) is **UNVERIF
 
 ---
 
+## 10a. The implementer invocation (issue #176, not probed)
+
+With `routing.implementers` listing Codex, an implementer runs the review
+invocation of section 0 with `--sandbox workspace-write` (section 1: writes of
+the commands it runs confined to `-C`, network off unless
+`sandbox_workspace_write.network_access=true`, which Orbit never sets) and
+`-C <the run's worktree>`, or inside srt with `danger-full-access` and the
+worktree added to the profile's writes (ADR 0022). The final message is shaped
+by the implementer schema and validated against Orbit's copy of it. A turn that
+fails with a used-up allowance ("usage limit", `insufficient_quota`, "exceeded
+your current quota") ends `auth_failed` with reason `quota`; a plain 429 stays
+transient. Nothing of this was run against the real CLI: the acceptance lab
+drives `tests/fakes/fake-codex.mjs`.
+
 ## 11. UNVERIFIED / open items
 
 - **Success-path live capture against OpenAI.** The protocol shape is now verified against a local mock provider (§3 D′, gaps V6), but no real OpenAI success was captured. Re-run once with `-m gpt-6-astra` (or after `codex update`) to confirm real-model behaviour.

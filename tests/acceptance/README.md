@@ -101,6 +101,16 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | Expired credentials | `safe-stops.test.ts`, `credentials-and-routing.test.ts` | expired credentials: ...; scenario 12 |
 | Unavailable mandatory reviewer | `safe-stops.test.ts` | unavailable mandatory reviewer: ...; unavailable mandatory reviewer mid-run: ... |
 
+### Partner implementers (issue #176)
+
+| Scenario | File | Test |
+|---|---|---|
+| SC-001: the lab passes with each of Claude, Codex and Muse as implementer (Muse behind a stand-in for srt) | `partner-implementers.test.ts` | SC-001: the lab passes with %s as implementer |
+| US1 scenario 1: a Codex candidate meets the same scope and policy gates | `partner-implementers.test.ts` | US1 scenario 1: a Codex candidate that edits protected paths ... |
+| US1 scenario 2: two failed partner candidates hand the third attempt to Claude | `partner-implementers.test.ts` | US1 scenario 2: ... |
+| US2 scenario 1: a risky change gets a cross-model pass and a fresh same-family pass | `partner-implementers.test.ts` | US2 scenario 1: ... |
+| Edge cases: a partner out of quota, or without a writable tier, is skipped for the run | `partner-implementers.test.ts` | edge case: ... |
+
 ### Demo runs (spec section 2)
 
 | Run | File | Test |

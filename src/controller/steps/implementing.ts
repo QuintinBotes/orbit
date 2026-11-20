@@ -33,7 +33,8 @@ import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
-import { ensureWorker, raiseOutputCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason } from '../workers.ts';
+import { ensureWorker, raiseOutputCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, type RouteChoice } from '../workers.ts';
+import { attemptRouteDecision, skippedPartners, skipPartner } from '../route-outcome.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
 import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
@@ -95,7 +96,7 @@ export async function implementingStep(ctx: RunContext): Promise<StepResult> {
 /** Admit and count a new attempt. Returns a step result when it may not start (budget, capacity). */
 async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | null> {
   const ledger = ctx.ledger!;
-  const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
+  const route = implementRoute(ctx, n);
   const scheduler = schedulerFor(ctx);
   // Capacity is the machine's, not the run's: every live worker of this repository's database occupies a slot,
   // whichever run it belongs to (spec section 8; scenario 15 with two runs under one controller).
@@ -173,15 +174,32 @@ export function runningUnits(ctx: RunContext): { runId: string; unit: WorkUnit }
   return out;
 }
 
+/**
+ * The route of attempt `n`: its recorded decision, or, once the partner it named was skipped for the run (issue #176),
+ * the decision that replaced it for the same attempt, so a partner's quota or login never costs an attempt.
+ */
+export function implementRoute(ctx: RunContext, n: number): RouteChoice {
+  const skipped = skippedPartners(ctx);
+  let purpose = `implement:${n}`;
+  let route = routeFor(ctx, purpose, 'routine-code', routeSignals(ctx, n));
+  for (let hop = 0; route.provider in skipped && hop < 8; hop++) {
+    purpose = `${purpose}~${route.provider}`;
+    route = routeFor(ctx, purpose, 'routine-code', routeSignals(ctx, n));
+  }
+  return route;
+}
+
 async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable<RunContext['contract']>): Promise<StepResult> {
-  const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
+  let route = implementRoute(ctx, n);
   const base = `implement:${n}`;
   const units = recordedUnits(ctx, n);
   if (units && latestAttempt(ctx, base) === 0) {
     const r = await runParallelUnits(ctx, n, units, { route, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger!.maxTurnsPerSession() });
     if (r.kind === 'step') return r.result;
     if (r.kind === 'done') return snapshot(ctx, n, r.workerId);
-    // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree.
+    // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree,
+    // on the route as it stands now (a partner a unit found out of quota is skipped).
+    route = implementRoute(ctx, n);
   }
   // A resume after a person fixed what blocked this attempt (a login) starts a fresh session instead of replaying the stored failure.
   const start = await attemptStart(ctx, base, `implementer (attempt ${n})`);
@@ -211,7 +229,13 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
     });
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
     const r = st.result;
-    if (r.status === 'auth_failed') return blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error);
+    if (r.status === 'auth_failed') {
+      // A partner out of quota or logged out is skipped for the run; the attempt goes on with the next route, uncharged (FR-005).
+      if (!skipPartner(ctx, st.worker.provider, n, r.error ?? 'authentication failed')) return blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error);
+      route = implementRoute(ctx, n);
+      k++;
+      continue;
+    }
     // A session Orbit refused after it started (a plugin the policy does not allow, ...) would be refused again by the next: its edits are not verified as an attempt, and no attempt is spent on a retry.
     if (isSessionRefusal(r)) return blockOnRefusedSession(ctx, `implementer (attempt ${n})`, r.error);
     const stray = r.status === 'cancelled' && !ctx.refresh().cancelRequested;
@@ -402,8 +426,8 @@ function capOf(ctx: RunContext, n: number, purpose: string): number | null {
 export function routeSignals(ctx: RunContext, n: number): Parameters<typeof routeFor>[3] {
   const difficulty = (ctx.run.difficulty ?? 'medium') as DifficultyClass;
   const failures = listFailures(ctx.db, ctx.run.id);
-  const prev = n > 1 ? ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${n - 1}`) : undefined;
-  const prevRoute = prev ? (JSON.parse(prev.data_json) as { provider: string; model: string; effort: string | null }) : null;
+  const prev = n > 1 ? attemptRouteDecision(ctx, n - 1) : null;
+  const prevRoute = prev ? (prev.data as { provider: string; model: string; effort: string | null }) : null;
   const solved = n > 1 && diagnosisSolved(ctx, n);
   const latest = failures.at(-1) ?? null;
   const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
@@ -441,8 +465,7 @@ function criticalSecurity(ctx: RunContext): boolean {
 function diagnosisSolved(ctx: RunContext, n: number): boolean {
   let escalatedAt = 0;
   for (let k = n - 1; k >= 1; k--) {
-    const row = ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${k}`);
-    const d = row ? (JSON.parse(row.data_json) as { escalated_from?: unknown }) : null;
+    const d = (attemptRouteDecision(ctx, k)?.data ?? null) as { escalated_from?: unknown } | null;
     if (d?.escalated_from) {
       escalatedAt = k;
       break;

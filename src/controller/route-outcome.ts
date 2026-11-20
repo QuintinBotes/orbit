@@ -20,7 +20,8 @@
  * its own, with its own route and its own cost.
  */
 import type { CandidateRecord } from '../evidence/store.ts';
-import { getDecision } from '../storage/decisions.ts';
+import { getDecision, listDecisions, recordDecision } from '../storage/decisions.ts';
+import { providerFamily } from '../policy/config.ts';
 import { recordRouteOutcome } from '../routing/usage.ts';
 import { roundUsd } from '../routing/pricing.ts';
 import { WORK_KINDS, type RouteOutcome, type WorkKind } from '../routing/types.ts';
@@ -37,6 +38,63 @@ export interface RouteSettlement {
 /** The route decision id of an implementation attempt (routeFor's purpose `implement:<n>`). */
 export function implementRouteDecisionId(runId: string, attempt: number): string {
   return `dec-route-${runId}-implement_${attempt}`;
+}
+
+/** A partner implementer skipped for the rest of a run (issue #176): out of quota, a failed login, or no writable tier. */
+export const PARTNER_SKIPPED_KIND = 'routing.partner-skipped';
+
+/** Partners skipped for the rest of this run, with why. */
+export function skippedPartners(ctx: Pick<RunContext, 'db' | 'run'>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: PARTNER_SKIPPED_KIND })) {
+    const data = d.data as { provider?: unknown; reason?: unknown };
+    if (typeof data.provider === 'string' && !(data.provider in out)) out[data.provider] = typeof data.reason === 'string' ? data.reason : 'skipped';
+  }
+  return out;
+}
+
+/**
+ * Skip a partner for the rest of the run: its quota or login failed (FR-005), so the failure is classed `credentials`
+ * and charged to no candidate; the attempt it held goes on with the next route. False for Claude, which is never skipped.
+ */
+export function skipPartner(ctx: RunContext, provider: string, attempt: number | null, reason: string): boolean {
+  const family = providerFamily(provider);
+  if (family !== 'codex' && family !== 'muse') return false;
+  const id = `dec-${ctx.run.id}-partner-skipped-${provider}`;
+  if (getDecision(ctx.db, id)) return true;
+  recordDecision(
+    ctx.db,
+    ctx.runDir,
+    { id, runId: ctx.run.id, kind: PARTNER_SKIPPED_KIND, summary: `partner implementer ${provider} skipped for the rest of the run${attempt === null ? '' : ` (attempt ${attempt} goes on without it)`}: ${reason}`.slice(0, 1000), data: { provider, attempt, reason, failure_class: 'credentials' } },
+    ctx.clock,
+    { actor: ctx.ownerId },
+  );
+  return true;
+}
+
+/** How many candidates of each partner failed verification or review in this run (issue #176, US1 scenario 2). */
+export function partnerFailures(ctx: Pick<RunContext, 'db' | 'run'>): Record<string, number> {
+  const rows = ctx.db.all<{ provider: string; n: number }>("SELECT provider, COUNT(*) AS n FROM route_outcomes WHERE run_id = ? AND role = 'implementer' AND outcome IN ('failed', 'rejected') GROUP BY provider", ctx.run.id);
+  return Object.fromEntries(rows.filter((r) => providerFamily(r.provider) === 'codex' || providerFamily(r.provider) === 'muse').map((r) => [r.provider, r.n]));
+}
+
+/**
+ * The route attempt `n` really ran on: its own decision, or, when that named a partner skipped part way, the decision
+ * that replaced it (purpose `implement:<n>~<partner>`, then `~<next partner>`), followed for as many as were skipped.
+ */
+export function attemptRouteDecision(ctx: Pick<RunContext, 'db' | 'run'>, attempt: number): ReturnType<typeof getDecision> {
+  const skipped = skippedPartners(ctx);
+  let id = implementRouteDecisionId(ctx.run.id, attempt);
+  let d = getDecision(ctx.db, id);
+  for (let hop = 0; d && hop < 8; hop++) {
+    const provider = (d.data as { provider?: unknown } | null)?.provider;
+    if (typeof provider !== 'string' || !(provider in skipped)) break;
+    id = `${id}_${provider.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    const next = getDecision(ctx.db, id);
+    if (!next) break;
+    d = next;
+  }
+  return d;
 }
 
 /**
@@ -61,7 +119,7 @@ function attemptOf(ctx: RunContext, cand: CandidateRecord): number {
 export function settleRouteOutcome(ctx: RunContext, cand: CandidateRecord, settlement: RouteSettlement): number | null {
   if (settlement.environment) return null;
   const attempt = attemptOf(ctx, cand);
-  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, attempt));
+  const decision = attemptRouteDecision(ctx, attempt);
   const d = (decision?.data ?? null) as { provider?: unknown; model?: unknown; effort?: unknown; work_kind?: unknown } | null;
   if (!d || typeof d.provider !== 'string' || typeof d.model !== 'string' || !d.provider || !d.model) return null;
   const workKind = (WORK_KINDS as readonly string[]).includes(String(d.work_kind)) ? (d.work_kind as WorkKind) : 'routine-code';

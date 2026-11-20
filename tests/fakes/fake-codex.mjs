@@ -114,6 +114,11 @@ if (step.exitBeforeOutput) process.exit(step.exitCode ?? 1);
 out({ type: 'thread.started', thread_id: randomUUID() });
 out({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata for `fake` not found. Defaulting to fallback metadata.' } });
 out({ type: 'turn.started' });
+// A used-up allowance fails the first request: the turn fails before any item.
+if (step.outcome === 'quota') {
+  out({ type: 'turn.failed', error: { message: "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again later." } });
+  process.exit(1);
+}
 for (const [i, e] of (step.edits ?? []).entries()) {
   applyEdits(cwd, [e]);
   out({ type: 'item.completed', item: { id: `item_e${i}`, type: 'file_change', changes: [{ path: e.path, kind: 'update' }], status: 'completed' } });

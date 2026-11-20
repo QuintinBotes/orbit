@@ -513,6 +513,17 @@ Fable, Opus, Sonnet, and Haiku are intended model families for routing. Resolve 
 
 These are defaults to evaluate, not guarantees of best performance.
 
+### Partner implementers
+
+Claude implements unless `routing.implementers` names a partner (ADR 0022). The default is `[claude]`: partner implementers are off until a full benchmark shows they help. With Codex or Muse listed, routine candidate work (routine coding and focused tests: an implementation attempt or a parallel work unit with disjoint paths) goes to the first listed partner that may take it, on its configured model and effort, in its own writable worktree. The scope, policy and verification gates that apply to a Claude candidate apply unchanged, and Claude's verification decides whether the candidate is kept. A partner is passed over, and Claude implements:
+
+- once two of its candidates in the run failed verification or review: the third attempt goes to Claude;
+- for the rest of the run once its quota or login failed, or once preflight found its CLI, its writable tier or its credentials unusable. A quota or authentication failure is classed `credentials`, recorded as `routing.partner-skipped`, and charged to no candidate: the attempt it held goes on with the next route, without spending another;
+- when `providers.<id>.data_policy_eligible` is not true or `providers.<id>.model` names no model;
+- across runs, when its measured pass rate for the task class, recorded per provider in `route_outcomes`, falls below `routing.learning.min_pass_rate` after `min_samples` judged outcomes.
+
+Partner output is untrusted and parsed against Orbit's own copy of the implementer schema. Codex's writable tier is its own `workspace-write` sandbox (or `srt` in the os-sandbox tier); Muse implements only inside `srt` (`META_API_KEY` plus `srt`), with `--worktree off`, `--contributor-mode off` and the shell disabled. Every route decision records why each listed partner was or was not chosen.
+
 ### Routing objective
 
 Optimize expected cost per verified accepted task, not the cheapest token price:
@@ -685,12 +696,13 @@ reportUsage()
 
 Support Claude and Codex initially. Other providers may implement the same interface.
 
-Muse implements the same interface as a reviewer only (ADR 0017,
-docs/interfaces/muse.md). A repository opts in with a `providers.muse` block
+Muse implements the same interface as a reviewer (ADR 0017, replaced by ADR 0022,
+docs/interfaces/muse.md), and Codex and Muse may also implement bounded work
+when `routing.implementers` lists them (section 8, "Partner implementers"). A repository opts in with a `providers.muse` block
 (defaults: model `muse-wonder-full-1.0`, reasoning effort `high`, tier `auto`,
 not data-policy eligible until a person attests it) and lists it in
 `review.providers`, in any order with Codex. The adapter refuses any task that
-is not read-only, and the review checkout's read-only state rests on an
+is not read-only, but an implementer's in its own worktree inside `srt`, and the review checkout's read-only state rests on an
 external boundary, never on Muse's own settings alone: either `srt` wraps the whole muse process (tier
 `os-sandbox`, only on `META_API_KEY`, writes to the worker directory only,
 egress to the provider host only; set explicitly without `srt` or the key, Muse
@@ -738,6 +750,8 @@ Run reviewers separately with read-only access where possible. Codex sandbox con
 Do not decide by majority vote. Convert disagreements into testable claims; reproduce them; invoke Inquisition as needed; block unresolved high-impact findings. Record why findings were accepted or rejected.
 
 Cross-provider review improves diversity but does not guarantee independence or correctness. If another provider is mandatory and unavailable, block or report incomplete verification; do not silently substitute an equivalent label.
+
+Independence is computed per run from who implemented: a reviewer is independent only of a family different from every provider that implemented in the run, and Claude counts as an independent reviewer of a partner's work. A risky change (the planning assessment classes it `complex`) gets two passes: one cross-model review from another provider's top tier (a Claude model at the opus-class floor, or the partner provider's recommended or evaluated model), and one fresh-session review from the implementer's own family, run after it and recorded beside it (ADR 0022). A cross-model reviewer below its provider's top tier adds nothing to a risky change, so it is not used: the cross-model pass is skipped, the selection and the final report say why, and `review.when_unavailable` decides whether the same-family review stands alone. A change that is not risky keeps one review.
 
 ## 13. UI testing
 

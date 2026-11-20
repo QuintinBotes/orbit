@@ -21432,6 +21432,7 @@ var init_config_schema = __esm({
                 explorer: { type: "integer", minimum: 100, maximum: 2e5 }
               }
             },
+            implementers: { type: "array", minItems: 1, maxItems: 8, uniqueItems: true, items: { $ref: "#/$defs/providerId" } },
             learning: {
               type: "object",
               additionalProperties: false,
@@ -21896,7 +21897,8 @@ function defaultConfig(mode = DEFAULT_MODE) {
       codex: defaultProvider("codex", false)
     },
     // Fable is left out on purpose: headless Claude Code bills Fable usage credits without asking.
-    routing: { allowed_models: ["opus", "sonnet", "haiku"], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING } },
+    // Partner implementers are off until a full benchmark shows they help (issue #176): Claude implements alone.
+    routing: { allowed_models: ["opus", "sonnet", "haiku"], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING }, implementers: ["claude"] },
     static_security: defaultStaticSecurity(),
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
@@ -22025,6 +22027,9 @@ function providerFamily(id) {
     if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
   }
   return null;
+}
+function partnerImplementers(config) {
+  return (config.routing.implementers ?? []).filter((id) => providerFamily(id) === "codex" || providerFamily(id) === "muse");
 }
 function isIndependentReviewer(reviewer, implementer) {
   const family = providerFamily(reviewer);
@@ -22557,6 +22562,11 @@ var init_config = __esm({
         for (const [work, model] of Object.entries(c.routing.overrides)) {
           if (!modelPermitted(model, c.routing.allowed_models)) problems.push(`routing.overrides.${work}: "${model}" is not permitted by routing.allowed_models`);
         }
+        (c.routing.implementers ?? []).forEach((id, i) => {
+          const family = providerFamily(id);
+          if (family === null || family === "claude" && id !== "claude") problems.push(`routing.implementers[${i}]: "${id}" is not claude or a codex or muse provider`);
+          else if (!Object.hasOwn(c.providers, id)) problems.push(`routing.implementers[${i}]: "${id}" is not defined under providers`);
+        });
       },
       function retentionPatterns(c, problems) {
         c.retention.redact_patterns.forEach((p, i) => {
@@ -26123,7 +26133,7 @@ function codexReviewerProfile(profile, input) {
   }
   const defaultCodexHome = join10(home2, ".codex");
   return {
-    writablePaths: [workerDir, codexHome],
+    writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...defaultCodexHome === codexHome ? [] : [defaultCodexHome]]),
     readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join10(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
@@ -26137,7 +26147,7 @@ function museReviewerProfile(profile, input) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let the reviewer write ${workerDir}: the worker directory overlaps the review checkout ${checkout}, which must stay read-only`, { path: workerDir });
   }
   return {
-    writablePaths: [workerDir],
+    writablePaths: input.writable ? [workerDir, checkout] : [workerDir],
     denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
     readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
     allowedHosts: [...PROVIDER_HOSTS.muse],
@@ -30745,6 +30755,8 @@ function classifyCodexTranscript(input) {
   const failure = terminal?.type === "turn.failed" ? failureMessage(terminal) : null;
   const authText = terminal?.type === "turn.completed" ? void 0 : [failure, ...warnings].find((m) => m !== null && AUTH_PATTERNS.some((p) => p.test(m)));
   if (authText) return end("auth_failed", "auth", `authentication failed: ${clip2(authText, 300)}; not retried`);
+  const quotaText = terminal?.type === "turn.completed" ? void 0 : [failure, ...warnings].find((m) => m !== null && QUOTA_PATTERNS.some((p) => p.test(m)));
+  if (quotaText) return end("auth_failed", "quota", `out of quota: ${clip2(quotaText, 300)}; not retried`);
   if (exit.timedOut) return end("timeout", "timeout", `timed out; the shim sent ${exit.escalation.join(", ") || "no signal"}`);
   if (exit.cancelled) return end("cancelled", "interrupted", "cancelled by a signal to the worker");
   if (!terminal) {
@@ -30881,12 +30893,13 @@ function parsedOrText2(text2) {
     return text2;
   }
 }
-var AUTH_PATTERNS, TRANSIENT_PATTERNS, CODEX_INSPECTION_ITEMS;
+var AUTH_PATTERNS, QUOTA_PATTERNS, TRANSIENT_PATTERNS, CODEX_INSPECTION_ITEMS;
 var init_codex_events = __esm({
   "src/adapters/codex-events.ts"() {
     "use strict";
     init_schema5();
     AUTH_PATTERNS = [/\b401 Unauthorized\b/, /auth error: 401/, /auth error code: invalid_api_key/, /sign in again/i, /could not be refreshed/i];
+    QUOTA_PATTERNS = [/usage limit/i, /insufficient_quota/, /exceeded your current quota/i, /quota (?:exceeded|exhausted)/i];
     TRANSIENT_PATTERNS = [/"status":\s*(429|5\d\d)\b/, /\bstatus (429|5\d\d)\b/, /\b(429|5\d\d) (Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\b/, /overloaded/i];
     CODEX_INSPECTION_ITEMS = /* @__PURE__ */ new Set(["command_execution"]);
   }
@@ -30923,7 +30936,7 @@ function buildCodexArgv(i) {
     ...i.command,
     "exec",
     "--sandbox",
-    tier === "os-sandbox" ? DANGER_FULL_ACCESS : "read-only",
+    tier === "os-sandbox" ? DANGER_FULL_ACCESS : i.writable ? "workspace-write" : "read-only",
     "--ephemeral",
     "--ignore-user-config",
     "--json",
@@ -30999,7 +31012,7 @@ function lastMessageText(workerDir) {
     return null;
   }
 }
-var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON, DANGER_FULL_ACCESS, CODEX_MODEL_MIN_CLI_VERSIONS, NO_OS_ISOLATION, REVIEWER_TMP_DIR, CodexAdapter;
+var CODEX_PROMPT_FILE, CODEX_SCHEMA_FILE, CODEX_LAST_MESSAGE_FILE, CODEX_RESULT_FILE, CODEX_EFFORTS, CODEX_REQUIRED_FLAGS, CODEX_EXTRA_ARGS_ALLOWED, PROJECT_CONFIG_LIMITATION, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON, DANGER_FULL_ACCESS, CODEX_MODEL_MIN_CLI_VERSIONS, NO_OS_ISOLATION, NO_OS_ISOLATION_WRITABLE, REVIEWER_TMP_DIR, CodexAdapter;
 var init_codex = __esm({
   "src/adapters/codex.ts"() {
     "use strict";
@@ -31042,6 +31055,7 @@ var init_codex = __esm({
       "gpt-6.1-sol": "0.160.0"
     };
     NO_OS_ISOLATION = "No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.";
+    NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and keeps the network off; reads are unrestricted.";
     REVIEWER_TMP_DIR = "tmp";
     CodexAdapter = class {
       id;
@@ -31085,6 +31099,8 @@ var init_codex = __esm({
         return {
           provider: this.id,
           available,
+          // The writable tier needs nothing the review invocation does not (`--sandbox workspace-write`), so it is there when Codex is.
+          writable: { ok: available, why: available ? "" : "the codex CLI is not usable here" },
           version: v,
           models: slugs,
           modelMinimumVersions: CODEX_MODEL_MIN_CLI_VERSIONS,
@@ -31121,12 +31137,13 @@ ${status2.stderr}`;
         return { state: "unknown", method, detail: `codex doctor: auth.credentials ${auth ?? "missing"}, network.websocket_reachability ${reach ?? "missing"}` };
       }
       async startTask(spec) {
-        if (!spec.readOnly) throw new OrbitError("POLICY_DENIED", "the Codex adapter runs read-only review tasks only", { workerId: spec.workerId, role: spec.role });
+        const writable = !spec.readOnly;
+        if (writable && spec.role !== "implementer") throw new OrbitError("POLICY_DENIED", "the Codex adapter runs read-only tasks, and writes only as an implementer in its own worktree", { workerId: spec.workerId, role: spec.role });
         if (!spec.model) throw new OrbitError("CONFIG_INVALID", "Codex needs an explicit model (-m): the configured default may not work with the installed CLI");
         if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(spec.model)) throw new OrbitError("CONFIG_INVALID", `invalid Codex model ${JSON.stringify(spec.model)}`);
         if (spec.effort !== null && !CODEX_EFFORTS.includes(spec.effort)) throw new OrbitError("CONFIG_INVALID", `unsupported Codex reasoning effort ${JSON.stringify(spec.effort)}`);
         for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute11(p)) throw new OrbitError("CONFIG_INVALID", `paths must be absolute: ${p}`);
-        if (!existsSync14(spec.cwd) || !statSync7(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `review checkout does not exist: ${spec.cwd}`);
+        if (!existsSync14(spec.cwd) || !statSync7(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `${writable ? "worktree" : "review checkout"} does not exist: ${spec.cwd}`);
         const violations = strictSchemaViolations(spec.outputSchema);
         if (violations.length > 0) throw new OrbitError("SCHEMA_INVALID", `output schema is outside the strict subset Codex sends with strict: true: ${violations.slice(0, 5).join("; ")}`, { violations });
         const prior = readJsonIfExists(join17(spec.workerDir, LAUNCH_FILE));
@@ -31143,7 +31160,7 @@ ${status2.stderr}`;
         const choice = await this.chooseTier(codexEnvCredential({ ...this.baseEnv(), ...spec.env }));
         const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
         const env = buildWorkerEnv({ provider: "codex", base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
-        const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env), env: this.baseEnv() }) } : null;
+        const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env), env: this.baseEnv(), writable }) } : null;
         writeFileSync2(join17(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}
 
 ${spec.prompt}${outputTokens === null ? "" : `
@@ -31152,7 +31169,7 @@ ${outputBudgetInstruction(outputTokens)}
         atomicWriteJson(join17(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 384);
         rmSync4(join17(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
         const tier = choice.decision.tier;
-        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join17(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join17(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
+        const argv2 = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join17(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join17(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null, writable });
         let launchArgv = argv2;
         let launchEnv = env;
         const limitations = [...srt ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS];
@@ -31172,8 +31189,8 @@ ${outputBudgetInstruction(outputTokens)}
           for (const a of wrapped.argv) if (isAbsolute11(a) && basename7(dirname14(a)).startsWith("orbit-srt-")) cleanupPaths.push(dirname14(a));
           if (choice.decision.risky) limitations.push(`Codex runs in the os-sandbox tier although it may not work there: ${choice.decision.reason}.`);
         } else {
-          limitations.push(NO_OS_ISOLATION);
-          limitations.push(`Codex runs in the codex-sandbox tier, under its own read-only sandbox and without srt: ${choice.decision.reason}.`);
+          limitations.push(writable ? NO_OS_ISOLATION_WRITABLE : NO_OS_ISOLATION);
+          limitations.push(`Codex runs in the codex-sandbox tier, under its own ${writable ? "workspace-write" : "read-only"} sandbox and without srt: ${choice.decision.reason}.`);
         }
         const handle = await launchShim({
           provider: this.id,
@@ -31187,7 +31204,7 @@ ${outputBudgetInstruction(outputTokens)}
           graceMs: this.opts.graceMs,
           stdinPath: join17(workerDir, CODEX_PROMPT_FILE),
           cleanupPaths: [...new Set(cleanupPaths)],
-          meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens },
+          meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens, writable },
           clock: this.clock
         });
         return { ...handle, tier, limitations };
@@ -31297,11 +31314,14 @@ function classifyMuseTranscript(input) {
   if (exit.timedOut) return end("timeout", "timeout", `timed out; the shim sent ${exit.escalation.join(", ") || "no signal"}`);
   if (exit.cancelled) return end("cancelled", "interrupted", "cancelled by a signal to the worker");
   const authFailed = (text2) => end("auth_failed", "auth", `authentication failed: ${clip3(firstMatchingLine(text2), 300)}; not retried`);
+  const quotaFailed = (text2) => end("auth_failed", "quota", `out of quota: ${clip3(text2.split("\n").find((l) => MUSE_QUOTA_PATTERNS.some((p) => p.test(l))) ?? text2, 300)}; not retried`);
+  const isQuota = (text2) => typeof text2 === "string" && MUSE_QUOTA_PATTERNS.some((p) => p.test(text2));
   if (!terminal) {
     if (exit.escalation.length > 0) return end("cancelled", "interrupted", `ended after ${exit.escalation.join(", ")} with no terminal event`);
     if (exit.signal !== null) return end("failed", "crashed", `killed by ${exit.signal} with no terminal event`);
     if (input.malformedTail) return end("malformed_output", "malformed_transcript", `output ends in a line that is not JSON (exit ${exit.code})`);
     if (exit.code === 1 && isAuthText(input.stderr)) return authFailed(input.stderr);
+    if (exit.code === 1 && isQuota(input.stderr)) return quotaFailed(input.stderr);
     const said = lastStderrLine(input.stderr);
     return end("failed", "crashed", `exited ${exit.code} without run.terminal.completed or run.terminal.failed${said ? `: ${clip3(said, 300)}` : ""}`);
   }
@@ -31309,6 +31329,7 @@ function classifyMuseTranscript(input) {
     const failure = str3(terminal.reason) ?? "run failed";
     if (STEP_CAP.test(failure)) return end("failed", "step_cap", clip3(failure, 500));
     if (isAuthText(failure)) return authFailed(failure);
+    if (isQuota(failure)) return quotaFailed(failure);
     return end("failed", "run_failed", clip3(failure, 500));
   }
   if (exit.code !== 0) return end("failed", "crashed", `run.terminal.completed but exit ${exit.code}`);
@@ -31413,13 +31434,14 @@ function parsedOrText3(text2) {
     return text2;
   }
 }
-var MUSE_AUTH_PATTERNS, STEP_CAP;
+var MUSE_AUTH_PATTERNS, STEP_CAP, MUSE_QUOTA_PATTERNS;
 var init_muse_events = __esm({
   "src/adapters/muse-events.ts"() {
     "use strict";
     init_schema5();
     MUSE_AUTH_PATTERNS = [/missing meta credentials/i, /\b401\b/, /unauthori[sz]ed/i, /run `muse login`/i];
     STEP_CAP = /did not reach a terminal state within \d+ step/i;
+    MUSE_QUOTA_PATTERNS = [/usage limit/i, /out of quota/i, /quota (?:exceeded|exhausted)/i, /exceeded your (?:current )?quota/i];
   }
 });
 
@@ -31444,6 +31466,10 @@ function decideMuseTier(i) {
   return { tier: "os-sandbox", reason: `${i.apiKeyVar} is set and sandbox-runtime is in use, so the whole muse process is confined`, automatic: true };
 }
 function buildMuseArgv(i) {
+  if (i.writable && i.wrapper !== "sandbox-runtime") {
+    throw new OrbitError("POLICY_DENIED", `refusing a writable Muse unless the command runs inside the sandbox-runtime wrapper (wrapper: ${i.wrapper ?? "none"})`, { wrapper: i.wrapper ?? null });
+  }
+  const access = i.writable ? ["--worktree", "off", "--contributor-mode", "off", "--disable-approval"] : ["--permission-profile", ":read-only"];
   const argv2 = [
     ...i.command,
     "exec",
@@ -31453,10 +31479,9 @@ function buildMuseArgv(i) {
     i.effort,
     "--workspace",
     i.workspace,
-    "--permission-profile",
-    ":read-only",
+    ...access,
     "--disable-request-user-input",
-    "--disable-write",
+    ...i.writable ? [] : ["--disable-write"],
     // No shell: a shell running as the checkout's owner could chmod it writable again. Search and file reading remain.
     "--disable-shell",
     "--no-foreign-personal-context",
@@ -31470,13 +31495,13 @@ function buildMuseArgv(i) {
     "--prompt-file",
     i.promptPath
   ];
-  assertSafeMuseArgv(argv2);
+  assertSafeMuseArgv(argv2, i.writable ? ["--disable-approval"] : []);
   return argv2;
 }
-function assertSafeMuseArgv(argv2) {
+function assertSafeMuseArgv(argv2, allowed = []) {
   for (const a of argv2) {
     const flag = a.split("=")[0];
-    if (MUSE_FORBIDDEN_ARGS.includes(flag) || a.includes(":unrestricted")) {
+    if (MUSE_FORBIDDEN_ARGS.includes(flag) && !allowed.includes(flag) || a.includes(":unrestricted")) {
       throw new OrbitError("POLICY_DENIED", `refusing to launch Muse with ${a}: the review invocation is read-only`, { arg: a });
     }
   }
@@ -31515,7 +31540,7 @@ function stderrText(workerDir) {
     return "";
   }
 }
-var MUSE_PROMPT_FILE, MUSE_SCHEMA_FILE, MUSE_RESULT_FILE, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION, MUSE_REQUIRED_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_EXTRA_ARGS_ALLOWED, MUSE_READS_NOT_CONFINED, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, NO_KEY_REASON2, MuseAdapter;
+var MUSE_PROMPT_FILE, MUSE_SCHEMA_FILE, MUSE_RESULT_FILE, MUSE_REVIEW_MAX_STEPS, MUSE_MIN_VERSION, MUSE_REQUIRED_FLAGS, MUSE_WRITE_FLAGS, MUSE_FORBIDDEN_ARGS, MUSE_EXTRA_ARGS_ALLOWED, MUSE_READS_NOT_CONFINED, MUSE_LIMITATIONS, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_WRITABLE_LIMITATIONS, NO_KEY_REASON2, MuseAdapter, WRITABLE_NEEDS_SRT;
 var init_muse = __esm({
   "src/adapters/muse.ts"() {
     "use strict";
@@ -31556,6 +31581,7 @@ var init_muse = __esm({
       "--max-model-steps",
       "--prompt-file"
     ];
+    MUSE_WRITE_FLAGS = ["--worktree", "--contributor-mode", "--disable-approval"];
     MUSE_FORBIDDEN_ARGS = ["--yolo", "--disable-sandbox", "--disable-approval", "--trust-workspace"];
     MUSE_EXTRA_ARGS_ALLOWED = [];
     MUSE_READS_NOT_CONFINED = "Reads are not confined: measured on Muse 1.4.14, read_file under this profile reads files outside the review checkout, so nothing stops it reading other files, including credentials the login user can read, and a prompt in the candidate could steer them into a review or to the Meta API. Use the os-sandbox tier (META_API_KEY plus srt) where that matters.";
@@ -31565,6 +31591,9 @@ var init_muse = __esm({
     ];
     MUSE_OS_SANDBOX_LIMITATIONS = [
       "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout. Files outside the checkout that srt does not deny stay readable, but only api.meta.ai can receive them. This tier has not been run live."
+    ];
+    MUSE_WRITABLE_LIMITATIONS = [
+      "srt confines the whole muse process: writes to the worktree and the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. The shell is disabled, so it edits with its file tools only and runs no checks; Orbit verifies. Files outside the worktree that srt does not deny stay readable, but only api.meta.ai can receive them. The writable invocation (--worktree off, --contributor-mode off, --disable-approval) was not probed by Orbit; this tier has not been run live."
     ];
     NO_KEY_REASON2 = "no META_API_KEY in the environment, and Muse's login file is denied under srt";
     MuseAdapter = class {
@@ -31593,9 +31622,12 @@ var init_muse = __esm({
         const old = v !== null && compareVersions(v, MUSE_MIN_VERSION) < 0;
         const cliOk = version.ok && help.ok && missing.length === 0 && !old;
         const tierProblem = cliOk ? await this.explicitTierProblem() : null;
+        const lacking = MUSE_WRITE_FLAGS.filter((f) => !flags.has(f));
+        const writable = !cliOk || tierProblem !== null ? { ok: false, why: "the muse CLI is not usable here" } : lacking.length > 0 ? { ok: false, why: `muse exec lacks ${lacking.join(", ")}, which the writable tier needs` } : await this.writableTier();
         return {
           provider: this.id,
           available: cliOk && tierProblem === null,
+          writable,
           ...tierProblem === null ? {} : { tierUnavailable: true },
           version: v,
           // Muse has no model catalog command; the configured model is passed through unchanged.
@@ -31631,13 +31663,14 @@ ${r.stderr}`;
         }
       }
       async startTask(spec) {
-        if (!spec.readOnly) throw new OrbitError("POLICY_DENIED", "the Muse adapter runs read-only review tasks only", { workerId: spec.workerId, role: spec.role });
+        const writable = !spec.readOnly;
+        if (writable && spec.role !== "implementer") throw new OrbitError("POLICY_DENIED", "the Muse adapter runs read-only tasks, and writes only as an implementer in its own worktree", { workerId: spec.workerId, role: spec.role });
         if (!spec.model) throw new OrbitError("CONFIG_INVALID", "Muse needs an explicit model (--model)");
         if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(spec.model)) throw new OrbitError("CONFIG_INVALID", `invalid Muse model ${JSON.stringify(spec.model)}`);
         const effort = spec.effort ?? MUSE_DEFAULT_REASONING_EFFORT;
         if (!MUSE_REASONING_EFFORTS.includes(effort)) throw new OrbitError("CONFIG_INVALID", `unsupported Muse reasoning effort ${JSON.stringify(effort)}`);
         for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute12(p)) throw new OrbitError("CONFIG_INVALID", `paths must be absolute: ${p}`);
-        if (!existsSync15(spec.cwd) || !statSync8(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `review checkout does not exist: ${spec.cwd}`);
+        if (!existsSync15(spec.cwd) || !statSync8(spec.cwd).isDirectory()) throw new OrbitError("NOT_FOUND", `${writable ? "worktree" : "review checkout"} does not exist: ${spec.cwd}`);
         const prior = readJsonIfExists(join18(spec.workerDir, LAUNCH_FILE));
         if (prior) {
           const handle2 = await reattachLaunch(this.id, spec.workerDir, spec.workerId, this.clock);
@@ -31651,6 +31684,7 @@ ${r.stderr}`;
         const workerDir = spec.workerDir;
         const choice = await this.chooseTier(museEnvCredential({ ...this.baseEnv(), ...spec.env }));
         const tier = choice.decision.tier;
+        if (writable && tier !== "os-sandbox") throw new OrbitError("ISOLATION_UNAVAILABLE", `${WRITABLE_NEEDS_SRT}: ${choice.decision.reason}`, { workerId: spec.workerId, tier });
         if (tier === "muse-sandbox") assertWriteProtected(checkout);
         const tmpDir = prepareWorkerTmpDir(workerDir);
         const extra = { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env };
@@ -31660,21 +31694,25 @@ ${r.stderr}`;
           extra.XDG_CONFIG_HOME = own;
         }
         const env = buildWorkerEnv({ provider: "muse", base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra });
-        const srt = choice.srt ? { provider: choice.srt, profile: museReviewerProfile(spec.sandbox, { checkout, workerDir }) } : null;
+        const srt = choice.srt ? { provider: choice.srt, profile: museReviewerProfile(spec.sandbox, { checkout, workerDir, writable }) } : null;
         writeFileSync3(join18(workerDir, MUSE_PROMPT_FILE), `${spec.systemPrompt.trim()}
 
 ${spec.prompt}${outputTokens === null ? "" : `
 ${outputBudgetInstruction(outputTokens)}
 `}`, { mode: 384 });
         atomicWriteJson(join18(workerDir, MUSE_SCHEMA_FILE), spec.outputSchema, 384);
-        const argv2 = buildMuseArgv({ command: this.command, model: spec.model, effort, workspace: checkout, schemaPath: join18(workerDir, MUSE_SCHEMA_FILE), promptPath: join18(workerDir, MUSE_PROMPT_FILE), maxSteps: MUSE_REVIEW_MAX_STEPS });
+        const argv2 = buildMuseArgv({ command: this.command, model: spec.model, effort, workspace: checkout, schemaPath: join18(workerDir, MUSE_SCHEMA_FILE), promptPath: join18(workerDir, MUSE_PROMPT_FILE), maxSteps: MUSE_REVIEW_MAX_STEPS, writable, wrapper: srt?.provider.kind ?? null });
         let launchArgv = argv2;
         let launchEnv = env;
-        const limitations = [...srt ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS];
+        const limitations = [...writable ? MUSE_WRITABLE_LIMITATIONS : srt ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS];
         if (outputTokens !== null) limitations.push(`Output budget of ${outputTokens} tokens is an instruction only: Muse has no verified output cap, so overruns are measured and recorded.`);
         const cleanupPaths = [];
         if (srt) {
           const wrapped = srt.provider.wrap(argv2, srt.profile, { cwd: checkout, env });
+          if (writable && !(wrapped.argv.length > argv2.length && argv2.every((a, k) => wrapped.argv[wrapped.argv.length - argv2.length + k] === a))) {
+            wrapped.cleanup();
+            throw new OrbitError("POLICY_DENIED", "refusing to launch a writable Muse: the sandbox-runtime wrapper did not wrap the command");
+          }
           launchArgv = wrapped.argv;
           launchEnv = wrapped.env;
           limitations.push(...wrapped.limitations);
@@ -31694,7 +31732,7 @@ ${outputBudgetInstruction(outputTokens)}
           graceMs: this.opts.graceMs,
           stdinPath: null,
           cleanupPaths: [...new Set(cleanupPaths)],
-          meta: { tier, tierReason: choice.decision.reason, tierAutomatic: choice.decision.automatic, limitations, model: spec.model, outputBudgetTokens: outputTokens },
+          meta: { tier, tierReason: choice.decision.reason, tierAutomatic: choice.decision.automatic, limitations, model: spec.model, outputBudgetTokens: outputTokens, writable },
           clock: this.clock
         });
         return { ...handle, tier, limitations };
@@ -31741,6 +31779,16 @@ ${outputBudgetInstruction(outputTokens)}
       baseEnv() {
         return this.opts.baseEnv ?? process.env;
       }
+      /** Whether an implementer could run here: only in the os-sandbox tier (issue #176). */
+      async writableTier() {
+        try {
+          const { decision } = await this.chooseTier(museEnvCredential(this.baseEnv()));
+          return decision.tier === "os-sandbox" ? { ok: true, why: "" } : { ok: false, why: `${WRITABLE_NEEDS_SRT}: ${decision.reason}` };
+        } catch (err) {
+          if (isOrbitError(err, "ISOLATION_UNAVAILABLE")) return { ok: false, why: err.message };
+          throw err;
+        }
+      }
       /** Why an explicit os-sandbox cannot run here, so selection moves on instead of startTask blocking the run. `auto` never fails this way. */
       async explicitTierProblem() {
         if (this.opts.tier !== "os-sandbox") return null;
@@ -31783,6 +31831,7 @@ ${outputBudgetInstruction(outputTokens)}
         }
       }
     };
+    WRITABLE_NEEDS_SRT = "Muse implements only in the os-sandbox tier (META_API_KEY plus srt), since nothing else confines its writes to the worktree";
   }
 });
 
@@ -44060,11 +44109,14 @@ function selectReviewer(input) {
     }
     return null;
   };
-  const independentIds = order.filter((p) => isIndependentReviewer(p, impl) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
+  const implementers = [impl, ...input.implementers ?? []];
+  const independentOf = (p) => implementers.every((i) => isIndependentReviewer(p, i));
+  const asked = providerFamily(impl) === "claude" || order.includes("claude") ? order : [...order, "claude"];
+  const independentIds = asked.filter((p) => independentOf(p) && (Object.hasOwn(config.providers, p) || input.capabilities[p] !== void 0));
   const problems = /* @__PURE__ */ new Map();
   const unusable = /* @__PURE__ */ new Map();
   for (const p of independentIds) {
-    const prob = providerProblem(p);
+    const prob = providerProblem(p, providerFamily(p) === "claude");
     if (prob) {
       problems.set(p, prob);
       unusable.set(p, prob.reason);
@@ -44073,17 +44125,21 @@ function selectReviewer(input) {
     }
     const m = qualifiedModel(p, input, alternatives);
     if (!m) {
-      unusable.set(p, `"${p}" has no model qualified for review`);
+      unusable.set(p, `"${p}" has no model qualified for review${input.risky ? " at its top tier" : ""}`);
+      continue;
+    }
+    const weak = input.risky ? belowTopTier(m, input) : null;
+    if (weak) {
+      unusable.set(p, weak);
+      alternatives.push({ provider: p, model: m.model, reason: weak });
       continue;
     }
     const substituted = p !== preferred;
-    return finish(
-      input,
-      m,
-      { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false },
-      alternatives,
-      substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`
-    );
+    const why2 = substituted ? `preferred provider "${preferred}" is unusable (${problems.get(preferred ?? "")?.reason ?? "not selected"}); "${p}" is an independent, qualified provider` : `independent reviewer "${p}" (implementer: "${impl}")`;
+    const sel2 = finish(input, m, { independent: true, substitutedForPreferred: substituted, independentUnavailable: null, needsApproval: false }, alternatives, why2);
+    if (!input.risky) return sel2;
+    const same3 = sameFamilyPass(input, providerProblem, alternatives);
+    return { ...sel2, sameFamily: same3.pass, crossModelSkipped: null, reason: `${why2}; risky change: ${same3.pass ? `a fresh ${same3.pass.provider}/${same3.pass.model ?? "default"} session reviews it too (${same3.pass.reason})` : `no fresh same-family pass: ${same3.why}`}` };
   }
   const detail = independentIds.length === 0 ? order.length === 0 ? "no independent review provider is listed in review.providers" : `no provider other than "${impl}" is configured` : independentIds.map((p) => unusable.get(p) ?? `"${p}" has no model qualified for review`).join("; ");
   if (fallback === "block") {
@@ -44111,13 +44167,34 @@ function selectReviewer(input) {
     return { decision: "BLOCK", code: "PROVIDER_UNAVAILABLE", reason: `no independent reviewer is usable (${detail}) and review.when_unavailable is ${fallback}, but ${same2.reason}`, alternatives };
   }
   const why = `no independent reviewer was usable: ${detail}`;
-  return finish(
+  const sel = finish(
     input,
     same2.usable,
     { independent: false, substitutedForPreferred: false, independentUnavailable: why, needsApproval: fallback === "ask" },
     alternatives,
     `${why}; review.when_unavailable is ${fallback}, so "${impl}" reviews with ${same2.usable.model} in a separate reviewer session (${same2.usable.detail})${fallback === "ask" ? " once a person says yes" : ""}. This review is not independent.`
   );
+  return input.risky ? { ...sel, sameFamily: null, crossModelSkipped: detail } : sel;
+}
+function belowTopTier(u, input) {
+  if (providerFamily(u.provider) === "claude" || u.model === null || u.basis !== "configured" || !input.registry) return null;
+  const surface = PROVIDER_SURFACE[providerFamily(u.provider) ?? ""];
+  if (!surface) return null;
+  const a = input.registry.assess({ surface, provider: u.provider, allowedModels: [`${u.provider}:*`] });
+  const known = [...a.eligible, ...a.excluded.map((e) => e.model)];
+  const top = known.find((e) => e.eligibility.providerDefault);
+  const own = known.find((e) => e.modelId === u.model);
+  if (!top || top.modelId === u.model || own?.evaluation.qualifiedFor.includes("safety-review")) return null;
+  return `"${u.provider}" reviews with ${u.model}, below its top tier (${top.modelId} is ${u.provider}'s recommended model), and a weak cross-model reviewer adds nothing to a risky change`;
+}
+function sameFamilyPass(input, providerProblem, alternatives) {
+  const impl = input.implementer.provider;
+  const problem = providerProblem(impl, true);
+  if (problem) return { pass: null, why: problem.reason };
+  const effort = input.snapshot.config.providers[impl]?.reasoning_effort ?? null;
+  const partner = providerFamily(impl) === "claude" ? null : qualifiedModel(impl, input, alternatives);
+  const same2 = partner ? { ok: true, usable: partner } : providerFamily(impl) === "claude" ? sameProviderModel(input, alternatives) : { ok: false, reason: `"${impl}" has no model qualified for review` };
+  return same2.ok ? { pass: { provider: impl, model: same2.usable.model, effort, basis: same2.usable.basis, reason: same2.usable.detail }, why: null } : { pass: null, why: same2.reason };
 }
 function finish(input, u, how, alternatives, reason) {
   const cap = input.capabilities[u.provider];
@@ -47146,7 +47223,66 @@ function route(req) {
     previous,
     previousTier: previous && previous.provider === "claude" ? tierOf(previous) : null
   };
-  return req.workKind === "safety-review" ? routeSafetyReview(ctx) : routeLadder(ctx);
+  if (req.workKind === "safety-review") return routeSafetyReview(ctx);
+  return routePartner(ctx) ?? routeLadder(ctx);
+}
+function routePartner(ctx) {
+  const partners = partnerImplementers(ctx.policy);
+  const s = ctx.signals;
+  if (partners.length === 0 || s.implementation !== true) return null;
+  if (ctx.profile.output !== "candidate" || !ctx.profile.routine) {
+    ctx.ignored.push(`routing.implementers names ${partners.join(", ")}, but ${ctx.workKind} is not a bounded unit a partner implements`);
+    return null;
+  }
+  const passed = [];
+  for (const p of partners) {
+    const cfg = ctx.policy.providers[p];
+    const failures = s.partnerFailures?.[p] ?? 0;
+    const skipped = s.partnersSkipped?.[p];
+    const why = skipped !== void 0 ? `skipped for the rest of this run: ${skipped}` : failures >= PARTNER_MAX_FAILURES ? `${failures} of its candidates in this run failed verification or review` : cfg?.data_policy_eligible !== true ? `providers.${p}.data_policy_eligible is not true, so the code may not be sent to it` : !cfg.model ? `providers.${p}.model names no model` : measuredBelowFloor(ctx, p, cfg.model);
+    if (why !== null) {
+      passed.push({ provider: p, model: cfg?.model ?? "", family: providerFamily(p), eligible: false, expected_cost_per_verified_task: null, cost_basis: "unavailable", rejected_because: why });
+      continue;
+    }
+    const model = cfg.model;
+    const family = providerFamily(p);
+    const entry = ctx.registry.get(model);
+    const cost = entry ? estimateRoute(entry, ctx) : null;
+    const reason = [
+      `routing.implementers lets ${p} implement ${ctx.workKind}`,
+      ...passed.map((a) => `${a.provider} passed over: ${a.rejected_because}`),
+      `${p} implements in its own writable worktree; Claude's verification decides whether its candidate is kept`,
+      cost ? costText(cost) : "expected cost per verified task unavailable (no pricing or measured cost)"
+    ].join("; ");
+    return {
+      kind: "route",
+      summary: `route ${ctx.workKind} -> ${p}/${model} (partner)`,
+      work_kind: ctx.workKind,
+      provider: p,
+      model,
+      surface: FAMILY_SURFACE[family],
+      family: entry?.family ?? family,
+      effort: cfg.reasoning_effort ?? null,
+      reason,
+      justification: { signals: [], evidence: [...ctx.evidence], ignored: ctx.ignored },
+      alternatives_considered: passed,
+      expected_cost_per_verified_task: cost?.total ?? null,
+      expected_cost_breakdown: cost?.breakdown ?? null,
+      cost_basis: cost?.basis ?? "unavailable",
+      success_probability: round3(cost?.success ?? PRIOR_SUCCESS[2][s.difficulty]),
+      attempt: s.attempt,
+      difficulty: s.difficulty
+    };
+  }
+  ctx.ignored.push(`no partner implements: ${passed.map((a) => `${a.provider} ${a.rejected_because}`).join("; ")}; Claude implements`);
+  return null;
+}
+function measuredBelowFloor(ctx, provider, model) {
+  const st = ctx.outcomes.find((o) => o.provider === provider && o.modelId === model && o.workKind === ctx.workKind && (o.difficulty === void 0 || o.difficulty === null || o.difficulty === ctx.signals.difficulty));
+  const judged = st ? st.verified + st.failed + st.rejected : 0;
+  if (!st || judged === 0 || judged < ctx.learning.min_samples) return null;
+  const rate2 = st.verified / judged;
+  return rate2 < ctx.learning.min_pass_rate ? `measured pass rate ${pct(rate2)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) is below ${pct(ctx.learning.min_pass_rate)}` : null;
 }
 function toDecisionRecord(d) {
   return { kind: d.kind, summary: d.summary, data: d };
@@ -47758,7 +47894,7 @@ function round3(n2) {
 function uniq4(xs) {
   return [...new Set(xs)];
 }
-var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE2, EFFORT_ORDER, EFFORT_CEILING, PREDICTED_EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, BASIS_RANK;
+var TIER_NAME, FABLE_TIER, SAFETY_FLOOR_TIER, PROVIDER_SURFACE2, EFFORT_ORDER, EFFORT_CEILING, PREDICTED_EFFORT_CEILING, PROFILES, PRIOR_SUCCESS, PRIOR_REVIEW_SUCCESS, PRIOR_WEIGHT, MIN_MEASURED_SAMPLES, CALIBRATION_MARGIN, ACCURACY_FLOOR, MIN_SUCCESS, REPAIR_COST_FRACTION, VERIFICATION_USD_PER_ATTEMPT, REVIEW_USD_PER_TASK, HANDOFF_TOKENS, STATIC_SIGNALS, PARTNER_MAX_FAILURES, BASIS_RANK;
 var init_router = __esm({
   "src/routing/router.ts"() {
     "use strict";
@@ -47804,7 +47940,118 @@ var init_router = __esm({
     REVIEW_USD_PER_TASK = 0.3;
     HANDOFF_TOKENS = 2e4;
     STATIC_SIGNALS = /* @__PURE__ */ new Set(["coupled-change", "ambiguity", "security-sensitive-interpretation", "visual-complexity"]);
+    PARTNER_MAX_FAILURES = 2;
     BASIS_RANK = { configured: 0, evaluation: 1, "provider-default": 2, tier: 3 };
+  }
+});
+
+// src/controller/route-outcome.ts
+function implementRouteDecisionId(runId, attempt) {
+  return `dec-route-${runId}-implement_${attempt}`;
+}
+function skippedPartners(ctx) {
+  const out = {};
+  for (const d of listDecisions(ctx.db, ctx.run.id, { kind: PARTNER_SKIPPED_KIND })) {
+    const data = d.data;
+    if (typeof data.provider === "string" && !(data.provider in out)) out[data.provider] = typeof data.reason === "string" ? data.reason : "skipped";
+  }
+  return out;
+}
+function skipPartner(ctx, provider, attempt, reason) {
+  const family = providerFamily(provider);
+  if (family !== "codex" && family !== "muse") return false;
+  const id = `dec-${ctx.run.id}-partner-skipped-${provider}`;
+  if (getDecision(ctx.db, id)) return true;
+  recordDecision(
+    ctx.db,
+    ctx.runDir,
+    { id, runId: ctx.run.id, kind: PARTNER_SKIPPED_KIND, summary: `partner implementer ${provider} skipped for the rest of the run${attempt === null ? "" : ` (attempt ${attempt} goes on without it)`}: ${reason}`.slice(0, 1e3), data: { provider, attempt, reason, failure_class: "credentials" } },
+    ctx.clock,
+    { actor: ctx.ownerId }
+  );
+  return true;
+}
+function partnerFailures(ctx) {
+  const rows = ctx.db.all("SELECT provider, COUNT(*) AS n FROM route_outcomes WHERE run_id = ? AND role = 'implementer' AND outcome IN ('failed', 'rejected') GROUP BY provider", ctx.run.id);
+  return Object.fromEntries(rows.filter((r) => providerFamily(r.provider) === "codex" || providerFamily(r.provider) === "muse").map((r) => [r.provider, r.n]));
+}
+function attemptRouteDecision(ctx, attempt) {
+  const skipped = skippedPartners(ctx);
+  let id = implementRouteDecisionId(ctx.run.id, attempt);
+  let d = getDecision(ctx.db, id);
+  for (let hop = 0; d && hop < 8; hop++) {
+    const provider = d.data?.provider;
+    if (typeof provider !== "string" || !(provider in skipped)) break;
+    id = `${id}_${provider.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+    const next = getDecision(ctx.db, id);
+    if (!next) break;
+    d = next;
+  }
+  return d;
+}
+function attemptOf(ctx, cand) {
+  const row = ctx.db.get(
+    "SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.candidate_id') = ? ORDER BY id DESC LIMIT 1",
+    ctx.run.id,
+    CANDIDATE_EVENT,
+    cand.id
+  );
+  return typeof row?.n === "number" && row.n > 0 ? row.n : cand.attempt;
+}
+function settleRouteOutcome(ctx, cand, settlement) {
+  if (settlement.environment) return null;
+  const attempt = attemptOf(ctx, cand);
+  const decision = attemptRouteDecision(ctx, attempt);
+  const d = decision?.data ?? null;
+  if (!d || typeof d.provider !== "string" || typeof d.model !== "string" || !d.provider || !d.model) return null;
+  const workKind = WORK_KINDS.includes(String(d.work_kind)) ? d.work_kind : "routine-code";
+  const spent = attemptSpend(ctx, attempt);
+  return recordRouteOutcome(
+    ctx.db,
+    {
+      runId: ctx.run.id,
+      workKind,
+      provider: d.provider,
+      modelId: d.model,
+      outcome: settlement.outcome,
+      costUsd: spent.costUsd,
+      tokens: spent.tokens,
+      role: "implementer",
+      effort: typeof d.effort === "string" ? d.effort : null,
+      difficulty: ctx.run.difficulty ?? null,
+      attemptKey: `attempt:${attempt}`,
+      evidenceRef: settlement.evidenceRef
+    },
+    ctx.clock
+  );
+}
+function attemptSpend(ctx, attempt) {
+  const rows = ctx.db.all(
+    `SELECT w.id AS worker_id, u.cost_usd, u.cost_source, u.input_tokens, u.output_tokens, (u.id IS NOT NULL) AS has_usage
+       FROM workers w LEFT JOIN usage u ON u.worker_id = w.id AND u.run_id = w.run_id
+      WHERE w.run_id = ? AND w.role = 'implementer' AND w.attempt = ?`,
+    ctx.run.id,
+    attempt
+  );
+  if (rows.length === 0) return { costUsd: null, tokens: null };
+  const costKnown = rows.every((r) => r.has_usage === 1 && r.cost_usd !== null && r.cost_source !== "unavailable");
+  const tokensKnown = rows.every((r) => r.has_usage === 1 && r.input_tokens !== null && r.output_tokens !== null);
+  return {
+    costUsd: costKnown ? roundUsd(rows.reduce((a, r) => a + r.cost_usd, 0)) : null,
+    tokens: tokensKnown ? rows.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0) : null
+  };
+}
+var PARTNER_SKIPPED_KIND;
+var init_route_outcome = __esm({
+  "src/controller/route-outcome.ts"() {
+    "use strict";
+    init_decisions();
+    init_config();
+    init_usage();
+    init_pricing();
+    init_types2();
+    init_context2();
+    PARTNER_SKIPPED_KIND = "routing.partner-skipped";
   }
 });
 
@@ -50531,7 +50778,8 @@ function routeFor(ctx, purpose, workKind, signals) {
     const learning = routingLearning(config);
     const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
     const outcomes = learns ? routeStats(ctx.db, { workKind, role: "implementer", difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 864e5 }) : [];
-    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
+    const partners = purpose.startsWith(IMPLEMENT_PURPOSE) && partnerImplementers(config).length > 0 ? { implementation: true, partnerFailures: partnerFailures(ctx), partnersSkipped: skippedPartners(ctx) } : {};
+    const decision = route({ workKind, signals: { ...signals, ...partners }, registry: ctx.deps.registry, policy: config, outcomes });
     const rec2 = toDecisionRecord(decision);
     recordDecision(ctx.db, ctx.runDir, { id: decisionId2, runId: ctx.run.id, kind: rec2.kind, summary: `${purpose}: ${rec2.summary}`.slice(0, 500), data: { ...rec2.data, purpose, ...learning.enabled ? {} : { learning_disabled: "routing.learning.enabled is false: measured outcomes were not read" } } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId: decisionId2 };
@@ -50624,6 +50872,7 @@ var init_workers2 = __esm({
     init_accounting();
     init_pricing();
     init_config();
+    init_route_outcome();
     init_context2();
     init_run_store();
     init_knowledge_hooks();
@@ -56551,17 +56800,19 @@ function strOrNull(v) {
   return typeof v === "string" ? v : null;
 }
 function reviewerOf(db, runId, candidateId, standing, failed) {
-  const last = standing.at(-1);
-  if (!last) return null;
+  if (standing.length === 0) return null;
   const selections = listDecisions(db, runId, { kind: "review.select" }).filter((d) => d.data?.decision === "SELECT");
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data;
+  const last = standing.findLast((r) => r.provider === sel?.provider) ?? standing.at(-1);
+  const family = sel?.sameFamily ? standing.findLast((r) => r.provider === sel.sameFamily.provider && r !== last) : void 0;
+  const pair = { ...family ? { same_family_reviewer: `${family.provider}/${family.model ?? "default"}` } : {}, ...sel?.crossModelSkipped ? { cross_model_skipped: sel.crossModelSkipped } : {} };
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data;
   const approvedBy = typeof approval?.approved_by === "string" ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : sel.independentUnavailable ?? "no independent reviewer was usable", approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried, ...pair };
   }
   const implementer = listWorkers(db, { runId, role: "implementer" }).at(-1)?.provider ?? "claude";
   const independent = isIndependentReviewer(last.provider, implementer);
@@ -56592,8 +56843,11 @@ function reviewerLine(r) {
   const who = `${r.provider}/${r.model ?? "default"}`;
   const tier = r.tier === void 0 ? "" : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ""}${r.limitations?.length ? `. Limitations: ${r.limitations.join(" ")}` : ""}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})${tier}${tried}`;
+  const pair = `${r.same_family_reviewer ? `
+- Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : ""}${r.cross_model_skipped ? `
+- Cross-model review skipped: ${r.cross_model_skipped}` : ""}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}${pair}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? "no independent reviewer was usable"}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ""})${tier}${tried}${pair}`;
 }
 function tokens(t) {
   return { input: t.inputTokens, output: t.outputTokens, cache_read: t.cacheReadTokens, cache_write: t.cacheWriteTokens };
@@ -59548,7 +59802,7 @@ function dependencyFetchFailure(result2, journeys) {
   }
   return null;
 }
-function attemptOf(ctx, result2, checkId, n2) {
+function attemptOf2(ctx, result2, checkId, n2) {
   const journeys = result2.journeys.filter((j) => j.checkId === checkId);
   const fetchLine = dependencyFetchFailure(result2, journeys);
   if (fetchLine) return { environment: `a dependency could not be fetched or installed (${fetchLine})` };
@@ -59705,7 +59959,7 @@ tree: ${probeTree}
       }
       let failed = false;
       for (const id of checkIds) {
-        const a = attemptOf(ctx, result2, id, n2);
+        const a = attemptOf2(ctx, result2, id, n2);
         if ("environment" in a) environments.set(id, a.environment);
         else {
           attempts.get(id).push(a.attempt);
@@ -61522,6 +61776,7 @@ async function preflightStep(ctx) {
     if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state, auth.status.detail);
     return finishRun(ctx, "BLOCKED", `environment gate: ${env.gate.reasons.join("; ")}`, { outcome: { gate: env.gate } });
   }
+  skipUnusablePartners(ctx, env);
   const plugins = await workerPluginsStep(ctx);
   if (plugins) return plugins;
   const repo = ctx.run.repoRoot;
@@ -61585,6 +61840,14 @@ async function preflightStep(ctx) {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes }
   });
+}
+function skipUnusablePartners(ctx, env) {
+  for (const p of partnerImplementers(ctx.snapshot.config)) {
+    const cap = env.capabilities[p];
+    const cred = env.credentials.find((c) => c.provider === p)?.status ?? null;
+    const why = !cap ? `no adapter is configured for "${p}"` : !cap.available ? `it is not available: ${cap.detail || "adapter reported unavailable"}` : cap.writable?.ok !== true ? `it has no writable tier here: ${cap.writable?.why ?? "its adapter offers none"}` : cred?.state !== "valid" ? `its credentials are ${cred?.state ?? "not validated"}${cred?.detail ? ` (${cred.detail})` : ""}` : null;
+    if (why) skipPartner(ctx, p, null, why);
+  }
 }
 function classifyBaseline(ctx, report2, checkoutDir, only = null) {
   const judged = only === null ? report2 : { ...report2, failures: report2.failures.filter((f) => only.has(f.checkId)) };
@@ -61866,6 +62129,8 @@ var init_preflight = __esm({
     init_common();
     init_worker_plugins();
     init_workers2();
+    init_route_outcome();
+    init_config();
     IMPLEMENTER_PROVIDER = "claude";
     URL_USERINFO = /^([a-z][a-z0-9+.-]*):\/\/([^/?#@]*)@/i;
     AUTH_HEADER = /authorization|cookie|bearer|token|api[-_]?key|secret/i;
@@ -64396,7 +64661,11 @@ async function runParallelUnits(ctx, n2, units, opts) {
     const st = await ensureWorker(ctx, request(ctx, n2, u, units, opts));
     if (st.status === "running") continue;
     const r = st.result;
-    if (r.status === "auth_failed") return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+    if (r.status === "auth_failed") {
+      if (!skipPartner(ctx, st.worker.provider, n2, r.error ?? "authentication failed")) return { kind: "step", result: await blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error) };
+      await serialize2(ctx, n2, u, `partner ${st.worker.provider} was skipped for the run: ${(r.error ?? "authentication failed").slice(0, 200)}`);
+      continue;
+    }
     if (isSessionRefusal(r)) return { kind: "step", result: await blockOnRefusedSession(ctx, `implementer work unit ${u.id} (attempt ${n2})`, r.error) };
     if (r.status === "cancelled") {
       const stop = await safePoint(ctx);
@@ -64618,6 +64887,7 @@ var init_parallel_writers = __esm({
     init_workers2();
     init_contracting();
     init_common();
+    init_route_outcome();
     UNITS_EVENT = "implementation.units";
     UNIT_INTEGRATING_EVENT = "implementation.unit-integrating";
     UNIT_INTEGRATED_EVENT = "implementation.unit-integrated";
@@ -64977,7 +65247,7 @@ async function implementingStep(ctx) {
 }
 async function startAttempt(ctx, n2) {
   const ledger = ctx.ledger;
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  const route2 = implementRoute(ctx, n2);
   const scheduler = schedulerFor(ctx);
   const running = runningUnits(ctx);
   const own = new Set(running.filter((u) => u.runId === ctx.run.id).map((u) => u.unit.id));
@@ -65038,14 +65308,25 @@ function runningUnits(ctx) {
   }
   return out;
 }
+function implementRoute(ctx, n2) {
+  const skipped = skippedPartners(ctx);
+  let purpose = `implement:${n2}`;
+  let route2 = routeFor(ctx, purpose, "routine-code", routeSignals(ctx, n2));
+  for (let hop = 0; route2.provider in skipped && hop < 8; hop++) {
+    purpose = `${purpose}~${route2.provider}`;
+    route2 = routeFor(ctx, purpose, "routine-code", routeSignals(ctx, n2));
+  }
+  return route2;
+}
 async function continueAttempt(ctx, n2, contract) {
-  const route2 = routeFor(ctx, `implement:${n2}`, "routine-code", routeSignals(ctx, n2));
+  let route2 = implementRoute(ctx, n2);
   const base = `implement:${n2}`;
   const units = recordedUnits(ctx, n2);
   if (units && latestAttempt(ctx, base) === 0) {
     const r = await runParallelUnits(ctx, n2, units, { route: route2, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n2, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger.maxTurnsPerSession() });
     if (r.kind === "step") return r.result;
     if (r.kind === "done") return snapshot(ctx, n2, r.workerId);
+    route2 = implementRoute(ctx, n2);
   }
   const start = await attemptStart(ctx, base, `implementer (attempt ${n2})`);
   if (!start.ok) return start.step;
@@ -65072,7 +65353,12 @@ async function continueAttempt(ctx, n2, contract) {
     });
     if (st.status === "running") return WAIT(`implementer ${st.worker.id} (attempt ${n2}) is running`);
     const r = st.result;
-    if (r.status === "auth_failed") return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
+    if (r.status === "auth_failed") {
+      if (!skipPartner(ctx, st.worker.provider, n2, r.error ?? "authentication failed")) return blockOnAuth(ctx, st.worker.provider, "auth_failed", r.error);
+      route2 = implementRoute(ctx, n2);
+      k++;
+      continue;
+    }
     if (isSessionRefusal(r)) return blockOnRefusedSession(ctx, `implementer (attempt ${n2})`, r.error);
     const stray = r.status === "cancelled" && !ctx.refresh().cancelRequested;
     if (r.status === "transient_error" || stray) {
@@ -65200,8 +65486,8 @@ function capOf(ctx, n2, purpose) {
 function routeSignals(ctx, n2) {
   const difficulty = ctx.run.difficulty ?? "medium";
   const failures = listFailures(ctx.db, ctx.run.id);
-  const prev = n2 > 1 ? ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${n2 - 1}`) : void 0;
-  const prevRoute = prev ? JSON.parse(prev.data_json) : null;
+  const prev = n2 > 1 ? attemptRouteDecision(ctx, n2 - 1) : null;
+  const prevRoute = prev ? prev.data : null;
   const solved = n2 > 1 && diagnosisSolved(ctx, n2);
   const latest = failures.at(-1) ?? null;
   const same2 = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
@@ -65230,8 +65516,7 @@ function criticalSecurity(ctx) {
 function diagnosisSolved(ctx, n2) {
   let escalatedAt = 0;
   for (let k = n2 - 1; k >= 1; k--) {
-    const row = ctx.db.get("SELECT data_json FROM decisions WHERE id = ?", `dec-route-${ctx.run.id}-implement_${k}`);
-    const d = row ? JSON.parse(row.data_json) : null;
+    const d = attemptRouteDecision(ctx, k)?.data ?? null;
     if (d?.escalated_from) {
       escalatedAt = k;
       break;
@@ -65351,6 +65636,7 @@ var init_implementing = __esm({
     init_context2();
     init_gates();
     init_workers2();
+    init_route_outcome();
     init_parallel_writers();
     init_authorization();
     init_knowledge_hooks();
@@ -65361,73 +65647,6 @@ var init_implementing = __esm({
     READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
     AUTHORIZATION_RETRY_EVENT = "authorization.retry";
     LOST_RESTART_EVENT = "recovery.worker-restart";
-  }
-});
-
-// src/controller/route-outcome.ts
-function implementRouteDecisionId(runId, attempt) {
-  return `dec-route-${runId}-implement_${attempt}`;
-}
-function attemptOf2(ctx, cand) {
-  const row = ctx.db.get(
-    "SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.candidate_id') = ? ORDER BY id DESC LIMIT 1",
-    ctx.run.id,
-    CANDIDATE_EVENT,
-    cand.id
-  );
-  return typeof row?.n === "number" && row.n > 0 ? row.n : cand.attempt;
-}
-function settleRouteOutcome(ctx, cand, settlement) {
-  if (settlement.environment) return null;
-  const attempt = attemptOf2(ctx, cand);
-  const decision = getDecision(ctx.db, implementRouteDecisionId(ctx.run.id, attempt));
-  const d = decision?.data ?? null;
-  if (!d || typeof d.provider !== "string" || typeof d.model !== "string" || !d.provider || !d.model) return null;
-  const workKind = WORK_KINDS.includes(String(d.work_kind)) ? d.work_kind : "routine-code";
-  const spent = attemptSpend(ctx, attempt);
-  return recordRouteOutcome(
-    ctx.db,
-    {
-      runId: ctx.run.id,
-      workKind,
-      provider: d.provider,
-      modelId: d.model,
-      outcome: settlement.outcome,
-      costUsd: spent.costUsd,
-      tokens: spent.tokens,
-      role: "implementer",
-      effort: typeof d.effort === "string" ? d.effort : null,
-      difficulty: ctx.run.difficulty ?? null,
-      attemptKey: `attempt:${attempt}`,
-      evidenceRef: settlement.evidenceRef
-    },
-    ctx.clock
-  );
-}
-function attemptSpend(ctx, attempt) {
-  const rows = ctx.db.all(
-    `SELECT w.id AS worker_id, u.cost_usd, u.cost_source, u.input_tokens, u.output_tokens, (u.id IS NOT NULL) AS has_usage
-       FROM workers w LEFT JOIN usage u ON u.worker_id = w.id AND u.run_id = w.run_id
-      WHERE w.run_id = ? AND w.role = 'implementer' AND w.attempt = ?`,
-    ctx.run.id,
-    attempt
-  );
-  if (rows.length === 0) return { costUsd: null, tokens: null };
-  const costKnown = rows.every((r) => r.has_usage === 1 && r.cost_usd !== null && r.cost_source !== "unavailable");
-  const tokensKnown = rows.every((r) => r.has_usage === 1 && r.input_tokens !== null && r.output_tokens !== null);
-  return {
-    costUsd: costKnown ? roundUsd(rows.reduce((a, r) => a + r.cost_usd, 0)) : null,
-    tokens: tokensKnown ? rows.reduce((a, r) => a + r.input_tokens + r.output_tokens, 0) : null
-  };
-}
-var init_route_outcome = __esm({
-  "src/controller/route-outcome.ts"() {
-    "use strict";
-    init_decisions();
-    init_usage();
-    init_pricing();
-    init_types2();
-    init_context2();
   }
 });
 
@@ -66136,6 +66355,8 @@ async function reviewingStep(ctx) {
   const fresh = freshReviewOf(ctx, cand.treeHash);
   if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
   if (uncoveredUnits(ctx, cand).length === 0) {
+    const second = await familyPass(ctx, cand);
+    if (second) return second;
     const asked = askedReReview(ctx, cand, reReviewRecords(ctx));
     return asked ? reReview(ctx, cand, asked) : resolveAndDecide(ctx, cand);
   }
@@ -66144,7 +66365,25 @@ async function reviewingStep(ctx) {
   const sel = usable.sel;
   if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses, fresh);
   const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
-  return pending ?? resolveAndDecide(ctx, cand);
+  return pending ?? await familyPass(ctx, cand) ?? resolveAndDecide(ctx, cand);
+}
+async function familyPass(ctx, cand) {
+  const sel = getDecision(ctx.db, selectionId(ctx, cand))?.data;
+  const same2 = sel?.decision === "SELECT" ? sel.sameFamily : null;
+  if (!sel || sel.decision !== "SELECT" || !same2) return null;
+  const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: "reviewer" }).map((w) => [w.id, w.purpose]));
+  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).some((r) => r.workerId !== null && purposes.get(r.workerId)?.startsWith(`${FAMILY_BASE}:`))) return null;
+  if (listDecisions(ctx.db, ctx.run.id, { kind: FAMILY_PASS_FAILED_KIND }).some((d) => d.data.tree_hash === cand.treeHash)) return null;
+  const pass2 = { ...sel, provider: same2.provider, model: same2.model, effort: same2.effort, basis: same2.basis, independent: false, sameFamily: null, reason: same2.reason, alternatives: [] };
+  return singleReview(ctx, cand, pass2, {
+    base: `${FAMILY_BASE}:${cand.id}`,
+    what: `the ${same2.provider} reviewer (fresh same-family pass)`,
+    fresh: null,
+    exhausted: async (failed) => {
+      decide2(ctx, { kind: FAMILY_PASS_FAILED_KIND, summary: `the fresh same-family pass by ${same2.provider}/${same2.model ?? "default"} gave no review of tree ${cand.treeHash} (${failed.status}${failed.error ? `: ${clipAtWord(failed.error, 200)}` : ""}); the tree is decided on the cross-model review`, data: { tree_hash: cand.treeHash, provider: same2.provider, model: same2.model, status: failed.status } });
+      return MOVED;
+    }
+  });
 }
 async function usableReviewer(ctx, cand) {
   const sel = await reviewerSelection(ctx, cand);
@@ -66189,7 +66428,7 @@ async function singleReview(ctx, cand, sel, opts) {
     what: opts.what,
     exhausted: (failed) => {
       switched = true;
-      return reviewerFailed(ctx, cand, sel, failed);
+      return opts.exhausted ? opts.exhausted(failed) : reviewerFailed(ctx, cand, sel, failed);
     },
     // One review round per reviewer session started, regenerations included: every session costs a round.
     beforeStart: () => ctx.ledger.consume("review_rounds", 1),
@@ -66388,7 +66627,7 @@ async function parallelReview(ctx, cand, sel, focuses, fresh) {
   if (finished2 < focuses.length) return WAIT(waiting.join("; ") || "review units running");
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {
   });
-  return resolveAndDecide(ctx, cand);
+  return await familyPass(ctx, cand) ?? resolveAndDecide(ctx, cand);
 }
 async function cancelObsoleteWork(ctx, currentTree) {
   const scheduler = schedulerFor(ctx);
@@ -67273,7 +67512,10 @@ async function reviewerSelection(ctx, cand) {
 }
 function fallbackSelection(ctx, env, failed) {
   const credentials = Object.fromEntries(env.credentials.map((c) => [c.provider, c.status ?? void 0]));
-  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, registry: ctx.deps.registry, failed });
+  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === "complex", registry: ctx.deps.registry, failed });
+}
+function runImplementers(ctx) {
+  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.resultStatus !== "auth_failed").map((w) => w.provider))];
 }
 function lastImplementerModel(ctx) {
   return listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).at(-1)?.model ?? null;
@@ -67390,7 +67632,7 @@ async function prepareReview(ctx, cand, provider) {
   if (!existsSync49(checkout) || readdirSync15(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
-var FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, REREVIEW_SELECT_KIND, REREVIEW_FAILED_KIND, REREVIEW_ANSWER_KIND, reReviewId, answerId, reReviewAnswer, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
+var FAMILY_PASS_FAILED_KIND, FAMILY_BASE, FOCUS_TEXT, FRESH_REVIEW_KIND, SHALLOW_REVIEW_EFFORT, REREVIEW_KIND, REREVIEW_SELECT_KIND, REREVIEW_FAILED_KIND, REREVIEW_ANSWER_KIND, reReviewId, answerId, reReviewAnswer, askedReReview, REVIEW_REPAIR_EVENT, UNDECIDED, NOT_APART;
 var init_reviewing = __esm({
   "src/controller/steps/reviewing.ts"() {
     "use strict";
@@ -67439,6 +67681,8 @@ var init_reviewing = __esm({
     init_preflight();
     init_implementing();
     init_verifying();
+    FAMILY_PASS_FAILED_KIND = "review.family-pass-failed";
+    FAMILY_BASE = "review-family";
     FOCUS_TEXT = {
       security: "Focus: security. Authorization and tenancy, input validation, injection, secrets and sensitive data, unsafe defaults. Report any other defect you see as well.",
       ui: "Focus: the user interface. User-visible states (empty, loading, error), accessibility, layout and interaction regressions on the changed screens. Report any other defect you see as well."
