@@ -236,6 +236,18 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
   });
 
+  it('sends nothing when the Orbit configuration cannot be read: it may name the terms file the guard needs', async () => {
+    const l = lab();
+    endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK);
+    mkdirSync(join(l.repo, '.orbit'), { recursive: true });
+    writeFileSync(join(l.repo, '.orbit', 'config.yaml'), 'version: 1\nguard:\n  terms_file: /nonexistent/terms.txt\nnot_a_setting: true\n');
+    const yes = fake(true);
+    const r = await retro(l, [], yes);
+    expect(r.code).toBe(1);
+    expect(yes.sent).toEqual([]);
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
+  });
+
   it('keeps the draft and reports the error when sending fails, and exits non-zero', async () => {
     const l = lab();
     endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK);

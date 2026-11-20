@@ -76240,7 +76240,7 @@ function terminalAsk(ctx, input = process.stdin, output = process.stderr) {
     const rl = createInterface({ input, output });
     try {
       const closed = new Promise((resolve29) => rl.once("close", () => resolve29(null)));
-      const answer = await Promise.race([rl.question(`${question2} [y/N] `).catch(() => null), closed]);
+      const answer = await Promise.race([rl.question(`${question2} [y/N] `), closed]).catch(() => null);
       if (answer === null) {
         ended = true;
         return null;
@@ -76269,7 +76269,8 @@ function assertPublishable(ctx, repo, text2) {
   let guard = { terms_file: null, allowed_emails: [] };
   try {
     guard = loadConfig(repo).guard;
-  } catch {
+  } catch (err) {
+    if (!(err instanceof OrbitError && err.code === "NOT_FOUND")) throw err;
   }
   const g = loadPublicationGuard(guard.terms_file ? { termsPath: guard.terms_file, env: ctx.env } : { env: ctx.env });
   const res = checkPublication(text2, { ...g.options, allowedEmails: [...g.options.allowedEmails ?? [], ...guard.allowed_emails] });

@@ -60,7 +60,8 @@ export function terminalAsk(ctx: CliContext, input: Readable = process.stdin, ou
     try {
       // Ctrl-D closes the interface and leaves the question unsettled: nobody answered, and nobody is asked again.
       const closed = new Promise<null>((resolve) => rl.once('close', () => resolve(null)));
-      const answer = await Promise.race([rl.question(`${question} [y/N] `).catch(() => null), closed]);
+      // The question first: an answer typed in the same read as the Ctrl-D still counts.
+      const answer = await Promise.race([rl.question(`${question} [y/N] `), closed]).catch(() => null);
       if (answer === null) {
         ended = true;
         return null;
@@ -93,8 +94,9 @@ function assertPublishable(ctx: CliContext, repo: string, text: string): void {
   let guard: { terms_file: string | null; allowed_emails: readonly string[] } = { terms_file: null, allowed_emails: [] };
   try {
     guard = loadConfig(repo).guard;
-  } catch {
-    /* no valid Orbit configuration: publish-guard's own settings alone */
+  } catch (err) {
+    // No configuration: publish-guard's own settings alone. An invalid one may name a terms file, so nothing is sent.
+    if (!(err instanceof OrbitError && err.code === 'NOT_FOUND')) throw err;
   }
   const g = loadPublicationGuard(guard.terms_file ? { termsPath: guard.terms_file, env: ctx.env } : { env: ctx.env });
   const res = checkPublication(text, { ...g.options, allowedEmails: [...(g.options.allowedEmails ?? []), ...guard.allowed_emails] });
