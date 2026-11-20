@@ -705,7 +705,7 @@ export async function finalizeRun(ctx: RunContext): Promise<void> {
   try {
     await learnAtTerminal(ctx);
   } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500), in_prompts: ctx.snapshot.config.knowledge?.lessons_in_prompts === true }, ctx.clock.now()));
   }
   // The curator is charged after the report above was written, and `orbit report` prints that file, so its cost was
   // missing there while status and the timeline (read from the usage rows) had it (issue #33): write the report again.

@@ -217,6 +217,18 @@ describe('measureRun and liveWindow', () => {
     lab.db.run("UPDATE runs SET state = 'BLOCKED', outcome_json = '{not json' WHERE id = 'orb-3'");
     expect(liveWindow(lab.db, 0)).toMatchObject({ tasks: 1, verified_pass_rate: 0 });
   });
+
+  it('leaves out a run whose learning recorded lessons and overlays out of its prompts, whether learning completed or failed (#173)', () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    lab.db.run("UPDATE runs SET state = 'EXHAUSTED' WHERE id = ?", lab.runId);
+    for (const [id, type, inPrompts] of [['orb-2', 'learning.completed', false], ['orb-3', 'learning.failed', false], ['orb-4', 'learning.completed', true]] as const) {
+      createRun(lab.db, { id, repoRoot: lab.repo, goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, lab.clock);
+      lab.db.run("UPDATE runs SET state = 'EXHAUSTED' WHERE id = ?", id);
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, ?, 'test', ?)", id, type, JSON.stringify({ in_prompts: inPrompts }));
+    }
+    // The first run recorded nothing (learning off, or a run from before #173): it counts as before.
+    expect(liveWindow(lab.db, 0)).toMatchObject({ tasks: 2 });
+  });
 });
 
 describe('ReplayEvalRunner.runCase', () => {

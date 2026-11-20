@@ -49804,7 +49804,7 @@ var init_eval_runner = __esm({
     init_start();
     SETTLED_STATES = ["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE"];
     SETTLED_BLOCK = "(state = 'BLOCKED' AND CASE WHEN json_valid(outcome_json) THEN json_extract(outcome_json, '$.decided') = 'EXHAUSTED' ELSE 0 END)";
-    OUT_OF_PROMPTS = "EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.type = 'learning.completed' AND CASE WHEN json_valid(e.data_json) THEN json_extract(e.data_json, '$.in_prompts') = 0 ELSE 0 END)";
+    OUT_OF_PROMPTS = "EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.type IN ('learning.completed', 'learning.failed') AND CASE WHEN json_valid(e.data_json) THEN json_extract(e.data_json, '$.in_prompts') = 0 ELSE 0 END)";
     ReplayEvalRunner = class {
       o;
       spent = 0;
@@ -57071,7 +57071,7 @@ async function finalizeRun(ctx) {
   try {
     await learnAtTerminal(ctx);
   } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.failed", ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500), in_prompts: ctx.snapshot.config.knowledge?.lessons_in_prompts === true }, ctx.clock.now()));
   }
   if (listWorkers(ctx.db, { runId: ctx.run.id, role: "curator" }).length > 0) {
     try {
