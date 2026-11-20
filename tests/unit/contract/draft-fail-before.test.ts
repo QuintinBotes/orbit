@@ -16,7 +16,7 @@ import { BASELINE, planner, snapshot } from './fixtures.ts';
 
 type PlannerCriterion = PlannerOutput['criteria'][number];
 
-const criterion = (key: string, statement: string, mandatory = true): PlannerCriterion => ({ key, statement, mandatory, ui: false, proof: ['unit tests'], check_ids: ['reports-tests'], changes: [] });
+const criterion = (key: string, statement: string, mandatory = true): PlannerCriterion => ({ key, statement, mandatory, ui: false, proof: ['unit tests'], check_ids: ['reports-tests'], changes: [], kind: 'change', tests: [] });
 
 function input(criteria: PlannerCriterion[], goal = 'Add round_price to shop.pricing, with unit tests that fail before the change and pass after.'): DraftContractInput {
   return { goal, plannerOutput: planner({ criteria }), snapshot: snapshot(), baselineRevision: BASELINE, taskId: 'ORB-001' };

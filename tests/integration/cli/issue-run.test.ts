@@ -17,7 +17,7 @@ import { stateDbPath } from '../../../src/controller/start.ts';
 import { FakeIssueReader, FAKE_ISSUES_FILE } from '../../../src/intake/github.ts';
 import { ISSUE_BODY_MAX_CHARS, readIssueGoal } from '../../../src/intake/issue.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
-import { argvCalls, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
+import { argvCalls, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, PROOF_PASSES, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
 
 const SPEC = readFileSync(fileURLToPath(new URL('../../fixtures/specs/calc-mul.md', import.meta.url)), 'utf8');
 const BUG = 'add returns the wrong sum.\n\n### Steps to reproduce\n\n1. Call `mul(2, 3)`.\n2. It throws, because mul does not exist.\n';
@@ -57,7 +57,7 @@ function issuePlanner(keys: string[]): object {
   return {
     structured: {
       ...PLANNER_OUTPUT,
-      criteria: keys.map((key) => ({ key, statement: `the planner's own wording for ${key}`, mandatory: false, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] })),
+      criteria: keys.map((key) => ({ key, statement: `the planner's own wording for ${key}`, mandatory: false, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }], kind: 'change', tests: ['tests/mul.test.mjs'] })),
     },
   };
 }
@@ -228,7 +228,8 @@ describe('orbit run --issue', () => {
   it('story 3, scenario 1: an issue labelled bug with a reproduction starts as a repair with the reproduction as its fail-before criterion', async () => {
     const l = lab();
     issues(l).put({ number: 7, title: 'mul is missing', body: BUG, labels: ['bug'] });
-    writeScenario(l, baseScenario({ planner: [issuePlanner(['REPRO'])], implementer: [implementFor(['AC-1'])] }));
+    // A bug runs under required, so its tree goes through the proof checks before it is done (issue #200).
+    writeScenario(l, baseScenario({ planner: [issuePlanner(['REPRO'])], implementer: [implementFor(['AC-1'])], ...PROOF_PASSES }));
     const r = await cli(l, ['run', '--issue', '#7', '--foreground', '--policy', l.configPath]);
     const id = /^run (orb-\S+) started/m.exec(r.out)?.[1];
     expect(id, `${r.out}\n${r.err}`).toBeTruthy();

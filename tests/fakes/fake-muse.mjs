@@ -4,7 +4,7 @@
 // answers with `--json` JSONL envelopes. See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, renderPlaceholders, roleFromSchema, sleep, spawnGrandchild } from './scenario.mjs';
+import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, proofRole, renderPlaceholders, roleFromSchema, sleep, spawnGrandchild } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -130,7 +130,7 @@ if (!promptFile) {
   process.exit(0);
 }
 
-const loaded = loadStep(role, env);
+const loaded = loadStep(proofRole(role, prompt, env), env);
 const call = loaded.call;
 const step = renderPlaceholders(loaded.step, prompt);
 logArgv(env, { tool: 'muse', role, call, argv, envKeys: Object.keys(env).sort(), cwd: workspace, promptBytes: prompt.length });

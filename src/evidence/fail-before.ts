@@ -86,7 +86,7 @@ export const REPAIR_PROBE_DECISION_KIND = 'review.repair-probe';
  */
 export interface ProbeFlavour {
   /** The directory under evidence/<seq>/ that keeps its attempts' logs, and its ref namespace under refs/orbit/<run>/. */
-  name: 'fail-before' | 'repair-probe';
+  name: 'fail-before' | 'repair-probe' | 'criterion-probe' | 'criterion-candidate';
   /** The decision a completed probe records, and whose decisive results a later probe of the same tree reuses. */
   decisionKind: string;
   /** The tree the probe starts from, as a reason names it. */
@@ -105,8 +105,15 @@ export const REPAIR_CONTROL: ProbeFlavour = Object.freeze({ name: 'repair-probe'
  * pass after in one place: a test that fails only for the probe checkout's path fails here too.
  */
 export const REPAIR_REPAIRED: ProbeFlavour = Object.freeze({ name: 'repair-probe', decisionKind: REPAIR_PROBE_DECISION_KIND, base: 'the pre-repair tree', where: 'on the repaired tree in the probe checkout' });
+/**
+ * A criterion's mapped tests, each run alone (its check's tests_command), on the base revision with the candidate's
+ * test-owned paths (issue #200, FR-003): a change criterion's tests must fail there, a keep criterion's must pass.
+ */
+export const CRITERION_PROBE: ProbeFlavour = Object.freeze({ name: 'criterion-probe', decisionKind: 'verification.criterion-probe', base: 'the base revision', where: 'on the base revision with the new tests' });
+/** The same commands on the candidate's own tree, where each mapped test must pass. */
+export const CRITERION_CANDIDATE: ProbeFlavour = Object.freeze({ name: 'criterion-candidate', decisionKind: 'verification.criterion-candidate', base: 'the base revision', where: 'on the candidate' });
 /** One flavour per evidence directory, for the cleanup of interrupted attempts. */
-const FLAVOURS: readonly ProbeFlavour[] = [FAIL_BEFORE_PROBE, REPAIR_PROBE];
+const FLAVOURS: readonly ProbeFlavour[] = [FAIL_BEFORE_PROBE, REPAIR_PROBE, CRITERION_PROBE, CRITERION_CANDIDATE];
 
 export interface ProbeAttempt {
   attempt: number;
@@ -679,6 +686,8 @@ export interface ProbeRequest {
   flavour?: ProbeFlavour;
   /** What tells this candidate's probes of the flavour apart in their ref (probeRef): a repair probe's attempt and tree. */
   refPart?: string;
+  /** Definitions of checks the policy does not name (a criterion's test run alone); the policy's own otherwise. */
+  definitions?: ReadonlyMap<string, CheckDefinition>;
 }
 
 export interface ProbeResult {
@@ -890,7 +899,7 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   if ('refused' in built) return result(null, notEstablished(checkIds, 'refused-tree', (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
 
-  const defs = new Map(checkIds.map((id) => [id, snapshot.config.checks[id]!] as const));
+  const defs = new Map(checkIds.map((id) => [id, req.definitions?.get(id) ?? snapshot.config.checks[id]!] as const));
   const configHashes = new Map(checkIds.map((id) => [id, configHashFor(snapshot, defs.get(id)!)] as const));
   const earlier = reusable(db, runner.run.id, flavour.decisionKind, probeTree, runner.run.policyHash, configHashes);
   const toRun = checkIds.filter((id) => !earlier.has(id));
@@ -996,6 +1005,11 @@ export interface FailBeforeEvidence {
   skipped: { cause: NotEstablishedCause; reason: string } | null;
   /** Criteria a person accepted without fail-before for this candidate's tree. */
   accepted: readonly { criterionId: string; questionId: string; by: string }[];
+  /**
+   * Under `required`, for a contract that maps tests to criteria: each criterion's own entry (criterionProofEntry), which
+   * replaces the check-wide judgement (issue #200, FR-003).
+   */
+  criteria?: ReadonlyMap<string, CriterionFailBefore>;
 }
 
 /**

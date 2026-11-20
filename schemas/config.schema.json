@@ -579,7 +579,11 @@
         "mandatory": { "type": "boolean" },
         "flaky_reruns": { "type": "integer", "minimum": 0, "maximum": 5 },
         "kind": { "enum": ["command", "playwright"] },
-        "category": { "enum": ["test", "lint", "typecheck", "build", "sast", "ui", "other"] }
+        "category": { "enum": ["test", "lint", "typecheck", "build", "sast", "ui", "other"] },
+        "tests_command": {
+          "$ref": "#/$defs/argv",
+          "description": "argv, executed without a shell, that runs only the test files appended to it (one argument each, relative to cwd): how a criterion's mapped tests run alone for its fail-before (issue #200)."
+        }
       }
     },
     "ui": {
