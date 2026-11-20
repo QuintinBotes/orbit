@@ -462,6 +462,8 @@ Use transactions, owner leases, heartbeats, process reconciliation, and atomic a
 
 API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets. Time a run spends paused, or BLOCKED waiting for a person, is not charged to the wall-time budget.
 
+A worker session's turn cap is the 75th percentile of the turns that earlier successful sessions of the same role and task class took, within a configured floor and ceiling and never above the hard cap; with no history the configured default applies. From 80% of its cap a session is told how many turns remain. An implementer session that reaches that point and states what remains gets one extension for its attempt, and its unfinished work is neither verified nor diagnosed as a defect; a session the cap stops is recorded as `turn-cap`.
+
 ### Initial allowance
 
 Classify task difficulty using acceptance-criterion count, subsystem coupling, external integrations, baseline health, ambiguity, security impact, UI complexity, repository familiarity, and test availability. Record why an allowance was selected.
@@ -529,11 +531,11 @@ Escalate using observed difficulty, not worker confidence. Increase reasoning ef
 - Keep full logs in artifacts and send relevant excerpts.
 - Retrieve repository context on demand.
 - Maintain compact contracts, decisions, and repair briefs.
-- Use supported prompt caching.
+- Use supported prompt caching: stable prompt content comes before volatile content.
 - Avoid repeating this entire document in each worker.
 - Set role-specific output budgets.
 - Preserve evidence references and hashes in handoffs.
-- Track input/output/cached tokens and cost per accepted run.
+- Track input/output/cached tokens and cost per accepted run, and per role with its cache hit ratio; warn when a role's ratio is under the threshold.
 
 ### Agent scheduling
 

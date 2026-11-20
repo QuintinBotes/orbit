@@ -217,7 +217,18 @@
           }
         },
         "repeated_failure_threshold": { "type": "integer", "minimum": 1, "maximum": 100 },
-        "final_reserve_fraction": { "type": "number", "minimum": 0, "maximum": 0.9 }
+        "final_reserve_fraction": { "type": "number", "minimum": 0, "maximum": 0.9 },
+        "turn_cap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["floor", "ceiling", "default", "reminder_fraction"],
+          "properties": {
+            "floor": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "ceiling": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "default": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "reminder_fraction": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+          }
+        }
       }
     },
     "agents": {

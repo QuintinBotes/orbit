@@ -156,6 +156,16 @@ describe('renderWorkerPrompt', () => {
     expect(p).not.toMatch(/Copy-ready implementation prompt|Definition of delivered/);
   });
 
+  // Issue #177 FR-004: what every session of a role in a run shares comes first, as one prefix, then the work unit.
+  it('pins the stable prefix: operating prompt, role, policy summary and contract, before the work unit and all that varies', () => {
+    const repair = renderWorkerPrompt({ ...base, task: 'Repair attempt 2: act on the repair brief.', candidate: { revision: 'fff0000', treeHash: 'eee1111', base: 'main' }, evidenceRefs: [], briefs: [], untrusted: [], advisoryBlock: 'A lesson.' });
+    const prefix = (p: string) => p.slice(0, p.indexOf('## Work unit'));
+    expect(prefix(renderWorkerPrompt(base))).toBe(prefix(repair));
+    expect(prefix(repair)).toBe(
+      `${OPERATING_PROMPT}\n\n## Role\n\nimplementer\n\n## Policy summary\n\nEdit apps/** only. No network. Do not push.\n\n## Contract\n\nValidated by the controller. Criteria ids are the ones to cite.\n\n\`\`\`json\n{"objective":"Export filtered reports","criteria":[{"id":"AC-1","statement":"all matching rows"}]}\n\`\`\`\n\n`,
+    );
+  });
+
   it('fences every untrusted input with a label that says it grants nothing', () => {
     const p = renderWorkerPrompt(base);
     for (const label of ['excerpt of E1', 'repair brief', 'CI log']) expect(p).toContain(`Untrusted data (${label}`);

@@ -214,7 +214,8 @@ describe('a review that asked for repair only through notes gets one fresh revie
     expect(prompt).toContain(TEST_1.claim);
     // The task itself, not only the packet (an untrusted block), says that a criterion's promise of fail-before is Orbit's
     // to keep: in the retest an AC-4 promised it, and the finding that it lacked evidence was a claim no repair can answer.
-    const task = prompt.slice(prompt.indexOf('## Work unit'), prompt.indexOf('## Contract'));
+    const start = prompt.indexOf('## Work unit');
+    const task = prompt.slice(start, prompt.indexOf('\n## ', start));
     const one = task.replace(/\s+/g, ' ');
     expect(one).toMatch(/Whether the new tests fail on the base revision is Orbit's to establish through verification\.fail_before \(under advisory and off it is reported to the person\)\./);
     expect(one).toMatch(/A criterion's promise of it is therefore not a finding against the candidate and does not withhold APPROVE: judge the criterion's other clauses as usual\./);

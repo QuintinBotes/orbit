@@ -30,7 +30,7 @@ import { listFindings, listReviews } from '../review/store.ts';
 import { readSecurityPolicy } from '../review/resolve.ts';
 import { REVIEWER_FAILED_KIND, SAME_PROVIDER_APPROVED_KIND, type ReviewerFailure, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
-import { summarizeUsage } from '../routing/usage.ts';
+import { summarizeUsage, usageByRole } from '../routing/usage.ts';
 import { BudgetLedger, grantNote, spendBreakdown } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import type { SpendBreakdown } from '../scheduling/types.ts';
@@ -135,6 +135,8 @@ export interface FinalReport {
     tokens: { input: number; output: number; cache_read: number; cache_write: number };
     /** What the cost budget charged and what that adds to the reported spend; absent in reports written before it existed. */
     spend?: SpendBreakdown;
+    /** Input, cached input, output and cost per role with its cache hit ratio, and cost per accepted task (issue #177); absent in older reports. */
+    usage_by_role?: RoleUsageReport;
   } | null;
   unverified: string[];
   residual_risks: string[];
@@ -200,6 +202,26 @@ export interface WriteReportOptions {
   clock: Clock;
   /** The verified snapshot, when there is one; a report for a run whose policy failed verification omits budget limits. */
   snapshot?: PolicySnapshot | null;
+}
+
+/** A role whose cached share of prompt tokens is under this is warned about: its cache prefix is likely broken. */
+export const CACHE_HIT_WARNING_RATIO = 0.5;
+
+export interface RoleUsageReport {
+  roles: { role: string; sessions: number; input_tokens: number; cached_input_tokens: number; output_tokens: number; cost_usd: number; cache_hit_ratio: number | null }[];
+  cache_hit_threshold: number;
+  /** One line per role whose cache hit ratio is under the threshold. */
+  warnings: string[];
+  /** The run's model cost when its one task was accepted (the run SUCCEEDED); null otherwise. */
+  cost_per_accepted_task: number | null;
+}
+
+function roleUsageReport(db: OrbitDb, runId: string, acceptedCostUsd: number | null): RoleUsageReport {
+  const roles = usageByRole(db, runId).map((t) => ({ role: t.role, sessions: t.records, input_tokens: t.inputTokens, cached_input_tokens: t.cacheReadTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd, cache_hit_ratio: t.cacheHitRatio }));
+  const warnings = roles
+    .filter((r) => r.cache_hit_ratio !== null && r.cache_hit_ratio < CACHE_HIT_WARNING_RATIO)
+    .map((r) => `${r.role}: cache hit ratio ${r.cache_hit_ratio} is under ${CACHE_HIT_WARNING_RATIO}; check that its prompt keeps a stable prefix and its model is not switched mid-session`);
+  return { roles, cache_hit_threshold: CACHE_HIT_WARNING_RATIO, warnings, cost_per_accepted_task: acceptedCostUsd };
 }
 
 /**
@@ -269,6 +291,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     }
   }
   if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
+  budget = { ...budget, usage_by_role: roleUsageReport(db, run.id, run.state === 'SUCCEEDED' ? usage.totals.costUsd : null) };
 
   const unverified = [...(ev?.report.unverified ?? [])];
   for (const c of criteria) if (c.mandatory && c.status !== 'supported') unverified.push(`${c.id} is ${c.status}`);
@@ -631,7 +654,10 @@ export function renderMarkdown(r: FinalReport): string {
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`;
     // A session recorded before 0.3.1 whose transcript is gone has only its num_turns, which is not what the cap counts.
     const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
-    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
+    const byRole = (b.usage_by_role?.roles ?? []).map((u) => `role ${u.role}: ${u.input_tokens} in, ${u.cached_input_tokens} cached in, ${u.output_tokens} out, $${u.cost_usd.toFixed(4)}, cache hit ratio ${u.cache_hit_ratio ?? 'unavailable'}`);
+    const perTask = b.usage_by_role ? [`cost per accepted task: ${b.usage_by_role.cost_per_accepted_task === null ? 'none (no task accepted)' : `$${b.usage_by_role.cost_per_accepted_task.toFixed(4)}`}`] : [];
+    const cacheWarnings = (b.usage_by_role?.warnings ?? []).map((w) => `warning: ${w}`);
+    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`, ...byRole, ...perTask, ...cacheWarnings]), '');
   }
   out.push('## Not verified', '', list(r.unverified), '');
   out.push('## Residual risks', '', list(r.residual_risks), '');
