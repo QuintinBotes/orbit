@@ -52779,7 +52779,7 @@ function changedLines(diff) {
   for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
     const start = Number(m[1]);
     const count5 = m[2] === void 0 ? 1 : Number(m[2]);
-    if (count5 === 0) out.add(Math.max(start, 1));
+    if (count5 === 0) out.add(Math.max(start, 1)).add(start + 1);
     for (let i = 0; i < count5; i++) out.add(start + i);
   }
   return out;
@@ -59788,11 +59788,15 @@ function criterionTests(contract, snapshot2, isTestOwned) {
     const tests = [...new Set(c.tests ?? [])].map((path) => {
       if (!safeTestPath(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a repository-relative path` };
       if (!isTestOwned(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a test file, so it cannot prove ${c.id} on its own` };
-      const checkId = (c.check_ids ?? []).find((id) => {
+      const runners = (c.check_ids ?? []).filter((id) => {
         const def = snapshot2.config.checks[id];
-        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def) && safeTestPath(relativeToCheck(def, path));
+        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def);
       });
-      if (checkId === void 0) return { path, checkId: null, unitId: null, problem: `no check ${c.id} cites has a tests_command that runs ${path} alone` };
+      const checkId = runners.find((id) => safeTestPath(relativeToCheck(snapshot2.config.checks[id], path)));
+      if (checkId === void 0) {
+        const problem = runners.length > 0 ? `${path} is "${relativeToCheck(snapshot2.config.checks[runners[0]], path)}" in check ${runners[0]}'s directory, which its tests_command would read as an option` : `no check ${c.id} cites has a tests_command that runs ${path} alone`;
+        return { path, checkId: null, unitId: null, problem };
+      }
       return { path, checkId, unitId: unitIdFor(checkId, path), problem: null };
     });
     return { criterionId: c.id, kind, tests };
@@ -67899,7 +67903,7 @@ function extractRequirements(texts) {
   for (const text2 of texts) {
     let fenced2 = false;
     for (const line3 of text2.split(/\r?\n/)) {
-      const raw = line3.replace(/(?<![\w*])(\*\*|__|\*|_)(MUST(?:\s+NOT)?)\1(?![\w*])/g, "$2");
+      const raw = line3.replace(/(?<![\w*])(\*{1,3}|_{1,3})(MUST(?:\s+NOT)?)\1(?![\w*])/g, "$2").replace(/\bMUST(\s+)(\*{1,3}|_{1,3})NOT\2(?![\w*])/g, "MUST$1NOT");
       if (/^\s*(```|~~~)/.test(raw)) {
         fenced2 = !fenced2;
         continue;

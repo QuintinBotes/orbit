@@ -129,13 +129,15 @@ describe('the function a quoted line lies in, by search (FR-008)', () => {
 
   it('reads the changed lines of a zero-context diff', () => {
     const diff = ['diff --git a/x b/x', '@@ -3 +3 @@', '-a', '+b', '@@ -10,0 +11,2 @@', '+c', '+d', '@@ -20,2 +22,0 @@'].join('\n');
-    expect([...changedLines(diff)]).toEqual([3, 11, 12, 22]);
+    expect([...changedLines(diff)]).toEqual([3, 11, 12, 22, 23]);
   });
 
-  it('FR-008: a change that only deletes lines (an early return removed) still marks its function as changed', () => {
-    const text = ['export function route(x) {', '  const y = x + 1;', '  return y;', '}'].join('\n');
-    const lines = changedLines(['diff --git a/r.ts b/r.ts', '@@ -3 +2,0 @@', '-  if (x) return 0;'].join('\n'));
-    expect([...lines].map((l) => enclosingFunction(text, l)?.name)).toEqual(['route']);
+  it('FR-008: a change that only deletes lines (an early return, a decorator) still marks the function it changed', () => {
+    const text = ['export function route(x) {', '  const y = x + 1;', '  return y;', '}', '', 'export function admin() {', '  return 1;', '}'].join('\n');
+    const names = (hunk: string) => new Set([...changedLines(hunk)].map((l) => enclosingFunction(text, l)?.name));
+    expect(names('@@ -3 +2,0 @@')).toEqual(new Set(['route']));
+    // A decorator removed right above admin(): the line before it is route's, the line after it is admin's.
+    expect(names('@@ -6 +5,0 @@')).toContain('admin');
     expect([...changedLines('@@ -1,2 +0,0 @@')]).toEqual([1]);
   });
 });
@@ -178,6 +180,7 @@ describe('conformance records (FR-005 to FR-008)', () => {
   it('a MUST whose answer says BLOCK or REPAIR_REQUIRED with only info findings is unmet, even with a matching quote', () => {
     const matched = quote('info', '  return failedIssues >= 2;').findings;
     expect(judgeRequirement(requirement({ verdict: 'BLOCK', findings: matched, missing: null }))).toMatchObject({ status: 'unmet', reason: "the conformance answer's verdict BLOCK disagrees with its info findings" });
+    expect(judgeRequirement(requirement({ verdict: 'REPAIR_REQUIRED', findings: matched, missing: null }))).toMatchObject({ status: 'unmet', reason: "the conformance answer's verdict REPAIR_REQUIRED disagrees with its info findings" });
   });
 
   it('US2.3: a changed behaviour at a caller no requirement covers is an open finding, raised once however many answers name it', () => {

@@ -35,7 +35,7 @@ describe('criterionTests: each mapped test and the command that runs it alone (F
 
   it('never hands a check a path that reads as an option once it is made relative to the check\'s directory', () => {
     const [c] = criterionTests(contract({ acceptance_criteria: [{ id: 'AC-1', statement: 's', proof: ['p'], mandatory: true, check_ids: ['unit'], tests: ['app/--passWithNoTests.test.ts'] }] }), snapshot, owned);
-    expect(c!.tests).toEqual([{ path: 'app/--passWithNoTests.test.ts', checkId: null, unitId: null, problem: 'no check AC-1 cites has a tests_command that runs app/--passWithNoTests.test.ts alone' }]);
+    expect(c!.tests).toEqual([{ path: 'app/--passWithNoTests.test.ts', checkId: null, unitId: null, problem: 'app/--passWithNoTests.test.ts is "--passWithNoTests.test.ts" in check unit\'s directory, which its tests_command would read as an option' }]);
   });
 
   it('gives a person-checked criterion no test to run', () => {

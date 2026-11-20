@@ -55,12 +55,16 @@ export function criterionTests(contract: Pick<GoalContract, 'acceptance_criteria
     const tests = [...new Set(c.tests ?? [])].map((path): CriterionTest => {
       if (!safeTestPath(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a repository-relative path` };
       if (!isTestOwned(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a test file, so it cannot prove ${c.id} on its own` };
-      const checkId = (c.check_ids ?? []).find((id) => {
+      const runners = (c.check_ids ?? []).filter((id) => {
         const def = snapshot.config.checks[id];
-        // The argument is the path relative to the check's cwd, so it is that path that must not read as an option.
-        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def) && safeTestPath(relativeToCheck(def, path));
+        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def);
       });
-      if (checkId === undefined) return { path, checkId: null, unitId: null, problem: `no check ${c.id} cites has a tests_command that runs ${path} alone` };
+      // The argument is the path relative to the check's cwd, so it is that path that must not read as an option.
+      const checkId = runners.find((id) => safeTestPath(relativeToCheck(snapshot.config.checks[id]!, path)));
+      if (checkId === undefined) {
+        const problem = runners.length > 0 ? `${path} is "${relativeToCheck(snapshot.config.checks[runners[0]!]!, path)}" in check ${runners[0]}'s directory, which its tests_command would read as an option` : `no check ${c.id} cites has a tests_command that runs ${path} alone`;
+        return { path, checkId: null, unitId: null, problem };
+      }
       return { path, checkId, unitId: unitIdFor(checkId, path), problem: null };
     });
     return { criterionId: c.id, kind, tests };

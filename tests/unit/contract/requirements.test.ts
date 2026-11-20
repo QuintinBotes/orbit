@@ -35,6 +35,10 @@ describe('extractRequirements (issue #200, FR-005)', () => {
       { id: 'FR-009', wording: 'Logs MUST NOT hold tokens.' },
     ]);
     expect(extractRequirements(['Set ALLOW_MUST_FAIL; the job MUST stop.'])).toEqual([{ id: 'MUST-1', wording: 'Set ALLOW_MUST_FAIL; the job MUST stop.' }]);
+    expect(extractRequirements(['The queue MUST **NOT** merge.', 'It ***MUST*** stop.'])).toEqual([
+      { id: 'MUST-1', wording: 'The queue MUST NOT merge.' },
+      { id: 'MUST-2', wording: 'It MUST stop.' },
+    ]);
   });
 
   it('does not end a sentence at a full stop inside a quotation', () => {

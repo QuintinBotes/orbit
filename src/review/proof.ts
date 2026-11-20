@@ -133,8 +133,8 @@ export function changedLines(diff: string): Set<number> {
   for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
     const start = Number(m[1]);
     const count = m[2] === undefined ? 1 : Number(m[2]);
-    // A deletion-only hunk (+start,0) changes the code around new-side line start, so its function is changed too.
-    if (count === 0) out.add(Math.max(start, 1));
+    // A deletion-only hunk (+start,0) removed lines between new-side lines start and start + 1: both functions changed.
+    if (count === 0) out.add(Math.max(start, 1)).add(start + 1);
     for (let i = 0; i < count; i++) out.add(start + i);
   }
   return out;
