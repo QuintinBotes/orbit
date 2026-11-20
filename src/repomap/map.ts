@@ -53,10 +53,10 @@ const SCHEMA = 'orbit.repomap/1';
 const MAX_PARSE_BYTES = 1024 * 1024;
 const KEEP_CACHED = 32;
 /**
- * A generated header: a comment line that opens with `@generated`, or one line that names both the generator's work and
- * DO NOT EDIT. A comment that only mentions a marker (as the top of this file does) is authored code.
+ * A generated header: a comment line with an unquoted `@generated`, or one line that names both the generator's work and
+ * DO NOT EDIT. A comment that quotes a marker (as the top of this file does) is authored code.
  */
-const GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)\s*@generated\b|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
+const GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)[^\n]*?(?<![\w`'"])@generated\b(?![`'"])|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
 
 /** One tracked file as stored: what the tree and the blob say, before anything is resolved against the tree. */
 interface Entry {

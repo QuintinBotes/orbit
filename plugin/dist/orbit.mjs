@@ -36015,7 +36015,7 @@ var init_map2 = __esm({
     SCHEMA = "orbit.repomap/1";
     MAX_PARSE_BYTES = 1024 * 1024;
     KEEP_CACHED = 32;
-    GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)\s*@generated\b|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
+    GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)[^\n]*?(?<![\w`'"])@generated\b(?![`'"])|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
     LIST_MAX = 12;
   }
 });
