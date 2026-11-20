@@ -153,7 +153,7 @@ Keep the manifest in `.claude-plugin/plugin.json` and components at the plugin r
 }
 ```
 
-Validate manifest compatibility against the installed version before shipping.
+Validate manifest compatibility against the installed version before shipping. Every skill must also validate against the Agent Skills format (name, description, license, compatibility, metadata and allowed-tools as that format defines them; the name equals its folder); keys outside it are Claude Code's documented extensions only.
 
 ### Repository-local persistence
 
@@ -197,7 +197,10 @@ orbit pause <run-id>
 orbit resume <run-id>
 orbit cancel <run-id>
 orbit report <run-id>
+orbit export <run-id> --otel
 ```
+
+`orbit init` and every worker read the repository's own instructions, `AGENTS.md`, then `CLAUDE.md`, and record which were read. Init prefers a check command those files document over one derived from manifests and says in the proposal where it read it; workers get both files, as the base revision has them, as untrusted data in their prompt.
 
 `orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly.
 
@@ -829,6 +832,8 @@ Record every model choice, agent spawn/cancellation, allowance extension, policy
 Track verified pass rate, false-pass rate from subsequent review, escalation quality, duplicate failures, time-to-green, spend per accepted task, token/cache usage, concurrency overhead, stale-evidence prevention, and UI defects discovered.
 
 Do not expose sensitive content in logs. Make missing usage measurements explicit.
+
+Use the open conventions other tools read. `orbit export <run-id> --otel` writes a run as OpenTelemetry traces (OTLP/JSON) with a span per worker carrying its model, tokens and cost under the GenAI semantic conventions of one pinned and stated release, since those conventions are still in development; it never includes prompt or source text. The run report, the benchmark scorecard and the spec check result have published JSON Schemas in `schemas/`, and each document names its schema version.
 
 ## 17. Acceptance and fault testing
 

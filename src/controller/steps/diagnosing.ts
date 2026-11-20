@@ -27,7 +27,7 @@ import type { RunContext } from '../context.ts';
 import { routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
@@ -354,6 +354,7 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     evidenceRefs: refs,
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt! })),

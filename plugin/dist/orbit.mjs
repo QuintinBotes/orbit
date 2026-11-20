@@ -751,7 +751,7 @@ function snapshotPolicy(config, input) {
     throw new OrbitError("NOT_FOUND", `repository root does not exist: ${input.repoRoot}`, { code: err.code });
   }
   const checkHashes = {};
-  for (const [id, check] of Object.entries(config.checks)) checkHashes[id] = checkConfigHash(check);
+  for (const [id2, check] of Object.entries(config.checks)) checkHashes[id2] = checkConfigHash(check);
   const snapshot2 = {
     schema: SNAPSHOT_SCHEMA,
     run_id: input.runId,
@@ -1073,10 +1073,10 @@ var require_utils = __commonJS({
       REGEX_SPECIAL_CHARS_GLOBAL
     } = require_constants();
     exports.isObject = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
-    exports.hasRegexChars = (str8) => REGEX_SPECIAL_CHARS.test(str8);
-    exports.isRegexChar = (str8) => str8.length === 1 && exports.hasRegexChars(str8);
-    exports.escapeRegex = (str8) => str8.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
-    exports.toPosixSlashes = (str8) => str8.replace(REGEX_BACKSLASH, "/");
+    exports.hasRegexChars = (str9) => REGEX_SPECIAL_CHARS.test(str9);
+    exports.isRegexChar = (str9) => str9.length === 1 && exports.hasRegexChars(str9);
+    exports.escapeRegex = (str9) => str9.replace(REGEX_SPECIAL_CHARS_GLOBAL, "\\$1");
+    exports.toPosixSlashes = (str9) => str9.replace(REGEX_BACKSLASH, "/");
     exports.isWindows = () => {
       if (typeof navigator !== "undefined" && navigator.platform) {
         const platform3 = navigator.platform.toLowerCase();
@@ -1087,8 +1087,8 @@ var require_utils = __commonJS({
       }
       return false;
     };
-    exports.removeBackslashes = (str8) => {
-      return str8.replace(REGEX_REMOVE_BACKSLASH, (match) => {
+    exports.removeBackslashes = (str9) => {
+      return str9.replace(REGEX_REMOVE_BACKSLASH, (match) => {
         return match === "\\" ? "" : match;
       });
     };
@@ -1178,7 +1178,7 @@ var require_scan = __commonJS({
       const slashes = [];
       const tokens3 = [];
       const parts = [];
-      let str8 = input;
+      let str9 = input;
       let index = -1;
       let start = 0;
       let lastIndex3 = 0;
@@ -1197,10 +1197,10 @@ var require_scan = __commonJS({
       let code2;
       let token = { value: "", depth: 0, isGlob: false };
       const eos = () => index >= length;
-      const peek = () => str8.charCodeAt(index + 1);
+      const peek = () => str9.charCodeAt(index + 1);
       const advance = () => {
         prev = code2;
-        return str8.charCodeAt(++index);
+        return str9.charCodeAt(++index);
       };
       while (index < length) {
         code2 = advance();
@@ -1377,24 +1377,24 @@ var require_scan = __commonJS({
         isExtglob = false;
         isGlob = false;
       }
-      let base = str8;
+      let base = str9;
       let prefix = "";
       let glob = "";
       if (start > 0) {
-        prefix = str8.slice(0, start);
-        str8 = str8.slice(start);
+        prefix = str9.slice(0, start);
+        str9 = str9.slice(start);
         lastIndex3 -= start;
       }
       if (base && isGlob === true && lastIndex3 > 0) {
-        base = str8.slice(0, lastIndex3);
-        glob = str8.slice(lastIndex3);
+        base = str9.slice(0, lastIndex3);
+        glob = str9.slice(lastIndex3);
       } else if (isGlob === true) {
         base = "";
-        glob = str8;
+        glob = str9;
       } else {
-        base = str8;
+        base = str9;
       }
-      if (base && base !== "" && base !== "/" && base !== str8) {
+      if (base && base !== "" && base !== "/" && base !== str9) {
         if (isPathSeparator(base.charCodeAt(base.length - 1))) {
           base = base.slice(0, -1);
         }
@@ -2441,8 +2441,8 @@ var require_parse = __commonJS({
         if (opts2.noglobstar === true) return star;
         return `(${capture}(?:(?!${START_ANCHOR}${opts2.dot ? DOTS_SLASH : DOT_LITERAL}).)*?)`;
       };
-      const create = (str8) => {
-        switch (str8) {
+      const create = (str9) => {
+        switch (str9) {
           case "*":
             return `${nodot}${ONE_CHAR}${star}`;
           case ".*":
@@ -2460,7 +2460,7 @@ var require_parse = __commonJS({
           case "**/.*":
             return `(?:${nodot}${globstar(opts)}${SLASH_LITERAL})?${DOT_LITERAL}${ONE_CHAR}${star}`;
           default: {
-            const match = /^(.*?)\.(\w+)$/.exec(str8);
+            const match = /^(.*?)\.(\w+)$/.exec(str9);
             if (!match) return;
             const source2 = create(match[1]);
             if (!source2) return;
@@ -2491,9 +2491,9 @@ var require_picomatch = __commonJS({
     var picomatch9 = (glob, options, returnState = false) => {
       if (Array.isArray(glob)) {
         const fns = glob.map((input) => picomatch9(input, options, returnState));
-        const arrayMatcher = (str8) => {
+        const arrayMatcher = (str9) => {
           for (const isMatch of fns) {
-            const state2 = isMatch(str8);
+            const state2 = isMatch(str9);
             if (state2) return state2;
           }
           return false;
@@ -2569,7 +2569,7 @@ var require_picomatch = __commonJS({
       const regex = glob instanceof RegExp ? glob : picomatch9.makeRe(glob, options);
       return regex.test(utils.basename(input, { windows: posix7 }));
     };
-    picomatch9.isMatch = (str8, patterns, options) => picomatch9(patterns, options)(str8);
+    picomatch9.isMatch = (str9, patterns, options) => picomatch9(patterns, options)(str9);
     picomatch9.parse = (pattern, options) => {
       if (Array.isArray(pattern)) return pattern.map((p) => picomatch9.parse(p, options));
       return parse6(pattern, { ...options, fastpaths: false });
@@ -7137,8 +7137,8 @@ function indentComment(comment, indent) {
 var stringifyComment, lineComment;
 var init_stringifyComment = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyComment.js"() {
-    stringifyComment = (str8) => str8.replace(/^(?!$)(?: $)?/gm, "#");
-    lineComment = (str8, indent, comment) => str8.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str8.endsWith(" ") ? "" : " ") + comment;
+    stringifyComment = (str9) => str9.replace(/^(?!$)(?: $)?/gm, "#");
+    lineComment = (str9, indent, comment) => str9.endsWith("\n") ? indentComment(comment, indent) : comment.includes("\n") ? "\n" + indentComment(comment, indent) : (str9.endsWith(" ") ? "" : " ") + comment;
   }
 });
 
@@ -7275,15 +7275,15 @@ var init_foldFlowLines = __esm({
 });
 
 // node_modules/yaml/browser/dist/stringify/stringifyString.js
-function lineLengthOverLimit(str8, lineWidth, indentLength) {
+function lineLengthOverLimit(str9, lineWidth, indentLength) {
   if (!lineWidth || lineWidth < 0)
     return false;
   const limit = lineWidth - indentLength;
-  const strLen = str8.length;
+  const strLen = str9.length;
   if (strLen <= limit)
     return false;
   for (let i = 0, start = 0; i < strLen; ++i) {
-    if (str8[i] === "\n") {
+    if (str9[i] === "\n") {
       if (i - start > limit)
         return true;
       start = i + 1;
@@ -7300,11 +7300,11 @@ function doubleQuotedString(value, ctx) {
   const { implicitKey } = ctx;
   const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
   const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
-  let str8 = "";
+  let str9 = "";
   let start = 0;
   for (let i = 0, ch = json3[i]; ch; ch = json3[++i]) {
     if (ch === " " && json3[i + 1] === "\\" && json3[i + 2] === "n") {
-      str8 += json3.slice(start, i) + "\\ ";
+      str9 += json3.slice(start, i) + "\\ ";
       i += 1;
       start = i;
       ch = "\\";
@@ -7313,38 +7313,38 @@ function doubleQuotedString(value, ctx) {
       switch (json3[i + 1]) {
         case "u":
           {
-            str8 += json3.slice(start, i);
+            str9 += json3.slice(start, i);
             const code2 = json3.substr(i + 2, 4);
             switch (code2) {
               case "0000":
-                str8 += "\\0";
+                str9 += "\\0";
                 break;
               case "0007":
-                str8 += "\\a";
+                str9 += "\\a";
                 break;
               case "000b":
-                str8 += "\\v";
+                str9 += "\\v";
                 break;
               case "001b":
-                str8 += "\\e";
+                str9 += "\\e";
                 break;
               case "0085":
-                str8 += "\\N";
+                str9 += "\\N";
                 break;
               case "00a0":
-                str8 += "\\_";
+                str9 += "\\_";
                 break;
               case "2028":
-                str8 += "\\L";
+                str9 += "\\L";
                 break;
               case "2029":
-                str8 += "\\P";
+                str9 += "\\P";
                 break;
               default:
                 if (code2.substr(0, 2) === "00")
-                  str8 += "\\x" + code2.substr(2);
+                  str9 += "\\x" + code2.substr(2);
                 else
-                  str8 += json3.substr(i, 6);
+                  str9 += json3.substr(i, 6);
             }
             i += 5;
             start = i + 1;
@@ -7354,14 +7354,14 @@ function doubleQuotedString(value, ctx) {
           if (implicitKey || json3[i + 2] === '"' || json3.length < minMultiLineLength) {
             i += 1;
           } else {
-            str8 += json3.slice(start, i) + "\n\n";
+            str9 += json3.slice(start, i) + "\n\n";
             while (json3[i + 2] === "\\" && json3[i + 3] === "n" && json3[i + 4] !== '"') {
-              str8 += "\n";
+              str9 += "\n";
               i += 2;
             }
-            str8 += indent;
+            str9 += indent;
             if (json3[i + 2] === " ")
-              str8 += "\\";
+              str9 += "\\";
             i += 1;
             start = i + 1;
           }
@@ -7370,8 +7370,8 @@ function doubleQuotedString(value, ctx) {
           i += 1;
       }
   }
-  str8 = start ? str8 + json3.slice(start) : json3;
-  return implicitKey ? str8 : foldFlowLines(str8, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
+  str9 = start ? str9 + json3.slice(start) : json3;
+  return implicitKey ? str9 : foldFlowLines(str9, indent, FOLD_QUOTED, getFoldOptions(ctx, false));
 }
 function singleQuotedString(value, ctx) {
   if (ctx.options.singleQuote === false || ctx.implicitKey && value.includes("\n") || /[ \t]\n|\n[ \t]/.test(value))
@@ -7493,15 +7493,15 @@ function plainString(item, ctx, onComment, onChompKeep) {
       return quotedString(value, ctx);
     }
   }
-  const str8 = value.replace(/\n+/g, `$&
+  const str9 = value.replace(/\n+/g, `$&
 ${indent}`);
   if (actualString) {
-    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str8);
+    const test = (tag2) => tag2.default && tag2.tag !== "tag:yaml.org,2002:str" && tag2.test?.test(str9);
     const { compat, tags } = ctx.doc.schema;
     if (tags.some(test) || compat?.some(test))
       return quotedString(value, ctx);
   }
-  return implicitKey ? str8 : foldFlowLines(str8, indent, FOLD_FLOW, getFoldOptions(ctx, false));
+  return implicitKey ? str9 : foldFlowLines(str9, indent, FOLD_FLOW, getFoldOptions(ctx, false));
 }
 function stringifyString(item, ctx, onComment, onChompKeep) {
   const { implicitKey, inFlow } = ctx;
@@ -7546,7 +7546,7 @@ var init_stringifyString = __esm({
       lineWidth: ctx.options.lineWidth,
       minContentWidth: ctx.options.minContentWidth
     });
-    containsDocumentMarker = (str8) => /^(%|---|\.\.\.)/m.test(str8);
+    containsDocumentMarker = (str9) => /^(%|---|\.\.\.)/m.test(str9);
     try {
       blockEndNewlines = new RegExp("(^|(?<!\n))\n+(?!\n|$)", "g");
     } catch {
@@ -7661,11 +7661,11 @@ function stringify(item, ctx, onComment, onChompKeep) {
   const props = stringifyProps(node, tagObj, ctx);
   if (props.length > 0)
     ctx.indentAtStart = (ctx.indentAtStart ?? 0) + props.length + 1;
-  const str8 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
+  const str9 = typeof tagObj.stringify === "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
   if (!props)
-    return str8;
-  return isScalar(node) || str8[0] === "{" || str8[0] === "[" ? `${props} ${str8}` : `${props}
-${ctx.indent}${str8}`;
+    return str9;
+  return isScalar(node) || str9[0] === "{" || str9[0] === "[" ? `${props} ${str9}` : `${props}
+${ctx.indent}${str9}`;
 }
 var init_stringify = __esm({
   "node_modules/yaml/browser/dist/stringify/stringify.js"() {
@@ -7697,8 +7697,8 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
   });
   let keyCommentDone = false;
   let chompKeep = false;
-  let str8 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
-  if (!explicitKey && !ctx.inFlow && str8.length > 1024) {
+  let str9 = stringify(key2, ctx, () => keyCommentDone = true, () => chompKeep = true);
+  if (!explicitKey && !ctx.inFlow && str9.length > 1024) {
     if (simpleKeys)
       throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
     explicitKey = true;
@@ -7707,27 +7707,27 @@ function stringifyPair({ key: key2, value }, ctx, onComment, onChompKeep) {
     if (allNullValues || value == null) {
       if (keyCommentDone && onComment)
         onComment();
-      return str8 === "" ? "?" : explicitKey ? `? ${str8}` : str8;
+      return str9 === "" ? "?" : explicitKey ? `? ${str9}` : str9;
     }
   } else if (allNullValues && !simpleKeys || value == null && explicitKey) {
-    str8 = `? ${str8}`;
+    str9 = `? ${str9}`;
     if (keyComment && !keyCommentDone) {
-      str8 += lineComment(str8, ctx.indent, commentString(keyComment));
+      str9 += lineComment(str9, ctx.indent, commentString(keyComment));
     } else if (chompKeep && onChompKeep)
       onChompKeep();
-    return str8;
+    return str9;
   }
   if (keyCommentDone)
     keyComment = null;
   if (explicitKey) {
     if (keyComment)
-      str8 += lineComment(str8, ctx.indent, commentString(keyComment));
-    str8 = `? ${str8}
+      str9 += lineComment(str9, ctx.indent, commentString(keyComment));
+    str9 = `? ${str9}
 ${indent}:`;
   } else {
-    str8 = `${str8}:`;
+    str9 = `${str9}:`;
     if (keyComment)
-      str8 += lineComment(str8, ctx.indent, commentString(keyComment));
+      str9 += lineComment(str9, ctx.indent, commentString(keyComment));
   }
   let vsb, vcb, valueComment;
   if (isNode(value)) {
@@ -7743,7 +7743,7 @@ ${indent}:`;
   }
   ctx.implicitKey = false;
   if (!explicitKey && !keyComment && isScalar(value))
-    ctx.indentAtStart = str8.length + 1;
+    ctx.indentAtStart = str9.length + 1;
   chompKeep = false;
   if (!indentSeq && indentStep.length >= 2 && !ctx.inFlow && !explicitKey && isSeq(value) && !value.flow && !value.tag && !value.anchor) {
     ctx.indent = ctx.indent.substring(2);
@@ -7787,16 +7787,16 @@ ${ctx.indent}`;
   } else if (valueStr === "" || valueStr[0] === "\n") {
     ws = "";
   }
-  str8 += ws + valueStr;
+  str9 += ws + valueStr;
   if (ctx.inFlow) {
     if (valueCommentDone && onComment)
       onComment();
   } else if (valueComment && !valueCommentDone) {
-    str8 += lineComment(str8, ctx.indent, commentString(valueComment));
+    str9 += lineComment(str9, ctx.indent, commentString(valueComment));
   } else if (chompKeep && onChompKeep) {
     onChompKeep();
   }
-  return str8;
+  return str9;
 }
 var init_stringifyPair = __esm({
   "node_modules/yaml/browser/dist/stringify/stringifyPair.js"() {
@@ -8004,31 +8004,31 @@ function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, fl
       }
     }
     chompKeep = false;
-    let str9 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
+    let str10 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
     if (comment2)
-      str9 += lineComment(str9, itemIndent, commentString(comment2));
+      str10 += lineComment(str10, itemIndent, commentString(comment2));
     if (chompKeep && comment2)
       chompKeep = false;
-    lines.push(blockItemPrefix + str9);
+    lines.push(blockItemPrefix + str10);
   }
-  let str8;
+  let str9;
   if (lines.length === 0) {
-    str8 = flowChars.start + flowChars.end;
+    str9 = flowChars.start + flowChars.end;
   } else {
-    str8 = lines[0];
+    str9 = lines[0];
     for (let i = 1; i < lines.length; ++i) {
       const line3 = lines[i];
-      str8 += line3 ? `
+      str9 += line3 ? `
 ${indent}${line3}` : "\n";
     }
   }
   if (comment) {
-    str8 += "\n" + indentComment(commentString(comment), indent);
+    str9 += "\n" + indentComment(commentString(comment), indent);
     if (onComment)
       onComment();
   } else if (chompKeep && onChompKeep)
     onChompKeep();
-  return str8;
+  return str9;
 }
 function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
   const { indent, indentStep, flowCollectionPadding: fcPadding, options: { commentString } } = ctx;
@@ -8071,21 +8071,21 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
     }
     if (comment)
       reqNewline = true;
-    let str8 = stringify(item, itemCtx, () => comment = null);
-    reqNewline || (reqNewline = lines.length > linesAtValue || str8.includes("\n"));
+    let str9 = stringify(item, itemCtx, () => comment = null);
+    reqNewline || (reqNewline = lines.length > linesAtValue || str9.includes("\n"));
     if (i < items.length - 1) {
-      str8 += ",";
+      str9 += ",";
     } else if (ctx.options.trailingComma) {
       if (ctx.options.lineWidth > 0) {
-        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str8.length + 2) > ctx.options.lineWidth);
+        reqNewline || (reqNewline = lines.reduce((sum, line3) => sum + line3.length + 2, 2) + (str9.length + 2) > ctx.options.lineWidth);
       }
       if (reqNewline) {
-        str8 += ",";
+        str9 += ",";
       }
     }
     if (comment)
-      str8 += lineComment(str8, itemIndent, commentString(comment));
-    lines.push(str8);
+      str9 += lineComment(str9, itemIndent, commentString(comment));
+    lines.push(str9);
     linesAtValue = lines.length;
   }
   const { start, end } = flowChars;
@@ -8097,11 +8097,11 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
       reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
     }
     if (reqNewline) {
-      let str8 = start;
+      let str9 = start;
       for (const line3 of lines)
-        str8 += line3 ? `
+        str9 += line3 ? `
 ${indentStep}${indent}${line3}` : "\n";
-      return `${str8}
+      return `${str9}
 ${indent}${end}`;
     } else {
       return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
@@ -8432,7 +8432,7 @@ var init_string = __esm({
       identify: (value) => typeof value === "string",
       default: true,
       tag: "tag:yaml.org,2002:str",
-      resolve: (str8) => str8,
+      resolve: (str9) => str9,
       stringify(item, ctx, onComment, onChompKeep) {
         ctx = Object.assign({ actualString: true }, ctx);
         return stringifyString(item, ctx, onComment, onChompKeep);
@@ -8468,7 +8468,7 @@ var init_bool = __esm({
       default: true,
       tag: "tag:yaml.org,2002:bool",
       test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
-      resolve: (str8) => new Scalar(str8[0] === "t" || str8[0] === "T"),
+      resolve: (str9) => new Scalar(str9[0] === "t" || str9[0] === "T"),
       stringify({ source, value }, ctx) {
         if (source && boolTag.test.test(source)) {
           const sv = source[0] === "t" || source[0] === "T";
@@ -8517,7 +8517,7 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str8) => str8.slice(-3).toLowerCase() === "nan" ? NaN : str8[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str9) => str9.slice(-3).toLowerCase() === "nan" ? NaN : str9[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp = {
@@ -8526,7 +8526,7 @@ var init_float = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
-      resolve: (str8) => parseFloat(str8),
+      resolve: (str9) => parseFloat(str9),
       stringify(node) {
         const num7 = Number(node.value);
         return isFinite(num7) ? num7.toExponential() : stringifyNumber(node);
@@ -8537,11 +8537,11 @@ var init_float = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,
-      resolve(str8) {
-        const node = new Scalar(parseFloat(str8));
-        const dot = str8.indexOf(".");
-        if (dot !== -1 && str8[str8.length - 1] === "0")
-          node.minFractionDigits = str8.length - dot - 1;
+      resolve(str9) {
+        const node = new Scalar(parseFloat(str9));
+        const dot = str9.indexOf(".");
+        if (dot !== -1 && str9[str9.length - 1] === "0")
+          node.minFractionDigits = str9.length - dot - 1;
         return node;
       },
       stringify: stringifyNumber
@@ -8561,14 +8561,14 @@ var init_int = __esm({
   "node_modules/yaml/browser/dist/schema/core/int.js"() {
     init_stringifyNumber();
     intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
-    intResolve = (str8, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str8) : parseInt(str8.substring(offset), radix);
+    intResolve = (str9, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str9) : parseInt(str9.substring(offset), radix);
     intOct = {
       identify: (value) => intIdentify(value) && value >= 0,
       default: true,
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^0o[0-7]+$/,
-      resolve: (str8, _onError, opt) => intResolve(str8, 2, 8, opt),
+      resolve: (str9, _onError, opt) => intResolve(str9, 2, 8, opt),
       stringify: (node) => intStringify(node, 8, "0o")
     };
     int = {
@@ -8576,7 +8576,7 @@ var init_int = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9]+$/,
-      resolve: (str8, _onError, opt) => intResolve(str8, 0, 10, opt),
+      resolve: (str9, _onError, opt) => intResolve(str9, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex = {
@@ -8585,7 +8585,7 @@ var init_int = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^0x[0-9a-fA-F]+$/,
-      resolve: (str8, _onError, opt) => intResolve(str8, 2, 16, opt),
+      resolve: (str9, _onError, opt) => intResolve(str9, 2, 16, opt),
       stringify: (node) => intStringify(node, 16, "0x")
     };
   }
@@ -8634,7 +8634,7 @@ var init_schema2 = __esm({
         identify: (value) => typeof value === "string",
         default: true,
         tag: "tag:yaml.org,2002:str",
-        resolve: (str8) => str8,
+        resolve: (str9) => str9,
         stringify: stringifyJSON
       },
       {
@@ -8651,7 +8651,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:bool",
         test: /^true$|^false$/,
-        resolve: (str8) => str8 === "true",
+        resolve: (str9) => str9 === "true",
         stringify: stringifyJSON
       },
       {
@@ -8659,7 +8659,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:int",
         test: /^-?(?:0|[1-9][0-9]*)$/,
-        resolve: (str8, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str8) : parseInt(str8, 10),
+        resolve: (str9, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str9) : parseInt(str9, 10),
         stringify: ({ value }) => intIdentify2(value) ? value.toString() : JSON.stringify(value)
       },
       {
@@ -8667,7 +8667,7 @@ var init_schema2 = __esm({
         default: true,
         tag: "tag:yaml.org,2002:float",
         test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
-        resolve: (str8) => parseFloat(str8),
+        resolve: (str9) => parseFloat(str9),
         stringify: stringifyJSON
       }
     ];
@@ -8675,9 +8675,9 @@ var init_schema2 = __esm({
       default: true,
       tag: "",
       test: /^/,
-      resolve(str8, onError) {
-        onError(`Unresolved plain scalar ${JSON.stringify(str8)}`);
-        return str8;
+      resolve(str9, onError) {
+        onError(`Unresolved plain scalar ${JSON.stringify(str9)}`);
+        return str9;
       }
     };
     schema2 = [map, seq].concat(jsonScalars, jsonError);
@@ -8705,10 +8705,10 @@ var init_binary = __esm({
        */
       resolve(src, onError) {
         if (typeof atob === "function") {
-          const str8 = atob(src.replace(/[\n\r]/g, ""));
-          const buffer = new Uint8Array(str8.length);
-          for (let i = 0; i < str8.length; ++i)
-            buffer[i] = str8.charCodeAt(i);
+          const str9 = atob(src.replace(/[\n\r]/g, ""));
+          const buffer = new Uint8Array(str9.length);
+          for (let i = 0; i < str9.length; ++i)
+            buffer[i] = str9.charCodeAt(i);
           return buffer;
         } else {
           onError("This environment does not support reading binary tags; either Buffer or atob is required");
@@ -8719,26 +8719,26 @@ var init_binary = __esm({
         if (!value)
           return "";
         const buf = value;
-        let str8;
+        let str9;
         if (typeof btoa === "function") {
           let s = "";
           for (let i = 0; i < buf.length; ++i)
             s += String.fromCharCode(buf[i]);
-          str8 = btoa(s);
+          str9 = btoa(s);
         } else {
           throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
         }
         type ?? (type = Scalar.BLOCK_LITERAL);
         if (type !== Scalar.QUOTE_DOUBLE) {
           const lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth);
-          const n2 = Math.ceil(str8.length / lineWidth);
+          const n2 = Math.ceil(str9.length / lineWidth);
           const lines = new Array(n2);
           for (let i = 0, o = 0; i < n2; ++i, o += lineWidth) {
-            lines[i] = str8.substr(o, lineWidth);
+            lines[i] = str9.substr(o, lineWidth);
           }
-          str8 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
+          str9 = lines.join(type === Scalar.BLOCK_LITERAL ? "\n" : " ");
         }
-        return stringifyString({ comment, type, value: str8 }, ctx, onComment, onChompKeep);
+        return stringifyString({ comment, type, value: str9 }, ctx, onComment, onChompKeep);
       }
     };
   }
@@ -8936,7 +8936,7 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-      resolve: (str8) => str8.slice(-3).toLowerCase() === "nan" ? NaN : str8[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+      resolve: (str9) => str9.slice(-3).toLowerCase() === "nan" ? NaN : str9[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
       stringify: stringifyNumber
     };
     floatExp2 = {
@@ -8945,7 +8945,7 @@ var init_float2 = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "EXP",
       test: /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,
-      resolve: (str8) => parseFloat(str8.replace(/_/g, "")),
+      resolve: (str9) => parseFloat(str9.replace(/_/g, "")),
       stringify(node) {
         const num7 = Number(node.value);
         return isFinite(num7) ? num7.toExponential() : stringifyNumber(node);
@@ -8956,11 +8956,11 @@ var init_float2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:float",
       test: /^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,
-      resolve(str8) {
-        const node = new Scalar(parseFloat(str8.replace(/_/g, "")));
-        const dot = str8.indexOf(".");
+      resolve(str9) {
+        const node = new Scalar(parseFloat(str9.replace(/_/g, "")));
+        const dot = str9.indexOf(".");
         if (dot !== -1) {
-          const f = str8.substring(dot + 1).replace(/_/g, "");
+          const f = str9.substring(dot + 1).replace(/_/g, "");
           if (f[f.length - 1] === "0")
             node.minFractionDigits = f.length;
         }
@@ -8972,34 +8972,34 @@ var init_float2 = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
-function intResolve2(str8, offset, radix, { intAsBigInt }) {
-  const sign = str8[0];
+function intResolve2(str9, offset, radix, { intAsBigInt }) {
+  const sign = str9[0];
   if (sign === "-" || sign === "+")
     offset += 1;
-  str8 = str8.substring(offset).replace(/_/g, "");
+  str9 = str9.substring(offset).replace(/_/g, "");
   if (intAsBigInt) {
     switch (radix) {
       case 2:
-        str8 = `0b${str8}`;
+        str9 = `0b${str9}`;
         break;
       case 8:
-        str8 = `0o${str8}`;
+        str9 = `0o${str9}`;
         break;
       case 16:
-        str8 = `0x${str8}`;
+        str9 = `0x${str9}`;
         break;
     }
-    const n3 = BigInt(str8);
+    const n3 = BigInt(str9);
     return sign === "-" ? BigInt(-1) * n3 : n3;
   }
-  const n2 = parseInt(str8, radix);
+  const n2 = parseInt(str9, radix);
   return sign === "-" ? -1 * n2 : n2;
 }
 function intStringify2(node, radix, prefix) {
   const { value } = node;
   if (intIdentify3(value)) {
-    const str8 = value.toString(radix);
-    return value < 0 ? "-" + prefix + str8.substr(1) : prefix + str8;
+    const str9 = value.toString(radix);
+    return value < 0 ? "-" + prefix + str9.substr(1) : prefix + str9;
   }
   return stringifyNumber(node);
 }
@@ -9014,7 +9014,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "BIN",
       test: /^[-+]?0b[0-1_]+$/,
-      resolve: (str8, _onError, opt) => intResolve2(str8, 2, 2, opt),
+      resolve: (str9, _onError, opt) => intResolve2(str9, 2, 2, opt),
       stringify: (node) => intStringify2(node, 2, "0b")
     };
     intOct2 = {
@@ -9023,7 +9023,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "OCT",
       test: /^[-+]?0[0-7_]+$/,
-      resolve: (str8, _onError, opt) => intResolve2(str8, 1, 8, opt),
+      resolve: (str9, _onError, opt) => intResolve2(str9, 1, 8, opt),
       stringify: (node) => intStringify2(node, 8, "0")
     };
     int2 = {
@@ -9031,7 +9031,7 @@ var init_int2 = __esm({
       default: true,
       tag: "tag:yaml.org,2002:int",
       test: /^[-+]?[0-9][0-9_]*$/,
-      resolve: (str8, _onError, opt) => intResolve2(str8, 0, 10, opt),
+      resolve: (str9, _onError, opt) => intResolve2(str9, 0, 10, opt),
       stringify: stringifyNumber
     };
     intHex2 = {
@@ -9040,7 +9040,7 @@ var init_int2 = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "HEX",
       test: /^[-+]?0x[0-9a-fA-F_]+$/,
-      resolve: (str8, _onError, opt) => intResolve2(str8, 2, 16, opt),
+      resolve: (str9, _onError, opt) => intResolve2(str9, 2, 16, opt),
       stringify: (node) => intStringify2(node, 16, "0x")
     };
   }
@@ -9134,9 +9134,9 @@ var init_set = __esm({
 });
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
-function parseSexagesimal(str8, asBigInt) {
-  const sign = str8[0];
-  const parts = sign === "-" || sign === "+" ? str8.substring(1) : str8;
+function parseSexagesimal(str9, asBigInt) {
+  const sign = str9[0];
+  const parts = sign === "-" || sign === "+" ? str9.substring(1) : str9;
   const num7 = (n2) => asBigInt ? BigInt(n2) : Number(n2);
   const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num7(60) + num7(p), num7(0));
   return sign === "-" ? num7(-1) * res : res;
@@ -9177,7 +9177,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:int",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,
-      resolve: (str8, _onError, { intAsBigInt }) => parseSexagesimal(str8, intAsBigInt),
+      resolve: (str9, _onError, { intAsBigInt }) => parseSexagesimal(str9, intAsBigInt),
       stringify: stringifySexagesimal
     };
     floatTime = {
@@ -9186,7 +9186,7 @@ var init_timestamp = __esm({
       tag: "tag:yaml.org,2002:float",
       format: "TIME",
       test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,
-      resolve: (str8) => parseSexagesimal(str8, false),
+      resolve: (str9) => parseSexagesimal(str9, false),
       stringify: stringifySexagesimal
     };
     timestamp = {
@@ -9197,8 +9197,8 @@ var init_timestamp = __esm({
       // may be omitted altogether, resulting in a date format. In such a case, the time part is
       // assumed to be 00:00:00Z (start of day, UTC).
       test: RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),
-      resolve(str8) {
-        const match = str8.match(timestamp.test);
+      resolve(str9) {
+        const match = str9.match(timestamp.test);
         if (!match)
           throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
         const [, year, month, day, hour, minute, second] = match.map(Number);
@@ -13116,7 +13116,7 @@ var require_code = __commonJS({
     }
     exports._ = _;
     var plus = new _Code("+");
-    function str8(strs, ...args) {
+    function str9(strs, ...args) {
       const expr = [safeStringify(strs[0])];
       let i = 0;
       while (i < args.length) {
@@ -13127,7 +13127,7 @@ var require_code = __commonJS({
       optimize(expr);
       return new _Code(expr);
     }
-    exports.str = str8;
+    exports.str = str9;
     function addCodeArg(code2, arg) {
       if (arg instanceof _Code)
         code2.push(...arg._items);
@@ -13170,7 +13170,7 @@ var require_code = __commonJS({
       return;
     }
     function strConcat(c1, c2) {
-      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str8`${c1}${c2}`;
+      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str9`${c1}${c2}`;
     }
     exports.strConcat = strConcat;
     function interpolate(x) {
@@ -14132,22 +14132,22 @@ var require_util = __commonJS({
       return (0, codegen_1._)`${topSchemaRef}${schemaPath}${(0, codegen_1.getProperty)(keyword)}`;
     }
     exports.schemaRefOrVal = schemaRefOrVal;
-    function unescapeFragment(str8) {
-      return unescapeJsonPointer(decodeURIComponent(str8));
+    function unescapeFragment(str9) {
+      return unescapeJsonPointer(decodeURIComponent(str9));
     }
     exports.unescapeFragment = unescapeFragment;
-    function escapeFragment(str8) {
-      return encodeURIComponent(escapeJsonPointer(str8));
+    function escapeFragment(str9) {
+      return encodeURIComponent(escapeJsonPointer(str9));
     }
     exports.escapeFragment = escapeFragment;
-    function escapeJsonPointer(str8) {
-      if (typeof str8 == "number")
-        return `${str8}`;
-      return str8.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPointer(str9) {
+      if (typeof str9 == "number")
+        return `${str9}`;
+      return str9.replace(/~/g, "~0").replace(/\//g, "~1");
     }
     exports.escapeJsonPointer = escapeJsonPointer;
-    function unescapeJsonPointer(str8) {
-      return str8.replace(/~1/g, "/").replace(/~0/g, "~");
+    function unescapeJsonPointer(str9) {
+      return str9.replace(/~1/g, "/").replace(/~0/g, "~");
     }
     exports.unescapeJsonPointer = unescapeJsonPointer;
     function eachItem(xs, f) {
@@ -15172,8 +15172,8 @@ var require_json_schema_traverse = __commonJS({
         post(schema4, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
       }
     }
-    function escapeJsonPtr(str8) {
-      return str8.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPtr(str9) {
+      return str9.replace(/~/g, "~0").replace(/\//g, "~1");
     }
   }
 });
@@ -15250,10 +15250,10 @@ var require_resolve = __commonJS({
       }
       return count5;
     }
-    function getFullPath(resolver, id = "", normalize4) {
+    function getFullPath(resolver, id2 = "", normalize4) {
       if (normalize4 !== false)
-        id = normalizeId(id);
-      const p = resolver.parse(id);
+        id2 = normalizeId(id2);
+      const p = resolver.parse(id2);
       return _getFullPath(resolver, p);
     }
     exports.getFullPath = getFullPath;
@@ -15263,13 +15263,13 @@ var require_resolve = __commonJS({
     }
     exports._getFullPath = _getFullPath;
     var TRAILING_SLASH_HASH = /#\/?$/;
-    function normalizeId(id) {
-      return id ? id.replace(TRAILING_SLASH_HASH, "") : "";
+    function normalizeId(id2) {
+      return id2 ? id2.replace(TRAILING_SLASH_HASH, "") : "";
     }
     exports.normalizeId = normalizeId;
-    function resolveUrl(resolver, baseId, id) {
-      id = normalizeId(id);
-      return resolver.resolve(baseId, id);
+    function resolveUrl(resolver, baseId, id2) {
+      id2 = normalizeId(id2);
+      return resolver.resolve(baseId, id2);
     }
     exports.resolveUrl = resolveUrl;
     var ANCHOR2 = /^[a-z_][-a-z0-9._]*$/i;
@@ -15999,7 +15999,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref3];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve29.call(this, root, ref3);
+      let _sch = resolve30.call(this, root, ref3);
       if (_sch === void 0) {
         const schema4 = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref3];
         const { schemaId } = this.opts;
@@ -16026,7 +16026,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve29(root, ref3) {
+    function resolve30(root, ref3) {
       let sch;
       while (typeof (sch = this.refs[ref3]) == "string")
         ref3 = sch;
@@ -16039,8 +16039,8 @@ var require_compile = __commonJS({
       if (Object.keys(root.schema).length > 0 && refPath === baseId) {
         return getJsonPointer.call(this, p, root);
       }
-      const id = (0, resolve_1.normalizeId)(refPath);
-      const schOrRef = this.refs[id] || this.schemas[id];
+      const id2 = (0, resolve_1.normalizeId)(refPath);
+      const schOrRef = this.refs[id2] || this.schemas[id2];
       if (typeof schOrRef == "string") {
         const sch = resolveSchema.call(this, root, schOrRef);
         if (typeof (sch === null || sch === void 0 ? void 0 : sch.schema) !== "object")
@@ -16051,7 +16051,7 @@ var require_compile = __commonJS({
         return;
       if (!schOrRef.validate)
         compileSchema2.call(this, schOrRef);
-      if (id === (0, resolve_1.normalizeId)(ref3)) {
+      if (id2 === (0, resolve_1.normalizeId)(ref3)) {
         const { schema: schema4 } = schOrRef;
         const { schemaId } = this.opts;
         const schId = schema4[schemaId];
@@ -16270,10 +16270,10 @@ var require_utils2 = __commonJS({
         isIPV6: true
       };
     }
-    function findToken(str8, token) {
+    function findToken(str9, token) {
       let ind = 0;
-      for (let i = 0; i < str8.length; i++) {
-        if (str8[i] === token) ind++;
+      for (let i = 0; i < str9.length; i++) {
+        if (str9[i] === token) ind++;
       }
       return ind;
     }
@@ -16890,7 +16890,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve29(baseURI, relativeURI, options) {
+    function resolve30(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -17281,7 +17281,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize: normalize4,
-      resolve: resolve29,
+      resolve: resolve30,
       resolveComponent,
       equal,
       serialize: serialize3,
@@ -17343,7 +17343,7 @@ var require_core = __commonJS({
     var util_1 = require_util();
     var $dataRefSchema = require_data();
     var uri_1 = require_uri();
-    var defaultRegExp = (str8, flags) => new RegExp(str8, flags);
+    var defaultRegExp = (str9, flags) => new RegExp(str9, flags);
     defaultRegExp.code = "new RegExp";
     var META_IGNORE_OPTIONS = ["removeAdditional", "useDefaults", "coerceTypes"];
     var EXT_SCOPE_NAMES = /* @__PURE__ */ new Set([
@@ -17534,15 +17534,15 @@ var require_core = __commonJS({
             this.addSchema(sch, void 0, _meta, _validateSchema);
           return this;
         }
-        let id;
+        let id2;
         if (typeof schema4 === "object") {
           const { schemaId } = this.opts;
-          id = schema4[schemaId];
-          if (id !== void 0 && typeof id != "string") {
+          id2 = schema4[schemaId];
+          if (id2 !== void 0 && typeof id2 != "string") {
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key2 = (0, resolve_1.normalizeId)(key2 || id);
+        key2 = (0, resolve_1.normalizeId)(key2 || id2);
         this._checkUnique(key2);
         this.schemas[key2] = this._addSchema(schema4, _meta, key2, _validateSchema, true);
         return this;
@@ -17621,11 +17621,11 @@ var require_core = __commonJS({
           case "object": {
             const cacheKey = schemaKeyRef;
             this._cache.delete(cacheKey);
-            let id = schemaKeyRef[this.opts.schemaId];
-            if (id) {
-              id = (0, resolve_1.normalizeId)(id);
-              delete this.schemas[id];
-              delete this.refs[id];
+            let id2 = schemaKeyRef[this.opts.schemaId];
+            if (id2) {
+              id2 = (0, resolve_1.normalizeId)(id2);
+              delete this.schemas[id2];
+              delete this.refs[id2];
             }
             return this;
           }
@@ -17732,10 +17732,10 @@ var require_core = __commonJS({
         }
       }
       _addSchema(schema4, meta, baseId, validateSchema = this.opts.validateSchema, addSchema = this.opts.addUsedSchema) {
-        let id;
+        let id2;
         const { schemaId } = this.opts;
         if (typeof schema4 == "object") {
-          id = schema4[schemaId];
+          id2 = schema4[schemaId];
         } else {
           if (this.opts.jtd)
             throw new Error("schema must be object");
@@ -17745,7 +17745,7 @@ var require_core = __commonJS({
         let sch = this._cache.get(schema4);
         if (sch !== void 0)
           return sch;
-        baseId = (0, resolve_1.normalizeId)(id || baseId);
+        baseId = (0, resolve_1.normalizeId)(id2 || baseId);
         const localRefs = resolve_1.getSchemaRefs.call(this, schema4, baseId);
         sch = new compile_1.SchemaEnv({ schema: schema4, schemaId, meta, baseId, localRefs });
         this._cache.set(sch.schema, sch);
@@ -17758,9 +17758,9 @@ var require_core = __commonJS({
           this.validateSchema(schema4, true);
         return sch;
       }
-      _checkUnique(id) {
-        if (this.schemas[id] || this.refs[id]) {
-          throw new Error(`schema with key or id "${id}" already exists`);
+      _checkUnique(id2) {
+        if (this.schemas[id2] || this.refs[id2]) {
+          throw new Error(`schema with key or id "${id2}" already exists`);
         }
       }
       _compileSchemaEnv(sch) {
@@ -18138,16 +18138,16 @@ var require_ucs2length = __commonJS({
   "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    function ucs2length(str8) {
-      const len = str8.length;
+    function ucs2length(str9) {
+      const len = str9.length;
       let length = 0;
       let pos = 0;
       let value;
       while (pos < len) {
         length++;
-        value = str8.charCodeAt(pos++);
+        value = str9.charCodeAt(pos++);
         if (value >= 55296 && value <= 56319 && pos < len) {
-          value = str8.charCodeAt(pos);
+          value = str9.charCodeAt(pos);
           if ((value & 64512) === 56320)
             pos++;
         }
@@ -20605,8 +20605,8 @@ var require_formats = __commonJS({
     }
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function date(str8) {
-      const matches = DATE.exec(str8);
+    function date(str9) {
+      const matches = DATE.exec(str9);
       if (!matches)
         return false;
       const year = +matches[1];
@@ -20625,8 +20625,8 @@ var require_formats = __commonJS({
     }
     var TIME2 = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
-      return function time(str8) {
-        const matches = TIME2.exec(str8);
+      return function time(str9) {
+        const matches = TIME2.exec(str9);
         if (!matches)
           return false;
         const hr = +matches[1];
@@ -20672,8 +20672,8 @@ var require_formats = __commonJS({
     var DATE_TIME_SEPARATOR = /t|\s/i;
     function getDateTime(strictTimeZone) {
       const time = getTime(strictTimeZone);
-      return function date_time(str8) {
-        const dateTime = str8.split(DATE_TIME_SEPARATOR);
+      return function date_time(str9) {
+        const dateTime = str9.split(DATE_TIME_SEPARATOR);
         return dateTime.length === 2 && date(dateTime[0]) && time(dateTime[1]);
       };
     }
@@ -20698,13 +20698,13 @@ var require_formats = __commonJS({
     }
     var NOT_URI_FRAGMENT = /\/|:/;
     var URI = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
-    function uri(str8) {
-      return NOT_URI_FRAGMENT.test(str8) && URI.test(str8);
+    function uri(str9) {
+      return NOT_URI_FRAGMENT.test(str9) && URI.test(str9);
     }
     var BYTE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;
-    function byte(str8) {
+    function byte(str9) {
       BYTE.lastIndex = 0;
-      return BYTE.test(str8);
+      return BYTE.test(str9);
     }
     var MIN_INT32 = -(2 ** 31);
     var MAX_INT32 = 2 ** 31 - 1;
@@ -20718,11 +20718,11 @@ var require_formats = __commonJS({
       return true;
     }
     var Z_ANCHOR = /[^\\]\\Z/;
-    function regex(str8) {
-      if (Z_ANCHOR.test(str8))
+    function regex(str9) {
+      if (Z_ANCHOR.test(str9))
         return false;
       try {
-        new RegExp(str8);
+        new RegExp(str9);
         return true;
       } catch (e) {
         return false;
@@ -21808,8 +21808,8 @@ var init_near_miss = __esm({
 });
 
 // src/policy/review.ts
-function isSupportedReviewProvider(id) {
-  return SUPPORTED_REVIEW_PROVIDERS.some((family) => id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`));
+function isSupportedReviewProvider(id2) {
+  return SUPPORTED_REVIEW_PROVIDERS.some((family) => id2 === family || id2.startsWith(`${family}-`) || id2.startsWith(`${family}_`));
 }
 function legacyReviewFallback(review) {
   const required = review.independent_provider_required;
@@ -21970,9 +21970,9 @@ function notificationsPolicy(config) {
   if (!n2) return d;
   return { ...d, ...n2, remote_answers: { ...d.remote_answers, ...n2.remote_answers ?? {} } };
 }
-function defaultCheck(id) {
+function defaultCheck(id2) {
   return {
-    id,
+    id: id2,
     command: [],
     shell: false,
     cwd: ".",
@@ -22069,16 +22069,16 @@ function capModelCost(config, usd4) {
 function isolationLimits(config) {
   return { ...defaultIsolationLimits(), ...config.isolation.limits ?? {} };
 }
-function defaultProvider(id, eligible) {
-  const base = { command: id, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
-  const family = providerFamily(id);
+function defaultProvider(id2, eligible) {
+  const base = { command: id2, data_policy_eligible: eligible, model: null, reasoning_effort: null, extra_args: [] };
+  const family = providerFamily(id2);
   if (family === "codex") return { ...base, tier: "auto", review_reasoning_effort: DEFAULT_REVIEW_REASONING_EFFORT };
   if (family === "muse") return { ...base, command: "muse", model: MUSE_DEFAULT_MODEL, reasoning_effort: MUSE_DEFAULT_REASONING_EFFORT, tier: "auto" };
   return base;
 }
-function providerFamily(id) {
+function providerFamily(id2) {
   for (const family of ["claude", "codex", "muse"]) {
-    if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
+    if (id2 === family || id2.startsWith(`${family}-`) || id2.startsWith(`${family}_`)) return family;
   }
   return null;
 }
@@ -22164,13 +22164,13 @@ function normalizeChecks(raw, problems) {
   if (raw === void 0 || raw === null) return {};
   if (!isPlainObject(raw)) return raw;
   const out = {};
-  for (const [id, def] of Object.entries(raw)) {
+  for (const [id2, def] of Object.entries(raw)) {
     if (!isPlainObject(def)) {
-      out[id] = def;
+      out[id2] = def;
       continue;
     }
-    const where2 = `checks.${id}`;
-    if (def.id !== void 0 && def.id !== id) problems.push(`${where2}.id: must equal the key "${id}" (got ${JSON.stringify(def.id)})`);
+    const where2 = `checks.${id2}`;
+    if (def.id !== void 0 && def.id !== id2) problems.push(`${where2}.id: must equal the key "${id2}" (got ${JSON.stringify(def.id)})`);
     let command = def.command;
     const shell = def.shell === true;
     if (typeof command === "string") {
@@ -22183,7 +22183,7 @@ function normalizeChecks(raw, problems) {
     }
     if (command === void 0) problems.push(`${where2}.command: required`);
     const category = def.category ?? (def.kind === "playwright" ? "ui" : "test");
-    out[id] = { ...defaultCheck(id), ...def, command: command ?? [], category };
+    out[id2] = { ...defaultCheck(id2), ...def, command: command ?? [], category };
   }
   return out;
 }
@@ -22224,13 +22224,13 @@ function normalizeProviders(raw, defaults) {
   if (raw === void 0 || raw === null) return { ...defaults };
   if (!isPlainObject(raw)) return raw;
   const out = { ...defaults };
-  for (const [id, def] of Object.entries(raw)) {
+  for (const [id2, def] of Object.entries(raw)) {
     if (!isPlainObject(def)) {
-      out[id] = def;
+      out[id2] = def;
       continue;
     }
-    const inherit = def.review_reasoning_effort === void 0 && typeof def.reasoning_effort === "string" && providerFamily(id) === "codex" ? { review_reasoning_effort: def.reasoning_effort } : {};
-    out[id] = { ...defaults[id] ?? defaultProvider(id, false), ...inherit, ...def };
+    const inherit = def.review_reasoning_effort === void 0 && typeof def.reasoning_effort === "string" && providerFamily(id2) === "codex" ? { review_reasoning_effort: def.reasoning_effort } : {};
+    out[id2] = { ...defaults[id2] ?? defaultProvider(id2, false), ...inherit, ...def };
   }
   return out;
 }
@@ -22521,11 +22521,11 @@ var init_config = __esm({
           problems.push(`review.preferred_provider: "${r.preferred_provider}" is not defined under providers`);
         }
         const list3 = r.providers ?? [];
-        list3.forEach((id, i) => {
-          if (!isSupportedReviewProvider(id)) {
-            problems.push(`review.providers[${i}]: "${id}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(", ")} (another provider needs an Orbit adapter before it can review)`);
-          } else if (!Object.hasOwn(c.providers, id)) {
-            problems.push(`review.providers[${i}]: "${id}" is not defined under providers`);
+        list3.forEach((id2, i) => {
+          if (!isSupportedReviewProvider(id2)) {
+            problems.push(`review.providers[${i}]: "${id2}" is not a supported independent review provider; supported: ${SUPPORTED_REVIEW_PROVIDERS.join(", ")} (another provider needs an Orbit adapter before it can review)`);
+          } else if (!Object.hasOwn(c.providers, id2)) {
+            problems.push(`review.providers[${i}]: "${id2}" is not defined under providers`);
           }
         });
         if (list3.length === 0 && r.when_unavailable === "block") {
@@ -22533,36 +22533,36 @@ var init_config = __esm({
         }
       },
       function providerTiers(c, problems) {
-        for (const [id, provider] of Object.entries(c.providers)) {
+        for (const [id2, provider] of Object.entries(c.providers)) {
           if (!isPlainObject(provider) || provider.tier === void 0) continue;
-          const family = providerFamily(id);
+          const family = providerFamily(id2);
           if (family === "claude") {
-            problems.push(`providers.${id}.tier: is a setting of the Codex and Muse reviewers only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
+            problems.push(`providers.${id2}.tier: is a setting of the Codex and Muse reviewers only; Claude workers choose their own tier (os-sandbox with an exported credential and sandbox-runtime, else claude-sandbox)`);
           } else if (family === "codex" && provider.tier === "muse-sandbox") {
-            problems.push(`providers.${id}.tier: muse-sandbox is a Muse tier; a Codex provider takes auto, os-sandbox or codex-sandbox`);
+            problems.push(`providers.${id2}.tier: muse-sandbox is a Muse tier; a Codex provider takes auto, os-sandbox or codex-sandbox`);
           } else if (family === "muse" && provider.tier === "codex-sandbox") {
-            problems.push(`providers.${id}.tier: codex-sandbox is a Codex tier; a Muse provider takes auto, os-sandbox or muse-sandbox`);
+            problems.push(`providers.${id2}.tier: codex-sandbox is a Codex tier; a Muse provider takes auto, os-sandbox or muse-sandbox`);
           }
         }
       },
       function providerReviewEfforts(c, problems) {
-        for (const [id, provider] of Object.entries(c.providers)) {
+        for (const [id2, provider] of Object.entries(c.providers)) {
           if (!isPlainObject(provider) || provider.review_reasoning_effort === void 0) continue;
-          const family = providerFamily(id);
+          const family = providerFamily(id2);
           if (family !== "codex") {
-            const own = family === "muse" ? `a Muse reviewer's effort is providers.${id}.reasoning_effort` : `a Claude reviewer's effort comes from providers.${id}.reasoning_effort and the router`;
-            problems.push(`providers.${id}.review_reasoning_effort: is a setting of the Codex reviewer only; ${own}`);
+            const own = family === "muse" ? `a Muse reviewer's effort is providers.${id2}.reasoning_effort` : `a Claude reviewer's effort comes from providers.${id2}.reasoning_effort and the router`;
+            problems.push(`providers.${id2}.review_reasoning_effort: is a setting of the Codex reviewer only; ${own}`);
           } else if (!REVIEW_REASONING_EFFORTS.includes(provider.review_reasoning_effort)) {
-            problems.push(`providers.${id}.review_reasoning_effort: ${JSON.stringify(provider.review_reasoning_effort)} is not one of ${REVIEW_REASONING_EFFORTS.join(", ")}`);
+            problems.push(`providers.${id2}.review_reasoning_effort: ${JSON.stringify(provider.review_reasoning_effort)} is not one of ${REVIEW_REASONING_EFFORTS.join(", ")}`);
           }
         }
       },
       function museEfforts(c, problems) {
-        for (const [id, provider] of Object.entries(c.providers)) {
-          if (!isPlainObject(provider) || providerFamily(id) !== "muse") continue;
+        for (const [id2, provider] of Object.entries(c.providers)) {
+          if (!isPlainObject(provider) || providerFamily(id2) !== "muse") continue;
           const effort = provider.reasoning_effort;
           if (effort !== null && effort !== void 0 && !MUSE_REASONING_EFFORTS.includes(effort)) {
-            problems.push(`providers.${id}.reasoning_effort: ${JSON.stringify(effort)} is not one of ${MUSE_REASONING_EFFORTS.join(", ")}`);
+            problems.push(`providers.${id2}.reasoning_effort: ${JSON.stringify(effort)} is not one of ${MUSE_REASONING_EFFORTS.join(", ")}`);
           }
         }
       },
@@ -22584,8 +22584,8 @@ var init_config = __esm({
         }
       },
       function checkDefinitions(c, problems) {
-        for (const [id, check] of Object.entries(c.checks)) {
-          const where2 = `checks.${id}`;
+        for (const [id2, check] of Object.entries(c.checks)) {
+          const where2 = `checks.${id2}`;
           const cwdProblem = relativeDirProblem(check.cwd);
           if (cwdProblem) problems.push(`${where2}.cwd: ${cwdProblem}`);
           if (check.command.length > 0 && check.command[0].trim() === "") problems.push(`${where2}.command: the program must not be empty`);
@@ -22603,10 +22603,10 @@ var init_config = __esm({
         if (c.ui === null) return;
         globList(c.ui.ui_paths, "ui.ui_paths", problems);
         globList(c.ui.visual.baseline_globs, "ui.visual.baseline_globs", problems);
-        for (const id of c.ui.journey_check_ids) {
-          const check = c.checks[id];
-          if (!check) problems.push(`ui.journey_check_ids: "${id}" is not defined under checks`);
-          else if (check.kind !== "playwright") problems.push(`ui.journey_check_ids: "${id}" must be a check of kind "playwright"`);
+        for (const id2 of c.ui.journey_check_ids) {
+          const check = c.checks[id2];
+          if (!check) problems.push(`ui.journey_check_ids: "${id2}" is not defined under checks`);
+          else if (check.kind !== "playwright") problems.push(`ui.journey_check_ids: "${id2}" must be a check of kind "playwright"`);
         }
       },
       function routingReferences(c, problems) {
@@ -23653,7 +23653,7 @@ var init_clock = __esm({
     "use strict";
     systemClock = {
       now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve29) => setTimeout(resolve29, ms))
+      sleep: (ms) => new Promise((resolve30) => setTimeout(resolve30, ms))
     };
   }
 });
@@ -24167,27 +24167,27 @@ function registerController(db, input, clock) {
     return getController(db, input.id);
   });
 }
-function heartbeatController(db, id, clock, opts = {}) {
+function heartbeatController(db, id2, clock, opts = {}) {
   const now = clock.now();
-  const res = opts.progress ? db.run("UPDATE controllers SET heartbeat_at = ?, last_progress_at = ? WHERE id = ? AND stopped_at IS NULL", now, now, id) : db.run("UPDATE controllers SET heartbeat_at = ? WHERE id = ? AND stopped_at IS NULL", now, id);
+  const res = opts.progress ? db.run("UPDATE controllers SET heartbeat_at = ?, last_progress_at = ? WHERE id = ? AND stopped_at IS NULL", now, now, id2) : db.run("UPDATE controllers SET heartbeat_at = ? WHERE id = ? AND stopped_at IS NULL", now, id2);
   return res.changes === 1;
 }
-function markControllerStopped(db, id, reason, clock) {
+function markControllerStopped(db, id2, reason, clock) {
   const now = clock.now();
   return db.tx(() => {
-    const c = getController(db, id);
+    const c = getController(db, id2);
     if (c.stoppedAt !== null) return c;
-    db.run("UPDATE controllers SET stopped_at = ?, stop_reason = ? WHERE id = ? AND stopped_at IS NULL", now, reason, id);
-    return getController(db, id);
+    db.run("UPDATE controllers SET stopped_at = ?, stop_reason = ? WHERE id = ? AND stopped_at IS NULL", now, reason, id2);
+    return getController(db, id2);
   });
 }
-function getController(db, id) {
-  const row = db.get("SELECT * FROM controllers WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no controller ${id}`);
+function getController(db, id2) {
+  const row = db.get("SELECT * FROM controllers WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no controller ${id2}`);
   return toRecord(row);
 }
-function findController(db, id) {
-  const row = db.get("SELECT * FROM controllers WHERE id = ?", id);
+function findController(db, id2) {
+  const row = db.get("SELECT * FROM controllers WHERE id = ?", id2);
   return row ? toRecord(row) : null;
 }
 function listControllers(db, opts = {}) {
@@ -25062,13 +25062,13 @@ function createRun(db, input, clock, actor = "cli") {
     return getRun(db, input.id);
   });
 }
-function getRun(db, id) {
-  const row = db.get("SELECT * FROM runs WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no run ${id}`);
+function getRun(db, id2) {
+  const row = db.get("SELECT * FROM runs WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no run ${id2}`);
   return toRecord2(row);
 }
-function findRun(db, id) {
-  const row = db.get("SELECT * FROM runs WHERE id = ?", id);
+function findRun(db, id2) {
+  const row = db.get("SELECT * FROM runs WHERE id = ?", id2);
   return row ? toRecord2(row) : null;
 }
 function listRuns(db, opts = {}) {
@@ -25575,10 +25575,10 @@ function toolchainCacheRoot(orbitHome, repoKey2) {
   return join8(orbitHome, "toolchains", repoKey2);
 }
 function toolchainRegistryHosts(ids) {
-  return [...new Set(ordered(ids).flatMap((id) => TOOLCHAIN_PROFILES[id].registryHosts))];
+  return [...new Set(ordered(ids).flatMap((id2) => TOOLCHAIN_PROFILES[id2].registryHosts))];
 }
 function ordered(ids) {
-  return TOOLCHAIN_IDS.filter((id) => ids.includes(id));
+  return TOOLCHAIN_IDS.filter((id2) => ids.includes(id2));
 }
 function commandWords(command) {
   return command.flatMap((part) => part.split(/[\s;&|()<>`]+/)).filter((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)).map((w) => basename3(w));
@@ -25594,8 +25594,8 @@ function hasMarker(dir, markers) {
 }
 function detectToolchains(input) {
   const words2 = commandWords(input.command ?? []);
-  return TOOLCHAIN_IDS.filter((id) => {
-    const p = TOOLCHAIN_PROFILES[id];
+  return TOOLCHAIN_IDS.filter((id2) => {
+    const p = TOOLCHAIN_PROFILES[id2];
     return words2.some((w) => p.executables.test(w)) || (input.roots ?? []).some((r) => hasMarker(r, p.markers));
   });
 }
@@ -25616,7 +25616,7 @@ function toolchainLayout(input) {
   const cachePath = (name) => input.cacheRoot !== null ? join8(input.cacheRoot, name) : join8(input.scratchRoot, "cache", name);
   const ownPath = (name) => join8(input.scratchRoot, "cache", name);
   const scratchPath = (name) => join8(input.scratchRoot, name);
-  const modeOf = (id) => input.installs?.includes(id) ? "install" : input.mode;
+  const modeOf = (id2) => input.installs?.includes(id2) ? "install" : input.mode;
   const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
   const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
   const platform3 = input.platform ?? process.platform;
@@ -25625,9 +25625,9 @@ function toolchainLayout(input) {
   const caches = [];
   const writableCaches = [];
   const readOnly = [];
-  for (const id of ids) {
-    const p = TOOLCHAIN_PROFILES[id];
-    const mode = modeOf(id);
+  for (const id2 of ids) {
+    const p = TOOLCHAIN_PROFILES[id2];
+    const mode = modeOf(id2);
     const fetch2 = mode === "fetch";
     const dirs = {
       mode,
@@ -25642,7 +25642,7 @@ function toolchainLayout(input) {
       networkHosts: input.networkHosts
     };
     Object.assign(env, p.env(dirs));
-    for (const name of p.caches) caches.push({ toolchain: id, name, path: cachePath(name) });
+    for (const name of p.caches) caches.push({ toolchain: id2, name, path: cachePath(name) });
     if (shared) (mode === "install" ? writableCaches : readOnly).push(...p.caches.map(cachePath));
     directories.push(...p.caches.map(cachePath), ...fetch2 ? p.caches.map(ownPath) : [], ...p.scratch.map(scratchPath));
   }
@@ -26530,8 +26530,8 @@ function compileObject(schema4, label) {
   const cached = byHash.get(key2);
   if (cached) return cached;
   const a = instance();
-  const id = schema4.$id;
-  if (typeof id === "string") a.removeSchema(id);
+  const id2 = schema4.$id;
+  if (typeof id2 === "string") a.removeSchema(id2);
   let fn;
   try {
     fn = a.compile(schema4);
@@ -26822,16 +26822,16 @@ function workerPlugins(initPlugins, check) {
   for (const e of entries) {
     if (isBuiltinPlugin(e)) continue;
     const r = isRecord2(e) ? e : {};
-    const id = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
+    const id2 = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
     const name = typeof r.name === "string" ? r.name : null;
-    const scope = typeof r.scope === "string" ? r.scope : id === null ? null : check.installed?.find((p) => p.id === id)?.scope ?? null;
-    out.push({ id, name, scope, allowed_by: allowance(id, scope, check.policy) });
+    const scope = typeof r.scope === "string" ? r.scope : id2 === null ? null : check.installed?.find((p) => p.id === id2)?.scope ?? null;
+    out.push({ id: id2, name, scope, allowed_by: allowance(id2, scope, check.policy) });
   }
   return out;
 }
-function allowance(id, scope, policy) {
-  if (id === null) return null;
-  if (policy.allowed.includes(id)) return "agents.allowed_plugins";
+function allowance(id2, scope, policy) {
+  if (id2 === null) return null;
+  if (policy.allowed.includes(id2)) return "agents.allowed_plugins";
   if (scope === "managed" && policy.allowManaged) return "agents.allow_managed_plugins";
   return null;
 }
@@ -27748,10 +27748,10 @@ function createCandidateOverlay(store, draft, scope) {
   if (draft.lesson_ids.length === 0) throw new OrbitError("SCHEMA_INVALID", "an overlay must cite the lessons it was distilled from");
   return store.tx(() => {
     const cited = [];
-    for (const id of draft.lesson_ids) {
-      const lesson = store.requireLesson(id);
+    for (const id2 of draft.lesson_ids) {
+      const lesson = store.requireLesson(id2);
       if (scope === "global" && (lesson.scope !== "global" || !lesson.code_free)) {
-        throw new OrbitError("POLICY_DENIED", `a global overlay may cite only global, code-free lessons; ${id} is not one`);
+        throw new OrbitError("POLICY_DENIED", `a global overlay may cite only global, code-free lessons; ${id2} is not one`);
       }
       cited.push(lesson);
     }
@@ -27776,17 +27776,17 @@ function createCandidateOverlay(store, draft, scope) {
     return overlay;
   });
 }
-function move(store, id, to, patch = {}) {
-  const overlay = store.getOverlay(id);
-  if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id}`);
+function move(store, id2, to, patch = {}) {
+  const overlay = store.getOverlay(id2);
+  if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id2}`);
   if (!canTransitionOverlay(overlay.status, to)) {
-    throw new OrbitError("TRANSITION_INVALID", `overlay ${id}: ${overlay.status} -> ${to} is not an allowed transition`);
+    throw new OrbitError("TRANSITION_INVALID", `overlay ${id2}: ${overlay.status} -> ${to} is not an allowed transition`);
   }
-  store.updateOverlay(id, { status: to, ...patch });
-  return store.getOverlay(id);
+  store.updateOverlay(id2, { status: to, ...patch });
+  return store.getOverlay(id2);
 }
-function startEvaluation(store, id) {
-  return store.tx(() => move(store, id, "evaluating"));
+function startEvaluation(store, id2) {
+  return store.tx(() => move(store, id2, "evaluating"));
 }
 function metricProblems(label, m) {
   const out = [];
@@ -27812,7 +27812,7 @@ function decideAdoption(input) {
   }
   return { adopt: true, improvements: cmp.improvements, regressions: [], reason: `improves ${qualifying.join(", ")} with no regression` };
 }
-function completeEvaluation(store, id, input) {
+function completeEvaluation(store, id2, input) {
   const decision = decideAdoption(input);
   const now = store.clock.now();
   const evaluation = {
@@ -27825,18 +27825,18 @@ function completeEvaluation(store, id, input) {
     decided_at: new Date(now).toISOString()
   };
   return store.tx(() => {
-    const overlay = store.getOverlay(id);
-    if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id}`);
-    if (overlay.status !== "evaluating") throw new OrbitError("TRANSITION_INVALID", `overlay ${id} is ${overlay.status}, not evaluating`);
+    const overlay = store.getOverlay(id2);
+    if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id2}`);
+    if (overlay.status !== "evaluating") throw new OrbitError("TRANSITION_INVALID", `overlay ${id2} is ${overlay.status}, not evaluating`);
     if (input.baseline_overlay_id !== void 0) {
       const activeId = store.activeOverlay(overlay.role, overlay.scope)?.id ?? null;
       if (activeId !== input.baseline_overlay_id) {
-        throw new OrbitError("CONCURRENT_UPDATE", `overlay ${id} was evaluated against ${input.baseline_overlay_id ?? "the base prompt"}, but the active overlay is now ${activeId ?? "none"}; evaluate it again`);
+        throw new OrbitError("CONCURRENT_UPDATE", `overlay ${id2} was evaluated against ${input.baseline_overlay_id ?? "the base prompt"}, but the active overlay is now ${activeId ?? "none"}; evaluate it again`);
       }
     }
     store.insertEvalRun({
       id: newId("evl"),
-      overlay_id: id,
+      overlay_id: id2,
       kind: "replay",
       suite_id: input.suite_id,
       cases: input.cases,
@@ -27845,22 +27845,22 @@ function completeEvaluation(store, id, input) {
       decision: decision.adopt ? "adopt" : "reject",
       detail: { reason: decision.reason, improvements: decision.improvements, regressions: decision.regressions }
     });
-    if (!decision.adopt) return { overlay: move(store, id, "rejected", { eval: evaluation }), decision };
+    if (!decision.adopt) return { overlay: move(store, id2, "rejected", { eval: evaluation }), decision };
     const current = store.activeOverlay(overlay.role, overlay.scope);
-    if (current && current.id !== id) move(store, current.id, "retired");
-    return { overlay: move(store, id, "active", { eval: evaluation, activatedAt: now, parentId: current?.id ?? null }), decision };
+    if (current && current.id !== id2) move(store, current.id, "retired");
+    return { overlay: move(store, id2, "active", { eval: evaluation, activatedAt: now, parentId: current?.id ?? null }), decision };
   });
 }
-function rollbackOverlay(store, id, reason) {
+function rollbackOverlay(store, id2, reason) {
   return store.tx(() => {
-    const result2 = rollback(store, id);
-    store.insertEvalRun({ id: newId("evl"), overlay_id: id, kind: "live", suite_id: null, cases: null, baseline: null, metrics: {}, decision: "rollback", detail: { reason } });
+    const result2 = rollback(store, id2);
+    store.insertEvalRun({ id: newId("evl"), overlay_id: id2, kind: "live", suite_id: null, cases: null, baseline: null, metrics: {}, decision: "rollback", detail: { reason } });
     return result2;
   });
 }
-function rollback(store, id) {
+function rollback(store, id2) {
   return store.tx(() => {
-    const rolledBack = move(store, id, "rolled_back");
+    const rolledBack = move(store, id2, "rolled_back");
     let restored = null;
     const parent = rolledBack.parent_id ? store.getOverlay(rolledBack.parent_id) : null;
     if (parent && parent.status === "retired" && !store.activeOverlay(parent.role, parent.scope)) {
@@ -27885,15 +27885,15 @@ function checkLiveRegression(window, baseline, thresholds = DEFAULT_REGRESSION_T
   if (window.false_pass_rate - baseline.false_pass_rate > thresholds.falsePassRise) breaches.push("false_pass_rate");
   return breaches.length > 0 ? { rollback: true, breaches, reason: `live regression in ${breaches.join(", ")}` } : { rollback: false, breaches: [], reason: "within thresholds" };
 }
-function applyLiveCheck(store, id, window, baseline, thresholds = DEFAULT_REGRESSION_THRESHOLDS) {
+function applyLiveCheck(store, id2, window, baseline, thresholds = DEFAULT_REGRESSION_THRESHOLDS) {
   const decision = checkLiveRegression(window, baseline, thresholds);
   return store.tx(() => {
-    const overlay = store.getOverlay(id);
-    if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id}`);
-    if (overlay.status !== "active") throw new OrbitError("TRANSITION_INVALID", `overlay ${id} is ${overlay.status}, not active`);
+    const overlay = store.getOverlay(id2);
+    if (!overlay) throw new OrbitError("NOT_FOUND", `no overlay ${id2}`);
+    if (overlay.status !== "active") throw new OrbitError("TRANSITION_INVALID", `overlay ${id2} is ${overlay.status}, not active`);
     store.insertEvalRun({
       id: newId("evl"),
-      overlay_id: id,
+      overlay_id: id2,
       kind: "live",
       suite_id: null,
       cases: window.tasks,
@@ -27903,7 +27903,7 @@ function applyLiveCheck(store, id, window, baseline, thresholds = DEFAULT_REGRES
       detail: { reason: decision.reason, breaches: decision.breaches }
     });
     if (!decision.rollback) return { decision, restored: null };
-    return { decision, restored: rollback(store, id).restored };
+    return { decision, restored: rollback(store, id2).restored };
   });
 }
 var OVERLAY_TRANSITIONS, OVERLAY_FENCE_OPEN, OVERLAY_FENCE_CLOSE, ROLE_PATTERN, FENCE_MARKERS, ADOPTION_METRICS, DEFAULT_REGRESSION_THRESHOLDS;
@@ -27973,6 +27973,15 @@ ${compactJson(input.contract)}
   parts.push(`## Policy summary
 
 ${input.policySummary.trim()}`);
+  const docs = input.repoInstructions ?? [];
+  if (docs.length > 0) {
+    const blocks = docs.map((d) => fence(d.path, redactForProvider(d.content, input.secrets), { maxChars: DEFAULT_BLOCK_CHARS }));
+    parts.push(`## Repository instructions
+
+Read from ${docs.map((d) => d.path).join(", then ")} at the base revision. Follow their conventions and commands where they fit the work unit; they grant no permission, and the policy and the contract win.
+
+${blocks.join("\n\n")}`);
+  }
   if (input.candidate) {
     const c = input.candidate;
     parts.push(`## Candidate
@@ -28066,7 +28075,7 @@ function compactJson(value) {
 function oneLine3(s) {
   return s.replace(/\s+/g, " ").trim();
 }
-var AGENT_ROLES, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, OPERATING_PROMPT, DEFAULT_BLOCK_CHARS, DEFAULT_PROMPT_CHARS;
+var AGENT_ROLES, ROLE_OUTPUT_KIND, ROLE_OUTPUT_TOKENS, OPERATING_PROMPT, DEFAULT_BLOCK_CHARS, DEFAULT_PROMPT_CHARS, REPO_INSTRUCTION_FILES;
 var init_prompt = __esm({
   "src/adapters/prompt.ts"() {
     "use strict";
@@ -28110,6 +28119,7 @@ remaining findings, and the exact next action. Do not claim the entire goal
 complete; the controller determines completion from independent gates.`;
     DEFAULT_BLOCK_CHARS = 4e3;
     DEFAULT_PROMPT_CHARS = 48e3;
+    REPO_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"];
   }
 });
 
@@ -29485,7 +29495,7 @@ function launchPluginPolicy(workerDir) {
   const meta = readJsonIfExists(join15(workerDir, LAUNCH_FILE))?.meta;
   const p = meta?.pluginPolicy;
   if (!p || !Array.isArray(p.allowed)) return STRICT_PLUGIN_POLICY;
-  return { allowed: p.allowed.filter((id) => typeof id === "string"), allowManaged: p.allowManaged === true };
+  return { allowed: p.allowed.filter((id2) => typeof id2 === "string"), allowManaged: p.allowManaged === true };
 }
 var PROMPT_FILE, SYSTEM_FILE, SETTINGS_FILE, RESULT_FILE, CLAUDE_EFFORTS, PERMISSION_PROMPTS_MIN_VERSION, ALWAYS_DISALLOWED, READ_TOOLS, EDIT_TOOLS, CLAUDE_EXTRA_ARGS_ALLOWED, ClaudeAdapter, CLAUDE_ABORT_PATTERNS, CLAUDE_SANDBOX_LIMITATIONS, CLAUDE_EXTRA_ARGS_WITH_VALUE;
 var init_claude = __esm({
@@ -30207,20 +30217,20 @@ function parseSeedFile(raw) {
   for (const m of file.models) {
     if (!isObject2(m) || typeof m.model_id !== "string" || !m.model_id) fail3("every model needs a model_id");
     const model = m;
-    const id = model.model_id;
-    if (seen.has(id)) fail3(`duplicate model_id ${id}`);
-    seen.add(id);
-    if (typeof model.provider !== "string") fail3(`${id}: provider missing`);
-    if (!Array.isArray(model.surfaces) || !model.surfaces.every((s) => SURFACES.includes(s))) fail3(`${id}: unknown surface`);
+    const id2 = model.model_id;
+    if (seen.has(id2)) fail3(`duplicate model_id ${id2}`);
+    seen.add(id2);
+    if (typeof model.provider !== "string") fail3(`${id2}: provider missing`);
+    if (!Array.isArray(model.surfaces) || !model.surfaces.every((s) => SURFACES.includes(s))) fail3(`${id2}: unknown surface`);
     const limits = model.limits;
-    if (!isObject2(limits) || !isPositive(limits.context_tokens) || !isPositive(limits.max_output_tokens)) fail3(`${id}: limits must be positive numbers`);
+    if (!isObject2(limits) || !isPositive(limits.context_tokens) || !isPositive(limits.max_output_tokens)) fail3(`${id2}: limits must be positive numbers`);
     if (model.pricing !== null) {
       const p = model.pricing;
       for (const k of ["input", "output", "cache_write_5m", "cache_write_1h", "cache_read"]) {
-        if (!isObject2(p) || !isNonNegative(p[k])) fail3(`${id}: pricing.${k} must be a non-negative number`);
+        if (!isObject2(p) || !isNonNegative(p[k])) fail3(`${id2}: pricing.${k} must be a non-negative number`);
       }
     }
-    if (!isObject2(model.capabilities) || !Array.isArray(model.capabilities.effort_levels)) fail3(`${id}: capabilities.effort_levels missing`);
+    if (!isObject2(model.capabilities) || !Array.isArray(model.capabilities.effort_levels)) fail3(`${id2}: capabilities.effort_levels missing`);
   }
   if (!Array.isArray(file.runtime_providers)) fail3("runtime_providers must be an array");
   return raw;
@@ -31036,8 +31046,8 @@ function parseDoctorChecks(stdout) {
       }
     }
   } else if (checks && typeof checks === "object") {
-    for (const [id, c] of Object.entries(checks)) {
-      if (c && typeof c === "object" && typeof c.status === "string") out[id] = c.status;
+    for (const [id2, c] of Object.entries(checks)) {
+      if (c && typeof c === "object" && typeof c.status === "string") out[id2] = c.status;
     }
   } else {
     return null;
@@ -31927,22 +31937,22 @@ var init_types3 = __esm({
 
 // src/adapters/index.ts
 import { basename as basename10 } from "node:path";
-function providerKind(id) {
+function providerKind(id2) {
   for (const kind of ["claude", "codex", "muse"]) {
-    if (id === kind || id.startsWith(`${kind}-`) || id.startsWith(`${kind}_`)) return kind;
+    if (id2 === kind || id2.startsWith(`${kind}-`) || id2.startsWith(`${kind}_`)) return kind;
   }
-  throw new OrbitError("CONFIG_INVALID", `providers.${id}: unknown provider; Orbit has adapters for claude, codex and muse`, { provider: id });
+  throw new OrbitError("CONFIG_INVALID", `providers.${id2}: unknown provider; Orbit has adapters for claude, codex and muse`, { provider: id2 });
 }
 function commandArgv(command) {
   return /\.(mjs|cjs|js)$/.test(basename10(command)) ? [process.execPath, command] : [command];
 }
-function createAdapter(id, config, deps = {}) {
-  const kind = providerKind(id);
-  const common = { baseEnv: deps.baseEnv, shimCommand: deps.shimCommand, graceMs: deps.graceMs, clock: deps.clock, isolation: deps.isolation ?? null, extraArgs: config.extra_args, id };
+function createAdapter(id2, config, deps = {}) {
+  const kind = providerKind(id2);
+  const common = { baseEnv: deps.baseEnv, shimCommand: deps.shimCommand, graceMs: deps.graceMs, clock: deps.clock, isolation: deps.isolation ?? null, extraArgs: config.extra_args, id: id2 };
   const fake = fakeKind(config.command);
   if (fake) {
-    if (fake !== kind) throw new OrbitError("CONFIG_INVALID", `providers.${id}.command points at the ${fake} fake`, { provider: id });
-    return fake === "claude" ? new FakeAdapter({ provider: "claude", script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models("claude") : void 0 }) : fake === "codex" ? new FakeAdapter({ provider: "codex", script: config.command, ...common, tier: codexTier(id, config.tier) }) : new FakeAdapter({ provider: "muse", script: config.command, ...common, tier: museTier(id, config.tier), model: config.model });
+    if (fake !== kind) throw new OrbitError("CONFIG_INVALID", `providers.${id2}.command points at the ${fake} fake`, { provider: id2 });
+    return fake === "claude" ? new FakeAdapter({ provider: "claude", script: config.command, ...common, hookCommand: deps.hookCommand, tier: deps.claudeTier, modelEfforts: deps.modelEfforts, models: deps.models ? () => deps.models("claude") : void 0 }) : fake === "codex" ? new FakeAdapter({ provider: "codex", script: config.command, ...common, tier: codexTier(id2, config.tier) }) : new FakeAdapter({ provider: "muse", script: config.command, ...common, tier: museTier(id2, config.tier), model: config.model });
   }
   if (kind === "claude") {
     return new ClaudeAdapter({
@@ -31954,20 +31964,20 @@ function createAdapter(id, config, deps = {}) {
       models: deps.models ? () => deps.models("claude") : void 0
     });
   }
-  if (kind === "muse") return new MuseAdapter({ ...common, command: commandArgv(config.command), tier: museTier(id, config.tier), model: config.model });
-  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: codexTier(id, config.tier) });
+  if (kind === "muse") return new MuseAdapter({ ...common, command: commandArgv(config.command), tier: museTier(id2, config.tier), model: config.model });
+  return new CodexAdapter({ ...common, command: commandArgv(config.command), tier: codexTier(id2, config.tier) });
 }
-function codexTier(id, tier) {
-  if (tier === "muse-sandbox") throw new OrbitError("CONFIG_INVALID", `providers.${id}.tier: muse-sandbox is a Muse tier`, { provider: id });
+function codexTier(id2, tier) {
+  if (tier === "muse-sandbox") throw new OrbitError("CONFIG_INVALID", `providers.${id2}.tier: muse-sandbox is a Muse tier`, { provider: id2 });
   return tier;
 }
-function museTier(id, tier) {
-  if (tier === "codex-sandbox") throw new OrbitError("CONFIG_INVALID", `providers.${id}.tier: codex-sandbox is a Codex tier`, { provider: id });
+function museTier(id2, tier) {
+  if (tier === "codex-sandbox") throw new OrbitError("CONFIG_INVALID", `providers.${id2}.tier: codex-sandbox is a Codex tier`, { provider: id2 });
   return tier;
 }
 function createAdapters(config, deps = {}) {
   const out = {};
-  for (const [id, pc] of Object.entries(config.providers)) out[id] = createAdapter(id, pc, deps);
+  for (const [id2, pc] of Object.entries(config.providers)) out[id2] = createAdapter(id2, pc, deps);
   return out;
 }
 var init_adapters = __esm({
@@ -32026,13 +32036,13 @@ function describeLimits(limits) {
 }
 function limitScript(limits) {
   const steps = [];
-  const int3 = (v, what) => {
+  const int4 = (v, what) => {
     if (!Number.isSafeInteger(v) || v < 1) throw new OrbitError("CONFIG_INVALID", `isolation.limits.${what} must be a positive integer (got ${String(v)})`);
     return v;
   };
-  if (limits.cpu_seconds !== null) steps.push(`orbit_limit -t ${int3(limits.cpu_seconds, "cpu_seconds")}`);
-  if (limits.max_processes !== null) steps.push(`orbit_limit -u ${int3(limits.max_processes, "max_processes")}`);
-  if (limits.max_file_mb !== null) steps.push(`orbit_limit -f ${int3(limits.max_file_mb, "max_file_mb") * 1024}`);
+  if (limits.cpu_seconds !== null) steps.push(`orbit_limit -t ${int4(limits.cpu_seconds, "cpu_seconds")}`);
+  if (limits.max_processes !== null) steps.push(`orbit_limit -u ${int4(limits.max_processes, "max_processes")}`);
+  if (limits.max_file_mb !== null) steps.push(`orbit_limit -f ${int4(limits.max_file_mb, "max_file_mb") * 1024}`);
   const fn = `orbit_limit() { h=$(ulimit -H "$1") || { echo "orbit-limits: cannot read ulimit $1" >&2; exit ${LIMIT_FAILURE_EXIT}; }; if [ "$h" = unlimited ] || [ "$h" -gt "$2" ]; then ulimit "$1" "$2" || { echo "orbit-limits: cannot set ulimit $1 $2" >&2; exit ${LIMIT_FAILURE_EXIT}; }; fi; }`;
   return `set +o posix; ${fn}; ${steps.join(" && ")} && exec "$@"`;
 }
@@ -32916,14 +32926,14 @@ var init_sandbox_runtime = __esm({
         if (pkg.name === null && pkg.version === null) throw unavailable(`srt at ${where2} has an unknown version (no readable package.json), and the srt preload was verified against ${SRT_PACKAGE} ${SRT_VERIFIED_VERSION} only`);
         if (pkg.name !== SRT_PACKAGE) throw unavailable(`srt at ${where2} is not ${SRT_PACKAGE} (package ${String(pkg.name)})`);
         if (pkg.version !== SRT_VERIFIED_VERSION) throw unavailable(`srt at ${where2} is version ${String(pkg.version)}, and the srt preload was verified against ${SRT_VERIFIED_VERSION} only`);
-        const resolve29 = (path, what) => {
+        const resolve30 = (path, what) => {
           try {
             return realpathSync5(path);
           } catch {
             throw unavailable(`${what} ${path} is missing`);
           }
         };
-        return { node: resolve29(this.opts.nodePath ?? process.execPath, "node"), preload: resolve29(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
+        return { node: resolve30(this.opts.nodePath ?? process.execPath, "node"), preload: resolve30(this.opts.chromiumPreloadPath ?? defaultChromiumPreloadPath(), "the srt preload"), cli: pkg.cli };
       }
       missingDetail() {
         if (this.opts.srtPath !== void 0) return `configured srt ${this.opts.srtPath} is not an absolute path to an executable file`;
@@ -33081,18 +33091,18 @@ function parseRunListAsChecks(text2) {
   if (!Array.isArray(v)) throw malformed("run list", "expected an array");
   return v.map((raw) => {
     const o = obj("run list", raw);
-    const id = o.databaseId;
-    if (typeof id !== "number") throw malformed("run list", "field databaseId is missing or not a number");
+    const id2 = o.databaseId;
+    if (typeof id2 !== "number") throw malformed("run list", "field databaseId is missing or not a number");
     const status2 = typeof o.status === "string" ? o.status : "";
     const conclusion = typeof o.conclusion === "string" ? o.conclusion : "";
-    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id}`;
+    const name = typeof o.workflowName === "string" && o.workflowName || typeof o.name === "string" && o.name || `run ${id2}`;
     return {
       name,
       bucket: runBucket(status2, conclusion),
       state: (conclusion || status2).toUpperCase(),
       link: typeof o.url === "string" ? o.url : null,
       workflow: typeof o.workflowName === "string" ? o.workflowName : null,
-      runId: String(id),
+      runId: String(id2),
       jobId: null,
       startedAt: typeof o.startedAt === "string" ? o.startedAt : null,
       completedAt: typeof o.updatedAt === "string" && status2 === "completed" ? o.updatedAt : null,
@@ -34805,14 +34815,14 @@ function orbitInstallDir(here = dirname17(fileURLToPath4(import.meta.url))) {
 function startRun(input) {
   const clock = input.clock ?? systemClock;
   const repoRoot = realpathSync6(input.repoRoot);
-  const id = input.runId ?? newRunId(clock.now());
-  const runDir2 = join23(orbitDir(repoRoot), "runs", id);
-  const snap = snapshotPolicy(input.config, { runId: id, repoRoot, runDir: runDir2, clock });
+  const id2 = input.runId ?? newRunId(clock.now());
+  const runDir2 = join23(orbitDir(repoRoot), "runs", id2);
+  const snap = snapshotPolicy(input.config, { runId: id2, repoRoot, runDir: runDir2, clock });
   const issue = input.issue ?? null;
   if (issue) writeIssueGoal(runDir2, issue);
   return createRun(
     input.db,
-    { id, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...input.environment ? { environment: input.environment } : {}, ...issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {} },
+    { id: id2, repoRoot, goal: input.goal, mode: input.config.mode, policyHash: snap.hash, policyPath: snap.path, ...input.environment ? { environment: input.environment } : {}, ...issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {} },
     clock,
     input.actor ?? "cli"
   );
@@ -34933,16 +34943,16 @@ async function withState(repoRoot, fn, opts = {}) {
     db.close();
   }
 }
-function findRunByPrefix(db, id) {
-  const exact = findRun(db, id);
+function findRunByPrefix(db, id2) {
+  const exact = findRun(db, id2);
   if (exact) return exact;
-  if (id.length >= 4) {
-    const hits = db.all("SELECT id FROM runs WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 3", `${id.replace(/[\\%_]/g, "\\$&")}%`);
+  if (id2.length >= 4) {
+    const hits = db.all("SELECT id FROM runs WHERE id LIKE ? ESCAPE '\\' ORDER BY id LIMIT 3", `${id2.replace(/[\\%_]/g, "\\$&")}%`);
     if (hits.length === 1) return findRun(db, hits[0].id);
-    if (hits.length > 1) throw new OrbitError("NOT_FOUND", `"${id}" matches more than one run (${hits.map((h) => h.id).join(", ")}); use the full id`);
+    if (hits.length > 1) throw new OrbitError("NOT_FOUND", `"${id2}" matches more than one run (${hits.map((h) => h.id).join(", ")}); use the full id`);
   }
   const recent = listRuns(db, { limit: 3 });
-  throw new OrbitError("NOT_FOUND", `no run ${id}${recent.length ? `; recent runs: ${recent.map((r) => r.id).join(", ")}` : ""}`);
+  throw new OrbitError("NOT_FOUND", `no run ${id2}${recent.length ? `; recent runs: ${recent.map((r) => r.id).join(", ")}` : ""}`);
 }
 function liveLease(db, runId, now) {
   const l = getLease(db, runId);
@@ -36177,13 +36187,13 @@ function planWorker(db, input, clock, actor = "controller") {
     return getWorker(db, input.id);
   });
 }
-function getWorker(db, id) {
-  const row = db.get("SELECT * FROM workers WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no worker ${id}`);
+function getWorker(db, id2) {
+  const row = db.get("SELECT * FROM workers WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no worker ${id2}`);
   return toRecord3(row);
 }
-function findWorker(db, id) {
-  const row = db.get("SELECT * FROM workers WHERE id = ?", id);
+function findWorker(db, id2) {
+  const row = db.get("SELECT * FROM workers WHERE id = ?", id2);
   return row ? toRecord3(row) : null;
 }
 function listWorkers(db, query = {}) {
@@ -36208,14 +36218,14 @@ function listWorkers(db, query = {}) {
 function listActiveWorkers(db, runId) {
   return listWorkers(db, { ...runId === void 0 ? {} : { runId }, states: ACTIVE_WORKER_STATES });
 }
-function markWorkerRunning(db, id, proc, clock, actor = "controller") {
+function markWorkerRunning(db, id2, proc, clock, actor = "controller") {
   const now = clock.now();
   const procStart = proc.procStart === null ? null : normalizeStart(proc.procStart);
   return db.tx(() => {
-    const w = getWorker(db, id);
+    const w = getWorker(db, id2);
     if (w.state === "RUNNING" && w.pid === proc.pid && w.procStart === procStart) return w;
     if (w.state !== "PLANNED") {
-      throw new OrbitError("TRANSITION_INVALID", `worker ${id} is ${w.state}; only a PLANNED worker can start`, { workerId: id, state: w.state });
+      throw new OrbitError("TRANSITION_INVALID", `worker ${id2} is ${w.state}; only a PLANNED worker can start`, { workerId: id2, state: w.state });
     }
     const res = db.run(
       "UPDATE workers SET state = 'RUNNING', pid = ?, pgid = ?, proc_start = ?, spawned_at = ? WHERE id = ? AND state = 'PLANNED'",
@@ -36223,26 +36233,26 @@ function markWorkerRunning(db, id, proc, clock, actor = "controller") {
       proc.pgid,
       procStart,
       proc.spawnedAt ?? now,
-      id
+      id2
     );
-    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id} changed while starting`);
-    appendRunEvent(db, w.runId, "worker.started", actor, { worker_id: id, pid: proc.pid, pgid: proc.pgid }, now);
-    return getWorker(db, id);
+    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id2} changed while starting`);
+    appendRunEvent(db, w.runId, "worker.started", actor, { worker_id: id2, pid: proc.pid, pgid: proc.pgid }, now);
+    return getWorker(db, id2);
   });
 }
-function finishWorker(db, id, outcome, clock, actor = "controller") {
+function finishWorker(db, id2, outcome, clock, actor = "controller") {
   if (!FINISHED_WORKER_STATES.has(outcome.state)) {
-    throw new OrbitError("INTERNAL", `${String(outcome.state)} is not a final worker state`, { workerId: id, state: outcome.state });
+    throw new OrbitError("INTERNAL", `${String(outcome.state)} is not a final worker state`, { workerId: id2, state: outcome.state });
   }
   const now = clock.now();
   return db.tx(() => {
-    const w = getWorker(db, id);
+    const w = getWorker(db, id2);
     if (!isWorkerActive(w.state)) {
       if (w.state === outcome.state) return w;
-      throw new OrbitError("TRANSITION_INVALID", `worker ${id} already finished as ${w.state}; cannot record ${outcome.state}`, { workerId: id, state: w.state });
+      throw new OrbitError("TRANSITION_INVALID", `worker ${id2} already finished as ${w.state}; cannot record ${outcome.state}`, { workerId: id2, state: w.state });
     }
     if (outcome.state === "SUCCEEDED" && w.state !== "RUNNING") {
-      throw new OrbitError("TRANSITION_INVALID", `worker ${id} never started; it cannot have succeeded`, { workerId: id });
+      throw new OrbitError("TRANSITION_INVALID", `worker ${id2} never started; it cannot have succeeded`, { workerId: id2 });
     }
     const res = db.run(
       `UPDATE workers SET state = ?, ended_at = ?, exit_code = ?, signal = ?, result_status = ?, result_json = ?, error = ?
@@ -36254,50 +36264,50 @@ function finishWorker(db, id, outcome, clock, actor = "controller") {
       outcome.resultStatus ?? null,
       outcome.result === void 0 ? null : JSON.stringify(outcome.result),
       outcome.error ?? null,
-      id,
+      id2,
       w.state
     );
-    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id} changed while finishing`);
+    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id2} changed while finishing`);
     appendRunEvent(
       db,
       w.runId,
       "worker.finished",
       actor,
-      { worker_id: id, state: outcome.state, result_status: outcome.resultStatus ?? null, exit_code: outcome.exitCode ?? null, signal: outcome.signal ?? null },
+      { worker_id: id2, state: outcome.state, result_status: outcome.resultStatus ?? null, exit_code: outcome.exitCode ?? null, signal: outcome.signal ?? null },
       now
     );
-    return getWorker(db, id);
+    return getWorker(db, id2);
   });
 }
-function requestWorkerCancel(db, id, clock, actor = "controller", reason) {
+function requestWorkerCancel(db, id2, clock, actor = "controller", reason) {
   const now = clock.now();
   return db.tx(() => {
-    const w = getWorker(db, id);
+    const w = getWorker(db, id2);
     if (!isWorkerActive(w.state) || w.cancelRequested) return w;
-    db.run("UPDATE workers SET cancel_requested = 1 WHERE id = ?", id);
-    appendRunEvent(db, w.runId, "worker.cancel-requested", actor, { worker_id: id, ...reason ? { reason } : {} }, now);
-    return getWorker(db, id);
+    db.run("UPDATE workers SET cancel_requested = 1 WHERE id = ?", id2);
+    appendRunEvent(db, w.runId, "worker.cancel-requested", actor, { worker_id: id2, ...reason ? { reason } : {} }, now);
+    return getWorker(db, id2);
   });
 }
-function planWorkerRestart(db, id, clock, actor = "controller") {
+function planWorkerRestart(db, id2, clock, actor = "controller") {
   const now = clock.now();
   return db.tx(() => {
-    const w = getWorker(db, id);
+    const w = getWorker(db, id2);
     if (w.state !== "FAILED" && w.state !== "LOST") {
-      throw new OrbitError("TRANSITION_INVALID", `worker ${id} is ${w.state}; only a FAILED or LOST worker can restart`, { workerId: id, state: w.state });
+      throw new OrbitError("TRANSITION_INVALID", `worker ${id2} is ${w.state}; only a FAILED or LOST worker can restart`, { workerId: id2, state: w.state });
     }
-    if (w.cancelRequested) throw new OrbitError("CANCELLED", `worker ${id} was cancelled; it will not restart`, { workerId: id });
-    assertRunAcceptsWork(db, w.runId, id);
+    if (w.cancelRequested) throw new OrbitError("CANCELLED", `worker ${id2} was cancelled; it will not restart`, { workerId: id2 });
+    assertRunAcceptsWork(db, w.runId, id2);
     const res = db.run(
       `UPDATE workers SET state = 'PLANNED', restart_count = restart_count + 1, pid = NULL, pgid = NULL, proc_start = NULL,
          spawned_at = NULL, ended_at = NULL, exit_code = NULL, signal = NULL, result_status = NULL, result_json = NULL, error = NULL
        WHERE id = ? AND state = ?`,
-      id,
+      id2,
       w.state
     );
-    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id} changed while restarting`);
-    appendRunEvent(db, w.runId, "worker.restart-planned", actor, { worker_id: id, previous_state: w.state, restart_count: w.restartCount + 1 }, now);
-    return getWorker(db, id);
+    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `worker ${id2} changed while restarting`);
+    appendRunEvent(db, w.runId, "worker.restart-planned", actor, { worker_id: id2, previous_state: w.state, restart_count: w.restartCount + 1 }, now);
+    return getWorker(db, id2);
   });
 }
 function assertRunAcceptsWork(db, runId, workerId, endOfRun = false) {
@@ -37710,30 +37720,30 @@ function decisionsPath(runDir2) {
 function recordDecision(db, runDir2, input, clock, opts = {}) {
   assertNoTransaction(db, "recordDecision");
   if (!input.kind || !input.summary) throw new OrbitError("INTERNAL", "a decision needs a kind and a summary");
-  const id = input.id ?? newId("dec");
+  const id2 = input.id ?? newId("dec");
   const dataJson = input.data === void 0 ? null : JSON.stringify(input.data);
   const now = clock.now();
   const { record, fresh } = db.tx(() => {
-    const existing = db.get("SELECT * FROM decisions WHERE id = ?", id);
+    const existing = db.get("SELECT * FROM decisions WHERE id = ?", id2);
     if (existing) {
       const same2 = existing.run_id === input.runId && existing.kind === input.kind && existing.summary === input.summary && canonicalJson(existing.data_json === null ? null : JSON.parse(existing.data_json)) === canonicalJson(dataJson === null ? null : JSON.parse(dataJson));
-      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `decision ${id} already exists with different content`, { decisionId: id });
+      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `decision ${id2} already exists with different content`, { decisionId: id2 });
       return { record: toRecord4(existing), fresh: false };
     }
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
-    db.run("INSERT INTO decisions (id, run_id, kind, summary, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, input.runId, input.kind, input.summary, dataJson, now);
-    appendEvent(db, input.runId, "decision.recorded", opts.actor ?? "controller", { decision_id: id, kind: input.kind }, now);
-    return { record: toRecord4(db.get("SELECT * FROM decisions WHERE id = ?", id)), fresh: true };
+    db.run("INSERT INTO decisions (id, run_id, kind, summary, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", id2, input.runId, input.kind, input.summary, dataJson, now);
+    appendEvent(db, input.runId, "decision.recorded", opts.actor ?? "controller", { decision_id: id2, kind: input.kind }, now);
+    return { record: toRecord4(db.get("SELECT * FROM decisions WHERE id = ?", id2)), fresh: true };
   });
   try {
-    if (fresh || !mirroredIds(runDir2).has(id)) appendLine(runDir2, record);
+    if (fresh || !mirroredIds(runDir2).has(id2)) appendLine(runDir2, record);
   } catch (err) {
-    throw new OrbitError("INTERNAL", `decision ${id} was recorded but ${DECISIONS_FILE} could not be appended: ${err.message}`, { decisionId: id, runDir: runDir2 }, { cause: err });
+    throw new OrbitError("INTERNAL", `decision ${id2} was recorded but ${DECISIONS_FILE} could not be appended: ${err.message}`, { decisionId: id2, runDir: runDir2 }, { cause: err });
   }
   return record;
 }
-function getDecision(db, id) {
-  const row = db.get("SELECT * FROM decisions WHERE id = ?", id);
+function getDecision(db, id2) {
+  const row = db.get("SELECT * FROM decisions WHERE id = ?", id2);
   return row ? toRecord4(row) : null;
 }
 function listDecisions(db, runId, opts = {}) {
@@ -37881,9 +37891,9 @@ var init_actions = __esm({
         const row = this.db.get("SELECT * FROM actions WHERE idempotency_key = ?", idempotencyKey);
         return row ? toRecord5(row) : null;
       }
-      get(id) {
-        const row = this.db.get("SELECT * FROM actions WHERE id = ?", id);
-        if (!row) throw new OrbitError("NOT_FOUND", `no action ${id}`);
+      get(id2) {
+        const row = this.db.get("SELECT * FROM actions WHERE id = ?", id2);
+        if (!row) throw new OrbitError("NOT_FOUND", `no action ${id2}`);
         return toRecord5(row);
       }
       list(runId, opts = {}) {
@@ -37910,11 +37920,11 @@ var init_actions = __esm({
             }
             return { action: toRecord5(existing), created: false };
           }
-          const id = newId("act");
+          const id2 = newId("act");
           this.db.run(
             `INSERT INTO actions (id, run_id, kind, idempotency_key, target_json, candidate_id, tree_hash, commit_sha, state, attempts, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'INTENT', 0, ?, ?)`,
-            id,
+            id2,
             input.runId,
             input.kind,
             input.idempotencyKey,
@@ -37925,8 +37935,8 @@ var init_actions = __esm({
             now,
             now
           );
-          appendEvent(this.db, input.runId, "action.intent", this.actor, { action_id: id, kind: input.kind, key: input.idempotencyKey, tree_hash: input.treeHash ?? null, commit_sha: input.commitSha ?? null }, now);
-          return { action: this.get(id), created: true };
+          appendEvent(this.db, input.runId, "action.intent", this.actor, { action_id: id2, kind: input.kind, key: input.idempotencyKey, tree_hash: input.treeHash ?? null, commit_sha: input.commitSha ?? null }, now);
+          return { action: this.get(id2), created: true };
         });
       }
       /**
@@ -38128,7 +38138,7 @@ function recordUsage(db, input, clock) {
   }
   const durationMs = count(input.durationMs);
   const ts = clock.now();
-  const id = db.tx(
+  const id2 = db.tx(
     () => db.run(
       `INSERT INTO usage (run_id, worker_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, cost_source, duration_ms, ts)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -38157,7 +38167,7 @@ function recordUsage(db, input, clock) {
   }
   const latency = input.timeToFirstEventMs !== void 0 ? input.timeToFirstEventMs : u?.timeToFirstEventMs ?? null;
   if (model && latency !== null && latency !== void 0) new ModelRegistry(db, clock).recordLatency(model, latency);
-  return { id, provider, model, costUsd, costSource, notes, outputBudgetExceeded: overrun };
+  return { id: id2, provider, model, costUsd, costSource, notes, outputBudgetExceeded: overrun };
 }
 function summarizeUsage(db, runId) {
   const rows = db.all("SELECT * FROM usage WHERE run_id = ? ORDER BY id", runId);
@@ -38368,11 +38378,11 @@ function reserveCandidate(db, input, clock) {
     const existing = findCandidateByTree(db, input.runId, input.treeHash);
     if (existing) return existing;
     const next = db.get("SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM candidates WHERE run_id = ?", input.runId).n;
-    const id = newId("cand");
+    const id2 = newId("cand");
     db.run(
       `INSERT INTO candidates (id, run_id, seq, attempt, worker_id, commit_sha, tree_hash, parent_sha, status, created_at)
        VALUES (?, ?, ?, ?, ?, '', ?, ?, 'CREATING', ?)`,
-      id,
+      id2,
       input.runId,
       next,
       input.attempt,
@@ -38381,22 +38391,22 @@ function reserveCandidate(db, input, clock) {
       input.parentSha,
       now
     );
-    return getCandidate(db, id);
+    return getCandidate(db, id2);
   });
 }
-function finalizeCandidate(db, id, commitSha, diffStat2, clock) {
+function finalizeCandidate(db, id2, commitSha, diffStat2, clock) {
   const now = clock.now();
   return db.tx(() => {
-    const cur = getCandidate(db, id);
+    const cur = getCandidate(db, id2);
     if (cur.status !== "CREATING") return cur;
-    db.run("UPDATE candidates SET commit_sha = ?, diff_stat_json = ?, status = 'READY' WHERE id = ?", commitSha, JSON.stringify(diffStat2), id);
-    appendEvent(db, cur.runId, "candidate.created", "controller", { candidate_id: id, seq: cur.seq, tree_hash: cur.treeHash, commit: commitSha, attempt: cur.attempt, worker_id: cur.workerId }, now);
-    return getCandidate(db, id);
+    db.run("UPDATE candidates SET commit_sha = ?, diff_stat_json = ?, status = 'READY' WHERE id = ?", commitSha, JSON.stringify(diffStat2), id2);
+    appendEvent(db, cur.runId, "candidate.created", "controller", { candidate_id: id2, seq: cur.seq, tree_hash: cur.treeHash, commit: commitSha, attempt: cur.attempt, worker_id: cur.workerId }, now);
+    return getCandidate(db, id2);
   });
 }
-function getCandidate(db, id) {
-  const row = db.get("SELECT * FROM candidates WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no candidate ${id}`);
+function getCandidate(db, id2) {
+  const row = db.get("SELECT * FROM candidates WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no candidate ${id2}`);
   return toCandidate(row);
 }
 function findCandidateByTree(db, runId, treeHash) {
@@ -38406,11 +38416,11 @@ function findCandidateByTree(db, runId, treeHash) {
 function listCandidates(db, runId) {
   return db.all("SELECT * FROM candidates WHERE run_id = ? ORDER BY seq", runId).map(toCandidate);
 }
-function setCandidateStatus(db, id, status2) {
-  db.run("UPDATE candidates SET status = ? WHERE id = ?", status2, id);
+function setCandidateStatus(db, id2, status2) {
+  db.run("UPDATE candidates SET status = ? WHERE id = ?", status2, id2);
 }
-function setCandidateScope(db, id, scope) {
-  db.run("UPDATE candidates SET scope_json = ? WHERE id = ?", JSON.stringify(scope), id);
+function setCandidateScope(db, id2, scope) {
+  db.run("UPDATE candidates SET scope_json = ? WHERE id = ?", JSON.stringify(scope), id2);
 }
 function toCheckRun(r) {
   const blob2 = r.artifacts_json === null ? { artifacts: [], limitations: [] } : JSON.parse(r.artifacts_json);
@@ -38452,11 +38462,11 @@ function planCheckRun(db, input, clock) {
     if (run.cancel_requested === 1 || !input.afterEnd && TERMINAL_STATES.has(run.state)) {
       throw new OrbitError("CANCELLED", `run ${input.runId} is ${run.cancel_requested === 1 ? "cancelled" : run.state}; no new check starts`, { runId: input.runId, checkId: input.checkId });
     }
-    const id = newId("chk");
+    const id2 = newId("chk");
     db.run(
       `INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, rerun_of, artifacts_json, started_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PLANNED', ?, ?, ?)`,
-      id,
+      id2,
       input.runId,
       input.candidateId,
       input.checkId,
@@ -38471,23 +38481,23 @@ function planCheckRun(db, input, clock) {
       JSON.stringify({ artifacts: [], limitations: [...input.limitations], ...input.checkout ? { checkout: input.checkout } : {} }),
       now
     );
-    appendEvent(db, input.runId, "check.planned", "controller", { check_run_id: id, check_id: input.checkId, candidate_id: input.candidateId, rerun_of: input.rerunOf ?? null }, now);
-    return getCheckRun(db, id);
+    appendEvent(db, input.runId, "check.planned", "controller", { check_run_id: id2, check_id: input.checkId, candidate_id: input.candidateId, rerun_of: input.rerunOf ?? null }, now);
+    return getCheckRun(db, id2);
   });
 }
-function markCheckRunning(db, id, pid, clock) {
+function markCheckRunning(db, id2, pid, clock) {
   const now = clock.now();
   return db.tx(() => {
-    const cur = getCheckRun(db, id);
+    const cur = getCheckRun(db, id2);
     if (cur.status !== "PLANNED" && cur.status !== "RUNNING") return cur;
-    db.run("UPDATE check_runs SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ?", pid, cur.status === "PLANNED" ? now : cur.startedAt, id);
-    appendEvent(db, cur.runId, "check.started", "controller", { check_run_id: id, check_id: cur.checkId, pid }, now);
-    return getCheckRun(db, id);
+    db.run("UPDATE check_runs SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ?", pid, cur.status === "PLANNED" ? now : cur.startedAt, id2);
+    appendEvent(db, cur.runId, "check.started", "controller", { check_run_id: id2, check_id: cur.checkId, pid }, now);
+    return getCheckRun(db, id2);
   });
 }
-function finishCheckRun(db, id, f) {
+function finishCheckRun(db, id2, f) {
   return db.tx(() => {
-    const cur = getCheckRun(db, id);
+    const cur = getCheckRun(db, id2);
     if (isFinalCheckStatus(cur.status)) return cur;
     db.run(
       `UPDATE check_runs SET status = ?, exit_code = ?, timed_out = ?, cancelled = ?, log_path = ?, log_sha256 = ?, fingerprint = ?, excerpt = ?, artifacts_json = ?, ended_at = ? WHERE id = ?`,
@@ -38501,18 +38511,18 @@ function finishCheckRun(db, id, f) {
       f.excerpt,
       JSON.stringify({ artifacts: f.artifacts, limitations: cur.limitations, ...cur.checkout ? { checkout: cur.checkout } : {} }),
       f.endedAt,
-      id
+      id2
     );
-    appendEvent(db, cur.runId, "check.finished", "controller", { check_run_id: id, check_id: cur.checkId, status: f.status, exit_code: f.exitCode, fingerprint: f.fingerprint }, f.endedAt);
-    return getCheckRun(db, id);
+    appendEvent(db, cur.runId, "check.finished", "controller", { check_run_id: id2, check_id: cur.checkId, status: f.status, exit_code: f.exitCode, fingerprint: f.fingerprint }, f.endedAt);
+    return getCheckRun(db, id2);
   });
 }
-function setCheckFlaky(db, id, flaky) {
-  db.run("UPDATE check_runs SET flaky = ? WHERE id = ?", flaky ? 1 : 0, id);
+function setCheckFlaky(db, id2, flaky) {
+  db.run("UPDATE check_runs SET flaky = ? WHERE id = ?", flaky ? 1 : 0, id2);
 }
-function getCheckRun(db, id) {
-  const row = db.get("SELECT * FROM check_runs WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no check run ${id}`);
+function getCheckRun(db, id2) {
+  const row = db.get("SELECT * FROM check_runs WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no check run ${id2}`);
   return toCheckRun(row);
 }
 function listCheckRuns(db, q) {
@@ -38575,11 +38585,11 @@ function insertEvidenceReport(db, input, clock) {
   const now = clock.now();
   const { report: report2 } = input;
   return db.tx(() => {
-    const id = newId("evr");
+    const id2 = newId("evr");
     db.run(
       `INSERT INTO evidence_reports (id, run_id, candidate_id, tree_hash, check_config_hash, policy_hash, verdict, report_json, report_path, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
+      id2,
       report2.run_id,
       input.candidateId,
       report2.tree_hash,
@@ -38590,13 +38600,13 @@ function insertEvidenceReport(db, input, clock) {
       input.reportPath,
       now
     );
-    appendEvent(db, report2.run_id, "evidence.report", "controller", { report_id: id, candidate_id: input.candidateId, tree_hash: report2.tree_hash, verdict: report2.verdict, unverified: report2.unverified.length }, now);
-    return getEvidenceReport(db, id);
+    appendEvent(db, report2.run_id, "evidence.report", "controller", { report_id: id2, candidate_id: input.candidateId, tree_hash: report2.tree_hash, verdict: report2.verdict, unverified: report2.unverified.length }, now);
+    return getEvidenceReport(db, id2);
   });
 }
-function getEvidenceReport(db, id) {
-  const row = db.get("SELECT * FROM evidence_reports WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no evidence report ${id}`);
+function getEvidenceReport(db, id2) {
+  const row = db.get("SELECT * FROM evidence_reports WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no evidence report ${id2}`);
   return toReport(row);
 }
 function currentEvidenceReport(db, runId, candidateId) {
@@ -41537,7 +41547,7 @@ function candidateEvidenceDir(runDir2, seq2) {
 }
 async function runChecks(input) {
   if (input.candidate.runId !== input.run.id) throw new OrbitError("INTERNAL", `candidate ${input.candidate.id} belongs to run ${input.candidate.runId}, not ${input.run.id}`);
-  const defs = dedupe(input.checkIds).map((id) => trustedDefinition(input, id));
+  const defs = dedupe(input.checkIds).map((id2) => trustedDefinition(input, id2));
   const subject = candidateSubject(input.runDir, input.candidate);
   return runCheckSet(input, subject, defs);
 }
@@ -41617,26 +41627,26 @@ function assertRunPolicy(db, run, snapshot2) {
     throw new OrbitError("POLICY_TAMPERED", "the policy snapshot in memory does not match the hash recorded for the run", { runId: run.id });
   }
 }
-function trustedDefinition(ctx, id) {
-  const fromSnapshot = ctx.snapshot.config.checks[id];
-  const generated = ctx.definitions?.[id];
+function trustedDefinition(ctx, id2) {
+  const fromSnapshot = ctx.snapshot.config.checks[id2];
+  const generated = ctx.definitions?.[id2];
   if (fromSnapshot && generated) {
-    throw new OrbitError("POLICY_DENIED", `check ${JSON.stringify(id)} is defined in the policy snapshot and cannot be redefined by Orbit; the id is reserved`, { checkId: id, rule: "checks.trusted-only" });
+    throw new OrbitError("POLICY_DENIED", `check ${JSON.stringify(id2)} is defined in the policy snapshot and cannot be redefined by Orbit; the id is reserved`, { checkId: id2, rule: "checks.trusted-only" });
   }
   const def = fromSnapshot ?? generated;
-  if (!def) throw new OrbitError("POLICY_DENIED", `check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id, rule: "checks.trusted-only" });
-  return validDefinition(def, id);
+  if (!def) throw new OrbitError("POLICY_DENIED", `check ${JSON.stringify(id2)} is not defined in the policy snapshot`, { checkId: id2, rule: "checks.trusted-only" });
+  return validDefinition(def, id2);
 }
-function validDefinition(def, id) {
-  if (def.id !== id) throw new OrbitError("CONFIG_INVALID", `check ${JSON.stringify(id)} carries the id ${JSON.stringify(def.id)}`, { checkId: id });
-  if (def.kind !== "command") throw new OrbitError("INTERNAL", `check ${id} is a ${def.kind} check; the UI runner executes those`, { checkId: id });
+function validDefinition(def, id2) {
+  if (def.id !== id2) throw new OrbitError("CONFIG_INVALID", `check ${JSON.stringify(id2)} carries the id ${JSON.stringify(def.id)}`, { checkId: id2 });
+  if (def.kind !== "command") throw new OrbitError("INTERNAL", `check ${id2} is a ${def.kind} check; the UI runner executes those`, { checkId: id2 });
   assertSafeId(def.id);
-  if (def.command.length === 0) throw new OrbitError("CONFIG_INVALID", `check ${id} has an empty command`, { checkId: id });
-  if (def.shell && def.command.length !== 1) throw new OrbitError("CONFIG_INVALID", `check ${id} sets shell: true and must have exactly one command element (the script)`, { checkId: id });
+  if (def.command.length === 0) throw new OrbitError("CONFIG_INVALID", `check ${id2} has an empty command`, { checkId: id2 });
+  if (def.shell && def.command.length !== 1) throw new OrbitError("CONFIG_INVALID", `check ${id2} sets shell: true and must have exactly one command element (the script)`, { checkId: id2 });
   return def;
 }
-function assertSafeId(id) {
-  if (!CHECK_ID.test(id) || id.includes("..")) throw new OrbitError("CONFIG_INVALID", `check id ${JSON.stringify(id)} is not safe to use in a file name`, { checkId: id });
+function assertSafeId(id2) {
+  if (!CHECK_ID.test(id2) || id2.includes("..")) throw new OrbitError("CONFIG_INVALID", `check id ${JSON.stringify(id2)} is not safe to use in a file name`, { checkId: id2 });
 }
 async function assertCheckoutTree(dir, treeHash) {
   const head = (await git3(dir, ["rev-parse", "--verify", "HEAD^{tree}"])).trim();
@@ -42479,11 +42489,11 @@ function parseNpmAudit(text2) {
       if (!via || typeof via !== "object") continue;
       const a = via;
       const ghsa = typeof a.url === "string" ? /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/.exec(a.url)?.[0] : void 0;
-      const id = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
+      const id2 = ghsa ?? (typeof a.source === "number" || typeof a.source === "string" ? `npm:${a.source}` : null);
       const severity = typeof a.severity === "string" && Object.hasOwn(SEVERITY_RANK, a.severity) ? a.severity : null;
-      if (!id || !severity) continue;
+      if (!id2 || !severity) continue;
       const pkg = typeof a.name === "string" ? a.name : name;
-      out.set(`${id}\0${pkg}`, { id, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
+      out.set(`${id2}\0${pkg}`, { id: id2, kind: "vulnerability", package: pkg, severity, detail: redact(typeof a.title === "string" ? a.title : "").slice(0, 200) });
     }
   }
   return [...out.values()].sort((x, y) => x.id.localeCompare(y.id) || x.package.localeCompare(y.package));
@@ -42504,8 +42514,8 @@ function disallowedLicenses(lockText, allowlist) {
     const version = typeof entry.version === "string" ? entry.version : "0.0.0";
     const license = typeof entry.license === "string" ? entry.license : null;
     if (license !== null && licenseAllowed(license, allowed)) continue;
-    const id = `license:${name}@${version}`;
-    out.set(id, { id, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
+    const id2 = `license:${name}@${version}`;
+    out.set(id2, { id: id2, kind: "license", package: name, severity: null, detail: license ?? "no license recorded" });
   }
   return [...out.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -42635,10 +42645,10 @@ async function runBaseline(input) {
   const baseRevision = await resolveCommit(input.repoRoot, input.baseRev);
   const baseTree = await treeOf(input.repoRoot, baseRevision);
   const ids = input.checkIds ?? Object.values(snapshot2.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id);
-  for (const id of ids) {
-    if (!snapshot2.config.checks[id]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id)} is not defined in the policy snapshot`, { checkId: id });
+  for (const id2 of ids) {
+    if (!snapshot2.config.checks[id2]) throw new OrbitError("POLICY_DENIED", `baseline check ${JSON.stringify(id2)} is not defined in the policy snapshot`, { checkId: id2 });
   }
-  const defs = [...new Set(ids)].map((id) => snapshot2.config.checks[id]).filter((d) => d.kind === "command");
+  const defs = [...new Set(ids)].map((id2) => snapshot2.config.checks[id2]).filter((d) => d.kind === "command");
   const checkIds = defs.map((d) => d.id).sort();
   const file = join30(runDir2, BASELINE_FILE);
   const prior = readJsonIfExists(file);
@@ -42697,7 +42707,7 @@ async function runBaseline(input) {
       const covered = entries.filter(decisive).map((e) => e.checkId);
       const report4 = {
         ...base,
-        checkIds: [.../* @__PURE__ */ new Set([...base.checkIds.filter((id) => !asked.has(id)), ...covered])].sort(),
+        checkIds: [.../* @__PURE__ */ new Set([...base.checkIds.filter((id2) => !asked.has(id2)), ...covered])].sort(),
         install: { skipped: install.skipped, reason: install.reason, ok: install.ok },
         checks: [...base.checks.filter((c) => !asked.has(c.checkId)), ...entries],
         failures: [...base.failures.filter((f) => !asked.has(f.checkId)), ...entries.filter(failed).map((e) => ({ checkId: e.checkId, fingerprint: e.fingerprint, excerpt: e.excerpt }))],
@@ -42839,27 +42849,27 @@ function testChangesUnder(base, def) {
 function isTestCommandCheck(def) {
   return def !== void 0 && def.kind === "command" && checkCategory(def) === "test";
 }
-function isBrowserCheck(snapshot2, id) {
-  return snapshot2.config.checks[id]?.kind === "playwright" || (snapshot2.config.ui?.journey_check_ids ?? []).includes(id);
+function isBrowserCheck(snapshot2, id2) {
+  return snapshot2.config.checks[id2]?.kind === "playwright" || (snapshot2.config.ui?.journey_check_ids ?? []).includes(id2);
 }
 function newTestSupport(contract, snapshot2, base) {
   const baseStatus = new Map((base.checks ?? []).map((c) => [c.checkId, c.status]));
   const testsOf = /* @__PURE__ */ new Map();
-  const tests = (id) => {
-    let t = testsOf.get(id);
+  const tests = (id2) => {
+    let t = testsOf.get(id2);
     if (t === void 0) {
-      t = testChangesUnder(base, snapshot2.config.checks[id]);
-      testsOf.set(id, t);
+      t = testChangesUnder(base, snapshot2.config.checks[id2]);
+      testsOf.set(id2, t);
     }
     return t;
   };
   return contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
-    const withTests = ids.filter((id) => tests(id).length > 0);
-    const probeable = withTests.filter((id) => isBrowserCheck(snapshot2, id) || isTestCommandCheck(snapshot2.config.checks[id]) && baseStatus.get(id) === "PASSED");
+    const withTests = ids.filter((id2) => tests(id2).length > 0);
+    const probeable = withTests.filter((id2) => isBrowserCheck(snapshot2, id2) || isTestCommandCheck(snapshot2.config.checks[id2]) && baseStatus.get(id2) === "PASSED");
     return {
       criterionId: c.id,
-      flips: ids.filter((id) => baseStatus.get(id) === "FAILED" || baseStatus.get(id) === "TIMEOUT"),
+      flips: ids.filter((id2) => baseStatus.get(id2) === "FAILED" || baseStatus.get(id2) === "TIMEOUT"),
       withTests,
       probeable,
       testPaths: [...new Set(withTests.flatMap(tests))].sort()
@@ -42973,9 +42983,9 @@ function toCheckRun2(r) {
     endedAt: r.ended_at
   };
 }
-function probeRow(db, id) {
-  const row = db.get("SELECT * FROM fail_before_probes WHERE id = ?", id);
-  if (!row) throw new OrbitError("NOT_FOUND", `no fail-before probe attempt ${id}`);
+function probeRow(db, id2) {
+  const row = db.get("SELECT * FROM fail_before_probes WHERE id = ?", id2);
+  if (!row) throw new OrbitError("NOT_FOUND", `no fail-before probe attempt ${id2}`);
   return row;
 }
 function probeEvent(db, type, r, at) {
@@ -42994,11 +43004,11 @@ function probeRecords(probeId) {
           throw new OrbitError("CANCELLED", `run ${input.runId} is ${run.cancel_requested === 1 ? "cancelled" : run.state}; no fail-before probe starts`, { runId: input.runId, checkId: input.checkId });
         }
         const n2 = db.get("SELECT COUNT(*) AS n FROM fail_before_probes WHERE probe_id = ? AND check_id = ?", probeId, input.checkId)?.n ?? 0;
-        const id = newId("fbp");
+        const id2 = newId("fbp");
         db.run(
           `INSERT INTO fail_before_probes (id, run_id, candidate_id, probe_id, probe_tree, check_id, check_config_hash, policy_hash, attempt, command_json, cwd, isolation, status, started_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PLANNED', ?)`,
-          id,
+          id2,
           input.runId,
           input.candidateId ?? "",
           probeId,
@@ -43012,17 +43022,17 @@ function probeRecords(probeId) {
           input.isolation,
           now
         );
-        return toCheckRun2(probeRow(db, id));
+        return toCheckRun2(probeRow(db, id2));
       });
     },
-    running: (db, id, pid, clock) => db.tx(() => {
+    running: (db, id2, pid, clock) => db.tx(() => {
       const now = clock.now();
-      if (db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, now, id).changes === 1) probeEvent(db, "check.fail-before-probe-started", probeRow(db, id), now);
-      return toCheckRun2(probeRow(db, id));
+      if (db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, now, id2).changes === 1) probeEvent(db, "check.fail-before-probe-started", probeRow(db, id2), now);
+      return toCheckRun2(probeRow(db, id2));
     }),
-    finish: (db, id, f) => db.tx(() => {
-      if (db.run("UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id).changes === 1) probeEvent(db, "check.fail-before-probe-finished", probeRow(db, id), f.endedAt);
-      return toCheckRun2(probeRow(db, id));
+    finish: (db, id2, f) => db.tx(() => {
+      if (db.run("UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id2).changes === 1) probeEvent(db, "check.fail-before-probe-finished", probeRow(db, id2), f.endedAt);
+      return toCheckRun2(probeRow(db, id2));
     })
   };
 }
@@ -43088,7 +43098,7 @@ function reusable(db, runId, kind, probeTree, policyHash, configHashes) {
   return out;
 }
 function notEstablished(checkIds, cause, reason) {
-  return checkIds.map((id) => ({ checkId: id, outcome: "not-established", cause, reason: reason(id), attempts: [] }));
+  return checkIds.map((id2) => ({ checkId: id2, outcome: "not-established", cause, reason: reason(id2), attempts: [] }));
 }
 function runRelative(runDir2, p) {
   if (p === null) return null;
@@ -43122,7 +43132,7 @@ async function installProbeCheckout(o) {
   if (install.skip) return null;
   const ctx = { ...o.runner, checkoutDir: checkout, records: probeRecords(o.probeId) };
   const subject = { candidateId: o.candidateId, bindingId: o.bindingId, treeHash: o.treeHash, evidenceDir: o.evidenceDir, source: "check" };
-  const outOfBudget = (id) => `${id} was not probed to the end: the probe's bound of ${Math.floor(o.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
+  const outOfBudget = (id2) => `${id2} was not probed to the end: the probe's bound of ${Math.floor(o.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out during the locked install`;
   for (const def of install.definitions) {
     const attempts = [];
     const fetches2 = [];
@@ -43151,22 +43161,22 @@ async function installProbeCheckout(o) {
     const last = attempts.at(-1);
     const fetch2 = fetches2[0];
     if (refused === null && fetch2 !== void 0) {
-      return { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows that a dependency could not be fetched or installed (${fetch2.line})${fetch2.attempt.log ? ` (${fetch2.attempt.log})` : ""}` };
+      return { cause: "environment", reason: (id2) => `${id2} was not probed: the locked install (${def.id}) ${o.where} shows that a dependency could not be fetched or installed (${fetch2.line})${fetch2.attempt.log ? ` (${fetch2.attempt.log})` : ""}` };
     }
     const installSignals = [...new Set(attempts.flatMap((a) => a.signals))];
     if (refused === null && installSignals.length > 0) {
-      return { cause: "environment", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${o.where} shows an environment cause (${installSignals.join(", ")})${last?.log ? ` (${last.log})` : ""}` };
+      return { cause: "environment", reason: (id2) => `${id2} was not probed: the locked install (${def.id}) ${o.where} shows an environment cause (${installSignals.join(", ")})${last?.log ? ` (${last.log})` : ""}` };
     }
     const cut = attempts.find((a) => a.unscanned !== void 0);
     if (refused === null && last?.status === "PASSED" && cut !== void 0) {
-      return { cause: "unscanned", reason: (id) => `${id} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) ${o.where} could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ""}` };
+      return { cause: "unscanned", reason: (id2) => `${id2} was not probed: the log of the locked install (${def.id}, attempt ${cut.attempt}) ${o.where} could not be read whole (${cut.unscanned}), so an environment cause cannot be ruled out${cut.log ? ` (${cut.log})` : ""}` };
     }
     if (refused === null && last?.status === "PASSED") continue;
     if (refused === null && !attempts.some((a) => a.status === "FAILED") && (outOfTime || last?.status === "TIMEOUT" && bounded)) {
       return { cause: "budget", reason: outOfBudget };
     }
     const how = refused !== null ? `could not be started (${refused})` : `ended ${last?.status ?? "without a result"}`;
-    return { cause: "install", reason: (id) => `${id} was not probed: the locked install (${def.id}) ${how} ${o.where}${last?.log ? ` (${last.log})` : ""}` };
+    return { cause: "install", reason: (id2) => `${id2} was not probed: the locked install (${def.id}) ${how} ${o.where}${last?.log ? ` (${last.log})` : ""}` };
   }
   return null;
 }
@@ -43180,20 +43190,20 @@ async function runFailBeforeProbe(req) {
   const interrupted = await closeInterruptedProbes(db, runDir2, runner.run.id, clock, { graceMs: runner.killGraceMs });
   if (interrupted.kept.length > 0) {
     const why = interrupted.kept.map((k) => `${k.checkId} (${k.why})`).join("; ");
-    return result2(null, notEstablished(checkIds, "interrupted", (id) => `${id} was not probed: an earlier fail-before probe attempt may still be running: ${why}; the probe runs again once it has ended`));
+    return result2(null, notEstablished(checkIds, "interrupted", (id2) => `${id2} was not probed: an earlier fail-before probe attempt may still be running: ${why}; the probe runs again once it has ended`));
   }
   const built = await buildProbeTree(req.repoRoot, req.baseRev, req.changes, flavour.base);
-  if ("refused" in built) return result2(null, notEstablished(checkIds, "refused-tree", (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
+  if ("refused" in built) return result2(null, notEstablished(checkIds, "refused-tree", (id2) => `${id2} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
-  const defs = new Map(checkIds.map((id) => [id, snapshot2.config.checks[id]]));
-  const configHashes = new Map(checkIds.map((id) => [id, configHashFor(snapshot2, defs.get(id))]));
+  const defs = new Map(checkIds.map((id2) => [id2, snapshot2.config.checks[id2]]));
+  const configHashes = new Map(checkIds.map((id2) => [id2, configHashFor(snapshot2, defs.get(id2))]));
   const earlier = reusable(db, runner.run.id, flavour.decisionKind, probeTree, runner.run.policyHash, configHashes);
-  const toRun = checkIds.filter((id) => !earlier.has(id));
-  const reusedChecks = checkIds.filter((id) => earlier.has(id)).map((id) => earlier.get(id).check);
+  const toRun = checkIds.filter((id2) => !earlier.has(id2));
+  const reusedChecks = checkIds.filter((id2) => earlier.has(id2)).map((id2) => earlier.get(id2).check);
   if (toRun.length === 0) return result2(probeTree, reusedChecks, earlier.get(checkIds[0]).probeId, true);
   if (req.wallRemainingMs !== null && req.wallRemainingMs < req.timeoutMs) {
     const left = Math.max(0, Math.floor(req.wallRemainingMs / 1e3));
-    return result2(probeTree, [...reusedChecks, ...notEstablished(toRun, "budget", (id) => `${id} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`)]);
+    return result2(probeTree, [...reusedChecks, ...notEstablished(toRun, "budget", (id2) => `${id2} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`)]);
   }
   const probeId = newId("probe");
   const commit = await commitProbeTree(req.repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(runner.run.id, candidate.seq, flavour, req.refPart ?? null), message: `orbit ${flavour.name} probe ${runner.run.id}/${candidate.seq}
@@ -43213,9 +43223,9 @@ tree: ${probeTree}
   let stopped = null;
   try {
     stopped = await installProbeCheckout({ runner, probeId, candidateId: candidate.id, treeHash: probeTree, bindingId: subject.bindingId, evidenceDir: subject.evidenceDir, checkoutDir: req.checkoutDir, deadline, timeoutMs: req.timeoutMs, where: "on the probe tree" });
-    for (const id of toRun) {
+    for (const id2 of toRun) {
       if (stopped) break;
-      const def = defs.get(id);
+      const def = defs.get(id2);
       const attempts = [];
       let bounded = false;
       let refused = null;
@@ -43224,7 +43234,7 @@ tree: ${probeTree}
         if (left <= 0) break;
         const timeout = Math.min(def.timeout_seconds, Math.max(1, Math.ceil(left / 1e3)));
         bounded = timeout < def.timeout_seconds;
-        const row = await runProbeAttempt(ctx, subject, { ...def, timeout_seconds: timeout }, configHashes.get(id));
+        const row = await runProbeAttempt(ctx, subject, { ...def, timeout_seconds: timeout }, configHashes.get(id2));
         if (typeof row === "string") {
           refused = row;
           break;
@@ -43233,26 +43243,26 @@ tree: ${probeTree}
         if (row.status !== "FAILED") break;
       }
       if (refused !== null) {
-        ran.push({ checkId: id, outcome: "not-established", cause: "error", reason: `${id} could not be run on the probe tree: ${refused}`, attempts });
+        ran.push({ checkId: id2, outcome: "not-established", cause: "error", reason: `${id2} could not be run on the probe tree: ${refused}`, attempts });
         continue;
       }
-      let judged = judgeProbeAttempts(id, attempts, flavour.where);
+      let judged = judgeProbeAttempts(id2, attempts, flavour.where);
       const outOfTime = attempts.length === 0 || judged.cause === "once" || judged.cause === "timeout" && bounded;
       if (judged.outcome === "not-established" && outOfTime && clock.now() >= deadline - 1e3) {
-        judged = { ...judged, cause: "budget", reason: `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out` };
+        judged = { ...judged, cause: "budget", reason: `${id2} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out` };
       }
       ran.push(judged);
     }
   } catch (err) {
     if (!isOrbitError(err, "CANCELLED") || err.details?.detached === true) throw err;
-    stopped = { cause: "cancelled", reason: (id) => `${id} was not probed: the run was cancelled` };
+    stopped = { cause: "cancelled", reason: (id2) => `${id2} was not probed: the run was cancelled` };
   } finally {
     if (runner.detachSignal?.aborted !== true && !probeAttemptOpen(db, probeId)) await cleanupCandidateCheckout(req.repoRoot, req.checkoutDir).catch(() => {
     });
   }
   const done = new Set(ran.map((c) => c.checkId));
-  const rest = stopped ? notEstablished(toRun.filter((id) => !done.has(id)), stopped.cause, stopped.reason) : [];
-  const checks = checkIds.map((id) => earlier.get(id)?.check ?? ran.find((c) => c.checkId === id) ?? rest.find((c) => c.checkId === id));
+  const rest = stopped ? notEstablished(toRun.filter((id2) => !done.has(id2)), stopped.cause, stopped.reason) : [];
+  const checks = checkIds.map((id2) => earlier.get(id2)?.check ?? ran.find((c) => c.checkId === id2) ?? rest.find((c) => c.checkId === id2));
   if (stopped?.cause !== "cancelled") {
     const criteria = new Map(req.checks.map((c) => [c.checkId, [...c.criteria]]));
     const fresh = checks.filter((c) => toRun.includes(c.checkId));
@@ -43270,8 +43280,8 @@ tree: ${probeTree}
   }
   return result2(probeTree, checks, probeId, false);
 }
-function attemptNumber(db, id) {
-  return db.get("SELECT attempt FROM fail_before_probes WHERE id = ?", id)?.attempt ?? 1;
+function attemptNumber(db, id2) {
+  return db.get("SELECT attempt FROM fail_before_probes WHERE id = ?", id2)?.attempt ?? 1;
 }
 function probeSummary(checks) {
   return checks.map((c) => `${c.reason}${c.criteria.length > 0 ? `: ${c.criteria.join(", ")}` : ""}`).join("; ");
@@ -43286,7 +43296,7 @@ function criterionFailBefore(support, fb) {
   }
   if (fb.mode === "off") return { ...base, outcome: "not-run", checks: [], reason: "the fail-before probe was not run (verification.fail_before: off)" };
   const ids = [...support.probeable].sort();
-  const probed = ids.map((id) => ({ id, c: fb.probe?.checks.find((x) => x.checkId === id) ?? null }));
+  const probed = ids.map((id2) => ({ id: id2, c: fb.probe?.checks.find((x) => x.checkId === id2) ?? null }));
   const checks = probed.flatMap(({ c }) => c === null ? [] : [{ id: c.checkId, outcome: c.outcome, ...c.cause ? { cause: c.cause } : {}, attempts: c.attempts.map((a) => ({ status: a.status, exit_code: a.exitCode, log: a.log })) }]);
   if (ids.length === 0) {
     return { ...base, outcome: "not-established", cause: "not-probed", checks, reason: `${support.withTests.join(", ")} ${support.withTests.length === 1 ? "is" : "are"} not probed: only a command check of category test that passed on the base revision, or a browser check, is`, ...acceptance };
@@ -43297,15 +43307,15 @@ function criterionFailBefore(support, fb) {
   const open2 = probed.filter(({ c }) => c === null || c.outcome === "not-established");
   const causes = open2.map(({ c }) => c?.cause ?? fb.skipped?.cause ?? "not-probed");
   const cause = causes.find((c) => !acceptableCause(c)) ?? causes.find((c) => c !== "unscanned") ?? causes[0];
-  const reason = [...new Set(open2.map(({ id, c }) => c?.reason ?? fb.skipped?.reason ?? `${id} was not probed`))].join("; ");
+  const reason = [...new Set(open2.map(({ id: id2, c }) => c?.reason ?? fb.skipped?.reason ?? `${id2} was not probed`))].join("; ");
   return { ...base, outcome: "not-established", cause, checks, reason, ...causes.every(acceptableCause) ? acceptance : {} };
 }
 function otherwiseAcceptable(results, required, allowFlaky, exceptions) {
-  return required.every((id) => {
-    const r = results.filter((x) => x.checkId === id).at(-1);
+  return required.every((id2) => {
+    const r = results.filter((x) => x.checkId === id2).at(-1);
     if (r === void 0) return false;
     if (r.status === "PASSED") return !r.flaky || allowFlaky;
-    const recorded = exceptions.get(id);
+    const recorded = exceptions.get(id2);
     return (r.status === "FAILED" || r.status === "TIMEOUT") && recorded !== void 0 && r.fingerprint !== null && r.fingerprint === recorded;
   });
 }
@@ -44002,7 +44012,7 @@ function crossCheck(c, snapshot2, expectedHash) {
   const problems = [];
   const config = snapshot2.config;
   const checks = config.checks ?? {};
-  const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
+  const isCheck = (id2) => Object.prototype.hasOwnProperty.call(checks, id2);
   if (c.policy_hash !== expectedHash) problems.push("policy_hash does not match the frozen policy snapshot");
   const seenCriteria = /* @__PURE__ */ new Set();
   for (const ac of c.acceptance_criteria) {
@@ -44010,9 +44020,9 @@ function crossCheck(c, snapshot2, expectedHash) {
     seenCriteria.add(ac.id);
     if (ac.statement.trim() === "") problems.push(`criterion ${ac.id} has an empty statement`);
     if (ac.mandatory && !ac.proof.some((p) => p.trim() !== "")) problems.push(`mandatory criterion ${ac.id} has no proof`);
-    for (const id of ac.check_ids ?? []) {
-      if (!isCheck(id)) problems.push(`criterion ${ac.id} cites check "${id}", which the policy does not define`);
-      else if (!c.required_check_ids.includes(id)) problems.push(`criterion ${ac.id} cites check "${id}", which is not in required_check_ids`);
+    for (const id2 of ac.check_ids ?? []) {
+      if (!isCheck(id2)) problems.push(`criterion ${ac.id} cites check "${id2}", which the policy does not define`);
+      else if (!c.required_check_ids.includes(id2)) problems.push(`criterion ${ac.id} cites check "${id2}", which is not in required_check_ids`);
     }
   }
   if (!c.acceptance_criteria.some((ac) => ac.mandatory)) problems.push("at least one acceptance criterion must be mandatory");
@@ -44028,11 +44038,11 @@ function crossCheck(c, snapshot2, expectedHash) {
     seenExceptions.add(e.check_id);
   }
   if (c.practices !== void 0) problems.push(...practiceProblems(c.practices).map((p) => `practices: ${p}`));
-  for (const id of c.required_check_ids) {
-    if (!isCheck(id)) problems.push(`required check "${id}" is not defined by the policy`);
+  for (const id2 of c.required_check_ids) {
+    if (!isCheck(id2)) problems.push(`required check "${id2}" is not defined by the policy`);
   }
-  for (const [id, def] of Object.entries(checks)) {
-    if (def.mandatory && !c.required_check_ids.includes(id)) problems.push(`policy check "${id}" is mandatory but not in required_check_ids`);
+  for (const [id2, def] of Object.entries(checks)) {
+    if (def.mandatory && !c.required_check_ids.includes(id2)) problems.push(`policy check "${id2}" is mandatory but not in required_check_ids`);
   }
   const scope = config.scope?.allowed_paths ?? [];
   c.allowed_paths.forEach((glob, i) => {
@@ -44390,9 +44400,9 @@ function chargeMarks(db, runId) {
   const marks = /* @__PURE__ */ new Map();
   for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id", runId, USAGE_CHARGED_EVENT)) {
     const d = parseData(e.data_json);
-    const ids = Array.isArray(d.usage_ids) ? d.usage_ids.filter((id) => typeof id === "number") : [];
+    const ids = Array.isArray(d.usage_ids) ? d.usage_ids.filter((id2) => typeof id2 === "number") : [];
     const basis = d.basis === "reported" || d.basis === "estimated" || d.basis === "ceiling" ? d.basis : null;
-    for (const id of ids) marks.set(id, { usd: ids.length === 1 && typeof d.charged_usd === "number" && Number.isFinite(d.charged_usd) ? d.charged_usd : null, basis });
+    for (const id2 of ids) marks.set(id2, { usd: ids.length === 1 && typeof d.charged_usd === "number" && Number.isFinite(d.charged_usd) ? d.charged_usd : null, basis });
   }
   return marks;
 }
@@ -45205,18 +45215,18 @@ function indexUnits(units) {
 }
 function cyclicUnits(units, byId) {
   const state = /* @__PURE__ */ new Map();
-  const visit3 = (id) => {
-    const s = state.get(id);
+  const visit3 = (id2) => {
+    const s = state.get(id2);
     if (s === "visiting" || s === "cyclic") return true;
     if (s === "ok") return false;
-    state.set(id, "visiting");
+    state.set(id2, "visiting");
     let cyc = false;
-    for (const d of byId.get(id)?.dependsOn ?? []) if (byId.has(d) && visit3(d)) cyc = true;
-    state.set(id, cyc ? "cyclic" : "ok");
+    for (const d of byId.get(id2)?.dependsOn ?? []) if (byId.has(d) && visit3(d)) cyc = true;
+    state.set(id2, cyc ? "cyclic" : "ok");
     return cyc;
   };
   for (const u of units) visit3(u.id);
-  return new Set([...state].filter(([, s]) => s === "cyclic").map(([id]) => id));
+  return new Set([...state].filter(([, s]) => s === "cyclic").map(([id2]) => id2));
 }
 function pathsOverlap(a, b) {
   const left = a.length ? a : ["**"];
@@ -45549,10 +45559,10 @@ function loadRunContext(deps, runId, signal) {
 }
 function currentCandidate(db, runId) {
   const ev = db.get("SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1", runId, CANDIDATE_EVENT);
-  const id = ev?.data_json ? JSON.parse(ev.data_json).candidate_id : void 0;
+  const id2 = ev?.data_json ? JSON.parse(ev.data_json).candidate_id : void 0;
   const all = listCandidates(db, runId);
-  if (id) {
-    const hit = all.find((c) => c.id === id);
+  if (id2) {
+    const hit = all.find((c) => c.id === id2);
     if (hit) return hit;
   }
   return all.filter((c) => c.status === "READY" || c.status === "DELIVERED").at(-1) ?? null;
@@ -46403,8 +46413,8 @@ function selectRuns(ctx) {
   const since = ctx.clock.now() - (ctx.opts.orphanScanWindowMs ?? DEFAULT_SCAN_WINDOW_MS);
   for (const row of db.all("SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at >= ?", since)) if (!ids.has(row.id)) extra.push(row.id);
   const out = [...nonTerminal];
-  for (const id of new Set(extra)) {
-    const run = getRun(db, id);
+  for (const id2 of new Set(extra)) {
+    const run = getRun(db, id2);
     if (isRunTerminal(run.state)) out.push(run);
   }
   return out.filter((r) => only === null || only.has(r.id)).sort((a, b) => a.createdAt - b.createdAt);
@@ -48579,13 +48589,13 @@ var init_store2 = __esm({
       }
       /** Keep the caller's id unless another statement already owns it. */
       freeId(input) {
-        const taken = (id) => this.db.get("SELECT id FROM nodes WHERE id = ?", id) !== void 0;
+        const taken = (id2) => this.db.get("SELECT id FROM nodes WHERE id = ?", id2) !== void 0;
         if (!taken(input.id)) return input.id;
         const derived = lessonIdFor(input.kind, input.statement);
         if (!taken(derived)) return derived;
         for (; ; ) {
-          const id = newId("les");
-          if (!taken(id)) return id;
+          const id2 = newId("les");
+          if (!taken(id2)) return id2;
         }
       }
       writeNode(lesson, key2, now, insert) {
@@ -48662,13 +48672,13 @@ var init_store2 = __esm({
         );
         return r.changes === 1;
       }
-      getLesson(id) {
-        const row = this.db.get("SELECT id, lesson_json FROM nodes WHERE id = ?", id);
+      getLesson(id2) {
+        const row = this.db.get("SELECT id, lesson_json FROM nodes WHERE id = ?", id2);
         return row ? parseLesson(row.lesson_json) : null;
       }
-      requireLesson(id) {
-        const lesson = this.getLesson(id);
-        if (!lesson) throw new OrbitError("NOT_FOUND", `no lesson ${id}`);
+      requireLesson(id2) {
+        const lesson = this.getLesson(id2);
+        if (!lesson) throw new OrbitError("NOT_FOUND", `no lesson ${id2}`);
         return lesson;
       }
       /** The node a lesson with this kind and statement would merge into, if any. */
@@ -48713,14 +48723,14 @@ var init_store2 = __esm({
        * Record a status change with its reason. The rules deciding when a status
        * changes live in feedback.ts and overlays.ts; this only writes and audits.
        */
-      setStatus(id, status2, reason, data) {
+      setStatus(id2, status2, reason, data) {
         const now = this.clock.now();
         return this.db.tx(() => {
-          const lesson = this.requireLesson(id);
+          const lesson = this.requireLesson(id2);
           if (lesson.status === status2) return lesson;
           const next = { ...lesson, status: status2 };
-          this.db.run("UPDATE nodes SET status = ?, lesson_json = ?, updated_at = ? WHERE id = ?", status2, JSON.stringify(next), now, id);
-          this.appendEvent(id, "status", { from: lesson.status, to: status2, reason, ...data ?? {} }, now);
+          this.db.run("UPDATE nodes SET status = ?, lesson_json = ?, updated_at = ? WHERE id = ?", status2, JSON.stringify(next), now, id2);
+          this.appendEvent(id2, "status", { from: lesson.status, to: status2, reason, ...data ?? {} }, now);
           return next;
         });
       }
@@ -48729,16 +48739,16 @@ var init_store2 = __esm({
        * (relation, run, artifact) was already recorded, which is what makes
        * settling a run twice harmless.
        */
-      addEvidence(id, ref3) {
+      addEvidence(id2, ref3) {
         const now = this.clock.now();
         return this.db.tx(() => {
-          const lesson = this.requireLesson(id);
-          const added = this.insertEvidenceEdge(id, ref3, now);
+          const lesson = this.requireLesson(id2);
+          const added = this.insertEvidenceEdge(id2, ref3, now);
           if (!added) return false;
           const next = { ...lesson, evidence: mergeEvidence(lesson.evidence, [ref3]) };
           assertLesson(next);
-          this.db.run("UPDATE nodes SET lesson_json = ?, updated_at = ? WHERE id = ?", JSON.stringify(next), now, id);
-          this.appendEvent(id, "evidence", { relation: ref3.relation, run_id: ref3.run_id, artifact: ref3.artifact }, now);
+          this.db.run("UPDATE nodes SET lesson_json = ?, updated_at = ? WHERE id = ?", JSON.stringify(next), now, id2);
+          this.appendEvent(id2, "evidence", { relation: ref3.relation, run_id: ref3.run_id, artifact: ref3.artifact }, now);
           return true;
         });
       }
@@ -48782,7 +48792,7 @@ var init_store2 = __esm({
       }
       statsMany(lessonIds) {
         const out = /* @__PURE__ */ new Map();
-        for (const id of lessonIds) out.set(id, emptyStats());
+        for (const id2 of lessonIds) out.set(id2, emptyStats());
         if (lessonIds.length === 0) return out;
         for (let i = 0; i < lessonIds.length; i += 400) {
           const chunk = lessonIds.slice(i, i + 400);
@@ -48863,8 +48873,8 @@ var init_store2 = __esm({
           this.clock.now()
         );
       }
-      getOverlay(id) {
-        const row = this.db.get("SELECT * FROM overlays WHERE id = ?", id);
+      getOverlay(id2) {
+        const row = this.db.get("SELECT * FROM overlays WHERE id = ?", id2);
         return row ? toOverlay(row) : null;
       }
       listOverlays(filter = {}) {
@@ -48889,7 +48899,7 @@ var init_store2 = __esm({
         const row = this.db.get("SELECT MAX(version) AS v FROM overlays WHERE role = ? AND scope = ?", role, scope);
         return Number(row?.v ?? 0) + 1;
       }
-      updateOverlay(id, patch) {
+      updateOverlay(id2, patch) {
         const sets = ["status = ?", "updated_at = ?"];
         const params = [patch.status, this.clock.now()];
         if (patch.parentId !== void 0) {
@@ -48904,8 +48914,8 @@ var init_store2 = __esm({
           sets.push("activated_at = ?");
           params.push(patch.activatedAt);
         }
-        const r = this.db.run(`UPDATE overlays SET ${sets.join(", ")} WHERE id = ?`, ...params, id);
-        if (r.changes !== 1) throw new OrbitError("NOT_FOUND", `no overlay ${id}`);
+        const r = this.db.run(`UPDATE overlays SET ${sets.join(", ")} WHERE id = ?`, ...params, id2);
+        if (r.changes !== 1) throw new OrbitError("NOT_FOUND", `no overlay ${id2}`);
       }
       insertEvalRun(row) {
         this.db.run(
@@ -49231,7 +49241,7 @@ function recordReview(db, input, clock) {
   if (!REVIEW_VERDICTS.includes(input.verdict)) throw new OrbitError("SCHEMA_INVALID", `unknown review verdict ${String(input.verdict)}`);
   if (!Number.isInteger(input.round) || input.round < 1) throw new OrbitError("SCHEMA_INVALID", "review round must be a positive integer");
   if (!input.treeHash) throw new OrbitError("SCHEMA_INVALID", "a review must be bound to a tree hash");
-  const id = input.id ?? newId("rev");
+  const id2 = input.id ?? newId("rev");
   const seenIds = /* @__PURE__ */ new Set();
   for (const f of input.findings) {
     if (!isFindingSeverity(f.severity)) throw new OrbitError("SCHEMA_INVALID", `finding ${f.externalId} has unknown severity ${String(f.severity)}`);
@@ -49241,10 +49251,10 @@ function recordReview(db, input, clock) {
   const findingsJson = canonicalJson(input.findings);
   const now = clock.now();
   return db.tx(() => {
-    const existing = db.get("SELECT * FROM reviews WHERE id = ?", id);
+    const existing = db.get("SELECT * FROM reviews WHERE id = ?", id2);
     if (existing) {
       const same2 = existing.run_id === input.runId && existing.candidate_id === input.candidateId && existing.tree_hash === input.treeHash && existing.provider === input.provider && existing.verdict === input.verdict && existing.findings_json === findingsJson;
-      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `review ${id} already exists with different content`, { reviewId: id });
+      if (!same2) throw new OrbitError("CONCURRENT_UPDATE", `review ${id2} already exists with different content`, { reviewId: id2 });
       return toReview(existing);
     }
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
@@ -49259,7 +49269,7 @@ function recordReview(db, input, clock) {
     }
     db.run(
       "INSERT INTO reviews (id, run_id, candidate_id, tree_hash, round, provider, model, worker_id, verdict, packet_sha256, findings_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      id,
+      id2,
       input.runId,
       input.candidateId,
       input.treeHash,
@@ -49275,9 +49285,9 @@ function recordReview(db, input, clock) {
     for (const f of input.findings) {
       db.run(
         "INSERT INTO findings (id, run_id, review_id, external_id, severity, category, location, claim, evidence, suggested_validation, status, resolution, resolution_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
-        findingStoreId(id, f.externalId),
+        findingStoreId(id2, f.externalId),
         input.runId,
-        id,
+        id2,
         f.externalId,
         f.severity,
         f.category,
@@ -49295,10 +49305,10 @@ function recordReview(db, input, clock) {
       input.runId,
       "review.recorded",
       "controller",
-      { review_id: id, provider: input.provider, model: input.model, verdict: input.verdict, tree_hash: input.treeHash, round: input.round, findings: input.findings.length },
+      { review_id: id2, provider: input.provider, model: input.model, verdict: input.verdict, tree_hash: input.treeHash, round: input.round, findings: input.findings.length },
       now
     );
-    return toReview(db.get("SELECT * FROM reviews WHERE id = ?", id));
+    return toReview(db.get("SELECT * FROM reviews WHERE id = ?", id2));
   });
 }
 function listReviews(db, runId, filter = {}) {
@@ -49349,7 +49359,7 @@ function listFindings(db, runId, filter = {}) {
   }
   return db.all(`SELECT * FROM findings WHERE ${clauses.join(" AND ")} ORDER BY created_at, rowid`, ...params).map(toFinding);
 }
-function updateFindingStatus(db, id, update, clock) {
+function updateFindingStatus(db, id2, update, clock) {
   if (!FINDING_STATUSES.includes(update.status)) throw new OrbitError("SCHEMA_INVALID", `unknown finding status ${String(update.status)}`);
   if (!update.resolution.trim()) throw new OrbitError("SCHEMA_INVALID", "a finding status change needs a recorded reason");
   const rj = update.resolutionJson ?? null;
@@ -49360,18 +49370,18 @@ function updateFindingStatus(db, id, update, clock) {
     throw new OrbitError("SCHEMA_INVALID", "an excepted finding needs the policy exception that waives it (resolutionJson.exception)");
   }
   return db.tx(() => {
-    const row = db.get("SELECT * FROM findings WHERE id = ?", id);
-    if (!row) throw new OrbitError("NOT_FOUND", `no finding ${id}`);
+    const row = db.get("SELECT * FROM findings WHERE id = ?", id2);
+    if (!row) throw new OrbitError("NOT_FOUND", `no finding ${id2}`);
     const from = row.status;
     const json3 = update.resolutionJson === void 0 ? null : canonicalJson(update.resolutionJson);
     if (from === update.status && row.resolution === update.resolution && row.resolution_json === json3) return toFinding(row);
     if (TERMINAL_FINDING_STATUSES.includes(from) && from !== update.status) {
-      throw new OrbitError("TRANSITION_INVALID", `finding ${id} is ${from}; a ${from} finding is never reopened (a re-raised claim is a new finding)`, { findingId: id, from, to: update.status });
+      throw new OrbitError("TRANSITION_INVALID", `finding ${id2} is ${from}; a ${from} finding is never reopened (a re-raised claim is a new finding)`, { findingId: id2, from, to: update.status });
     }
     const now = clock.now();
-    db.run("UPDATE findings SET status = ?, resolution = ?, resolution_json = ?, updated_at = ? WHERE id = ?", update.status, update.resolution, json3, now, id);
-    appendEvent(db, row.run_id, "finding.status", "controller", { finding_id: id, from, to: update.status, reason: update.resolution }, now);
-    return toFinding(db.get("SELECT * FROM findings WHERE id = ?", id));
+    db.run("UPDATE findings SET status = ?, resolution = ?, resolution_json = ?, updated_at = ? WHERE id = ?", update.status, update.resolution, json3, now, id2);
+    appendEvent(db, row.run_id, "finding.status", "controller", { finding_id: id2, from, to: update.status, reason: update.resolution }, now);
+    return toFinding(db.get("SELECT * FROM findings WHERE id = ?", id2));
   });
 }
 function loadResolverState(db, runId, treeHash) {
@@ -49516,7 +49526,7 @@ function measureRun(db, runId, requiredCheckIds) {
   const cand = currentCandidate(db, runId);
   const report2 = cand ? currentEvidenceReport(db, runId, cand.id) : null;
   if (run.state === "SUCCEEDED" && cand && report2 && report2.verdict === "PASS" && report2.treeHash === cand.treeHash) {
-    verified = required.every((id) => report2.report.checks.some((c) => c.id === id && c.status === "PASSED"));
+    verified = required.every((id2) => report2.report.checks.some((c) => c.id === id2 && c.status === "PASSED"));
   }
   const reviews = listReviews(db, runId);
   const passedTrees = new Set(
@@ -49838,12 +49848,12 @@ function denialsFromTranscript(events) {
     }
   }
   const out = /* @__PURE__ */ new Map();
-  for (const [id, r] of results) {
+  for (const [id2, r] of results) {
     if (!r.isError) continue;
     const m = GUARD_REASON.exec(r.text);
     if (!m) continue;
-    const use = uses.get(id);
-    out.set(id, { toolUseId: id, tool: use?.name ?? "unknown", rule: m[1].trim(), target: targetOf(use?.input), reason: clip4(m[2].trim()), source: "guard-hook" });
+    const use = uses.get(id2);
+    out.set(id2, { toolUseId: id2, tool: use?.name ?? "unknown", rule: m[1].trim(), target: targetOf(use?.input), reason: clip4(m[2].trim()), source: "guard-hook" });
   }
   for (const d of listed3) {
     if (!d.tool_use_id || out.has(d.tool_use_id)) continue;
@@ -49925,13 +49935,13 @@ async function ensureWorker(ctx, req) {
   const existing = workersFor(ctx, req.purpose).at(-1) ?? null;
   if (existing && (existing.state === "PLANNED" || existing.state === "RUNNING")) return observe(ctx, existing, req);
   if (existing) return { status: "finished", worker: existing, result: accountFinished(ctx, existing, req.phase) };
-  const id = newId("wrk");
+  const id2 = newId("wrk");
   const worker = ctx.db.tx(() => {
     assertLeaseHeld(ctx.db, ctx.run.id, ctx.ownerId, ctx.clock.now());
     return planWorker(
       ctx.db,
       {
-        id,
+        id: id2,
         runId: ctx.run.id,
         role: req.role,
         purpose: req.purpose,
@@ -49940,7 +49950,7 @@ async function ensureWorker(ctx, req) {
         effort: req.effort,
         attempt: req.attempt ?? null,
         candidateId: req.candidateId ?? null,
-        workerDir: join40(ctx.runDir, "workers", id),
+        workerDir: join40(ctx.runDir, "workers", id2),
         cwd: req.cwd,
         ownedPaths: req.ownedPaths ?? null
       },
@@ -50273,7 +50283,7 @@ function lostAttemptUsageIds(db, runId, workerId) {
     WORKER_RESTART_EVENT,
     ...workerId === void 0 ? [] : [workerId]
   );
-  return new Set(rows.map((r) => r.id).filter((id) => typeof id === "number"));
+  return new Set(rows.map((r) => r.id).filter((id2) => typeof id2 === "number"));
 }
 function measuredUsage(ctx, w, status2, usage) {
   if (!(ZERO_COST_STATUSES.has(status2) && usage.costUsd === null && sessionSpentNothing(w, usage))) return usage;
@@ -50340,7 +50350,7 @@ function markedUsageIds(db, runId) {
   const ids = /* @__PURE__ */ new Set();
   for (const e of db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ?", runId, USAGE_CHARGED_EVENT)) {
     const d = e.data_json ? JSON.parse(e.data_json) : {};
-    for (const id of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id === "number") ids.add(id);
+    for (const id2 of Array.isArray(d.usage_ids) ? d.usage_ids : []) if (typeof id2 === "number") ids.add(id2);
   }
   return ids;
 }
@@ -50724,14 +50734,14 @@ function toQuestion(r) {
   };
 }
 function insertQuestion(db, input, clock, actor = "controller") {
-  const id = input.id ?? newId("q");
+  const id2 = input.id ?? newId("q");
   const now = clock.now();
   return db.tx(() => {
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
     db.run(
       `INSERT INTO questions (id, run_id, mode, question, evidence, options_json, recommendation, safe_default, material, affected_json, unblocked_json, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
-      id,
+      id2,
       input.runId,
       input.mode,
       input.question,
@@ -50744,58 +50754,58 @@ function insertQuestion(db, input, clock, actor = "controller") {
       JSON.stringify(input.unblocked),
       now
     );
-    appendEvent(db, input.runId, "question.created", actor, { question_id: id, mode: input.mode, material: input.material, affected: input.affected }, now);
-    return getQuestion(db, id);
+    appendEvent(db, input.runId, "question.created", actor, { question_id: id2, mode: input.mode, material: input.material, affected: input.affected }, now);
+    return getQuestion(db, id2);
   });
 }
-function findQuestion(db, id) {
-  const row = db.get("SELECT * FROM questions WHERE id = ?", id);
+function findQuestion(db, id2) {
+  const row = db.get("SELECT * FROM questions WHERE id = ?", id2);
   return row ? toQuestion(row) : null;
 }
-function getQuestion(db, id) {
-  const q = findQuestion(db, id);
-  if (!q) throw new OrbitError("NOT_FOUND", `no question ${id}`);
+function getQuestion(db, id2) {
+  const q = findQuestion(db, id2);
+  if (!q) throw new OrbitError("NOT_FOUND", `no question ${id2}`);
   return q;
 }
 function listQuestions(db, runId, opts = {}) {
   const rows = opts.status === void 0 ? db.all("SELECT * FROM questions WHERE run_id = ? ORDER BY created_at, rowid", runId) : db.all("SELECT * FROM questions WHERE run_id = ? AND status = ? ORDER BY created_at, rowid", runId, opts.status);
   return rows.map(toQuestion);
 }
-function setQuestionAnswer(db, id, answer, by, clock) {
+function setQuestionAnswer(db, id2, answer, by, clock) {
   const now = clock.now();
   return db.tx(() => {
-    const q = getQuestion(db, id);
+    const q = getQuestion(db, id2);
     if (q.status === "answered") {
       if (q.answer === answer && q.answeredBy === by) return q;
-      throw new OrbitError("CONCURRENT_UPDATE", `question ${id} was already answered`, { questionId: id });
+      throw new OrbitError("CONCURRENT_UPDATE", `question ${id2} was already answered`, { questionId: id2 });
     }
-    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id} is ${q.status}; only an open question can be answered`, { questionId: id });
-    db.run("UPDATE questions SET status = 'answered', answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND status = 'open'", answer, by, now, id);
-    appendEvent(db, q.runId, "question.answered", by, { question_id: id }, now);
-    return getQuestion(db, id);
+    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id2} is ${q.status}; only an open question can be answered`, { questionId: id2 });
+    db.run("UPDATE questions SET status = 'answered', answer = ?, answered_by = ?, answered_at = ? WHERE id = ? AND status = 'open'", answer, by, now, id2);
+    appendEvent(db, q.runId, "question.answered", by, { question_id: id2 }, now);
+    return getQuestion(db, id2);
   });
 }
-function widenQuestionAffected(db, id, extra, clock, actor = "controller") {
+function widenQuestionAffected(db, id2, extra, clock, actor = "controller") {
   const now = clock.now();
   return db.tx(() => {
-    const q = getQuestion(db, id);
+    const q = getQuestion(db, id2);
     const added = extra.filter((w) => !q.affected.includes(w));
     if (added.length === 0) return q;
-    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id} is ${q.status}; only an open question can be widened`, { questionId: id });
-    db.run("UPDATE questions SET affected_json = ? WHERE id = ?", JSON.stringify({ affected: [...q.affected, ...added], changes: q.changes }), id);
-    appendEvent(db, q.runId, "question.widened", actor, { question_id: id, added }, now);
-    return getQuestion(db, id);
+    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id2} is ${q.status}; only an open question can be widened`, { questionId: id2 });
+    db.run("UPDATE questions SET affected_json = ? WHERE id = ?", JSON.stringify({ affected: [...q.affected, ...added], changes: q.changes }), id2);
+    appendEvent(db, q.runId, "question.widened", actor, { question_id: id2, added }, now);
+    return getQuestion(db, id2);
   });
 }
-function withdrawQuestion(db, id, reason, clock, actor = "controller") {
+function withdrawQuestion(db, id2, reason, clock, actor = "controller") {
   const now = clock.now();
   return db.tx(() => {
-    const q = getQuestion(db, id);
+    const q = getQuestion(db, id2);
     if (q.status === "withdrawn") return q;
-    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id} is ${q.status}; only an open question can be withdrawn`, { questionId: id });
-    db.run("UPDATE questions SET status = 'withdrawn' WHERE id = ? AND status = 'open'", id);
-    appendEvent(db, q.runId, "question.withdrawn", actor, { question_id: id, reason }, now);
-    return getQuestion(db, id);
+    if (q.status !== "open") throw new OrbitError("TRANSITION_INVALID", `question ${id2} is ${q.status}; only an open question can be withdrawn`, { questionId: id2 });
+    db.run("UPDATE questions SET status = 'withdrawn' WHERE id = ? AND status = 'open'", id2);
+    appendEvent(db, q.runId, "question.withdrawn", actor, { question_id: id2, reason }, now);
+    return getQuestion(db, id2);
   });
 }
 function toLedger(r) {
@@ -50815,14 +50825,14 @@ function toLedger(r) {
   };
 }
 function insertLedgerEntry(db, input, clock, actor = "controller") {
-  const id = input.id ?? newId("as");
+  const id2 = input.id ?? newId("as");
   const now = clock.now();
   return db.tx(() => {
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
     db.run(
       `INSERT INTO ledger (id, run_id, claim, source, confidence, consequence, reversibility, experiment, status, evidence_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
+      id2,
       input.runId,
       input.claim,
       input.source,
@@ -50835,31 +50845,31 @@ function insertLedgerEntry(db, input, clock, actor = "controller") {
       now,
       now
     );
-    appendEvent(db, input.runId, "ledger.added", actor, { ledger_id: id, status: input.status ?? "unverified" }, now);
-    return getLedgerEntry(db, id);
+    appendEvent(db, input.runId, "ledger.added", actor, { ledger_id: id2, status: input.status ?? "unverified" }, now);
+    return getLedgerEntry(db, id2);
   });
 }
-function findLedgerEntry(db, id) {
-  const row = db.get("SELECT * FROM ledger WHERE id = ?", id);
+function findLedgerEntry(db, id2) {
+  const row = db.get("SELECT * FROM ledger WHERE id = ?", id2);
   return row ? toLedger(row) : null;
 }
-function getLedgerEntry(db, id) {
-  const e = findLedgerEntry(db, id);
-  if (!e) throw new OrbitError("NOT_FOUND", `no ledger entry ${id}`);
+function getLedgerEntry(db, id2) {
+  const e = findLedgerEntry(db, id2);
+  if (!e) throw new OrbitError("NOT_FOUND", `no ledger entry ${id2}`);
   return e;
 }
 function listLedger(db, runId, opts = {}) {
   const rows = opts.status === void 0 ? db.all("SELECT * FROM ledger WHERE run_id = ? ORDER BY created_at, rowid", runId) : db.all("SELECT * FROM ledger WHERE run_id = ? AND status = ? ORDER BY created_at, rowid", runId, opts.status);
   return rows.map(toLedger);
 }
-function writeLedgerStatus(db, id, from, to, evidence, clock, actor = "controller") {
+function writeLedgerStatus(db, id2, from, to, evidence, clock, actor = "controller") {
   const now = clock.now();
   return db.tx(() => {
-    const cur = getLedgerEntry(db, id);
-    const res = db.run("UPDATE ledger SET status = ?, evidence_json = ?, updated_at = ? WHERE id = ? AND status = ?", to, JSON.stringify([...cur.evidence, ...evidence]), now, id, from);
-    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `ledger entry ${id} changed while updating`, { ledgerId: id });
-    appendEvent(db, cur.runId, "ledger.transition", actor, { ledger_id: id, from, to }, now);
-    return getLedgerEntry(db, id);
+    const cur = getLedgerEntry(db, id2);
+    const res = db.run("UPDATE ledger SET status = ?, evidence_json = ?, updated_at = ? WHERE id = ? AND status = ?", to, JSON.stringify([...cur.evidence, ...evidence]), now, id2, from);
+    if (res.changes !== 1) throw new OrbitError("CONCURRENT_UPDATE", `ledger entry ${id2} changed while updating`, { ledgerId: id2 });
+    appendEvent(db, cur.runId, "ledger.transition", actor, { ledger_id: id2, from, to }, now);
+    return getLedgerEntry(db, id2);
   });
 }
 function toAmendment(r) {
@@ -50886,14 +50896,14 @@ function toAmendment(r) {
   };
 }
 function insertAmendment(db, input, clock, actor = "controller") {
-  const id = input.id ?? newId("amd");
+  const id2 = input.id ?? newId("amd");
   const now = clock.now();
   return db.tx(() => {
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
     db.run(
       `INSERT INTO amendments (id, run_id, field, old_json, new_json, evidence, reason, approval_required, approved_by, affected_json, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
+      id2,
       input.runId,
       input.record.field,
       JSON.stringify(input.record.old_value ?? null),
@@ -50906,17 +50916,17 @@ function insertAmendment(db, input, clock, actor = "controller") {
       input.status,
       now
     );
-    appendEvent(db, input.runId, `amendment.${input.status}`, actor, { amendment_id: id, field: input.record.field }, now);
-    return getAmendment(db, id);
+    appendEvent(db, input.runId, `amendment.${input.status}`, actor, { amendment_id: id2, field: input.record.field }, now);
+    return getAmendment(db, id2);
   });
 }
-function findAmendment(db, id) {
-  const row = db.get("SELECT * FROM amendments WHERE id = ?", id);
+function findAmendment(db, id2) {
+  const row = db.get("SELECT * FROM amendments WHERE id = ?", id2);
   return row ? toAmendment(row) : null;
 }
-function getAmendment(db, id) {
-  const a = findAmendment(db, id);
-  if (!a) throw new OrbitError("NOT_FOUND", `no amendment ${id}`);
+function getAmendment(db, id2) {
+  const a = findAmendment(db, id2);
+  if (!a) throw new OrbitError("NOT_FOUND", `no amendment ${id2}`);
   return a;
 }
 function listAmendments(db, runId, opts = {}) {
@@ -50926,21 +50936,21 @@ function listAmendments(db, runId, opts = {}) {
 function amendmentHistory(db, runId) {
   return listAmendments(db, runId, { status: "applied" }).map((a) => a.record);
 }
-function resolveAmendment(db, id, to, approvedBy, clock, actor = "controller", hashes) {
+function resolveAmendment(db, id2, to, approvedBy, clock, actor = "controller", hashes) {
   const now = clock.now();
   return db.tx(() => {
-    const a = getAmendment(db, id);
+    const a = getAmendment(db, id2);
     if (a.status === to && a.approvedBy === approvedBy) return a;
-    if (a.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${id} is ${a.status}; only a pending amendment can be resolved`, { amendmentId: id });
-    const row = db.get("SELECT affected_json FROM amendments WHERE id = ?", id);
+    if (a.status !== "pending-approval") throw new OrbitError("TRANSITION_INVALID", `amendment ${id2} is ${a.status}; only a pending amendment can be resolved`, { amendmentId: id2 });
+    const row = db.get("SELECT affected_json FROM amendments WHERE id = ?", id2);
     const env = parseJson3(row?.affected_json ?? null, {});
     if (hashes) {
       env.contract_before = hashes.before;
       env.contract_after = hashes.after;
     }
-    db.run("UPDATE amendments SET status = ?, approved_by = ?, affected_json = ? WHERE id = ? AND status = ?", to, approvedBy, JSON.stringify(env), id, "pending-approval");
-    appendEvent(db, a.runId, `amendment.${to}`, actor, { amendment_id: id, approved_by: approvedBy }, now);
-    return getAmendment(db, id);
+    db.run("UPDATE amendments SET status = ?, approved_by = ?, affected_json = ? WHERE id = ? AND status = ?", to, approvedBy, JSON.stringify(env), id2, "pending-approval");
+    appendEvent(db, a.runId, `amendment.${to}`, actor, { amendment_id: id2, approved_by: approvedBy }, now);
+    return getAmendment(db, id2);
   });
 }
 function toHypothesis(r) {
@@ -50960,14 +50970,14 @@ function toHypothesis(r) {
   };
 }
 function insertHypothesis(db, input, clock, actor = "controller") {
-  const id = input.id ?? newId("hyp");
+  const id2 = input.id ?? newId("hyp");
   const now = clock.now();
   return db.tx(() => {
     if (!db.get("SELECT 1 AS x FROM runs WHERE id = ?", input.runId)) throw new OrbitError("NOT_FOUND", `no run ${input.runId}`);
     db.run(
       `INSERT INTO hypotheses (id, run_id, statement, normalized_hash, fingerprint, experiment, expected_observation, status, result, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?)`,
-      id,
+      id2,
       input.runId,
       input.statement,
       input.normalizedHash,
@@ -50978,17 +50988,17 @@ function insertHypothesis(db, input, clock, actor = "controller") {
       now,
       now
     );
-    appendEvent(db, input.runId, "hypothesis.proposed", actor, { hypothesis_id: id, fingerprint: input.fingerprint }, now);
-    return getHypothesis(db, id);
+    appendEvent(db, input.runId, "hypothesis.proposed", actor, { hypothesis_id: id2, fingerprint: input.fingerprint }, now);
+    return getHypothesis(db, id2);
   });
 }
-function findHypothesis(db, id) {
-  const row = db.get("SELECT * FROM hypotheses WHERE id = ?", id);
+function findHypothesis(db, id2) {
+  const row = db.get("SELECT * FROM hypotheses WHERE id = ?", id2);
   return row ? toHypothesis(row) : null;
 }
-function getHypothesis(db, id) {
-  const h = findHypothesis(db, id);
-  if (!h) throw new OrbitError("NOT_FOUND", `no hypothesis ${id}`);
+function getHypothesis(db, id2) {
+  const h = findHypothesis(db, id2);
+  if (!h) throw new OrbitError("NOT_FOUND", `no hypothesis ${id2}`);
   return h;
 }
 function listHypotheses(db, runId) {
@@ -51066,11 +51076,11 @@ function reviewDepthOf(ctx, reviewId) {
   return d ? d.data : null;
 }
 function recordReviewDepth(ctx, worker, reviewId) {
-  const id = `dec-${ctx.run.id}-review-depth-${reviewId}`;
-  if (getDecision(ctx.db, id)) return;
+  const id2 = `dec-${ctx.run.id}-review-depth-${reviewId}`;
+  if (getDecision(ctx.db, id2)) return;
   const d = readReviewDepth(worker);
   const data = { review_id: reviewId, worker_id: worker.id, provider: worker.provider, model: worker.model, tool_calls: d.toolCalls, reasoning_tokens: d.reasoningTokens };
-  recordDecision(ctx.db, ctx.runDir, { id, runId: ctx.run.id, kind: REVIEW_DEPTH_KIND, summary: `${worker.provider}/${worker.model ?? "default"} review ${reviewId}: ${describeDepth(data)}`, data }, ctx.clock, { actor: ctx.ownerId });
+  recordDecision(ctx.db, ctx.runDir, { id: id2, runId: ctx.run.id, kind: REVIEW_DEPTH_KIND, summary: `${worker.provider}/${worker.model ?? "default"} review ${reviewId}: ${describeDepth(data)}`, data }, ctx.clock, { actor: ctx.ownerId });
 }
 function describeDepth(d) {
   const calls = d.tool_calls === null ? "tool calls unavailable" : d.tool_calls === 0 ? "NO TOOL CALLS (judged from the packet alone)" : `${d.tool_calls} tool call${d.tool_calls === 1 ? "" : "s"}`;
@@ -51111,8 +51121,8 @@ function observationId(runId, source, key2) {
   return `obs-${sha256(`${runId}\0${source}\0${key2}`).slice(0, 12)}`;
 }
 function rowRef(runId, table3, row) {
-  const id = row.id;
-  return { run_id: runId, artifact: `${table3}:${id}`, sha256: sha256(canonicalJson(row)), relation: "supports" };
+  const id2 = row.id;
+  return { run_id: runId, artifact: `${table3}:${id2}`, sha256: sha256(canonicalJson(row)), relation: "supports" };
 }
 function logRef(runId, runDir2, check) {
   const sha = asSha256(check.log_sha256);
@@ -51239,10 +51249,10 @@ function repairObservations(db, runId, runDir2) {
       if (reported.has(fp) || nextFailing.has(fp)) continue;
       const checkIds = [...new Set(seen.checkRuns.map((c) => c.check_id))].sort();
       if (checkIds.length === 0) continue;
-      if (checkIds.some((id) => curChecks.some((c) => c.check_id === id && c.status === PASSED_CHECK_STATUS))) continue;
-      const passedAgain = checkIds.map((id) => nextChecks.find((c) => c.check_id === id && cleanPass(c)));
+      if (checkIds.some((id2) => curChecks.some((c) => c.check_id === id2 && c.status === PASSED_CHECK_STATUS))) continue;
+      const passedAgain = checkIds.map((id2) => nextChecks.find((c) => c.check_id === id2 && cleanPass(c)));
       if (passedAgain.some((c) => c === void 0)) continue;
-      if (checkIds.some((id) => nextChecks.some((c) => c.check_id === id && !cleanPass(c)))) continue;
+      if (checkIds.some((id2) => nextChecks.some((c) => c.check_id === id2 && !cleanPass(c)))) continue;
       reported.add(fp);
       const firstSeen = candidates.find((c) => perCandidate.get(c.id).has(fp));
       const stat = parseJson4(next.diff_stat_json);
@@ -51880,7 +51890,7 @@ function decideStatus(status2, stats) {
 }
 function applyPromotionRules(store, lessonIds) {
   return store.tx(() => {
-    const lessons = lessonIds ? lessonIds.map((id) => store.getLesson(id)).filter((l) => l !== null) : store.listLessons();
+    const lessons = lessonIds ? lessonIds.map((id2) => store.getLesson(id2)).filter((l) => l !== null) : store.listLessons();
     const stats = store.statsMany(lessons.map((l) => l.id));
     const changes = [];
     for (const lesson of [...lessons].sort((a, b) => a.id.localeCompare(b.id))) {
@@ -51900,19 +51910,19 @@ function settleRun(store, runId, outcome) {
     const retrieved = [...new Set(store.retrievalsForRun(runId).map((r) => r.lesson_id))].sort();
     const contradictedSet = new Set(outcome.contradictedLessonIds);
     const report2 = { runId, retrievalsSettled, supported: [], contradicted: [], unknown: [], changes: [] };
-    for (const id of [...contradictedSet].sort()) {
-      if (!store.getLesson(id)) {
-        report2.unknown.push(id);
+    for (const id2 of [...contradictedSet].sort()) {
+      if (!store.getLesson(id2)) {
+        report2.unknown.push(id2);
         continue;
       }
       const ref3 = { run_id: runId, artifact: artifact.path, sha256: artifact.sha256, relation: "contradicts" };
-      if (store.addEvidence(id, ref3)) report2.contradicted.push(id);
+      if (store.addEvidence(id2, ref3)) report2.contradicted.push(id2);
     }
     if (outcome.succeeded && outcome.verifiedCriteria.length > 0) {
-      for (const id of retrieved) {
-        if (contradictedSet.has(id)) continue;
+      for (const id2 of retrieved) {
+        if (contradictedSet.has(id2)) continue;
         const ref3 = { run_id: runId, artifact: artifact.path, sha256: artifact.sha256, relation: "supports" };
-        if (store.addEvidence(id, ref3)) report2.supported.push(id);
+        if (store.addEvidence(id2, ref3)) report2.supported.push(id2);
       }
     }
     const touched = [.../* @__PURE__ */ new Set([...report2.supported, ...report2.contradicted])];
@@ -52933,8 +52943,8 @@ ${res.stdout}`);
       /** A comment by `author`, as a person would write it on the thread. */
       addComment(thread, author, body) {
         const s = this.read();
-        const id = s.comments.reduce((m, c2) => Math.max(m, c2.id), 0) + 1;
-        const c = { thread, id, url: `https://github.test/acme/app/issues/${thread}#issuecomment-${id}`, author, body, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const id2 = s.comments.reduce((m, c2) => Math.max(m, c2.id), 0) + 1;
+        const c = { thread, id: id2, url: `https://github.test/acme/app/issues/${thread}#issuecomment-${id2}`, author, body, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
         s.comments.push(c);
         this.write(s);
         return strip(c);
@@ -53103,9 +53113,9 @@ function namedAt(text2, checkId) {
   return m === null ? null : { index: m.index, end: m.index + m[0].length };
 }
 function namedCheckIds(text2, checkIds) {
-  return [...new Set(checkIds)].flatMap((id) => {
-    const at = namedAt(text2, id);
-    return at === null ? [] : [{ id, index: at.index }];
+  return [...new Set(checkIds)].flatMap((id2) => {
+    const at = namedAt(text2, id2);
+    return at === null ? [] : [{ id: id2, index: at.index }];
   }).sort((a, b) => a.index - b.index).map((x) => x.id);
 }
 function sentenceTestsRunByChecks(sentence, checkIds) {
@@ -53127,9 +53137,9 @@ function testsRunByChecksFrom(sentence, from, checkIds) {
   const named2 = [];
   let aCheck = false;
   for (const element2 of agents[1].split(/\s*,?\s+(?:and|or)\s+/i).map((e) => e.trim())) {
-    const id = ids.find((x) => new RegExp(String.raw`^(?:the\s+)?${escapeRegExp3(x)}(?:\s+checks?)?$`, "i").test(element2));
-    if (id !== void 0) {
-      if (!named2.includes(id)) named2.push(id);
+    const id2 = ids.find((x) => new RegExp(String.raw`^(?:the\s+)?${escapeRegExp3(x)}(?:\s+checks?)?$`, "i").test(element2));
+    if (id2 !== void 0) {
+      if (!named2.includes(id2)) named2.push(id2);
       aCheck = true;
     } else if (CHECK_AGENT.test(element2)) aCheck = true;
   }
@@ -53139,8 +53149,8 @@ function sentenceStatesCheckRunsTests(sentence, checkIds) {
   const subjects = [];
   const generic2 = SUBJECT.exec(sentence);
   if (generic2 !== null) subjects.push({ index: generic2.index, end: generic2.index + generic2[0].length });
-  for (const id of new Set(checkIds)) {
-    const at = namedAt(sentence, id);
+  for (const id2 of new Set(checkIds)) {
+    const at = namedAt(sentence, id2);
     if (at !== null) subjects.push(at);
   }
   subjects.sort((a, b) => a.index - b.index || b.end - a.end);
@@ -53161,7 +53171,7 @@ function statesCheckRunsTests(statement, checkIds) {
   return null;
 }
 function unknownNamedChecks(statement, checkIds) {
-  const configured = new Set([...checkIds].map((id) => id.toLowerCase()));
+  const configured = new Set([...checkIds].map((id2) => id2.toLowerCase()));
   const unknown = [];
   const seen = /* @__PURE__ */ new Set();
   const add = (word) => {
@@ -53291,7 +53301,7 @@ function contractAssumptionsHash(assumptions) {
 function aggregateCheckConfigHash(snapshot2, checkIds) {
   const ids = [...new Set(checkIds)].sort();
   const map2 = {};
-  for (const id of ids) map2[id] = snapshot2.check_config_hashes[id] ?? null;
+  for (const id2 of ids) map2[id2] = snapshot2.check_config_hashes[id2] ?? null;
   return hashObject(map2);
 }
 function evaluateEvidence(input) {
@@ -53318,9 +53328,9 @@ function evaluateEvidence(input) {
     if (!prev || r.endedAt >= prev.endedAt) valid.set(r.checkId, r);
     if (r.status === "FAILED" || r.status === "TIMEOUT") failedAt.set(r.checkId, Math.min(failedAt.get(r.checkId) ?? Infinity, r.endedAt));
   }
-  for (const [id, r] of valid) {
-    const failed = failedAt.get(id);
-    if (r.status === "PASSED" && !r.flaky && failed !== void 0 && failed <= r.endedAt) valid.set(id, { ...r, flaky: true });
+  for (const [id2, r] of valid) {
+    const failed = failedAt.get(id2);
+    if (r.status === "PASSED" && !r.flaky && failed !== void 0 && failed <= r.endedAt) valid.set(id2, { ...r, flaky: true });
   }
   const ui = /* @__PURE__ */ new Map();
   for (const u of input.uiResults ?? []) {
@@ -53367,27 +53377,27 @@ function evaluateEvidence(input) {
     return { outcome: worst.status === "FAILED" || worst.status === "TIMEOUT" ? "failed" : "error", status: worst.status, artifacts: art };
   };
   const mandatory = new Set(contract.required_check_ids);
-  for (const [id, def] of Object.entries(snapshot2.config.checks)) {
-    if (def.mandatory && (def.kind === "command" || input.uiRequired === true)) mandatory.add(id);
+  for (const [id2, def] of Object.entries(snapshot2.config.checks)) {
+    if (def.mandatory && (def.kind === "command" || input.uiRequired === true)) mandatory.add(id2);
   }
-  for (const id of [...mandatory].sort()) {
-    const e = evidenceFor(id);
+  for (const id2 of [...mandatory].sort()) {
+    const e = evidenceFor(id2);
     switch (e.outcome) {
       case "passed":
       case "excepted":
         break;
       case "flaky":
-        if (allowFlaky) note3(unverified, `check ${id}: passed only after a rerun (flaky); accepted by policy`);
-        else note3(incomplete, `check ${id}: passed only after a rerun (flaky); a flaky pass is not a clean pass`);
+        if (allowFlaky) note3(unverified, `check ${id2}: passed only after a rerun (flaky); accepted by policy`);
+        else note3(incomplete, `check ${id2}: passed only after a rerun (flaky); a flaky pass is not a clean pass`);
         break;
       case "failed":
-        note3(fail3, `check ${id}: ${e.status === "TIMEOUT" ? "timed out" : "failed"}`);
+        note3(fail3, `check ${id2}: ${e.status === "TIMEOUT" ? "timed out" : "failed"}`);
         break;
       case "error":
-        note3(incomplete, `check ${id}: ${e.status === "CANCELLED" ? "was cancelled" : "could not be run"}; no result`);
+        note3(incomplete, `check ${id2}: ${e.status === "CANCELLED" ? "was cancelled" : "could not be run"}; no result`);
         break;
       case "missing":
-        note3(incomplete, `check ${id}: mandatory but not executed for this candidate`);
+        note3(incomplete, `check ${id2}: mandatory but not executed for this candidate`);
         break;
     }
   }
@@ -53406,35 +53416,35 @@ function evaluateEvidence(input) {
     if (noChange) return "the candidate makes no change, so its green checks are no evidence of one";
     const s2 = support.get(criterionId);
     if (s2 !== void 0 && (s2.flips.length > 0 || s2.withTests.length > 0)) return null;
-    const passed = base.checks !== null && ids.every((id) => baseStatus.get(id) === "PASSED");
+    const passed = base.checks !== null && ids.every((id2) => baseStatus.get(id2) === "PASSED");
     const already = `no new evidence: ${ids.join(", ")} ${passed ? "already passed on the base revision" : "has no failing result recorded on the base revision"}`;
     if (!anyTestChanged) return `${already} and the candidate adds or changes no test`;
-    const dirs = [...new Set(ids.map((id) => (snapshot2.config.checks[id]?.cwd ?? ".").replace(/^\.\/+/, "").replace(/\/+$/, "") || "."))];
+    const dirs = [...new Set(ids.map((id2) => (snapshot2.config.checks[id2]?.cwd ?? ".").replace(/^\.\/+/, "").replace(/\/+$/, "") || "."))];
     return `${already} and no test the candidate adds or changes lies under ${ids.length === 1 ? "its directory" : "their directories"} (${dirs.join(", ")})`;
   };
   const fb = base !== void 0 ? input.failBefore : void 0;
   const failBeforeOf = /* @__PURE__ */ new Map();
-  if (fb !== void 0) for (const [id, s2] of support) failBeforeOf.set(id, criterionFailBefore(s2, fb));
+  if (fb !== void 0) for (const [id2, s2] of support) failBeforeOf.set(id2, criterionFailBefore(s2, fb));
   const restsOnNewTests = (e) => e !== void 0 && e.outcome !== "not-applicable";
   const advisoryGaps = [];
   const notRun = [];
-  const judgeFailBefore = (id, e, status2) => {
+  const judgeFailBefore = (id2, e, status2) => {
     if (e.outcome === "not-run") {
-      notRun.push(id);
+      notRun.push(id2);
       return { status: status2, why: void 0 };
     }
     if (e.cause === "not-acceptable") {
-      if (e.mode === "required") note3(incomplete, `criterion ${id}: fail-before was not established: ${e.reason}`);
+      if (e.mode === "required") note3(incomplete, `criterion ${id2}: fail-before was not established: ${e.reason}`);
       return { status: status2, why: void 0 };
     }
     if (e.mode === "advisory") {
-      if (e.outcome === "passed-before") advisoryGaps.push(`the new tests of ${id} pass on the base revision (${e.reason})`);
-      else if (e.outcome === "not-established") advisoryGaps.push(`${id} could not be probed (${e.reason})`);
+      if (e.outcome === "passed-before") advisoryGaps.push(`the new tests of ${id2} pass on the base revision (${e.reason})`);
+      else if (e.outcome === "not-established") advisoryGaps.push(`${id2} could not be probed (${e.reason})`);
       return { status: status2, why: void 0 };
     }
     if (e.mode !== "required" || e.outcome === "failed-before") return { status: status2, why: void 0 };
     if (e.accepted) {
-      note3(unverified, `fail-before: ${id} accepted without fail-before by ${e.accepted.by} (question ${e.accepted.question_id}): ${e.reason}`);
+      note3(unverified, `fail-before: ${id2} accepted without fail-before by ${e.accepted.by} (question ${e.accepted.question_id}): ${e.reason}`);
       return { status: status2, why: void 0 };
     }
     if (e.outcome === "passed-before") return { status: "unverified", why: passedBeforeNote(e) };
@@ -53449,21 +53459,21 @@ function evaluateEvidence(input) {
       return `the new tests pass on the base revision: ${c.id} passed on ${at} with ${files} test ${files === 1 ? "file" : "files"} overlaid${log ? ` (${log})` : ""}, so they do not show the change, or ${c.id} does not run them`;
     }).join("; ");
   };
-  const isBrowserCheck2 = (id) => isBrowserCheck(snapshot2, id) || ui.has(id);
+  const isBrowserCheck2 = (id2) => isBrowserCheck(snapshot2, id2) || ui.has(id2);
   const citedBy2 = /* @__PURE__ */ new Map();
-  for (const c of contract.acceptance_criteria) for (const id of new Set(c.check_ids ?? [])) citedBy2.set(id, [...citedBy2.get(id) ?? [], c.id]);
-  const runOf = (id) => {
-    if (isBrowserCheck2(id)) return `the journeys ${id} runs`;
-    const def = snapshot2.config.checks[id];
-    return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" ? `the tests ${id} runs` : `what ${id} checks`;
+  for (const c of contract.acceptance_criteria) for (const id2 of new Set(c.check_ids ?? [])) citedBy2.set(id2, [...citedBy2.get(id2) ?? [], c.id]);
+  const runOf = (id2) => {
+    if (isBrowserCheck2(id2)) return `the journeys ${id2} runs`;
+    const def = snapshot2.config.checks[id2];
+    return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" ? `the tests ${id2} runs` : `what ${id2} checks`;
   };
   const checkWide = (ids) => {
-    const shared = [...new Set(ids)].filter((id) => (citedBy2.get(id)?.length ?? 0) > 1).sort();
-    return shared.length === 0 ? void 0 : `check-wide: ${shared.map((id) => `${runOf(id)}, shared by ${citedBy2.get(id).join(", ")}`).join("; ")}`;
+    const shared = [...new Set(ids)].filter((id2) => (citedBy2.get(id2)?.length ?? 0) > 1).sort();
+    return shared.length === 0 ? void 0 : `check-wide: ${shared.map((id2) => `${runOf(id2)}, shared by ${citedBy2.get(id2).join(", ")}`).join("; ")}`;
   };
-  for (const [id, e] of failBeforeOf) {
+  for (const [id2, e] of failBeforeOf) {
     const wide = checkWide(e.checks.map((x) => x.id));
-    if (wide !== void 0) failBeforeOf.set(id, { ...e, check_wide: wide });
+    if (wide !== void 0) failBeforeOf.set(id2, { ...e, check_wide: wide });
   }
   const criteria = contract.acceptance_criteria.map((c) => {
     const ids = c.check_ids ?? [];
@@ -53474,7 +53484,7 @@ function evaluateEvidence(input) {
       status2 = "unverified";
       why = c.ui === true ? "no browser check is mapped to this UI criterion" : "no executed check is mapped to this criterion; prose proof alone is not evidence";
     } else {
-      const ev = ids.map((id) => ({ id, e: evidenceFor(id) }));
+      const ev = ids.map((id2) => ({ id: id2, e: evidenceFor(id2) }));
       artifacts = [...new Set(ev.flatMap((x) => x.e.artifacts))];
       const bad = ev.filter((x) => x.e.outcome === "failed");
       const err = ev.filter((x) => x.e.outcome === "error");
@@ -53549,10 +53559,10 @@ function evaluateEvidence(input) {
       reason = "the probe ran no check";
     } else {
       const byId = new Map(assumptionProbe.checks.map((x) => [x.checkId, x]));
-      status2 = itsChecks.every((id) => byId.get(id)?.outcome === "failed-before") ? "supported" : "unverified";
-      reason = itsChecks.map((id) => {
-        const probed = byId.get(id);
-        return probed === void 0 ? `${id}: no probe result` : `${id}: ${probed.outcome} (${probed.reason})`;
+      status2 = itsChecks.every((id2) => byId.get(id2)?.outcome === "failed-before") ? "supported" : "unverified";
+      reason = itsChecks.map((id2) => {
+        const probed = byId.get(id2);
+        return probed === void 0 ? `${id2}: no probe result` : `${id2}: ${probed.outcome} (${probed.reason})`;
       }).join("; ");
     }
     assumptions.push({ assumption_id: a.id, statement: a.statement, status: status2, reason, checks: itsChecks });
@@ -53562,7 +53572,7 @@ function evaluateEvidence(input) {
   if (input.uiRequired === true) {
     const journeyChecks = new Set(snapshot2.config.ui?.journey_check_ids ?? []);
     if (input.uiResults === void 0 || input.uiResults.length === 0) {
-      if (![...journeyChecks].some((id) => mandatory.has(id))) note3(incomplete, "UI evidence is required for this candidate but no journey was executed");
+      if (![...journeyChecks].some((id2) => mandatory.has(id2))) note3(incomplete, "UI evidence is required for this candidate but no journey was executed");
     }
     for (const u of input.uiResults ?? []) {
       if (u.status === "FAILED" || u.status === "TIMEOUT") note3(fail3, `journey ${u.journey}: ${u.status === "TIMEOUT" ? "timed out" : "failed"}`);
@@ -53761,15 +53771,15 @@ function textList(values, name, minItems = 1) {
   if (out.length < minItems) invalid2(`${name} needs at least ${minItems} entr${minItems === 1 ? "y" : "ies"}`);
   return out;
 }
-function criterion(c, id) {
-  const found = c.acceptance_criteria.find((ac) => ac.id === id);
-  if (!found) invalid2(`no criterion ${String(id)}`);
+function criterion(c, id2) {
+  const found = c.acceptance_criteria.find((ac) => ac.id === id2);
+  if (!found) invalid2(`no criterion ${String(id2)}`);
   return found;
 }
 function nextId(prefix, ids) {
   let max = 0;
-  for (const id of ids) {
-    const m = new RegExp(`^${prefix}-([0-9]+)$`).exec(id);
+  for (const id2 of ids) {
+    const m = new RegExp(`^${prefix}-([0-9]+)$`).exec(id2);
     if (m) max = Math.max(max, Number(m[1]));
   }
   return `${prefix}-${max + 1}`;
@@ -53787,12 +53797,12 @@ function criterionIdsIn(history) {
   }
   return ids;
 }
-function checkDefined(ctx, id) {
-  return Object.prototype.hasOwnProperty.call(ctx.snapshot.config.checks ?? {}, id);
+function checkDefined(ctx, id2) {
+  return Object.prototype.hasOwnProperty.call(ctx.snapshot.config.checks ?? {}, id2);
 }
 function requireDefinedChecks(ctx, ids) {
-  for (const id of ids) {
-    if (!checkDefined(ctx, id)) ctx.forbidden.push(`check "${id}" is not defined by the policy, and a contract cannot add check commands`);
+  for (const id2 of ids) {
+    if (!checkDefined(ctx, id2)) ctx.forbidden.push(`check "${id2}" is not defined by the policy, and a contract cannot add check commands`);
   }
 }
 function noop() {
@@ -53826,11 +53836,11 @@ function applyChange(ctx, change) {
       const checkIds = uniqueIds(change.check_ids, "check_ids", 0);
       if (typeof change.mandatory !== "boolean" || typeof change.ui !== "boolean") invalid2("mandatory and ui must be booleans");
       requireDefinedChecks(ctx, checkIds);
-      const id = nextId("AC", [...contract.acceptance_criteria.map((ac) => ac.id), ...criterionIdsIn(ctx.history)]);
-      const added = { id, statement, proof, mandatory: change.mandatory, ui: change.ui, check_ids: checkIds };
+      const id2 = nextId("AC", [...contract.acceptance_criteria.map((ac) => ac.id), ...criterionIdsIn(ctx.history)]);
+      const added = { id: id2, statement, proof, mandatory: change.mandatory, ui: change.ui, check_ids: checkIds };
       next.acceptance_criteria.push(added);
       for (const cid of checkIds) if (!next.required_check_ids.includes(cid)) next.required_check_ids.push(cid);
-      return { field: "acceptance_criteria", oldValue: null, newValue: added, affected: [id, ...checkIds.map((c) => `check:${c}`)] };
+      return { field: "acceptance_criteria", oldValue: null, newValue: added, affected: [id2, ...checkIds.map((c) => `check:${c}`)] };
     }
     case "add_proof": {
       const old = criterion(contract, change.criterion_id);
@@ -53873,13 +53883,13 @@ function applyChange(ctx, change) {
       const target = change.criterion_id === null ? null : criterion(next, change.criterion_id);
       const before = { required_check_ids: [...contract.required_check_ids], ...target ? { check_ids: [...target.check_ids ?? []] } : {} };
       let changed2 = false;
-      for (const id of ids) {
-        if (!next.required_check_ids.includes(id)) {
-          next.required_check_ids.push(id);
+      for (const id2 of ids) {
+        if (!next.required_check_ids.includes(id2)) {
+          next.required_check_ids.push(id2);
           changed2 = true;
         }
-        if (target && !(target.check_ids ?? []).includes(id)) {
-          target.check_ids = [...target.check_ids ?? [], id];
+        if (target && !(target.check_ids ?? []).includes(id2)) {
+          target.check_ids = [...target.check_ids ?? [], id2];
           changed2 = true;
         }
       }
@@ -53896,28 +53906,28 @@ function applyChange(ctx, change) {
       const ids = uniqueIds(change.check_ids, "check_ids", 1);
       const checks = ctx.snapshot.config.checks ?? {};
       if (change.criterion_id === null) {
-        const removed2 = ids.filter((id) => contract.required_check_ids.includes(id));
+        const removed2 = ids.filter((id2) => contract.required_check_ids.includes(id2));
         if (removed2.length === 0) noop();
-        for (const id of removed2) {
-          if (checks[id]?.mandatory) ctx.forbidden.push(`check "${id}" is mandatory in the policy and cannot be removed`);
+        for (const id2 of removed2) {
+          if (checks[id2]?.mandatory) ctx.forbidden.push(`check "${id2}" is mandatory in the policy and cannot be removed`);
         }
         ctx.approval.push(`removes required check${removed2.length === 1 ? "" : "s"} ${removed2.join(", ")}`);
-        next.required_check_ids = next.required_check_ids.filter((id) => !removed2.includes(id));
+        next.required_check_ids = next.required_check_ids.filter((id2) => !removed2.includes(id2));
         const touched = [];
         for (const ac of next.acceptance_criteria) {
-          if (ac.check_ids?.some((id) => removed2.includes(id))) {
-            ac.check_ids = ac.check_ids.filter((id) => !removed2.includes(id));
+          if (ac.check_ids?.some((id2) => removed2.includes(id2))) {
+            ac.check_ids = ac.check_ids.filter((id2) => !removed2.includes(id2));
             touched.push(ac.id);
           }
         }
         return { field: "required_check_ids", oldValue: contract.required_check_ids, newValue: next.required_check_ids, affected: [...touched, ...removed2.map((c) => `check:${c}`)] };
       }
       const old = criterion(contract, change.criterion_id);
-      const removed = ids.filter((id) => (old.check_ids ?? []).includes(id));
+      const removed = ids.filter((id2) => (old.check_ids ?? []).includes(id2));
       if (removed.length === 0) noop();
       ctx.approval.push(`removes check evidence ${removed.join(", ")} from criterion ${old.id}`);
       const target = criterion(next, old.id);
-      target.check_ids = (target.check_ids ?? []).filter((id) => !removed.includes(id));
+      target.check_ids = (target.check_ids ?? []).filter((id2) => !removed.includes(id2));
       return { field: `acceptance_criteria[${old.id}].check_ids`, oldValue: old.check_ids ?? [], newValue: target.check_ids, affected: [old.id] };
     }
     case "set_allowed_paths": {
@@ -53961,8 +53971,8 @@ function applyChange(ctx, change) {
       const statuses = ["unverified", "supported", "rejected", "needs-decision"];
       if (!statuses.includes(change.status)) invalid2("unknown assumption status");
       if (change.assumption_id === null) {
-        const id = nextId("AS", contract.assumptions.map((a) => a.id));
-        const added = { id, statement, status: change.status };
+        const id2 = nextId("AS", contract.assumptions.map((a) => a.id));
+        const added = { id: id2, statement, status: change.status };
         next.assumptions = [...contract.assumptions, added];
         return { field: "assumptions", oldValue: null, newValue: added, affected: ["review"] };
       }
@@ -54458,7 +54468,7 @@ function validateQuestion(q, opts = {}) {
     const ids = d.affected_work.filter((w) => AC_ID.test(String(w).trim())).map((w) => String(w).trim());
     const known = new Set(opts.contract.acceptance_criteria.map((c) => c.id));
     if (ids.length === 0) problems.push("affected work must name at least one acceptance criterion (AC-n) so the controller knows what to block");
-    const unknown = ids.filter((id) => !known.has(id));
+    const unknown = ids.filter((id2) => !known.has(id2));
     if (unknown.length > 0) problems.push(`affected work names criteria that do not exist: ${unknown.join(", ")}`);
     if (Array.isArray(d.unblocked_work)) {
       const clash = d.unblocked_work.filter((w) => ids.includes(String(w).trim()));
@@ -54541,32 +54551,32 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
     return { question, created: true, classification };
   });
 }
-function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
+function answerQuestion(db, runDir2, id2, answer, by, clock, opts = {}) {
   if (!isHumanActor(by)) throw new OrbitError("POLICY_DENIED", `"${by}" cannot answer a question: decisions come from a person, not a model or worker`, { by });
   const text2 = answer.trim();
   if (text2 === "") throw new OrbitError("SCHEMA_INVALID", "an answer cannot be empty");
-  const existing = getQuestion(db, id);
+  const existing = getQuestion(db, id2);
   const matched = existing.options.find((o) => norm(o.label) === norm(text2)) ?? existing.options.find((o) => norm(o.description) === norm(text2)) ?? null;
   const stored = matched ? matched.label : text2;
-  const question = setQuestionAnswer(db, id, stored, by.trim(), clock);
+  const question = setQuestionAnswer(db, id2, stored, by.trim(), clock);
   const decision = recordDecision(
     db,
     runDir2,
     {
-      id: answerDecisionId(id),
+      id: answerDecisionId(id2),
       runId: question.runId,
       kind: ANSWER_DECISION_KIND,
       summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question.question}`,
-      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
+      data: { question_id: id2, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
     },
     clock,
     { actor: by.trim() }
   );
   let baselineException = null;
   try {
-    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question.runId, runDir: runDir2 }, { questionId: id }).outcomes[0] ?? null;
+    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question.runId, runDir: runDir2 }, { questionId: id2 }).outcomes[0] ?? null;
   } catch (err) {
-    db.tx(() => appendEvent(db, question.runId, "baseline-exception.apply-failed", by.trim(), { question_id: id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
+    db.tx(() => appendEvent(db, question.runId, "baseline-exception.apply-failed", by.trim(), { question_id: id2, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
   }
   return { question, decision, chosenOption: matched, unblocks: question.affected, baselineException };
 }
@@ -54666,10 +54676,10 @@ function closeOverDependencies(seed, dependsOn, all) {
   let grew = true;
   while (grew) {
     grew = false;
-    for (const id of all) {
-      if (blocked.has(id)) continue;
-      if ((dependsOn?.[id] ?? []).some((d) => blocked.has(d))) {
-        blocked.add(id);
+    for (const id2 of all) {
+      if (blocked.has(id2)) continue;
+      if ((dependsOn?.[id2] ?? []).some((d) => blocked.has(d))) {
+        blocked.add(id2);
         grew = true;
       }
     }
@@ -54763,9 +54773,9 @@ function resolveAmbiguities(input) {
       authorization: "test",
       discriminates: []
     });
-    for (const id of affects) {
+    for (const id2 of affects) {
       amendments.push({
-        change: { op: "add_proof", criterion_id: id, proof: [`A test pins the decision "${choice.option.trim()}" for: ${a.description.trim()}`] },
+        change: { op: "add_proof", criterion_id: id2, proof: [`A test pins the decision "${choice.option.trim()}" for: ${a.description.trim()}`] },
         evidence: evidence.join("; ") || a.description,
         reason: "a reversible choice is recorded as a decision and pinned by a test, so reversing it later is deliberate"
       });
@@ -54782,7 +54792,7 @@ function blockingDisposition(input) {
   const allIds = input.contract.acceptance_criteria.map((c) => c.id);
   const blockedCriteria = closeOverDependencies(input.blocked, input.dependsOn, allIds);
   const done = new Set(input.supportedCriteria ?? []);
-  const continuingCriteria = allIds.filter((id) => !blockedCriteria.includes(id) && !done.has(id));
+  const continuingCriteria = allIds.filter((id2) => !blockedCriteria.includes(id2) && !done.has(id2));
   const unattended = input.mode !== "supervised";
   if (blockedCriteria.length === 0) return { blockedCriteria, continuingCriteria, disposition: "continue", reason: "nothing is blocked" };
   if (continuingCriteria.length > 0) {
@@ -54832,7 +54842,7 @@ function buildImpactRegister(inquiry, policy, trigger) {
     const paths = [.../* @__PURE__ */ new Set([...fromPaths.get(category) ?? [], ...diffPaths.get(category) ?? []])].sort();
     const evidence = [...fromDiff.get(category) ?? [], ...paths.map((p) => `path ${p}`)];
     if (paths.length === 0 && evidence.length === 0) continue;
-    const available = known.filter((id) => ID_HINT[category].test(id)).sort();
+    const available = known.filter((id2) => ID_HINT[category].test(id2)).sort();
     entries.push({
       category,
       affected_paths: paths,
@@ -54912,18 +54922,18 @@ function experimentExists(db, runId, ref3) {
   }
   return false;
 }
-function transitionAssumption(db, id, to, evidence, clock, actor = "controller") {
+function transitionAssumption(db, id2, to, evidence, clock, actor = "controller") {
   return db.tx(() => {
-    const cur = getLedgerEntry(db, id);
+    const cur = getLedgerEntry(db, id2);
     if (cur.status === to) return cur;
     if (!ALLOWED[cur.status].includes(to)) {
-      throw new OrbitError("TRANSITION_INVALID", `assumption ${id} cannot go from ${cur.status} to ${to}`, { ledgerId: id, from: cur.status, to });
+      throw new OrbitError("TRANSITION_INVALID", `assumption ${id2} cannot go from ${cur.status} to ${to}`, { ledgerId: id2, from: cur.status, to });
     }
-    if (evidence.length === 0) throw new OrbitError("SCHEMA_INVALID", `assumption ${id}: a status change needs evidence`, { ledgerId: id });
+    if (evidence.length === 0) throw new OrbitError("SCHEMA_INVALID", `assumption ${id2}: a status change needs evidence`, { ledgerId: id2 });
     const stamped = evidence.map((e) => stamp(db, cur.runId, e, clock, to === "supported"));
     const settles2 = stamped.some((e) => SETTLING_KINDS.has(e.kind));
     if ((to === "supported" || to === "rejected") && !settles2) {
-      throw new OrbitError("SCHEMA_INVALID", `assumption ${id} cannot become ${to} on a review alone; run a check or experiment`, { ledgerId: id });
+      throw new OrbitError("SCHEMA_INVALID", `assumption ${id2} cannot become ${to} on a review alone; run a check or experiment`, { ledgerId: id2 });
     }
     if (cur.status === "needs-decision") {
       const human = stamped.find((e) => {
@@ -54932,9 +54942,9 @@ function transitionAssumption(db, id, to, evidence, clock, actor = "controller")
         const by = d?.data?.answered_by;
         return d?.kind === "inquisition.answer" && typeof by === "string" && isHumanActor(by);
       });
-      if (!human) throw new OrbitError("POLICY_DENIED", `assumption ${id} needs a human decision (an answered question) to leave needs-decision`, { ledgerId: id });
+      if (!human) throw new OrbitError("POLICY_DENIED", `assumption ${id2} needs a human decision (an answered question) to leave needs-decision`, { ledgerId: id2 });
     }
-    return writeLedgerStatus(db, id, cur.status, to, stamped, clock, actor);
+    return writeLedgerStatus(db, id2, cur.status, to, stamped, clock, actor);
   });
 }
 function entriesFromWorker(runId, output, now) {
@@ -55100,7 +55110,7 @@ function checksGreen(s) {
   if (!e || e.checks.length === 0) return false;
   const required = new Set(s.contract?.required_check_ids ?? []);
   const relevant = required.size > 0 ? e.checks.filter((c) => required.has(c.id)) : e.checks;
-  if (relevant.length === 0 || required.size > 0 && [...required].some((id) => !e.checks.some((c) => c.id === id))) return false;
+  if (relevant.length === 0 || required.size > 0 && [...required].some((id2) => !e.checks.some((c) => c.id === id2))) return false;
   return relevant.every((c) => c.status === PASSED && !c.flaky);
 }
 function detectGreenWithoutProof(s) {
@@ -55278,7 +55288,7 @@ function ledgerDraft(runId, claim, source, experiment, status2 = "unverified", r
 function deterministicLedger(t, runId) {
   switch (t.kind) {
     case "green_without_proof":
-      return t.subjects.map((id) => ledgerDraft(runId, `The passing checks establish ${id}.`, "evidence report", `Write a test for ${id} that fails without the change; run it against the base and the candidate.`));
+      return t.subjects.map((id2) => ledgerDraft(runId, `The passing checks establish ${id2}.`, "evidence report", `Write a test for ${id2} that fails without the change; run it against the base and the candidate.`));
     case "oracle_weakening":
       return t.evidence.map((e) => ledgerDraft(runId, `The edit to the oracle does not reduce what the tests prove (${e}).`, "scope report", "Restore the removed or weakened expectation and show the suite still passes, or record a decision that justifies the change."));
     case "unsupported_confidence":
@@ -55290,7 +55300,7 @@ function deterministicLedger(t, runId) {
     case "hidden_decision":
       return t.evidence.length > 0 && t.mode === "decision-record" ? t.evidence.map((e) => ledgerDraft(runId, e, "contract assumptions", null, "needs-decision", "irreversible")) : [ledgerDraft(runId, `${t.summary}; the behaviour chosen is acceptable.`, "diff and contract", null, "needs-decision", "irreversible")];
     case "missing_outcomes":
-      return t.subjects.map((id) => ledgerDraft(runId, `${id} can be verified as written.`, "contract", `Rewrite ${id} as an observable outcome with a test that can fail.`));
+      return t.subjects.map((id2) => ledgerDraft(runId, `${id2} can be verified as written.`, "contract", `Rewrite ${id2} as an observable outcome with a test that can fail.`));
     case "reviewer_disagreement":
       return [ledgerDraft(runId, "The reviewers see the same code and one of them is wrong.", "review records", "Turn each objection into a test that passes or fails on this tree.")];
     default:
@@ -55351,6 +55361,7 @@ function renderInquisitorPrompt(trigger, ctx) {
     block("trigger-evidence", redact(trigger.evidence.join("\n"))),
     block("contract", JSON.stringify(contract, null, 1))
   ];
+  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, d.content.slice(0, DEFAULT_BLOCK_CHARS)));
   if (ctx.ambiguities && ctx.ambiguities.length > 0) {
     parts.push(block("ambiguities", redact(JSON.stringify(ctx.ambiguities.map((a) => ({ id: a.id, description: a.description, kind: a.kind, affects: a.affects, evidence: a.evidence, options: a.options })), null, 1))));
   }
@@ -55496,16 +55507,16 @@ ${d.rationale}`;
       a.ledger.push({ runId: ctx.runId, claim: d.decision, source: "inquisitor autonomous decision", confidence: "low", consequence: "proceeding would be a guess", reversibility: d.reversibility, experiment: null, status: "needs-decision" });
       continue;
     }
-    const id = `AMB-${hashObject({ d: d.decision }).slice(7, 15)}`;
+    const id2 = `AMB-${hashObject({ d: d.decision }).slice(7, 15)}`;
     a.decisions.push({
-      ambiguityId: id,
+      ambiguityId: id2,
       kind: "inquisition.resolve",
       summary: `${d.category === "convention" ? "followed convention" : d.category === "technical-hypothesis" ? "adopted for testing" : "chose reversible detail"}: ${d.decision}`,
-      data: { ambiguity_id: id, category: d.category === "convention" ? "convention" : "implementation-detail", choice: d.decision, rationale: d.rationale, evidence: d.evidence, reversibility: d.reversibility, affects: [] }
+      data: { ambiguity_id: id2, category: d.category === "convention" ? "convention" : "implementation-detail", choice: d.decision, rationale: d.rationale, evidence: d.evidence, reversibility: d.reversibility, affects: [] }
     });
     if (d.category !== "technical-hypothesis") {
       a.experiments.push({
-        ambiguityId: id,
+        ambiguityId: id2,
         kind: "pin-test",
         description: `Add a test that pins the chosen behaviour: ${d.decision.trim()}`,
         expectedObservation: "The test passes with the choice in place and fails if it is reverted.",
@@ -55931,6 +55942,7 @@ var init_engine = __esm({
     init_events();
     init_workers();
     init_usage();
+    init_prompt();
     init_amend();
     init_model_outputs();
     init_strict_schema();
@@ -56106,8 +56118,8 @@ function processedComments(db, runId) {
   const out = /* @__PURE__ */ new Set();
   for (const r of rows) {
     try {
-      const id = JSON.parse(r.data_json ?? "{}").comment_id;
-      if (typeof id === "number") out.add(id);
+      const id2 = JSON.parse(r.data_json ?? "{}").comment_id;
+      if (typeof id2 === "number") out.add(id2);
     } catch {
     }
   }
@@ -56372,7 +56384,7 @@ async function notifyOpenQuestions(input) {
   const { db, run } = input;
   if (TERMINAL_STATES.has(run.state) && run.state !== "BLOCKED") return null;
   const named2 = new Set(dispatched(db, run.id).flatMap((d) => d.questions));
-  const fresh = listQuestions(db, run.id, { status: "open" }).map((q) => q.id).filter((id) => !named2.has(id));
+  const fresh = listQuestions(db, run.id, { status: "open" }).map((q) => q.id).filter((id2) => !named2.has(id2));
   if (fresh.length === 0) return null;
   return dispatch(input, "question.open", `question:${fresh.join(",")}`, fresh);
 }
@@ -57102,12 +57114,12 @@ function readLaunchStatus(path) {
   const r = parsed3;
   if (typeof r.app !== "string" || !STATES.has(r.app)) return null;
   const num7 = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
-  const str8 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
+  const str9 = (v, max) => typeof v === "string" ? v.slice(0, max) : void 0;
   const out = { app: r.app };
   if (num7(r.status) !== void 0) out.status = num7(r.status);
   if (r.code === null || num7(r.code) !== void 0) out.code = r.code === null ? null : num7(r.code);
-  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str8(r.signal, 20);
-  if (str8(r.detail, 300) !== void 0) out.detail = str8(r.detail, 300);
+  if (r.signal === null || typeof r.signal === "string") out.signal = r.signal === null ? null : str9(r.signal, 20);
+  if (str9(r.detail, 300) !== void 0) out.detail = str9(r.detail, 300);
   if (num7(r.readyMs) !== void 0) out.readyMs = num7(r.readyMs);
   if (typeof r.exitedDuringCheck === "boolean") out.exitedDuringCheck = r.exitedDuringCheck;
   return out;
@@ -57697,10 +57709,10 @@ function toEvidenceUi(result2) {
 }
 function resolveChecks(snapshot2, ids) {
   if (ids.length === 0) throw new OrbitError("CONFIG_INVALID", "ui is configured but no journey checks are named (ui.journey_check_ids is empty)", { rule: "ui.journey_check_ids" });
-  return ids.map((id) => {
-    const check = snapshot2.config.checks[id];
-    if (!check) throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} is not defined in checks`, { id });
-    if (check.kind !== "playwright") throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id)} must have kind: playwright`, { id, kind: check.kind });
+  return ids.map((id2) => {
+    const check = snapshot2.config.checks[id2];
+    if (!check) throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id2)} is not defined in checks`, { id: id2 });
+    if (check.kind !== "playwright") throw new OrbitError("CONFIG_INVALID", `ui journey check ${JSON.stringify(id2)} must have kind: playwright`, { id: id2, kind: check.kind });
     return check;
   });
 }
@@ -57919,11 +57931,11 @@ function buildJourney(test, ctx, checkDir2, cwd) {
   const { checkoutDir } = ctx;
   const file = relativeTo2(test.file, checkoutDir);
   const title2 = test.titlePath[test.titlePath.length - 1] ?? "";
-  const id = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
+  const id2 = `${test.projectName}/${file}#${test.titlePath.join(" > ")}`;
   const failing = test.results.filter((r) => FAILED_RESULT.has(r.status));
   const focus = failing[failing.length - 1] ?? test.results[test.results.length - 1];
   const status2 = journeyStatus(test);
-  const slug2 = `${sha256(id).slice(0, 8)}-${title2.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
+  const slug2 = `${sha256(id2).slice(0, 8)}-${title2.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}`;
   const artifactDir = join52(checkDir2, "artifacts", slug2);
   const collected = focus ? collectAttachments(focus.attachments, { checkoutDir, outputDir: join52(checkDir2, "test-results"), artifactDir }) : { artifacts: [], diagnostics: null, browser: null, a11y: [], keyboard: [], errorContext: null };
   const firstError = (failing[0] ?? focus)?.error ?? null;
@@ -57942,7 +57954,7 @@ function buildJourney(test, ctx, checkDir2, cwd) {
   const declared = collected.browser ?? null;
   const browser = declared ? { name: declared.name, version: declared.version } : fallbackBrowser(checkoutDir, ctx.input.uiConfig.browsers);
   return {
-    id,
+    id: id2,
     title: title2,
     titlePath: test.titlePath,
     file,
@@ -58837,9 +58849,9 @@ async function scanBlobInChunks(repoRoot, commit, rel) {
     for (const m of red.matchAll(/\[REDACTED:([a-z0-9_-]+)\]/gi)) found.set(`${at}:${m[1]}`, { file: rel, line: at, rule: `builtin:${m[1]}` });
   };
   const child = spawn5("git", ["cat-file", "blob", `${commit}:${rel}`], { cwd: repoRoot, env: gitEnv4(), stdio: ["ignore", "pipe", "ignore"] });
-  const exited = new Promise((resolve29, reject2) => {
+  const exited = new Promise((resolve30, reject2) => {
     child.once("error", reject2);
-    child.once("close", (code2) => resolve29(code2));
+    child.once("close", (code2) => resolve30(code2));
   });
   const timer = setTimeout(() => child.kill("SIGKILL"), 10 * 6e4);
   try {
@@ -58904,7 +58916,7 @@ async function builtinScan(input, files, reportPath2, why) {
   };
 }
 function sastCheckIds2(snapshot2) {
-  return Object.keys(snapshot2.config.checks).filter((id) => SAST_ID.test(id)).sort();
+  return Object.keys(snapshot2.config.checks).filter((id2) => SAST_ID.test(id2)).sort();
 }
 var import_picomatch6, UNSCANNABLE_RULE, TRUSTED_GITLEAKS_CONFIG, MAX_FILE_BYTES, MAX_SCAN_BYTES, SCAN_WINDOW, SCAN_OVERLAP, CRITICAL_SECRET_RULE, SAST_ID;
 var init_security = __esm({
@@ -59181,11 +59193,11 @@ function explorerWorkUnit(task, cfg, harness) {
 function sanitizeCandidates(list3) {
   const seen = /* @__PURE__ */ new Set();
   return list3.map((f, i) => {
-    let id = f.id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `F-${i + 1}`;
-    if (seen.has(id)) id = `${id}-${i + 1}`;
-    seen.add(id);
+    let id2 = f.id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || `F-${i + 1}`;
+    if (seen.has(id2)) id2 = `${id2}-${i + 1}`;
+    seen.add(id2);
     return {
-      id,
+      id: id2,
       summary: cleanText(f.summary, 300),
       steps: f.steps.slice(0, 20).map((s) => cleanText(s, 300)),
       expected: cleanText(f.expected, 500),
@@ -59461,6 +59473,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
           task: task.workUnit,
           contract,
           policySummary: policySummary(ctx, { readOnly: true }),
+          repoInstructions: repoInstructions(ctx),
           candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision }
         })
       }, task.timeoutMs, task.signal);
@@ -59491,6 +59504,7 @@ async function exploreCandidate(ctx, cand, checkoutDir, outDir, opts = {}) {
           task: text2,
           contract,
           policySummary: policySummary(ctx, { readOnly: true }),
+          repoInstructions: repoInstructions(ctx),
           candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
           untrusted: [{ label: `candidate finding ${finding.id}`, content: JSON.stringify({ summary: finding.summary, steps: finding.steps, expected: finding.expected, observed: finding.observed, proposed_test: finding.proposed_test }, null, 1) }]
         })
@@ -59563,7 +59577,7 @@ var init_exploration = __esm({
 import { existsSync as existsSync41, readFileSync as readFileSync32 } from "node:fs";
 import { isAbsolute as isAbsolute22, join as join56, relative as relative8, sep as sep16 } from "node:path";
 function notEstablished2(checkIds, cause, reason) {
-  return checkIds.map((id) => ({ checkId: id, outcome: "not-established", cause, reason: reason(id), attempts: [] }));
+  return checkIds.map((id2) => ({ checkId: id2, outcome: "not-established", cause, reason: reason(id2), attempts: [] }));
 }
 function runRelative2(runDir2, p) {
   const r = relative8(runDir2, p);
@@ -59633,14 +59647,14 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
   };
   const ui = ctx.snapshot.config.ui;
   if (!ui || ui.journey_check_ids.length === 0) {
-    return done(null, notEstablished2(checkIds, "not-probed", (id) => `${id} was not probed: no ui journeys are configured (ui.journey_check_ids is empty)`));
+    return done(null, notEstablished2(checkIds, "not-probed", (id2) => `${id2} was not probed: no ui journeys are configured (ui.journey_check_ids is empty)`));
   }
   if (ui.environment.start_command === null) {
-    return done(null, notEstablished2(checkIds, "not-probed", (id) => `${id} was not probed: ui.environment.start_command is not set, so the journeys would run against the application already at ui.environment.base_url, which is not started from the probe's checkout and is not bound to the base revision`));
+    return done(null, notEstablished2(checkIds, "not-probed", (id2) => `${id2} was not probed: ui.environment.start_command is not set, so the journeys would run against the application already at ui.environment.base_url, which is not started from the probe's checkout and is not bound to the base revision`));
   }
   if (req.wallRemainingMs !== null && req.wallRemainingMs < req.timeoutMs) {
     const left = Math.max(0, Math.floor(req.wallRemainingMs / 1e3));
-    return done(null, notEstablished2(checkIds, "budget", (id) => `${id} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`));
+    return done(null, notEstablished2(checkIds, "budget", (id2) => `${id2} was not probed: the run has ${left} s of wall time left, less than the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds)`));
   }
   const boundMs = req.wallRemainingMs === null ? req.timeoutMs : Math.min(req.timeoutMs, req.wallRemainingMs);
   const deadline = ctx.clock.now() + boundMs;
@@ -59659,7 +59673,7 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
     ctx.signal.removeEventListener("abort", onBoundSignal);
   };
   const boundRanOut = () => !ctx.signal.aborted && (boundOut || ctx.clock.now() >= deadline);
-  const boundReason = (id) => `${id} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out`;
+  const boundReason = (id2) => `${id2} was not probed to the end: the probe's bound of ${Math.floor(req.timeoutMs / 1e3)} s (verification.fail_before_timeout_seconds) ran out`;
   const repoRoot = ctx.run.repoRoot;
   const baseCommit = await resolveCommit(repoRoot, req.baseRev);
   const baseTree = await treeOf(repoRoot, baseCommit);
@@ -59710,10 +59724,10 @@ async function runUiFailBeforeProbe(ctx, cand, req) {
   if (controlCut) return done(null, notEstablished2(checkIds, "budget", boundReason));
   const judgedControl = judgeControl(control);
   if (!judgedControl.passed) {
-    return done(null, notEstablished2(checkIds, judgedControl.cause, (id) => `${id} was not probed: ${judgedControl.reason}, so a failure with the new journeys would not be theirs alone`));
+    return done(null, notEstablished2(checkIds, judgedControl.cause, (id2) => `${id2} was not probed: ${judgedControl.reason}, so a failure with the new journeys would not be theirs alone`));
   }
   const built = await buildProbeTree(repoRoot, req.baseRev, req.changes, FAIL_BEFORE_PROBE.base);
-  if ("refused" in built) return done(null, notEstablished2(checkIds, "refused-tree", (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
+  if ("refused" in built) return done(null, notEstablished2(checkIds, "refused-tree", (id2) => `${id2} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
   const commit = await commitProbeTree(repoRoot, { base: req.baseRev, tree: probeTree, ref: probeRef(ctx.run.id, cand.seq, FAIL_BEFORE_PROBE, "ui"), message: `orbit fail-before ui probe ${ctx.run.id}/${cand.seq}
 
@@ -59721,7 +59735,7 @@ base: ${req.baseRev}
 candidate: ${cand.commitSha}
 tree: ${probeTree}
 ` });
-  const attempts = new Map(checkIds.map((id) => [id, []]));
+  const attempts = new Map(checkIds.map((id2) => [id2, []]));
   const environments = /* @__PURE__ */ new Map();
   let thrown = null;
   let cutShort = false;
@@ -59760,11 +59774,11 @@ tree: ${probeTree}
         break;
       }
       let failed = false;
-      for (const id of checkIds) {
-        const a = attemptOf(ctx, result2, id, n2);
-        if ("environment" in a) environments.set(id, a.environment);
+      for (const id2 of checkIds) {
+        const a = attemptOf(ctx, result2, id2, n2);
+        if ("environment" in a) environments.set(id2, a.environment);
         else {
-          attempts.get(id).push(a.attempt);
+          attempts.get(id2).push(a.attempt);
           if (a.attempt.status === "FAILED") failed = true;
         }
       }
@@ -59774,17 +59788,17 @@ tree: ${probeTree}
     await cleanupCandidateCheckout(repoRoot, checkout).catch(() => {
     });
   }
-  const probed = checkIds.map((id) => {
-    const mine = attempts.get(id);
-    if (probeInstall !== null) return { checkId: id, outcome: "not-established", cause: probeInstall.cause, reason: probeInstall.reason(id), attempts: mine };
-    const environment = environments.get(id);
-    if (environment !== void 0) return { checkId: id, outcome: "not-established", cause: "environment", reason: `${id} could not run on the base revision with the new tests: ${environment}, not a journey result`, attempts: mine };
-    if (thrown !== null) return { checkId: id, outcome: "not-established", cause: thrown.cause, reason: `${id} could not be run on the probe tree: ${thrown.message}`, attempts: mine };
-    if (cutShort) return { checkId: id, outcome: "not-established", cause: "budget", reason: boundReason(id), attempts: mine };
-    if (mine.length === 0) return { checkId: id, outcome: "not-established", cause: "budget", reason: boundReason(id), attempts: mine };
-    const judged = judgeProbeAttempts(id, mine, FAIL_BEFORE_PROBE.where);
+  const probed = checkIds.map((id2) => {
+    const mine = attempts.get(id2);
+    if (probeInstall !== null) return { checkId: id2, outcome: "not-established", cause: probeInstall.cause, reason: probeInstall.reason(id2), attempts: mine };
+    const environment = environments.get(id2);
+    if (environment !== void 0) return { checkId: id2, outcome: "not-established", cause: "environment", reason: `${id2} could not run on the base revision with the new tests: ${environment}, not a journey result`, attempts: mine };
+    if (thrown !== null) return { checkId: id2, outcome: "not-established", cause: thrown.cause, reason: `${id2} could not be run on the probe tree: ${thrown.message}`, attempts: mine };
+    if (cutShort) return { checkId: id2, outcome: "not-established", cause: "budget", reason: boundReason(id2), attempts: mine };
+    if (mine.length === 0) return { checkId: id2, outcome: "not-established", cause: "budget", reason: boundReason(id2), attempts: mine };
+    const judged = judgeProbeAttempts(id2, mine, FAIL_BEFORE_PROBE.where);
     if (judged.outcome === "not-established" && judged.cause === "once" && (boundRanOut() || ctx.clock.now() >= deadline - 1e3)) {
-      return { ...judged, cause: "budget", reason: boundReason(id) };
+      return { ...judged, cause: "budget", reason: boundReason(id2) };
     }
     return judged;
   });
@@ -59838,10 +59852,10 @@ async function collectFailBefore(ctx, cand, input) {
   if (mode === "off") return evidence(null);
   const resting = newTestSupport(input.contract, ctx.snapshot, input.base).filter((s) => s.flips.length === 0 && s.withTests.length > 0);
   const byCheck = /* @__PURE__ */ new Map();
-  for (const s of resting) for (const id of s.probeable) byCheck.set(id, [...byCheck.get(id) ?? [], s.criterionId]);
+  for (const s of resting) for (const id2 of s.probeable) byCheck.set(id2, [...byCheck.get(id2) ?? [], s.criterionId]);
   if (byCheck.size === 0) return evidence(null);
   const allowFlaky = ctx.snapshot.config.verification.allow_flaky_pass === true;
-  const required = [.../* @__PURE__ */ new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id)])].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command");
+  const required = [.../* @__PURE__ */ new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === "command").map((c) => c.id)])].filter((id2) => ctx.snapshot.config.checks[id2]?.kind === "command");
   const exceptions = new Map((input.contract.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint]));
   if (!input.installOk || !otherwiseAcceptable(input.results, required, allowFlaky, exceptions)) {
     return evidence(null, { cause: "not-acceptable", reason: "the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)" });
@@ -59937,20 +59951,20 @@ function acceptedWithoutFailBefore(ctx, treeHash) {
   for (const criterionId of [...new Set(requests(ctx).filter((r) => r.tree_hash === treeHash).map((r) => r.criterion_id))].sort()) {
     const a = answerFor(ctx, treeHash, criterionId);
     if (a.state !== "accepted") continue;
-    const id = `dec-${ctx.run.id}-fail-before-accepted-${a.questionId}`;
-    if (!getDecision(ctx.db, id)) decide2(ctx, { id, kind: FAIL_BEFORE_ACCEPTED_KIND, summary: `${a.by} accepted ${criterionId} without fail-before for tree ${treeHash.slice(0, 12)} only`, data: { question_id: a.questionId, criterion_id: criterionId, tree_hash: treeHash, accepted_by: a.by } });
+    const id2 = `dec-${ctx.run.id}-fail-before-accepted-${a.questionId}`;
+    if (!getDecision(ctx.db, id2)) decide2(ctx, { id: id2, kind: FAIL_BEFORE_ACCEPTED_KIND, summary: `${a.by} accepted ${criterionId} without fail-before for tree ${treeHash.slice(0, 12)} only`, data: { question_id: a.questionId, criterion_id: criterionId, tree_hash: treeHash, accepted_by: a.by } });
     out.push({ criterionId, questionId: a.questionId, by: a.by });
   }
   return out;
 }
 function ask(ctx, cand, e, why) {
   const fb = e.fail_before;
-  const id = failBeforeQuestionId(ctx.run.id, cand.treeHash, e.criterion_id);
+  const id2 = failBeforeQuestionId(ctx.run.id, cand.treeHash, e.criterion_id);
   const tree = cand.treeHash.slice(0, 12);
-  const q = findQuestion(ctx.db, id) ?? insertQuestion(
+  const q = findQuestion(ctx.db, id2) ?? insertQuestion(
     ctx.db,
     {
-      id,
+      id: id2,
       runId: ctx.run.id,
       mode: "decision-record",
       question: `Accept ${e.criterion_id} without fail-before evidence for candidate ${cand.seq} (tree ${tree})?`,
@@ -60007,7 +60021,7 @@ function failBeforeStale(ctx, cand, record) {
 }
 function groupedByText(items) {
   const groups = /* @__PURE__ */ new Map();
-  for (const { id, text: text2 } of items) groups.set(text2, [...groups.get(text2) ?? [], id]);
+  for (const { id: id2, text: text2 } of items) groups.set(text2, [...groups.get(text2) ?? [], id2]);
   return [...groups].map(([text2, ids]) => `${ids.join(", ")}: ${text2}`);
 }
 function decideHow(runId, questions) {
@@ -60098,7 +60112,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
   const checkpoint = async () => opts.checkpoint ? opts.checkpoint() : null;
   const runner = { ...checkRunnerFor(ctx), checkoutDir };
   const install = await installDependencies({ ...runner, candidate: cand, installAfterEnd: opts.installAfterEnd === true });
-  const commandChecks = contract.required_check_ids.filter((id) => snapshot2.config.checks[id]?.kind === "command");
+  const commandChecks = contract.required_check_ids.filter((id2) => snapshot2.config.checks[id2]?.kind === "command");
   const results = [...install.results];
   if (install.skipped || install.ok) results.push(...await runChecks({ ...runner, candidate: cand, checkIds: commandChecks }));
   const afterChecks = await checkpoint();
@@ -60141,7 +60155,7 @@ async function collectVerificationEvidence(ctx, cand, opts) {
     policy: staticPolicy,
     now: judgedAt
   });
-  const sastVerdicts = sastCheckIds2(snapshot2).map((id) => judgeSastResult(results.find((r) => r.checkId === id) ?? null, id, staticPolicy, judgedAt));
+  const sastVerdicts = sastCheckIds2(snapshot2).map((id2) => judgeSastResult(results.find((r) => r.checkId === id2) ?? null, id2, staticPolicy, judgedAt));
   const security = staticSecurityGate({ scan, sast: sastVerdicts.map((v) => ({ checkId: v.checkId, status: v.status })) });
   gate(security);
   const uiResults = uiResult ? toEvidenceUi(uiResult) : [];
@@ -60363,7 +60377,7 @@ function environmentFixes(failures, platform3) {
   const change = (group, key2) => {
     for (const f of group) settings.add(key2(f.checkId));
   };
-  const command = (id) => `checks.${id}.command`;
+  const command = (id2) => `checks.${id2}.command`;
   const has2 = (signal) => failures.filter((f) => f.signals.includes(signal));
   const refusedFs = failures.filter((f) => !f.signals.includes("pipe-denied") && (f.signals.includes("filesystem-denied") || f.signals.includes("permission-denied") || f.signals.includes("sandbox-violation")));
   const outsideFs = refusedFs.filter((f) => f.folderForm === false && runsDotnetFormat(f));
@@ -60399,7 +60413,7 @@ function environmentFixes(failures, platform3) {
   if (outside.length > 0) {
     const ids = outside.map((f) => f.checkId);
     fixes.push(`dotnet format (${ids.length > 1 ? "checks" : "check"} ${ids.join(", ")}) cannot run in this check sandbox: ${outside.map((f) => formatOutsideFix({ id: f.checkId })).join("; ")} ${FORMAT_OUTSIDE_REASON}`);
-    change(outside, (id) => `checks.${id}`);
+    change(outside, (id2) => `checks.${id2}`);
   }
   const network = has2("network-denied");
   const nugetOnMac2 = platform3 === "darwin" ? network.filter((f) => f.lines.some((l) => NUGET_LINE.test(l))) : [];
@@ -60759,7 +60773,7 @@ function missingTargetAdvice(input) {
 }
 function mandatoryCommandChecks(ctx) {
   const ids = new Set(ctx.contract?.required_check_ids ?? []);
-  for (const [id, def] of Object.entries(ctx.snapshot.config.checks)) if (def.mandatory && def.kind === "command") ids.add(id);
+  for (const [id2, def] of Object.entries(ctx.snapshot.config.checks)) if (def.mandatory && def.kind === "command") ids.add(id2);
   return ids;
 }
 function readCapped2(path) {
@@ -60959,6 +60973,8 @@ var init_baseline_questions = __esm({
 });
 
 // src/controller/steps/common.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { join as join61 } from "node:path";
 function move2(ctx, to, reason, opts = {}) {
   const from = ctx.run.state;
   ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...opts.patch ? { patch: opts.patch } : {}, ...opts.data === void 0 ? {} : { data: opts.data }, ...opts.cause ? { cause: opts.cause } : {} }, ctx.clock);
@@ -61036,7 +61052,7 @@ function frozenPolicyCause(reason, code2) {
   if (/plugin\(s\)[^.;]*\bthe policy does not allow/.test(reason)) return /agents\.allow_managed_plugins/.test(reason) ? "agents.allowed_plugins or agents.allow_managed_plugins" : "agents.allowed_plugins";
   if (/differs from the frozen policy mode/.test(reason)) return "mode";
   const misconfigured = /^[Cc]hecks? ([\w.-]+(?:, [\w.-]+)*) (?:is|are) misconfigured\b/.exec(reason);
-  if (misconfigured) return misconfigured[1].split(", ").map((id) => `checks.${id}.command`).join(", ");
+  if (misconfigured) return misconfigured[1].split(", ").map((id2) => `checks.${id2}.command`).join(", ");
   return null;
 }
 function withSentence(reason, next) {
@@ -61119,6 +61135,23 @@ async function blockOnOpenQuestions(ctx, stage, opts = {}) {
 function assertContract(ctx) {
   if (!ctx.contract) throw new OrbitError("CONTRACT_INVALID", `run ${ctx.run.id} reached ${ctx.run.state} without a contract`);
   return ctx.contract;
+}
+function repoInstructions(ctx) {
+  const file = join61(ctx.runDir, REPO_INSTRUCTIONS_FILE);
+  const saved = readJsonIfExists(file);
+  if (saved) return saved.files.map(({ path, content }) => ({ path, content }));
+  const base = ctx.run.baseRevision;
+  const files = base === null ? [] : REPO_INSTRUCTION_FILES.flatMap((path) => {
+    try {
+      const content = execFileSync3("git", ["show", `${base}:${path}`], { cwd: ctx.run.repoRoot, env: gitEnv4(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3e4, maxBuffer: 4 * 1024 * 1024 });
+      return [{ path, content, sha256: sha256(content) }];
+    } catch {
+      return [];
+    }
+  });
+  note2(ctx, REPO_INSTRUCTIONS_EVENT, { files: files.map((f) => f.path), revision: base });
+  atomicWriteJson(file, { revision: base, files });
+  return files.map(({ path, content }) => ({ path, content }));
 }
 function policySummary(ctx, opts) {
   const c = ctx.snapshot.config;
@@ -61214,11 +61247,15 @@ async function handleWorkerFailure(ctx, failed, opts) {
   if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   return { retry: false, result: await finishRun(ctx, "BLOCKED", `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ""})`) };
 }
-var WAIT, MOVED, DONE, CLOSING_STATES, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
+var WAIT, MOVED, DONE, CLOSING_STATES, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, REPO_INSTRUCTIONS_FILE, REPO_INSTRUCTIONS_EVENT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
 var init_common = __esm({
   "src/controller/steps/common.ts"() {
     "use strict";
     init_errors();
+    init_fsx();
+    init_hash();
+    init_prompt();
+    init_git2();
     init_text2();
     init_invocation();
     init_types3();
@@ -61248,6 +61285,8 @@ var init_common = __esm({
     DOTNET_WORKER_BUILDS = "- .NET: pass -m:1 to every dotnet build, test, publish, pack, restore, clean or msbuild you start, and run a project with dotnet run --no-build after such a build (dotnet run hands -m:1 to the program); this sandbox refuses MSBuild worker nodes, so without -m:1 such a command fails, on macOS only after about five minutes; ";
     DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads the project through a build host whose named pipe this sandbox refuses too, so of dotnet format only dotnet format whitespace --folder runs here`;
     DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
+    REPO_INSTRUCTIONS_FILE = "repo-instructions.json";
+    REPO_INSTRUCTIONS_EVENT = "repo.instructions-read";
     WORKER_RETRY_EVENT = "worker.retry";
     MAX_REGENERATIONS = 2;
   }
@@ -61550,7 +61589,7 @@ async function workerPluginsStep(ctx) {
   const refusals = await workerPluginRefusals(ctx.deps.adapters, ctx.snapshot.config);
   if (refusals.length === 0) return null;
   const reason = refusals.map(({ verdict }) => `${verdict.summary}; to fix: ${verdict.fix ?? "allow each plugin in .orbit/config.yaml"}`).join("; and ");
-  const plugins = refusals.flatMap(({ verdict }) => verdict.refused.map((p) => p.id).filter((id) => id !== null));
+  const plugins = refusals.flatMap(({ verdict }) => verdict.refused.map((p) => p.id).filter((id2) => id2 !== null));
   decide2(ctx, { kind: "preflight.worker-plugins", summary: reason, data: { providers: refusals.map((r) => r.provider), plugins } });
   return finishRun(ctx, "BLOCKED", reason, { outcome: { worker_refusal: { kind: "plugins", plugins, providers: refusals.map((r) => r.provider) } } });
 }
@@ -61564,7 +61603,7 @@ var init_worker_plugins = __esm({
 
 // src/controller/steps/preflight.ts
 import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync16 } from "node:fs";
-import { dirname as dirname31, isAbsolute as isAbsolute24, join as join61, resolve as resolve17 } from "node:path";
+import { dirname as dirname31, isAbsolute as isAbsolute24, join as join62, resolve as resolve17 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -61603,7 +61642,7 @@ async function preflightStep(ctx) {
   }
   const wtRoot = runWorktreeRoot(ctx);
   mkdirSync20(wtRoot, { recursive: true, mode: 448 });
-  const baselineDir = join61(wtRoot, "baseline");
+  const baselineDir = join62(wtRoot, "baseline");
   let settled = null;
   const baseline = await runBaseline({
     settle: (report2) => (settled = classifyBaseline(ctx, report2, baselineDir)).report,
@@ -61631,7 +61670,7 @@ async function preflightStep(ctx) {
   if (!bg.passed && bg.status === "fail") return finishRun(ctx, "BLOCKED", `baseline gate: ${bg.reasons.join("; ")}`, { outcome: { gate: bg } });
   if (misconfigured.length > 0 || notRun.length > 0 || incomplete.length > 0) return blockOnBaseline(ctx, classified, { environment: notRun, incomplete, misconfigured });
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: "" });
-  const worktree = await ensureWorktree(repo, join61(wtRoot, "implementer"), head);
+  const worktree = await ensureWorktree(repo, join62(wtRoot, "implementer"), head);
   await preinstallWorktree(ctx, repo, worktree, head, baseTree);
   const installed2 = await safePoint(ctx);
   if (installed2) return installed2;
@@ -61672,7 +61711,7 @@ function askAboutBaseFailures(ctx, found, opts) {
   const mine = classified.failures.filter((f) => opts.only === void 0 || opts.only.has(f.checkId));
   const preExisting = mine.filter((f) => f.classification === void 0);
   if (missingTargets.length > 0) {
-    atomicWriteJson(join61(ctx.runDir, BASELINE_FILE), classified);
+    atomicWriteJson(join62(ctx.runDir, BASELINE_FILE), classified);
     decide2(ctx, {
       id: `dec-${ctx.run.id}-baseline-missing-target-${opts.key === "" ? classified.recordedAt : opts.key}`,
       kind: MISSING_TARGET_KIND,
@@ -61704,7 +61743,7 @@ function askAboutBaseFailures(ctx, found, opts) {
 }
 async function blockOnBaseline(ctx, report2, blocked, amendment = null) {
   const { environment, incomplete, misconfigured } = blocked;
-  atomicWriteJson(join61(ctx.runDir, BASELINE_FILE), amendment ? report2 : { ...report2, complete: false });
+  atomicWriteJson(join62(ctx.runDir, BASELINE_FILE), amendment ? report2 : { ...report2, complete: false });
   const reason = baselineBlockReason({ runId: ctx.run.id, baseRevision: report2.baseRevision, environment, incomplete, misconfigured, ...amendment ? { amended: amendment.checks } : {} });
   const environmentChecks = environment.map((f) => ({ check_id: f.checkId, classification: "environment", signals: f.signals, cause: f.cause, evidence_lines: f.lines, ...f.logPath ? { log_path: f.logPath } : {} }));
   const policyFix = environmentFixSettings(environment);
@@ -61872,11 +61911,11 @@ async function checkEnvironment(ctx) {
     isolation = { error: messageOf3(err) };
   }
   const capabilities = {};
-  for (const [id, adapter] of Object.entries(ctx.deps.adapters)) {
+  for (const [id2, adapter] of Object.entries(ctx.deps.adapters)) {
     try {
-      capabilities[id] = await adapter.discoverCapabilities();
+      capabilities[id2] = await adapter.discoverCapabilities();
     } catch (err) {
-      capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf3(err) };
+      capabilities[id2] = { provider: id2, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: messageOf3(err) };
     }
   }
   const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
@@ -61893,7 +61932,7 @@ async function checkEnvironment(ctx) {
   const credentials = all.filter((c) => required.has(c.provider));
   const delivery = deliveryEnvironmentProblem(config, ctx.deps.hostEnv ?? process.env);
   const gate = environmentGate({ snapshot: ctx.snapshot, mode: ctx.run.mode, isolation, credentials, reviewer, delivery });
-  atomicWriteJson(join61(ctx.runDir, "environment.json"), {
+  atomicWriteJson(join62(ctx.runDir, "environment.json"), {
     checked_at: ctx.clock.now(),
     gate,
     capabilities,
@@ -61931,7 +61970,7 @@ var init_preflight = __esm({
 });
 
 // src/controller/steps/baseline-amendment.ts
-import { join as join62 } from "node:path";
+import { join as join63 } from "node:path";
 function amendedDecisionId(runId, at) {
   return `dec-${runId}-baseline-amended-${at}`;
 }
@@ -61939,7 +61978,7 @@ function rebasedDecisionId(runId, baseRevision) {
   return `dec-${runId}-baseline-rebased-${baseRevision}`;
 }
 function baselineOf2(ctx) {
-  const report2 = readJsonIfExists(join62(ctx.runDir, BASELINE_FILE));
+  const report2 = readJsonIfExists(join63(ctx.runDir, BASELINE_FILE));
   if (!report2 || report2.baseRevision !== ctx.run.baseRevision || report2.policyHash !== ctx.run.policyHash) return null;
   return Array.isArray(report2.checkIds) && Array.isArray(report2.checks) && Array.isArray(report2.failures) ? report2 : null;
 }
@@ -61949,12 +61988,12 @@ function citedBy(contract, checkId) {
 function checksToAmend(ctx, contract, report2, judged) {
   const covered = new Set(report2.checkIds);
   const latest = /* @__PURE__ */ new Map();
-  for (const a of report2.amendments ?? []) for (const id of a.checkIds) latest.set(id, a);
+  for (const a of report2.amendments ?? []) for (const id2 of a.checkIds) latest.set(id2, a);
   const blocked = new Set(
     report2.failures.filter((f) => latest.has(f.checkId) && (f.classification === "environment" || f.classification === "incomplete" || f.classification === "misconfigured")).map((f) => f.checkId)
   );
-  const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id]) => id));
-  return [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command" && (!covered.has(id) || blocked.has(id) || unjudged.has(id))).sort();
+  const unjudged = new Set([...latest].filter(([, a]) => !judged(a)).map(([id2]) => id2));
+  return [...new Set(contract.required_check_ids)].filter((id2) => ctx.snapshot.config.checks[id2]?.kind === "command" && (!covered.has(id2) || blocked.has(id2) || unjudged.has(id2))).sort();
 }
 async function amendBaseline(ctx, contract) {
   const remeasured = await remeasureRebasedBaseline(ctx, contract);
@@ -61978,8 +62017,8 @@ async function remeasureRebasedBaseline(ctx, contract) {
   if (!rebased) return null;
   const existing = baselineOf2(ctx);
   if (existing !== null && getDecision(ctx.db, rebasedDecisionId(ctx.run.id, baseRevision)) !== null) return null;
-  const checkoutDir = join62(runWorktreeRoot(ctx), "baseline");
-  const ids = [...new Set(contract.required_check_ids)].filter((id) => ctx.snapshot.config.checks[id]?.kind === "command").sort();
+  const checkoutDir = join63(runWorktreeRoot(ctx), "baseline");
+  const ids = [...new Set(contract.required_check_ids)].filter((id2) => ctx.snapshot.config.checks[id2]?.kind === "command").sort();
   let found = null;
   if (existing === null) {
     const outcome = await runBaseline({
@@ -62032,7 +62071,7 @@ async function remeasureRebasedBaseline(ctx, contract) {
 }
 async function runAmendment(ctx, contract, ids, baseRevision) {
   const stage = ctx.run.state;
-  const checkoutDir = join62(runWorktreeRoot(ctx), "baseline");
+  const checkoutDir = join63(runWorktreeRoot(ctx), "baseline");
   const outcome = await runBaseline({
     db: ctx.db,
     run: { id: ctx.run.id, policyHash: ctx.run.policyHash },
@@ -62056,10 +62095,10 @@ async function runAmendment(ctx, contract, ids, baseRevision) {
   const only = new Set(ids);
   const found = classifyBaseline(ctx, outcome.report, checkoutDir, only);
   const classified = found.report;
-  atomicWriteJson(join62(ctx.runDir, BASELINE_FILE), classified);
+  atomicWriteJson(join63(ctx.runDir, BASELINE_FILE), classified);
   faultPoint("controller.baseline-amendment.after-write");
   const at = classified.amendments?.at(-1)?.recordedAt ?? ctx.clock.now();
-  const amended = ids.map((id) => ({ checkId: id, citedBy: citedBy(contract, id), mandatory: ctx.snapshot.config.checks[id]?.mandatory === true }));
+  const amended = ids.map((id2) => ({ checkId: id2, citedBy: citedBy(contract, id2), mandatory: ctx.snapshot.config.checks[id2]?.mandatory === true }));
   const records = amended.map((a) => {
     const entry = classified.checks.find((c) => c.checkId === a.checkId);
     const failure = classified.failures.find((f) => f.checkId === a.checkId);
@@ -62359,7 +62398,7 @@ var init_deliver = __esm({
 // src/delivery/release.ts
 import { existsSync as existsSync43, mkdirSync as mkdirSync21, rmSync as rmSync17 } from "node:fs";
 import { homedir as homedir14, platform as platform2 } from "node:os";
-import { join as join63 } from "node:path";
+import { join as join64 } from "node:path";
 function releaseConfig(snapshot2) {
   return snapshot2.config.release ?? null;
 }
@@ -62624,8 +62663,8 @@ function verdictOf2(result2, sha, required, requireAny) {
   return { state: "passed", detail: `${result2.checks.length} check(s) green` };
 }
 function deployFiles(workDir, envName, sha) {
-  const dir = join63(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
-  return { dir, checkout: join63(dir, "checkout"), home: join63(dir, "home"), started: join63(dir, "started.json"), outcome: join63(dir, "outcome.json") };
+  const dir = join64(workDir, "release", `deploy-${envName}-${sha.slice(0, 12)}`);
+  return { dir, checkout: join64(dir, "checkout"), home: join64(dir, "home"), started: join64(dir, "started.json"), outcome: join64(dir, "outcome.json") };
 }
 function readDeployOutcome(files, sha, envName) {
   const outcome = readJsonIfExists(files.outcome);
@@ -62683,7 +62722,7 @@ async function runDeploy(a) {
       category: "other"
     };
     const field = `release.environments.${envName}.deploy_command`;
-    const scratch = join63(files.dir, "toolchains");
+    const scratch = join64(files.dir, "toolchains");
     const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: env.deploy_command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [files.home, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
@@ -62819,9 +62858,9 @@ async function runVerifyCommand(a) {
     if (!d.allowed) throw new OrbitError("POLICY_DENIED", `verifying the deploy needs network access to ${host}: ${d.reason}`, { rule: d.rule, definitive: true });
   }
   if (!await hasCommit(run.repoRoot, sha, input.git)) return { verdict: "unknown", detail: `commit ${sha.slice(0, 12)} is not in the repository, so the verify_command has nothing to run on` };
-  const dir = join63(files.dir, "verify");
-  const checkoutDir = join63(dir, "checkout");
-  const home2 = join63(dir, "home");
+  const dir = join64(files.dir, "verify");
+  const checkoutDir = join64(dir, "checkout");
+  const home2 = join64(dir, "home");
   mkdirSync21(dir, { recursive: true, mode: 448 });
   if (existsSync43(checkoutDir)) await cleanupCandidateCheckout(run.repoRoot, checkoutDir);
   const checkout = await materializeCandidate(run.repoRoot, sha, checkoutDir, { readOnly: false });
@@ -62829,7 +62868,7 @@ async function runVerifyCommand(a) {
     mkdirSync21(home2, { recursive: true, mode: 448 });
     const tmp = prepareFreshTmpDir(dir);
     const def = { id: `release-verify:${envName}`, command: [...a.command], shell: false, cwd: ".", timeout_seconds: env.timeout_seconds, network_hosts: [...env.network_hosts], local_binding: false, env: {}, mandatory: true, flaky_reruns: 0, kind: "command", category: "other" };
-    const scratch = join63(dir, "toolchains");
+    const scratch = join64(dir, "toolchains");
     const realHome = input.homeDir ?? homedir14();
     const toolchains = releaseToolchains({ command: a.command, checkout, cacheRoot: input.toolchainCacheRoot ?? null, scratch, tmp, isolation: a.isolation.kind, networkHosts: env.network_hosts, homeDir: realHome, hostEnv: input.hostEnv ?? process.env });
     const profile = profileForCheck({ worktree: checkout, check: def, snapshot: snapshot2, extraWritable: [home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: realHome });
@@ -62887,8 +62926,8 @@ function askedRecords(ctx) {
   return listDecisions(ctx.db, ctx.run.id, { kind: LEDGER_ASKED_KIND }).map((d) => d.data);
 }
 function recordAsked(ctx, data, summary) {
-  const id = `dec-${ctx.run.id}-ledger-asked-${hashObject(data).slice(7, 23)}`;
-  if (!getDecision(ctx.db, id)) decide2(ctx, { id, kind: LEDGER_ASKED_KIND, summary, data });
+  const id2 = `dec-${ctx.run.id}-ledger-asked-${hashObject(data).slice(7, 23)}`;
+  if (!getDecision(ctx.db, id2)) decide2(ctx, { id: id2, kind: LEDGER_ASKED_KIND, summary, data });
 }
 function recordAskedLedger(ctx, triggerKey, ledger, questions) {
   const marker = `trigger:${triggerKey}`;
@@ -62923,12 +62962,12 @@ function settle2(ctx, e, q) {
 }
 function ask2(ctx, entries) {
   const ids = entries.map((e) => e.id);
-  const id = ledgerQuestionId(ctx.run.id, ids);
+  const id2 = ledgerQuestionId(ctx.run.id, ids);
   const named2 = ids.join(", ");
-  const q = findQuestion(ctx.db, id) ?? insertQuestion(
+  const q = findQuestion(ctx.db, id2) ?? insertQuestion(
     ctx.db,
     {
-      id,
+      id: id2,
       runId: ctx.run.id,
       mode: "decision-record",
       question: `Accept the ${ids.length === 1 ? "decision" : "decisions"} this run recorded without a person: ${named2}?`,
@@ -62961,9 +63000,9 @@ async function blockOnUndecidedLedger(ctx, stage) {
   const unasked = [];
   const waiting = /* @__PURE__ */ new Map();
   const declined = /* @__PURE__ */ new Map();
-  const add = (into, q2, id) => into.set(q2.id, { q: q2, ids: [...into.get(q2.id)?.ids ?? [], id] });
+  const add = (into, q2, id2) => into.set(q2.id, { q: q2, ids: [...into.get(q2.id)?.ids ?? [], id2] });
   for (const e of open2) {
-    const asked = records.filter((r) => r.ledger_ids.includes(e.id)).flatMap((r) => r.question_ids.map((id) => ({ q: findQuestion(ctx.db, id), settlesOn: r.settles_on })));
+    const asked = records.filter((r) => r.ledger_ids.includes(e.id)).flatMap((r) => r.question_ids.map((id2) => ({ q: findQuestion(ctx.db, id2), settlesOn: r.settles_on })));
     const decided = asked.find(({ q: q2, settlesOn }) => answeredByPerson(q2) && (settlesOn === "any" || accepts(q2)));
     if (decided && answeredByPerson(decided.q) && settle2(ctx, e, decided.q)) continue;
     left.push(e);
@@ -62974,7 +63013,7 @@ async function blockOnUndecidedLedger(ctx, stage) {
     else unasked.push(e);
   }
   if (left.length === 0) return null;
-  const claim = (id) => `${id} (${left.find((e) => e.id === id).claim.slice(0, 160)})`;
+  const claim = (id2) => `${id2} (${left.find((e) => e.id === id2).claim.slice(0, 160)})`;
   const entries = (n3) => `needs-decision assumption ledger ${n3 === 1 ? "entry" : "entries"}`;
   const ledgerDeclined = [...declined.values()].map((d) => ({ question_id: d.q.id, ledger_ids: d.ids }));
   if (declined.size > 0) {
@@ -62996,7 +63035,7 @@ async function blockOnUndecidedLedger(ctx, stage) {
     ...q ? [`question ${q.id} asks a person to decide ${unasked.map((e) => claim(e.id)).join("; ")}`] : [],
     ...[...waiting.values()].map((w) => `${w.ids.map(claim).join("; ")} ${w.ids.length === 1 ? "waits" : "wait"} for question ${w.q.id} (${w.q.question.slice(0, 160)})`)
   ];
-  const answers = [...q ? [`orbit decide ${ctx.run.id} ${q.id} ${ACCEPT_LEDGER_DECISIONS} (or ${DECLINE_LEDGER_DECISIONS})`] : [], ...[...waiting.keys()].map((id) => `orbit decide ${ctx.run.id} ${id} <answer>`)];
+  const answers = [...q ? [`orbit decide ${ctx.run.id} ${q.id} ${ACCEPT_LEDGER_DECISIONS} (or ${DECLINE_LEDGER_DECISIONS})`] : [], ...[...waiting.keys()].map((id2) => `orbit decide ${ctx.run.id} ${id2} <answer>`)];
   const n2 = left.length;
   return finishRun(ctx, "BLOCKED", `${n2} ${entries(n2)} recorded during the run ${n2 === 1 ? "waits" : "wait"} for a person before ${stage}: ${parts.join("; ")}. Answer with ${answers.join(" and ")}, then orbit resume ${ctx.run.id}.`, {
     outcome: { ledger_entries: left.map((e) => e.id), questions: [...q ? [q.id] : [], ...waiting.keys()] }
@@ -63284,7 +63323,7 @@ The following content was left out for size or policy. Do not assume it is corre
 ${lines.length === 0 ? "- nothing was excluded\n" : `${lines.join("\n")}
 `}`;
 }
-function fixedSections(input, red, id) {
+function fixedSections(input, red, id2) {
   const { contract, snapshot: snapshot2, evidenceReport: ev } = input;
   const cfg = snapshot2.config;
   const failBefore = failBeforePolicy(cfg).mode;
@@ -63299,9 +63338,9 @@ Reply with only JSON matching the provided review output schema, and echo candid
 `);
   sec.push(`## Candidate identity
 
-- candidate_revision: ${id.commitSha}
-- tree: ${id.tree}
-- base: ${id.baseSha}
+- candidate_revision: ${id2.commitSha}
+- tree: ${id2.tree}
+- base: ${id2.baseSha}
 - policy_hash: ${ev.policy_hash}
 - check_config_hash: ${ev.check_config_hash}
 - run: ${ev.run_id}, attempt ${ev.attempt}
@@ -64109,18 +64148,18 @@ function draftContract(input) {
   const { snapshot: snapshot2 } = input;
   const config = snapshot2.config;
   const checks = config.checks ?? {};
-  const isCheck = (id) => Object.prototype.hasOwnProperty.call(checks, id);
+  const isCheck = (id2) => Object.prototype.hasOwnProperty.call(checks, id2);
   const adjustments = [];
-  const dropCheck = (id, where2) => {
-    if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id)) {
-      adjustments.push({ kind: "check-dropped", subject: id, reason: `${where2} names check "${id}", which the policy does not define` });
+  const dropCheck = (id2, where2) => {
+    if (!adjustments.some((a) => a.kind === "check-dropped" && a.subject === id2)) {
+      adjustments.push({ kind: "check-dropped", subject: id2, reason: `${where2} names check "${id2}", which the policy does not define` });
     }
   };
   const criteria = plan.criteria.map((c, i) => {
     const checkIds = [];
-    for (const id of c.check_ids) {
-      if (!isCheck(id)) dropCheck(id, `criterion ${c.key}`);
-      else if (!checkIds.includes(id)) checkIds.push(id);
+    for (const id2 of c.check_ids) {
+      if (!isCheck(id2)) dropCheck(id2, `criterion ${c.key}`);
+      else if (!checkIds.includes(id2)) checkIds.push(id2);
     }
     return {
       id: `AC-${i + 1}`,
@@ -64132,22 +64171,22 @@ function draftContract(input) {
     };
   });
   const required = [];
-  for (const id of plan.required_check_ids) {
-    if (!isCheck(id)) dropCheck(id, "required_check_ids");
-    else if (!required.includes(id)) required.push(id);
+  for (const id2 of plan.required_check_ids) {
+    if (!isCheck(id2)) dropCheck(id2, "required_check_ids");
+    else if (!required.includes(id2)) required.push(id2);
   }
   for (const ac of criteria) {
-    for (const id of ac.check_ids ?? []) {
-      if (!required.includes(id)) {
-        required.push(id);
-        adjustments.push({ kind: "check-added", subject: id, reason: `criterion ${ac.id} cites it as evidence` });
+    for (const id2 of ac.check_ids ?? []) {
+      if (!required.includes(id2)) {
+        required.push(id2);
+        adjustments.push({ kind: "check-added", subject: id2, reason: `criterion ${ac.id} cites it as evidence` });
       }
     }
   }
-  for (const id of Object.keys(checks).sort()) {
-    if (checks[id]?.mandatory && !required.includes(id)) {
-      required.push(id);
-      adjustments.push({ kind: "check-added", subject: id, reason: "the policy marks it mandatory" });
+  for (const id2 of Object.keys(checks).sort()) {
+    if (checks[id2]?.mandatory && !required.includes(id2)) {
+      required.push(id2);
+      adjustments.push({ kind: "check-added", subject: id2, reason: "the policy marks it mandatory" });
     }
   }
   const scope = config.scope?.allowed_paths ?? [];
@@ -64279,7 +64318,7 @@ var init_draft = __esm({
 
 // src/controller/steps/contracting.ts
 import { readFileSync as readFileSync34 } from "node:fs";
-import { join as join64 } from "node:path";
+import { join as join65 } from "node:path";
 async function contractingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -64309,7 +64348,7 @@ async function contractingStep(ctx) {
   });
   if (!got.ok) return got.step;
   const plan = issue ? alignPlanToIssue(got.value, issue) : got.value;
-  atomicWriteJson(join64(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
+  atomicWriteJson(join65(ctx.runDir, PLANNER_FILE), { worker_id: got.worker.id, output: plan });
   let drafted;
   try {
     drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment, source: issue ? contractSource(issue) : null });
@@ -64332,7 +64371,7 @@ async function accept2(ctx, contract, plan) {
   if (!intake.passed) return finishRun(ctx, "BLOCKED", `intake gate rejected the contract: ${intake.reasons.join("; ")}`, { outcome: { gate: intake } });
   const unexpected = missingTargetsNotExpectedToFlip(ctx, contract);
   if (unexpected.length > 0) return blockOnMissingTargets(ctx, unexpected);
-  atomicWriteJson(join64(ctx.runDir, "contract.json"), contract);
+  atomicWriteJson(join65(ctx.runDir, "contract.json"), contract);
   settleExpectedFlips(ctx, contract);
   const patch = { contractJson: JSON.stringify(contract), contractHash: hashObject(contract) };
   const material = (plan?.unresolved_decisions ?? []).filter((d) => d.material);
@@ -64359,7 +64398,7 @@ function worktreeOf(ctx) {
 function plannerPrompt(ctx, workerId) {
   const issue = readIssueGoal(ctx.runDir);
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
-  const baseline = readJsonIfExists(join64(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join65(ctx.runDir, BASELINE_FILE));
   const missing = baseline && baseline.baseRevision === ctx.run.baseRevision && Array.isArray(baseline.failures) ? baseline.failures.filter((f) => f.classification === "missing-target").map((f) => f.checkId) : [];
   const many = missing.length > 1;
   const optional = Object.values(ctx.snapshot.config.checks).some((c) => !c.mandatory);
@@ -64381,6 +64420,7 @@ function plannerPrompt(ctx, workerId) {
     task,
     contract: null,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
     // The whole spec in one block: intake refused a body longer than the block may be, so it is never cut here.
     ...issue ? { untrusted: issuePromptBlocks(issue), maxBlockChars: ISSUE_BODY_MAX_CHARS + 400 } : {},
@@ -64389,7 +64429,7 @@ function plannerPrompt(ctx, workerId) {
 }
 function storedPlan(ctx) {
   try {
-    const raw = JSON.parse(readFileSync34(join64(ctx.runDir, PLANNER_FILE), "utf8")).output;
+    const raw = JSON.parse(readFileSync34(join65(ctx.runDir, PLANNER_FILE), "utf8")).output;
     return raw ? validateModelOutput("planner", raw) : null;
   } catch {
     return null;
@@ -64421,7 +64461,7 @@ var init_contracting = __esm({
 // src/controller/parallel-writers.ts
 import { existsSync as existsSync44, mkdtempSync as mkdtempSync8, rmSync as rmSync18, writeFileSync as writeFileSync10 } from "node:fs";
 import { tmpdir as tmpdir13 } from "node:os";
-import { join as join65 } from "node:path";
+import { join as join66 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
   if (!fresh || ctx.run.mode === "supervised") return null;
   if (ctx.snapshot.config.agents.default_parallelism < 2) return null;
@@ -64441,7 +64481,7 @@ function unitPurpose(n2, u) {
   return `implement:${n2}/${u.id}#1`;
 }
 function unitWorktree(ctx, n2, u) {
-  return join65(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
+  return join66(runWorktreeRoot(ctx), `unit-${n2}-${u.id}`);
 }
 async function runParallelUnits(ctx, n2, units, opts) {
   const settled = () => /* @__PURE__ */ new Set([...unitEvents(ctx, UNIT_INTEGRATED_EVENT, n2).map((e) => e.unit), ...serializedUnits(ctx, n2).map((e) => e.unit)]);
@@ -64606,17 +64646,17 @@ async function changedFiles3(c) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
 }
 async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync8(join65(tmpdir13(), "orbit-unit-"));
+  const scratch = mkdtempSync8(join66(tmpdir13(), "orbit-unit-"));
   try {
-    const excludes = join65(scratch, "exclude");
+    const excludes = join66(scratch, "exclude");
     writeFileSync10(excludes, `${UNIT_EXCLUDES.join("\n")}
 `);
-    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join65(scratch, "index") }), config: { "core.excludesFile": excludes } };
+    const opts = { ...inCheckout(c, { GIT_INDEX_FILE: join66(scratch, "index") }), config: { "core.excludesFile": excludes } };
     await git3(c.worktree, ["read-tree", base], opts);
     await git3(c.worktree, ["add", "-A", "--", "."], opts);
     const tree = (await git3(c.worktree, ["write-tree"], opts)).trim();
-    const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
-    return (await git3(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
+    const id2 = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
+    return (await git3(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id2 })).trim();
   } finally {
     rmSync18(scratch, { recursive: true, force: true });
   }
@@ -64685,7 +64725,7 @@ var init_parallel_writers = __esm({
 
 // src/controller/authorization.ts
 import { existsSync as existsSync45, mkdirSync as mkdirSync22 } from "node:fs";
-import { basename as basename19, join as join66 } from "node:path";
+import { basename as basename19, join as join67 } from "node:path";
 function operationKey(op) {
   return `op-${sha256(canonicalJson(op)).slice(0, 16)}`;
 }
@@ -64716,14 +64756,14 @@ function grantFor(ctx, op, subject) {
   if (q.status === "open") return { state: "pending", questionId: q.id };
   const by = q.answeredBy;
   if (q.answer !== APPROVE_ONCE || !by || !isHumanActor(by)) return { state: "denied", questionId: q.id, by };
-  const id = `dec-${ctx.run.id}-grant-${q.id}`;
-  if (!getDecision(ctx.db, id)) {
+  const id2 = `dec-${ctx.run.id}-grant-${q.id}`;
+  if (!getDecision(ctx.db, id2)) {
     const forAttempt = req.attempt !== void 0;
     const what = forAttempt ? `implementation attempt ${req.attempt} only` : `candidate tree ${subject.slice(0, 12)} only`;
     const where2 = forAttempt ? { attempt: req.attempt, subject } : { tree_hash: subject };
-    decide2(ctx, { id, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where2, approved_by: by, policy_denial: op.denial } });
+    decide2(ctx, { id: id2, kind: AUTHORIZATION_GRANT_KIND, summary: `${by} authorized once: ${op.summary} (${what})`, data: { question_id: q.id, op_key: op.key, operation: op.op, ...where2, approved_by: by, policy_denial: op.denial } });
   }
-  return { state: "granted", decisionId: id, approvedBy: by, questionId: q.id };
+  return { state: "granted", decisionId: id2, approvedBy: by, questionId: q.id };
 }
 function authorizedOnce(ctx, op, treeHash) {
   if (authorize(ctx.snapshot, op.op).allowed) return true;
@@ -64826,10 +64866,10 @@ async function runApprovedOperation(ctx, n2, op, grant) {
   const plan = approvedPlan(op);
   const none = { key: op.key, command: plan?.shown ?? null, exit_code: null, timed_out: false, path: null, sha256: null, excerpt: null };
   if (!plan) return { ...none, state: "NOT_RUN", note: "the approval names a host but no exact command or address, so the controller had nothing exact to run" };
-  const rel = join66("authorization", `attempt-${n2}`, op.key);
-  const dir = join66(ctx.runDir, rel);
+  const rel = join67("authorization", `attempt-${n2}`, op.key);
+  const dir = join67(ctx.runDir, rel);
   const ledger = new ActionLedger(ctx.db, ctx.clock, { runDir: ctx.runDir, maxAttempts: 1, actor: ctx.ownerId });
-  const recorded = () => readJsonIfExists(join66(dir, RECEIPT_FILE));
+  const recorded = () => readJsonIfExists(join67(dir, RECEIPT_FILE));
   try {
     const done = await ledger.performAction(
       { runId: ctx.run.id, kind: APPROVED_COMMAND_ACTION, idempotencyKey: `${ctx.run.id}:approved:${n2}:${op.key}`, target: { command: plan.shown, attempt: n2, op_key: op.key, grant: grant.decisionId } },
@@ -64853,7 +64893,7 @@ async function runApprovedOperation(ctx, n2, op, grant) {
 }
 function installingToolchains(command, worktree, toolchains) {
   const installs = classifyBash(command, { cwd: worktree, root: worktree }).commands.filter((c) => c.category === "package-install");
-  return toolchains.filter((id) => installs.some((c) => TOOLCHAIN_PROFILES[id].executables.test(basename19(c.argv[0] ?? ""))));
+  return toolchains.filter((id2) => installs.some((c) => TOOLCHAIN_PROFILES[id2].executables.test(basename19(c.argv[0] ?? ""))));
 }
 function cachesLine(toolchains, installs) {
   if (toolchains.length === 0) return "";
@@ -64867,14 +64907,14 @@ function cachesLine(toolchains, installs) {
 }
 async function executeApproved(ctx, plan, dir, rel) {
   const worktree = ctx.run.worktreePath;
-  const home2 = join66(dir, "home");
+  const home2 = join67(dir, "home");
   mkdirSync22(home2, { recursive: true, mode: 448 });
   const tmp = prepareWorkerTmpDir(dir);
   const hosts = [.../* @__PURE__ */ new Set([...ctx.snapshot.config.network.allowed_hosts, ...plan.host ? [plan.host] : []])];
   const isolation = ctx.isolation();
   const ids = detectToolchains({ command: plan.argv, roots: [worktree] });
   const installs = plan.argv[0] === "/bin/sh" ? installingToolchains(plan.shown, worktree, ids) : [];
-  const scratch = join66(dir, "toolchains");
+  const scratch = join67(dir, "toolchains");
   const toolchains = commandToolchains({ command: plan.argv, roots: [worktree], mode: "fetch", installs, cacheRoot: toolchainCacheRootFor(ctx), scratchRoot: scratch, tmpDir: tmp, isolation: isolation.kind, networkHosts: hosts, hostHome: homeOf2(ctx.deps), hostEnv: ctx.deps.hostEnv ?? process.env });
   prepareToolchainLayout(toolchains);
   const def = { id: `approved-${rel.split("/").at(-1)}`, command: plan.argv, shell: false, cwd: ".", timeout_seconds: APPROVED_TIMEOUT_S, network_hosts: hosts, local_binding: false, env: {}, mandatory: false, flaky_reruns: 0, kind: "command" };
@@ -64922,9 +64962,9 @@ ${r.stderr}
 ${note3 ? `--- orbit ---
 ${note3}
 ` : ""}`);
-  atomicWrite(join66(dir, OUTPUT_FILE), text2, 384);
-  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join66(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
-  atomicWrite(join66(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
+  atomicWrite(join67(dir, OUTPUT_FILE), text2, 384);
+  const receipt = { exit_code: exitCode, timed_out: r.timedOut, path: join67(rel, OUTPUT_FILE), sha256: sha256(text2), excerpt: text2.slice(-APPROVED_EXCERPT_CHARS) };
+  atomicWrite(join67(dir, RECEIPT_FILE), `${JSON.stringify(receipt)}
 `, 384);
   return receipt;
 }
@@ -64955,7 +64995,7 @@ function ungrantedCommands(events, snapshot2, worktreeRoot, granted) {
   return out;
 }
 function sessionEvents(worker) {
-  const path = join66(worker.workerDir, LOG_FILE);
+  const path = join67(worker.workerDir, LOG_FILE);
   return existsSync45(path) ? readLogLines(path).events : [];
 }
 var APPROVE_ONCE, DENY2, AUTHORIZATION_REQUEST_KIND, AUTHORIZATION_GRANT_KIND, ASKABLE_RULE, NEVER_GRANTED, URL_HOST, APPROVED_COMMAND_ACTION, APPROVED_TIMEOUT_S, APPROVED_MAX_OUTPUT_BYTES, APPROVED_EXCERPT_CHARS, OUTPUT_FILE, RECEIPT_FILE;
@@ -65000,9 +65040,9 @@ var init_authorization = __esm({
 
 // src/controller/steps/implementing.ts
 import { existsSync as existsSync46 } from "node:fs";
-import { join as join67 } from "node:path";
+import { join as join68 } from "node:path";
 function briefPath(ctx, attempt) {
-  return join67(ctx.runDir, "briefs", `attempt-${attempt}.json`);
+  return join68(ctx.runDir, "briefs", `attempt-${attempt}.json`);
 }
 function currentAttempt(ctx) {
   const row = ctx.db.get("SELECT MAX(CAST(json_extract(data_json, '$.attempt') AS INTEGER)) AS n FROM events WHERE run_id = ? AND type = ?", ctx.run.id, ATTEMPT_EVENT);
@@ -65345,6 +65385,7 @@ function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: false }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
     briefs,
     evidenceRefs: refs,
@@ -65489,7 +65530,7 @@ var init_route_outcome = __esm({
 
 // src/controller/steps/verifying.ts
 import { existsSync as existsSync47, readdirSync as readdirSync14 } from "node:fs";
-import { join as join68 } from "node:path";
+import { join as join69 } from "node:path";
 async function verifyingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -65534,7 +65575,7 @@ async function verifyingStep(ctx) {
     }
     return act(ctx, cand, report2);
   }
-  const checkoutDir = join68(runWorktreeRoot(ctx), `check-${cand.seq}`);
+  const checkoutDir = join69(runWorktreeRoot(ctx), `check-${cand.seq}`);
   await ensureCheckout(ctx, cand, checkoutDir);
   try {
     const collected = await collectVerificationEvidence(ctx, cand, { checkoutDir, scope, notes: authorizedOnceNotes, checkpoint: () => safePoint(ctx), onGate: (g) => recordGate(ctx, g), exploration: true });
@@ -66007,6 +66048,7 @@ function diagnosisPrompt(ctx, fingerprint, failures, workerId, timeouts) {
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     evidenceRefs: refs,
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt })),
@@ -66110,12 +66152,12 @@ function sameProviderApprovalDecisionId(runId) {
   return `dec-${runId}-review-same-provider-approved`;
 }
 function ask4(ctx, sel) {
-  const id = sameProviderQuestionId(ctx.run.id);
+  const id2 = sameProviderQuestionId(ctx.run.id);
   const why = sel.independentUnavailable ?? "no independent reviewer was usable";
-  return findQuestion(ctx.db, id) ?? insertQuestion(
+  return findQuestion(ctx.db, id2) ?? insertQuestion(
     ctx.db,
     {
-      id,
+      id: id2,
       runId: ctx.run.id,
       mode: "decision-record",
       question: "No independent reviewer is usable: allow a same-provider review for this run?",
@@ -66176,7 +66218,7 @@ var init_review_approval = __esm({
 
 // src/controller/steps/reviewing.ts
 import { existsSync as existsSync49, readdirSync as readdirSync15, readFileSync as readFileSync35 } from "node:fs";
-import { join as join69 } from "node:path";
+import { join as join70 } from "node:path";
 async function reviewingStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -66190,7 +66232,7 @@ async function reviewingStep(ctx) {
   await cancelObsoleteWork(ctx, cand.treeHash);
   const focuses = reviewFocuses(ctx, cand);
   const fresh = freshReviewOf(ctx, cand.treeHash);
-  if (fresh && (focuses.length === 1 || !fresh.superseded.some((id) => setAsideReviews(ctx).has(id)))) return freshReview(ctx, cand, fresh);
+  if (fresh && (focuses.length === 1 || !fresh.superseded.some((id2) => setAsideReviews(ctx).has(id2)))) return freshReview(ctx, cand, fresh);
   if (uncoveredUnits(ctx, cand).length === 0) {
     const asked = askedReReview(ctx, cand, reReviewRecords(ctx));
     return asked ? reReview(ctx, cand, asked) : resolveAndDecide(ctx, cand);
@@ -66359,8 +66401,8 @@ async function parallelReview(ctx, cand, sel, focuses, fresh) {
   }
   const plan = scheduler.plan([...running.filter((r) => own.has(r.unit.id)).map((r) => r.unit), ...pending], { parallelism: Math.max(focuses.length, config.agents.default_parallelism), admit: budgetAdmission(ledger, "final") });
   const machine = machineAdmission(ctx, running.map((r) => r.unit), plan.start);
-  const admitted = new Set(plan.start.map((u) => u.id).filter((id) => machine.start.has(id)));
-  for (const [id, why] of machine.deferred) plan.deferred.push({ id, reason: why });
+  const admitted = new Set(plan.start.map((u) => u.id).filter((id2) => machine.start.has(id2)));
+  for (const [id2, why] of machine.deferred) plan.deferred.push({ id: id2, reason: why });
   if (plan.context_duplication.length > 0) note2(ctx, "scheduler.context-duplication", { candidate_id: cand.id, units: plan.context_duplication });
   for (const u of plan.start.filter((x) => admitted.has(x.id))) {
     const cap = caps.get(u.id);
@@ -66484,7 +66526,7 @@ async function resolveAndDecide(ctx, cand) {
   const state = loadResolverState(ctx.db, ctx.run.id, cand.treeHash);
   const repairs2 = reviewRepairs(ctx);
   const repaired = /* @__PURE__ */ new Map();
-  for (const r of repairs2) for (const f of r.findings) for (const id of f.member_ids) repaired.set(id, r);
+  for (const r of repairs2) for (const f of r.findings) for (const id2 of f.member_ids) repaired.set(id2, r);
   const closed = new Set([...state.findings, ...state.previousFindings].filter((f) => f.status === "resolved" || f.status === "rejected").map((f) => f.id));
   const raisedOn = /* @__PURE__ */ new Map();
   for (const f of [...state.findings, ...state.previousFindings]) {
@@ -66523,14 +66565,14 @@ async function resolveAndDecide(ctx, cand) {
   const blockRank = blockSeverityRank(ctx);
   const open2 = resolution.dispositions.filter((d) => d.status === "accepted" || d.status === "claim_pending" || d.status === "open");
   const routed = open2.filter(
-    (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id) => repaired.has(id))) && (d.blocking || severityRank(d.severity) <= blockRank)
+    (d) => d.status === "accepted" || undecided.has(d.findingId) || (repairRequested || d.memberIds.some((id2) => repaired.has(id2))) && (d.blocking || severityRank(d.severity) <= blockRank)
   );
   const askedHere = new Set(state.findings.filter((f) => state.reviews.some((r) => r.id === f.reviewId && r.verdict === "REPAIR_REQUIRED")).map((f) => f.id));
-  const toRepair = routed.length === 0 ? routed : open2.filter((d) => routed.includes(d) || d.memberIds.some((id) => askedHere.has(id)));
+  const toRepair = routed.length === 0 ? routed : open2.filter((d) => routed.includes(d) || d.memberIds.some((id2) => askedHere.has(id2)));
   const noted = resolution.dispositions.filter((d) => d.recordedClassification !== void 0);
   const freshAsked = freshReviewOf(ctx, cand.treeHash);
   if (toRepair.length === 0 && resolution.claimsToTest.length === 0 && gate.passed && !gate.details.approved && askedOnlyThroughNotes(state, noted).length === 0 && (!freshAsked || freshAsked.reason === "rereview")) {
-    toRepair.push(...resolution.dispositions.filter((d) => d.status === "advisory" && d.recordedClassification === void 0 && d.memberIds.some((id) => askedHere.has(id))));
+    toRepair.push(...resolution.dispositions.filter((d) => d.status === "advisory" && d.recordedClassification === void 0 && d.memberIds.some((id2) => askedHere.has(id2))));
   }
   if (toRepair.length > 0) {
     const texts = findingTexts(state);
@@ -66690,9 +66732,9 @@ async function freshReview(ctx, cand, rec2) {
     review = recordedFreshReview(ctx, rec2);
     if (!review) throw new OrbitError("INTERNAL", `the fresh review of tree ${rec2.tree_hash} was recorded but cannot be found`);
   }
-  for (const id of rec2.superseded) {
-    if (id === review.id) continue;
-    markReviewInvalidated(ctx.db, id, `superseded by fresh review ${review.id} of the same tree: it asked for repair only through notes on a classification Orbit recorded, which no repair can change`, ctx.clock);
+  for (const id2 of rec2.superseded) {
+    if (id2 === review.id) continue;
+    markReviewInvalidated(ctx.db, id2, `superseded by fresh review ${review.id} of the same tree: it asked for repair only through notes on a classification Orbit recorded, which no repair can change`, ctx.clock);
   }
   return resolveAndDecide(ctx, cand);
 }
@@ -66702,7 +66744,7 @@ function describeFreshReview(ctx, rec2, resolution, state) {
   const after = rec2.reason === "rereview" ? "a re-review dropped the last finding open on it" : `review(s) ${rec2.superseded.join(", ")}`;
   if (!review) return { text: `; the fresh review of the tree asked after ${after} did not come back`, outcome: { started: true, review_id: null, earlier_noted: rec2.noted } };
   const own = new Set(state.findings.filter((f) => f.reviewId === review.id).map((f) => f.id));
-  const findings = resolution.dispositions.filter((d) => d.memberIds.some((id) => own.has(id)));
+  const findings = resolution.dispositions.filter((d) => d.memberIds.some((id2) => own.has(id2)));
   const named2 = findings.length === 0 ? "it named no finding" : findings.map((d) => `${d.externalId ?? d.findingId} (${d.severity}, ${d.recordedClassification !== void 0 ? "a note" : d.status})`).join(", ");
   const why = rec2.reason === "rereview" ? "" : rec2.reason === "shallow" ? " approved it without inspecting anything" : ` raised only the note(s) ${earlier}`;
   const verdict = review.verdict === "APPROVE" ? "stands only for the review(s) it replaced" : `did not approve it either: ${named2}`;
@@ -66742,8 +66784,8 @@ async function reReviewCarried(ctx, cand, going, state, recs) {
 }
 async function reReviewer(ctx, rec2) {
   const failures = listDecisions(ctx.db, ctx.run.id, { kind: REREVIEW_FAILED_KIND }).map((d) => d.data).filter((f) => f.fingerprint === rec2.fingerprint);
-  const id = `dec-${ctx.run.id}-rereview-select-${rec2.fingerprint}-${failures.length}`;
-  const prior = getDecision(ctx.db, id);
+  const id2 = `dec-${ctx.run.id}-rereview-select-${rec2.fingerprint}-${failures.length}`;
+  const prior = getDecision(ctx.db, id2);
   if (prior) return prior.data.reviewer;
   const failed = Object.fromEntries([...activeReviewerFailures(ctx), ...failures].map((f) => [f.provider, f.reason]));
   const others = { ...failed };
@@ -66754,7 +66796,7 @@ async function reReviewer(ctx, rec2) {
   const reviewer = other?.independent ? other : usable(fallbackSelection(ctx, env, failed));
   const name = reReviewId(rec2);
   const summary = !reviewer ? `no reviewer is left to re-review finding ${name}` : `re-reviewer of finding ${name}: ${reviewerLabel(reviewer)}${rec2.raised_by.includes(reviewer.provider) ? `, which raised it: no other reviewer is eligible` : `, not ${rec2.raised_by.join(", ")}, which raised it`}`;
-  decide2(ctx, { id, kind: REREVIEW_SELECT_KIND, summary, data: { fingerprint: rec2.fingerprint, reviewer } });
+  decide2(ctx, { id: id2, kind: REREVIEW_SELECT_KIND, summary, data: { fingerprint: rec2.fingerprint, reviewer } });
   return reviewer;
 }
 async function reReview(ctx, cand, rec2) {
@@ -66808,9 +66850,9 @@ function settleReReviews(ctx, resolution, recs) {
     (gone ? dropped : present).add(rec2.fingerprint);
     const who = `re-review ${answer.worker_id} by ${answer.provider} of tree ${resolution.treeHash.slice(0, 12)}`;
     for (const d of resolution.dispositions) {
-      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id) => rec2.member_ids.includes(id))) continue;
+      if (d.fingerprint !== rec2.fingerprint && !d.memberIds.some((id2) => rec2.member_ids.includes(id2))) continue;
       if (!UNRESOLVED_FINDING_STATUSES.includes(d.status)) continue;
-      if (d.memberIds.some((id) => !rec2.member_ids.includes(id))) continue;
+      if (d.memberIds.some((id2) => !rec2.member_ids.includes(id2))) continue;
       if (!gone) {
         d.disagreement = null;
         d.reason += `; its one ${who} found it still present (${answer.verdict})`;
@@ -66853,18 +66895,18 @@ function materialSemantics(ctx, d, t) {
   }
   return reasons;
 }
-function namesId(text2, id) {
-  return new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "i").test(text2);
+function namesId(text2, id2) {
+  return new RegExp(`(^|[^A-Za-z0-9_-])${id2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`, "i").test(text2);
 }
 function namesFinding(text2, f) {
-  return [f.fingerprint, f.external_id].some((id) => typeof id === "string" && id.length > 0 && namesId(text2, id));
+  return [f.fingerprint, f.external_id].some((id2) => typeof id2 === "string" && id2.length > 0 && namesId(text2, id2));
 }
 function findingsNamed(text2, among, cited) {
   const out = /* @__PURE__ */ new Map();
   for (const f of among) if (f.fingerprint.length > 0 && namesId(text2, f.fingerprint)) out.set(f.fingerprint, f);
   const ids = new Set(among.flatMap((f) => typeof f.external_id === "string" && f.external_id.length > 0 && namesId(text2, f.external_id) ? [f.external_id] : []));
-  for (const id of ids) {
-    const sharing = among.filter((f) => f.external_id === id);
+  for (const id2 of ids) {
+    const sharing = among.filter((f) => f.external_id === id2);
     const pinned = sharing.filter((f) => cited.has(f.fingerprint));
     for (const f of pinned.length > 0 ? pinned : sharing) out.set(f.fingerprint, f);
   }
@@ -66888,7 +66930,7 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
   for (const c of listCheckRuns(ctx.db, { runId: ctx.run.id, candidateId: cand.id })) {
     if (required.has(c.checkId) && c.status === "PASSED" && c.treeHash === cand.treeHash && isTestCommandCheck(checks[c.checkId])) passed.set(c.checkId, c);
   }
-  const holders = (path) => [...passed.keys()].filter((id) => underCheck(path, checks[id])).sort();
+  const holders = (path) => [...passed.keys()].filter((id2) => underCheck(path, checks[id2])).sort();
   const reports = listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.state === "SUCCEEDED" && w.resultJson);
   const everyFinding = repairs2.flatMap((r) => r.findings);
   const attemptOf3 = /* @__PURE__ */ new Map();
@@ -66896,7 +66938,7 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
   const heldBy = (fingerprint, attempt) => [...seen.raisedOn.get(fingerprint) ?? []].find((t) => t !== cand.treeHash && (attemptOf3.get(t) ?? 0) >= attempt) ?? null;
   const judged = /* @__PURE__ */ new Set();
   for (const r of [...pending].reverse()) {
-    const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id) => seen.closed.has(id)));
+    const findings = r.findings.filter((f) => !seen.raisedAgain.has(f.fingerprint) && !judged.has(f.fingerprint) && !f.member_ids.every((id2) => seen.closed.has(id2)));
     if (findings.length === 0) continue;
     let changed2;
     try {
@@ -66975,10 +67017,10 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
         tests.push(t);
         const holding = holders(t.path);
         if (holding.length === 0) because(f.fingerprint, `no required command check of category test that passed on tree ${tree} holds ${t.path} under its directory`);
-        for (const id of holding) {
-          const b = before.get(id);
-          if (b?.status === "PASSED" && !b.flaky) ids.add(id);
-          else because(f.fingerprint, `${id} is not probed: it did not pass cleanly on the pre-repair tree ${r.tree_hash.slice(0, 12)} (${b === void 0 ? "it has no recorded run there" : b.status === "PASSED" ? "its pass there needed a rerun" : `its run there ended ${b.status}`}), so a failure there could not be tied to the repair's test`);
+        for (const id2 of holding) {
+          const b = before.get(id2);
+          if (b?.status === "PASSED" && !b.flaky) ids.add(id2);
+          else because(f.fingerprint, `${id2} is not probed: it did not pass cleanly on the pre-repair tree ${r.tree_hash.slice(0, 12)} (${b === void 0 ? "it has no recorded run there" : b.status === "PASSED" ? "its pass there needed a rerun" : `its run there ended ${b.status}`}), so a failure there could not be tied to the repair's test`);
         }
       }
       if (tests.length > 0 && ids.size > 0) plans.set(f.fingerprint, { name: f.external_id ?? f.finding_id, tests, checks: [...ids].sort() });
@@ -66995,35 +67037,35 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
         return null;
       }
     };
-    const under = (p, id) => p.tests.filter((t) => underCheck(t.path, checks[id]));
+    const under = (p, id2) => p.tests.filter((t) => underCheck(t.path, checks[id2]));
     const controlChecks = /* @__PURE__ */ new Map();
-    for (const p of plans.values()) for (const id of p.checks) controlChecks.set(id, [...controlChecks.get(id) ?? [], p.name]);
+    for (const p of plans.values()) for (const id2 of p.checks) controlChecks.set(id2, [...controlChecks.get(id2) ?? [], p.name]);
     const base = await probe2(control, null, controlChecks, [...plans.keys()]);
     if (!base) continue;
-    const afterChecks = new Map([...controlChecks].filter(([id]) => base.checks.some((c) => c.checkId === id && c.outcome === "passed-before")));
+    const afterChecks = new Map([...controlChecks].filter(([id2]) => base.checks.some((c) => c.checkId === id2 && c.outcome === "passed-before")));
     const after = afterChecks.size > 0 ? await probe2(plan.all, null, afterChecks, [...plans.keys()], true) : null;
     if (afterChecks.size > 0 && !after) continue;
     const keyOf2 = (p) => p.tests.map((t) => t.path).sort().join("\0");
     const groups = /* @__PURE__ */ new Map();
     for (const [fp, p] of plans) {
-      for (const id of p.checks) {
-        const c = base.checks.find((x) => x.checkId === id);
-        const label = under(p, id).map((t) => t.path).join(", ");
+      for (const id2 of p.checks) {
+        const c = base.checks.find((x) => x.checkId === id2);
+        const label = under(p, id2).map((t) => t.path).join(", ");
         if (c?.outcome === "failed-before") {
-          because(fp, `${label}: ${id} fails on the pre-repair tree without the finding's tests too, so its failure cannot be tied to them (${c.reason})`);
+          because(fp, `${label}: ${id2} fails on the pre-repair tree without the finding's tests too, so its failure cannot be tied to them (${c.reason})`);
           continue;
         }
         if (c?.outcome !== "passed-before") {
-          because(fp, `${label}: whether it tells the trees apart is not established: ${c?.reason ?? `${id} was not probed`}`);
+          because(fp, `${label}: whether it tells the trees apart is not established: ${c?.reason ?? `${id2} was not probed`}`);
           continue;
         }
-        const a = after?.checks.find((x) => x.checkId === id);
+        const a = after?.checks.find((x) => x.checkId === id2);
         if (a?.outcome !== "passed-before") {
-          because(fp, `${label}: ${id} did not pass on the repaired tree in the probe checkout (${a?.reason ?? `${id} was not probed`}), so what the finding's tests tell apart may be the probe checkout rather than the repair`);
+          because(fp, `${label}: ${id2} did not pass on the repaired tree in the probe checkout (${a?.reason ?? `${id2} was not probed`}), so what the finding's tests tell apart may be the probe checkout rather than the repair`);
           continue;
         }
         const g = groups.get(keyOf2(p)) ?? { tests: p.tests.map((t) => t.path).sort(), checks: /* @__PURE__ */ new Map(), fps: [] };
-        g.checks.set(id, [...g.checks.get(id) ?? [], p.name]);
+        g.checks.set(id2, [...g.checks.get(id2) ?? [], p.name]);
         if (!g.fps.includes(fp)) g.fps.push(fp);
         groups.set(keyOf2(p), g);
       }
@@ -67038,12 +67080,12 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
       const theirs = p ? verdicts.get(keyOf2(p)) : void 0;
       if (!p || !theirs) continue;
       let hit = null;
-      for (const id of p.checks) {
-        const c = theirs.checks.find((x) => x.checkId === id);
+      for (const id2 of p.checks) {
+        const c = theirs.checks.find((x) => x.checkId === id2);
         if (!c) continue;
-        const tests2 = under(p, id);
+        const tests2 = under(p, id2);
         const label = tests2.map((t) => t.path).join(", ");
-        if (c.outcome === "failed-before") hit ??= { tests: tests2, check: passed.get(id), reason: c.reason, control: base.checks.find((x) => x.checkId === id).reason, repaired: after.checks.find((x) => x.checkId === id).reason };
+        if (c.outcome === "failed-before") hit ??= { tests: tests2, check: passed.get(id2), reason: c.reason, control: base.checks.find((x) => x.checkId === id2).reason, repaired: after.checks.find((x) => x.checkId === id2).reason };
         else because(f.fingerprint, c.outcome === "passed-before" ? `${label}: ${NOT_APART} (${c.reason})` : `${label}: whether it tells the trees apart is not established: ${c.reason}`);
       }
       if (!hit) continue;
@@ -67060,7 +67102,7 @@ async function repairEvidence(ctx, cand, repairs2, seen) {
         checkId: check.checkId,
         ref: `${tests.map((t) => t.path).join(", ")} (written in attempt ${[...new Set(tests.map((t) => t.attempt))].join(" and ")} for this finding; ${hit.reason}, ${hit.control}, and ${hit.repaired}: pre-repair tree ${r.tree_hash.slice(0, 12)}, probe tree ${theirs.probeTree.slice(0, 12)}, control tree ${base.probeTree.slice(0, 12)}; and ${check.checkId} passed on tree ${tree}${check.logSha256 ? `; log sha256 ${check.logSha256.slice(0, 12)}` : ""})`
       });
-      for (const id of f.member_ids) result2.repairedBy.set(id, r);
+      for (const id2 of f.member_ids) result2.repairedBy.set(id2, r);
     }
   }
   return result2;
@@ -67124,7 +67166,7 @@ function refreshLists(resolution) {
 function markRepaired(resolution, repaired, repairedBy) {
   for (const d of resolution.dispositions) {
     if (d.status !== "rejected" || d.evidenceRefs.length === 0) continue;
-    const rec2 = d.memberIds.map((id) => repairedBy.get(id)).find((x) => x !== void 0) ?? d.memberIds.map((id) => repaired.get(id)).find((x) => x !== void 0);
+    const rec2 = d.memberIds.map((id2) => repairedBy.get(id2)).find((x) => x !== void 0) ?? d.memberIds.map((id2) => repaired.get(id2)).find((x) => x !== void 0);
     if (!rec2) continue;
     d.status = "resolved";
     d.reason = `repaired in attempt ${rec2.attempt}: the test written for it fails on the pre-repair tree and passes on tree ${resolution.treeHash.slice(0, 12)} (${d.evidenceRefs.join("; ")})`;
@@ -67138,12 +67180,12 @@ function openFindings(list3) {
 function blockedCriteriaIn(d, t, blocked) {
   if (blocked.length === 0) return [];
   const text2 = [d.claim, d.location ?? "", t?.evidence ?? "", t?.suggestedValidation ?? ""].join("\n");
-  return blocked.filter((id) => namesId(text2, id));
+  return blocked.filter((id2) => namesId(text2, id2));
 }
 function stalledReviewRepair(ctx, cand, going, stillPresent) {
   const latest = currentAttempt(ctx);
   if (latest === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
-  const resumedSince = (id) => ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, id) !== void 0;
+  const resumedSince = (id2) => ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ?", ctx.run.id, id2) !== void 0;
   const stop = (reason) => ({ terminate: true, reason, consecutiveNoProgress: 1, threshold: 1, fingerprint: null, suggestedState: "EXHAUSTED" });
   const sent = ctx.db.get("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? AND json_extract(data_json, '$.tree_hash') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, REVIEW_REPAIR_EVENT, latest, cand.treeHash);
   if (sent) {
@@ -67154,7 +67196,7 @@ function stalledReviewRepair(ctx, cand, going, stillPresent) {
   const prev = last?.data_json ? JSON.parse(last.data_json) : null;
   if (!last || !prev || !Array.isArray(prev.findings) || prev.attempt > latest || going.length === 0 || resumedSince(last.id) || going.some((d) => stillPresent.has(d.fingerprint))) return null;
   const asked = prev.findings.filter((f) => going.some((d) => d.fingerprint === f.fingerprint));
-  const shared = (id) => prev.findings.filter((f) => f.external_id === id).length > 1;
+  const shared = (id2) => prev.findings.filter((f) => f.external_id === id2).length > 1;
   const namesUniquely = (text2, f) => namesId(text2, f.fingerprint) || typeof f.external_id === "string" && f.external_id.length > 0 && !shared(f.external_id) && namesId(text2, f.external_id);
   if (!going.every((d) => asked.some((f) => f.fingerprint === d.fingerprint))) return null;
   const ended = [];
@@ -67287,9 +67329,9 @@ function latestResumeEventId(ctx) {
   return ctx.db.get("SELECT MAX(id) AS id FROM events WHERE run_id = ? AND type = 'run.resumed'", ctx.run.id)?.id ?? null;
 }
 function selectionId(ctx, cand) {
-  const id = `dec-${ctx.run.id}-review-select-${cand.id}`;
+  const id2 = `dec-${ctx.run.id}-review-select-${cand.id}`;
   const n2 = reviewerFailures(ctx, cand).length;
-  return n2 === 0 ? id : `${id}~${n2}`;
+  return n2 === 0 ? id2 : `${id2}~${n2}`;
 }
 function reviewerBase(ctx, cand, base, provider) {
   const first = getDecision(ctx.db, `dec-${ctx.run.id}-review-select-${cand.id}`)?.data;
@@ -67307,7 +67349,7 @@ async function reviewerFailed(ctx, cand, sel, failed) {
     }
   );
   const setAside = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, provider: sel.provider, includeInvalidated: true }).map((r) => r.id);
-  for (const id of setAside) markReviewInvalidated(ctx.db, id, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
+  for (const id2 of setAside) markReviewInvalidated(ctx.db, id2, `reviewer ${sel.provider} failed on another review unit of this tree; the next reviewer reviews every unit`, ctx.clock);
   const spent = new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "reviewer" }).filter((w) => w.candidateId === cand.id && w.provider === sel.provider).map((w) => w.purpose)).size;
   const granted = reviewerFailures(ctx, cand).filter((f) => f.provider === sel.provider).reduce((n2, f) => n2 + (f.rounds_granted ?? 0), 0);
   const record = { candidate_id: cand.id, provider: sel.provider, model: sel.model, reason, resumed_event_id: latestResumeEventId(ctx), rounds_granted: spent - granted, set_aside: setAside };
@@ -67316,14 +67358,14 @@ async function reviewerFailed(ctx, cand, sel, failed) {
   return MOVED;
 }
 async function reviewerSelection(ctx, cand) {
-  const id = selectionId(ctx, cand);
-  const prior = getDecision(ctx.db, id);
+  const id2 = selectionId(ctx, cand);
+  const prior = getDecision(ctx.db, id2);
   if (prior && prior.data.decision === "SELECT") return prior.data;
   const env = await checkEnvironment(ctx);
   const failed = Object.fromEntries(activeReviewerFailures(ctx).map((f) => [f.provider, f.reason]));
   const sel = fallbackSelection(ctx, env, failed);
   const rec2 = selectionDecisionRecord(sel);
-  if (sel.decision === "SELECT") decide2(ctx, { id, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
+  if (sel.decision === "SELECT") decide2(ctx, { id: id2, kind: rec2.kind, summary: rec2.summary, data: rec2.data });
   else decide2(ctx, { kind: rec2.kind, summary: rec2.summary, data: rec2.data });
   return sel;
 }
@@ -67350,8 +67392,8 @@ async function preparePacket(ctx, cand, reviewDir, provider) {
     // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
     ...failBeforePolicy(ctx.snapshot.config).mode === "required" ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}
   });
-  atomicWrite(join69(reviewDir, "packet.md"), packet.text, 384);
-  atomicWriteJson(join69(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
+  atomicWrite(join70(reviewDir, "packet.md"), packet.text, 384);
+  atomicWriteJson(join70(reviewDir, "packet.json"), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });
 }
 function failBeforeLogs(ctx, report2) {
   const out = /* @__PURE__ */ new Map();
@@ -67365,14 +67407,14 @@ function failBeforeLogs(ctx, report2) {
 }
 function packetProvider(reviewDir, fallback) {
   try {
-    return JSON.parse(readText(join69(reviewDir, "packet.json"))).eligibility?.provider ?? fallback;
+    return JSON.parse(readText(join70(reviewDir, "packet.json"))).eligibility?.provider ?? fallback;
   } catch {
     return fallback;
   }
 }
 function packetShaOf(reviewDir) {
   try {
-    return JSON.parse(readText(join69(reviewDir, "packet.json"))).sha256;
+    return JSON.parse(readText(join70(reviewDir, "packet.json"))).sha256;
   } catch {
     return "";
   }
@@ -67387,7 +67429,7 @@ function inspectionText(provider) {
   return "Inspect the checkout with Read, Grep and Glob; you have no shell.";
 }
 function reviewerPrompt(ctx, cand, reviewDir, focus = "general", fresh = null, provider = null, reReview2 = null) {
-  const text2 = readText(join69(reviewDir, "packet.md"));
+  const text2 = readText(join70(reviewDir, "packet.md"));
   const contract = assertContract(ctx);
   const task = [
     "Review the exact candidate in this read-only checkout against the contract and the bound evidence in the packet. Do not edit anything and do not ask questions.",
@@ -67406,6 +67448,7 @@ Evidence given: ${reReview2.evidence}` : ""}` });
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     untrusted: [{ label: "review packet", content: text2, ref: `reviews/${cand.seq}/packet.md` }, ...noted],
     maxBlockChars: text2.length + 100,
@@ -67432,17 +67475,17 @@ function freshReviewText(rec2) {
   ];
 }
 function reReviewText(rec2) {
-  const id = reReviewId(rec2);
+  const id2 = reReviewId(rec2);
   return [
-    `This is a re-review of one finding, ${id} (${rec2.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
+    `This is a re-review of one finding, ${id2} (${rec2.severity}), quoted below. An earlier review raised it and it was sent to repair, and it is still open on this candidate, which passed verification: no test or check Orbit ran can show whether it holds.`,
     "Judge only whether that defect is still present in this candidate, from the diff and evidence in the packet and the files in this checkout. Your answer decides only this finding: it neither approves the candidate nor raises other findings, so do not report any.",
-    `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id} whose evidence names what in the candidate shows that it is gone.`
+    `If it is still present, answer REPAIR_REQUIRED with it as a finding under the id ${id2} at its severity, with your evidence. If it is gone, answer APPROVE with one finding of severity info under the id ${id2} whose evidence names what in the candidate shows that it is gone.`
   ];
 }
 async function prepareReview(ctx, cand, provider) {
-  const reviewDir = join69(ctx.runDir, "reviews", String(cand.seq));
-  const checkout = join69(runWorktreeRoot(ctx), `review-${cand.seq}`);
-  if (!existsSync49(join69(reviewDir, "packet.md")) || packetProvider(reviewDir, provider) !== provider) await preparePacket(ctx, cand, reviewDir, provider);
+  const reviewDir = join70(ctx.runDir, "reviews", String(cand.seq));
+  const checkout = join70(runWorktreeRoot(ctx), `review-${cand.seq}`);
+  if (!existsSync49(join70(reviewDir, "packet.md")) || packetProvider(reviewDir, provider) !== provider) await preparePacket(ctx, cand, reviewDir, provider);
   if (!existsSync49(checkout) || readdirSync15(checkout).length === 0) await materializeCandidate(ctx.run.repoRoot, cand.commitSha, checkout, { readOnly: true });
   return { reviewDir, checkout };
 }
@@ -67516,7 +67559,7 @@ var init_reviewing = __esm({
 });
 
 // src/controller/steps/delivering.ts
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 async function deliveringStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -67566,7 +67609,7 @@ async function deliveringStep(ctx) {
   }
   const refused = await deliveryGateOrBlock(ctx, ev, review, result2.tree);
   if (refused) return refused;
-  atomicWriteJson(join70(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
+  atomicWriteJson(join71(ctx.runDir, DELIVERY_FILE), { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr ? { number: result2.pr.number, url: result2.pr.url, state: result2.pr.state, isDraft: result2.pr.isDraft } : null, pr_skipped: result2.prSkipped, warnings: result2.warnings, delivered_at: ctx.clock.now() });
   setCandidateStatus(ctx.db, cand.id, "DELIVERED");
   decide2(ctx, { id: `dec-${ctx.run.id}-delivered-${result2.commit}`, kind: "delivery.completed", summary: `delivered ${result2.commit.slice(0, 12)} (tree ${result2.tree.slice(0, 12)}) to ${result2.branch}${result2.pr ? `, PR #${result2.pr.number}` : ""}`, data: { commit: result2.commit, tree: result2.tree, branch: result2.branch, pr: result2.pr?.number ?? null, pr_skipped: result2.prSkipped } });
   return move2(ctx, "AWAITING_CI", `delivered ${result2.commit.slice(0, 12)} to ${result2.branch}`, { patch: { branch: result2.branch }, data: { commit: result2.commit, pr: result2.pr?.number ?? null } });
@@ -67638,7 +67681,7 @@ async function releaseDelivered(ctx, d, outcome, notes = []) {
     deploys: result2.deploys.map((x) => ({ environment: x.environment, sha: x.sha, branch: x.branch })),
     deploy_skipped: result2.deploySkipped
   };
-  atomicWriteJson(join70(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
+  atomicWriteJson(join71(ctx.runDir, RELEASE_FILE), { ...summary, released_at: ctx.clock.now() });
   const deployed = summary.deploys.length > 0 ? `deployed to ${summary.deploys.map((x) => x.environment).join(", ")}${summary.deploy_skipped ? ` (not: ${summary.deploy_skipped})` : ""}` : `no deploy (${summary.deploy_skipped})`;
   decide2(ctx, { id: `dec-${ctx.run.id}-released-${d.commit}`, kind: "release.completed", summary: `release of ${d.commit.slice(0, 12)}: ${summary.merge ? `merged PR #${summary.merge.pr}` : `no merge (${summary.merge_skipped})`}; ${deployed}`, data: summary });
   return complete(ctx, d.tree, { ...outcome, release: summary }, notes);
@@ -67707,7 +67750,7 @@ async function githubClientForConfig(repoRoot, config, env, opts = {}) {
   if (config.delivery.provider === "fake") {
     const url = await resolveRemoteUrl(repoRoot, remote).catch(() => null);
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : void 0;
-    return new FakeGitHub({ statePath: join70(repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
+    return new FakeGitHub({ statePath: join71(repoRoot, ".orbit", "fake-github.json"), ...local ? { remoteGitDir: local } : {} });
   }
   return githubClientFor(repoRoot, remote, env, opts);
 }
@@ -67749,11 +67792,11 @@ var init_delivering = __esm({
 
 // src/controller/steps/awaiting-ci.ts
 import { existsSync as existsSync50 } from "node:fs";
-import { join as join71 } from "node:path";
+import { join as join72 } from "node:path";
 async function awaitingCiStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
-  const d = readJsonIfExists(join71(ctx.runDir, DELIVERY_FILE));
+  const d = readJsonIfExists(join72(ctx.runDir, DELIVERY_FILE));
   if (!d || !ctx.ledger) throw new OrbitError("INTERNAL", `run ${ctx.run.id} is AWAITING_CI without a delivery record`);
   const config = ctx.snapshot.config;
   const client = await githubClient(ctx);
@@ -67875,7 +67918,7 @@ async function blockOnConflict(ctx, d, base, m, reason) {
   return finishRun(ctx, "BLOCKED", reason, { outcome: { ...base, base_conflict: { baseBranch: m.baseBranch, from: m.from, to: m.to, files } } });
 }
 async function rebaseCandidate(ctx, cand, tip) {
-  const checkoutDir = join71(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
+  const checkoutDir = join72(runWorktreeRoot(ctx), `rebase-${tip.slice(0, 12)}`);
   const env = { ...gitEnv({}, ctx.deps.hostEnv ?? process.env), GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email };
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkoutDir).catch(() => {
   });
@@ -67932,7 +67975,7 @@ var init_awaiting_ci = __esm({
 });
 
 // src/controller/steps/inquisition.ts
-import { join as join72 } from "node:path";
+import { join as join73 } from "node:path";
 async function inquisitionStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -67959,7 +68002,7 @@ async function inquisitionStep(ctx) {
   const cwd = ctx.run.worktreePath;
   const env = ctx.deps.hostEnv ?? process.env;
   const home2 = homeOf2(ctx.deps);
-  const workerDir = join72(ctx.runDir, "workers");
+  const workerDir = join73(ctx.runDir, "workers");
   const admit = (purpose) => {
     const ledger = ctx.ledger;
     if (!ledger) return null;
@@ -67984,11 +68027,12 @@ async function inquisitionStep(ctx) {
       contract,
       inquiry: loadInquisitionSnapshot(ctx.db, ctx.run.id, { ...ctx.candidate ? { currentTreeHash: ctx.candidate.treeHash } : {}, thresholds: thresholdsFromPolicy(ctx.snapshot.config) }),
       supportedCriteria: supported,
+      repoInstructions: repoInstructions(ctx),
       worker: {
         route: { provider: route2.provider, model: route2.model, effort: route2.effort },
         workerDir,
         cwd,
-        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join72(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
+        sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: ctx.snapshot, provider: route2.provider.startsWith("codex") ? "codex" : "claude", claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join73(home2, ".claude"), homeDir: home2, policyPath: ctx.run.policyPath, readablePaths: [ctx.deps.orbitInstallDir], env }),
         policyPath: ctx.run.policyPath,
         systemPrompt: systemPromptFor(ctx, "inquisitor"),
         maxTurns: ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
@@ -68001,7 +68045,7 @@ async function inquisitionStep(ctx) {
   }).finally(account);
   const patch = hashObject(result2.contract) !== hashObject(contract) ? { contractJson: JSON.stringify(result2.contract), contractHash: hashObject(result2.contract) } : void 0;
   recordAskedLedger(ctx, trigger.key, result2.ledger ?? [], result2.questions ?? []);
-  if (patch) atomicWriteJson(join72(ctx.runDir, "contract.json"), result2.contract);
+  if (patch) atomicWriteJson(join73(ctx.runDir, "contract.json"), result2.contract);
   const after = await safePoint(ctx);
   if (after) return after;
   if (result2.disposition === "ask" || result2.disposition === "block") {
@@ -68189,7 +68233,7 @@ var init_difficulty = __esm({
 });
 
 // src/controller/steps/planning.ts
-import { join as join73 } from "node:path";
+import { join as join74 } from "node:path";
 async function planningStep(ctx) {
   const stop = await safePoint(ctx);
   if (stop) return stop;
@@ -68198,7 +68242,7 @@ async function planningStep(ctx) {
   const amended = await amendBaseline(ctx, contract);
   if (amended) return amended;
   const plan = storedPlan(ctx);
-  const baseline = readJsonIfExists(join73(ctx.runDir, BASELINE_FILE));
+  const baseline = readJsonIfExists(join74(ctx.runDir, BASELINE_FILE));
   if (plan) {
     decide2(ctx, {
       id: `dec-${ctx.run.id}-proof-map`,
@@ -68421,7 +68465,7 @@ var init_steps = __esm({
 // src/storage/retention.ts
 import { existsSync as existsSync51, lstatSync as lstatSync11, realpathSync as realpathSync20, rmSync as rmSync19 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
-import { dirname as dirname32, isAbsolute as isAbsolute25, join as join74, resolve as resolve18 } from "node:path";
+import { dirname as dirname32, isAbsolute as isAbsolute25, join as join75, resolve as resolve18 } from "node:path";
 function repoKeyFor(repoRoot) {
   let real = repoRoot;
   try {
@@ -68435,9 +68479,9 @@ async function pruneExpiredRuns(db, opts) {
   const now = opts.clock.now();
   const cutoff = now - opts.keepDays * DAY_MS;
   const repoRoot = realOrResolved3(opts.repoRoot);
-  const runsRoot = join74(repoRoot, ".orbit", "runs");
-  const home2 = opts.orbitHome ?? process.env.ORBIT_HOME ?? join74(homedir15(), ".orbit");
-  const worktreesRoot = join74(home2, "worktrees", repoKeyFor(repoRoot));
+  const runsRoot = join75(repoRoot, ".orbit", "runs");
+  const home2 = opts.orbitHome ?? process.env.ORBIT_HOME ?? join75(homedir15(), ".orbit");
+  const worktreesRoot = join75(home2, "worktrees", repoKeyFor(repoRoot));
   const placeholders = PRUNABLE_STATES.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT r.id, r.state, r.policy_path, r.ended_at, r.updated_at FROM runs r
@@ -68466,14 +68510,14 @@ async function pruneExpiredRuns(db, opts) {
       result2.skipped.push({ runId: row.id, reason: `${live.map((w) => `worker ${w.id} (${w.state})`).join(", ")} may still be running: its termination is not confirmed (the next controller start stops it)` });
       continue;
     }
-    const runDir2 = join74(runsRoot, row.id);
+    const runDir2 = join75(runsRoot, row.id);
     const recorded = dirname32(row.policy_path);
-    const literalRunDir = join74(resolve18(opts.repoRoot), ".orbit", "runs", row.id);
+    const literalRunDir = join75(resolve18(opts.repoRoot), ".orbit", "runs", row.id);
     if (![runDir2, literalRunDir].includes(resolve18(recorded)) && realOrResolved3(recorded) !== runDir2) {
       result2.skipped.push({ runId: row.id, reason: `its recorded run directory ${recorded} is not ${runDir2}` });
       continue;
     }
-    const worktree = join74(worktreesRoot, row.id);
+    const worktree = join75(worktreesRoot, row.id);
     const workerTmps = db.all("SELECT worker_dir FROM workers WHERE run_id = ?", row.id).filter((w) => isAbsolute25(w.worker_dir)).flatMap((w) => tmpRoots.map((root) => workerTmpDir(w.worker_dir, root)));
     const tmpProblem = workerTmps.length === 0 ? null : tmpRoots.map(tmpRootProblem).find((p) => p !== null) ?? workerTmps.map(workerTmpProblem).find((p) => p !== null) ?? null;
     if (tmpProblem !== null) {
@@ -68495,7 +68539,7 @@ async function pruneExpiredRuns(db, opts) {
     }
     result2.pruned.push({ runId: row.id, state: row.state, endedAt: row.ended_at ?? row.updated_at, removed: targets });
   }
-  if (removedWorktree && existsSync51(join74(repoRoot, ".git"))) {
+  if (removedWorktree && existsSync51(join75(repoRoot, ".git"))) {
     await execCapture(["git", "worktree", "prune"], { cwd: repoRoot, timeoutMs: 3e4 }).catch(() => void 0);
   }
   return result2;
@@ -68566,7 +68610,7 @@ __export(loop_exports, {
 });
 import { existsSync as existsSync52 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
-import { dirname as dirname33, join as join75 } from "node:path";
+import { dirname as dirname33, join as join76 } from "node:path";
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -68750,8 +68794,8 @@ var init_loop = __esm({
         const timeoutMs = this.opts.stepTimeoutMs ?? 45 * 6e4;
         const graceMs = this.opts.stepAbortGraceMs ?? 6e4;
         let wedge = null;
-        const gaveUp = new Promise((resolve29) => {
-          wedge = setTimeout(() => resolve29("wedged"), timeoutMs + graceMs);
+        const gaveUp = new Promise((resolve30) => {
+          wedge = setTimeout(() => resolve30("wedged"), timeoutMs + graceMs);
           wedge.unref();
         });
         const timer = setTimeout(() => {
@@ -68825,7 +68869,7 @@ var init_loop = __esm({
             ...runIds ? { runIds } : {},
             ...this.opts.graceMs !== void 0 ? { graceMs: this.opts.graceMs } : {},
             ...this.opts.startGraceMs !== void 0 ? { startGraceMs: this.opts.startGraceMs } : {},
-            ledgerFor: (id) => this.ledgerFor(id),
+            ledgerFor: (id2) => this.ledgerFor(id2),
             orbitHome: this.deps.orbitHome,
             log: this.log
           });
@@ -68896,7 +68940,7 @@ var init_loop = __esm({
             clock: this.deps.clock,
             ownerId: this.ownerId,
             adapters: this.deps.adapters,
-            ledgerFor: (id) => this.ledgerFor(id),
+            ledgerFor: (id2) => this.ledgerFor(id2),
             orbitHome: this.deps.orbitHome,
             log: this.log,
             ...this.opts.watchdog ? { config: this.opts.watchdog } : {}
@@ -69087,7 +69131,7 @@ var init_loop = __esm({
           try {
             const run = getRun(db, row.id);
             const runDir2 = dirname33(run.policyPath);
-            const reported = existsSync52(join75(runDir2, "final.md")) && !rewrite.has(run.id);
+            const reported = existsSync52(join76(runDir2, "final.md")) && !rewrite.has(run.id);
             const unsettled = hasUnsettledSessions(db, run.id);
             if (reported && !unsettled) continue;
             let snapshot2 = null;
@@ -69161,7 +69205,7 @@ var init_loop = __esm({
 // src/controller/service.ts
 import { chmodSync as chmodSync9, existsSync as existsSync53, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync36, readdirSync as readdirSync16, rmSync as rmSync20, rmdirSync, statSync as statSync15 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { dirname as dirname34, isAbsolute as isAbsolute26, join as join76, resolve as resolve19 } from "node:path";
+import { dirname as dirname34, isAbsolute as isAbsolute26, join as join77, resolve as resolve19 } from "node:path";
 function serviceLabel(repoRoot) {
   return `${SERVICE_LABEL_PREFIX}.${repoKey(repoRoot)}`;
 }
@@ -69183,14 +69227,14 @@ function serviceSpec(input) {
     ...input.version !== void 0 ? { version: input.version } : {},
     args: ["service", "run", "--repo", input.repoRoot],
     workingDirectory: input.repoRoot,
-    logDir: join76(input.orbitHome, "logs"),
+    logDir: join77(input.orbitHome, "logs"),
     env,
     throttleSeconds: 10,
     stopTimeoutSeconds: 30
   };
 }
 function launcherPath(orbitHome) {
-  return join76(orbitHome, "bin", "orbit");
+  return join77(orbitHome, "bin", "orbit");
 }
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -69252,7 +69296,7 @@ function secureLauncherDir(orbitHome) {
   const home2 = statSync15(orbitHome);
   if (uid !== void 0 && home2.uid !== uid) throw new OrbitError("CONFIG_INVALID", `${orbitHome} is not owned by this user; refusing to put the service launcher in it`, { path: orbitHome });
   if ((home2.mode & 18) !== 0) chmodSync9(orbitHome, home2.mode & 493 & ~18);
-  const bin = join76(orbitHome, "bin");
+  const bin = join77(orbitHome, "bin");
   mkdirSync23(bin, { recursive: true, mode: 448 });
   const st = lstatSync12(bin);
   if (st.isSymbolicLink() || !st.isDirectory()) throw new OrbitError("CONFIG_INVALID", `${bin} must be a real directory, not a link or a file; refusing to put the service launcher in it`, { path: bin });
@@ -69299,26 +69343,26 @@ function refreshLauncher(input) {
   return "updated";
 }
 function logPaths(spec) {
-  return { out: join76(spec.logDir, `${spec.label}.out.log`), err: join76(spec.logDir, `${spec.label}.err.log`) };
+  return { out: join77(spec.logDir, `${spec.label}.out.log`), err: join77(spec.logDir, `${spec.label}.err.log`) };
 }
 function xml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 function renderLaunchdPlist(spec) {
   const logs = logPaths(spec);
-  const str8 = (v) => `<string>${xml(v)}</string>`;
-  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str8(v)}`).join("\n");
+  const str9 = (v) => `<string>${xml(v)}</string>`;
+  const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key>${str9(v)}`).join("\n");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
-    `  <key>Label</key>${str8(spec.label)}`,
+    `  <key>Label</key>${str9(spec.label)}`,
     "  <key>ProgramArguments</key>",
     "  <array>",
-    ...[spec.launcher, ...spec.args].map((a) => `    ${str8(a)}`),
+    ...[spec.launcher, ...spec.args].map((a) => `    ${str9(a)}`),
     "  </array>",
-    `  <key>WorkingDirectory</key>${str8(spec.workingDirectory)}`,
+    `  <key>WorkingDirectory</key>${str9(spec.workingDirectory)}`,
     "  <key>EnvironmentVariables</key>",
     "  <dict>",
     env,
@@ -69331,16 +69375,16 @@ function renderLaunchdPlist(spec) {
     "  </dict>",
     `  <key>ThrottleInterval</key><integer>${spec.throttleSeconds}</integer>`,
     `  <key>ExitTimeOut</key><integer>${spec.stopTimeoutSeconds}</integer>`,
-    `  <key>ProcessType</key>${str8("Background")}`,
-    `  <key>StandardOutPath</key>${str8(logs.out)}`,
-    `  <key>StandardErrorPath</key>${str8(logs.err)}`,
+    `  <key>ProcessType</key>${str9("Background")}`,
+    `  <key>StandardOutPath</key>${str9(logs.out)}`,
+    `  <key>StandardErrorPath</key>${str9(logs.err)}`,
     "</dict>",
     "</plist>",
     ""
   ].join("\n");
 }
 function launchdPlistPath(homeDir, label) {
-  return join76(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return join77(homeDir, "Library", "LaunchAgents", `${label}.plist`);
 }
 function launchctlCommands(label, uid, plistPath) {
   const domain = `gui/${uid}`;
@@ -69381,7 +69425,7 @@ function renderSystemdUnit(spec) {
   ].join("\n");
 }
 function systemdUnitPath(homeDir, label) {
-  return join76(homeDir, ".config", "systemd", "user", `${label}.service`);
+  return join77(homeDir, ".config", "systemd", "user", `${label}.service`);
 }
 function systemctlCommands(label) {
   const unit = `${label}.service`;
@@ -69409,7 +69453,7 @@ async function installService(spec, opts) {
   writeLauncher(dirname34(dirname34(spec.launcher)), { node: spec.nodePath, entry: spec.entry, ...spec.version !== void 0 ? { version: spec.version } : {} });
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, spec.label);
-    mkdirSync23(join76(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
+    mkdirSync23(join77(opts.homeDir, "Library", "LaunchAgents"), { recursive: true });
     atomicWrite(plist, renderLaunchdPlist(spec), 420);
     const cmd = launchctlCommands(spec.label, opts.uid, plist);
     await must(run, cmd.bootout, [0, 3]);
@@ -69419,7 +69463,7 @@ async function installService(spec, opts) {
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, spec.label);
-    mkdirSync23(join76(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
+    mkdirSync23(join77(opts.homeDir, ".config", "systemd", "user"), { recursive: true });
     atomicWrite(unit, renderSystemdUnit(spec), 420);
     const cmd = systemctlCommands(spec.label);
     await must(run, cmd.daemonReload, [0]);
@@ -69447,7 +69491,7 @@ async function uninstallService(label, opts) {
   return unsupported(opts.platform);
 }
 function installedDefinitions(opts) {
-  const dir = opts.platform === "darwin" ? join76(opts.homeDir, "Library", "LaunchAgents") : join76(opts.homeDir, ".config", "systemd", "user");
+  const dir = opts.platform === "darwin" ? join77(opts.homeDir, "Library", "LaunchAgents") : join77(opts.homeDir, ".config", "systemd", "user");
   try {
     return readdirSync16(dir).filter((f) => f.startsWith(`${SERVICE_LABEL_PREFIX}.`));
   } catch {
@@ -69545,7 +69589,7 @@ var init_controller = __esm({
 
 // src/cli/commands/drive.ts
 import { existsSync as existsSync54, readFileSync as readFileSync37 } from "node:fs";
-import { dirname as dirname35, join as join77 } from "node:path";
+import { dirname as dirname35, join as join78 } from "node:path";
 function formatEvent(e) {
   const at = clockTime(e.ts);
   let data = {};
@@ -69674,7 +69718,7 @@ function safeNewRunNeeded(db, run) {
 }
 function resultOf(ctx, db, run) {
   try {
-    const finalJson = join77(dirname35(run.policyPath), "final.json");
+    const finalJson = join78(dirname35(run.policyPath), "final.json");
     const report2 = existsSync54(finalJson) ? JSON.parse(readFileSync37(finalJson, "utf8")) : buildFinalReport(db, run, { runDir: dirname35(run.policyPath), clock: ctx.clock, snapshot: null });
     const rv = report2.revision;
     if (!rv) return null;
@@ -69804,12 +69848,12 @@ var init_notify2 = __esm({
 });
 
 // src/cli/commands/control.ts
-import { join as join78, resolve as resolve21 } from "node:path";
+import { join as join79, resolve as resolve21 } from "node:path";
 async function pauseCommand(args, ctx) {
-  const [id] = args.expect(1);
+  const [id2] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
   return withState(repo, (db) => {
-    const run = findRunByPrefix(db, id);
+    const run = findRunByPrefix(db, id2);
     const after = setPaused(db, run.id, true, actorOf(ctx), ctx.clock);
     if (args.bool("json")) json(ctx.io, { run_id: after.id, state: after.state, paused: after.paused });
     else {
@@ -69822,11 +69866,11 @@ async function pauseCommand(args, ctx) {
 }
 async function resumeCommand(args, ctx) {
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", "orbit resume <run-id> [--foreground | --detach] [--force]");
-  const [id] = args.expect(1);
+  const [id2] = args.expect(1);
   const repo = await resolveRepo(ctx, args.str("repo"));
   const db = openState(repo);
   try {
-    const run = findRunByPrefix(db, id);
+    const run = findRunByPrefix(db, id2);
     if (run.cancelRequested && run.state !== "CANCELLED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} has a durable cancellation request and will end CANCELLED; it cannot be resumed`);
     if (isTerminal(run.state) && run.state !== "BLOCKED") throw new OrbitError("TRANSITION_INVALID", `run ${run.id} is ${run.state}; nothing to resume. ${nextStepAfter(run)}`);
     const notes = [];
@@ -69918,7 +69962,7 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
       db,
       clock: ctx.clock,
       ownerId,
-      logger: createLogger({ file: join78(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
+      logger: createLogger({ file: join79(ctx.orbitHome, "logs", "controller.jsonl"), clock: ctx.clock }),
       adapters: {},
       registry: new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome)),
       orbitHome: ctx.orbitHome,
@@ -69928,12 +69972,12 @@ function cliLeaseDeps(ctx, repo, db, ownerId) {
   }
 }
 async function cancelCommand(args, ctx) {
-  const [id] = args.expect(1);
+  const [id2] = args.expect(1);
   const waitS = args.int("wait") ?? 0;
   const repo = await resolveRepo(ctx, args.str("repo"));
   const db = openState(repo);
   try {
-    const found = findRunByPrefix(db, id);
+    const found = findRunByPrefix(db, id2);
     const emit2 = (r, how) => {
       if (args.bool("json")) json(ctx.io, { run_id: r.id, state: r.state, cancel_requested: r.cancelRequested, how });
       else line(ctx.io, `run ${r.id}: ${new RegExp(`\\b${r.state}\\b`, "i").test(how) ? how : `${how} (${r.state})`}`);
@@ -70217,7 +70261,7 @@ var init_recovery = __esm({
 
 // src/cli/commands/service.ts
 import { existsSync as existsSync56 } from "node:fs";
-import { join as join79 } from "node:path";
+import { join as join80 } from "node:path";
 function managerOptions(ctx) {
   return {
     platform: ctx.platform,
@@ -70261,7 +70305,7 @@ async function serviceInstallCommand(args, ctx) {
     line(ctx.io, `service ${status2.label} installed (${status2.platform}): ${status2.loaded ? "loaded" : status2.detail}`);
     line(ctx.io, `definition: ${status2.definitionPath}`);
     line(ctx.io, `launcher: ${spec.launcher} (runs ${entry}; it follows plugin updates, so the service never needs reinstalling for one)`);
-    line(ctx.io, `logs: ${join79(ctx.orbitHome, "logs")}`);
+    line(ctx.io, `logs: ${join80(ctx.orbitHome, "logs")}`);
     line(ctx.io, `location variables: ${locationVariables.join(", ") || "none"}`);
     line(ctx.io, "No credentials were written to the definition. For unattended runs export ANTHROPIC_API_KEY (and CODEX_API_KEY) where the service can see them; see docs/decisions/0003-authentication.md.");
     for (const w of warnings) ctx.io.err(`warning: ${w}
@@ -70321,7 +70365,7 @@ async function serviceRunCommand(args, ctx) {
   const config = loadConfig(repo);
   const db = openDb(stateDbPath(repo));
   try {
-    const logger = createLogger({ file: join79(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
+    const logger = createLogger({ file: join80(ctx.orbitHome, "logs", "controller.jsonl"), stderr: true, clock: ctx.clock });
     const factory = ctx.seams.controllerDeps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome, logger });
     const controller = new Controller({ deps, mode: "service", handleSignals: true, ...ctx.seams.controller ?? {} });
@@ -70355,7 +70399,7 @@ var init_service2 = __esm({
 
 // src/cli/layout.ts
 import { open } from "node:fs/promises";
-import { join as join80 } from "node:path";
+import { join as join81 } from "node:path";
 async function trackedFiles(ctx, repo) {
   try {
     const r = await execCapture(["git", "ls-files", "-z"], { cwd: repo, env: gitEnv2(ctx.env), timeoutMs: 3e4 });
@@ -70429,7 +70473,7 @@ async function pipelineYaml(repo, files) {
   const candidates = files.filter((f) => /\.ya?ml$/i.test(f) && !f.startsWith(".") && !f.split("/").includes("node_modules")).slice(0, MAX_YAML_READS);
   for (const f of candidates) {
     try {
-      if (isPipelineYaml(await readHead2(join80(repo, f)))) found.add(f);
+      if (isPipelineYaml(await readHead2(join81(repo, f)))) found.add(f);
     } catch {
     }
   }
@@ -70535,12 +70579,12 @@ var init_doctor_policy_note = __esm({
 });
 
 // src/cli/commands/doctor-plugins.ts
-async function workerPluginsCheck(id, adapter, config) {
+async function workerPluginsCheck(id2, adapter, config) {
   const verdict = await judgeWorkerPlugins(adapter, config);
   if (verdict === null) return null;
   const { refused, ...check } = verdict;
   return {
-    id: `${id}.plugins`,
+    id: `${id2}.plugins`,
     area: "providers",
     ...check,
     fix: refused.length > 0 && check.fix !== null ? withHumanPolicyConfigNote(check.fix) : check.fix
@@ -70556,16 +70600,16 @@ var init_doctor_plugins = __esm({
 
 // src/cli/commands/doctor-dotnet.ts
 import { existsSync as existsSync57, lstatSync as lstatSync13, readdirSync as readdirSync17, readFileSync as readFileSync38 } from "node:fs";
-import { basename as basename20, join as join81, posix as posix6, resolve as resolve22 } from "node:path";
+import { basename as basename20, join as join82, posix as posix6, resolve as resolve22 } from "node:path";
 function xunitReferences(text2) {
   const out = [];
   for (const m of text2.matchAll(ITEM)) {
     const attrs = m[2] ?? "";
     const body = m[3] ?? "";
-    const id = attribute(attrs, "Include");
-    if (id === null || !XUNIT_IDS.has(id.trim().toLowerCase())) continue;
+    const id2 = attribute(attrs, "Include");
+    if (id2 === null || !XUNIT_IDS.has(id2.trim().toLowerCase())) continue;
     const version = attribute(attrs, "VersionOverride") ?? attribute(attrs, "Version") ?? element(body, "VersionOverride") ?? element(body, "Version");
-    out.push({ kind: m[1].toLowerCase() === "packageversion" ? "PackageVersion" : "PackageReference", id: id.trim(), version });
+    out.push({ kind: m[1].toLowerCase() === "packageversion" ? "PackageVersion" : "PackageReference", id: id2.trim(), version });
   }
   return out;
 }
@@ -70588,7 +70632,7 @@ function readSmall(path) {
 function threadsLifted(repo, tracked, dir) {
   const rel = dir === "." ? RUNNER_JSON : posix6.join(dir, RUNNER_JSON);
   if (!tracked.has(rel)) return false;
-  const text2 = readSmall(join81(repo, rel));
+  const text2 = readSmall(join82(repo, rel));
   try {
     const n2 = JSON.parse(text2 ?? "").maxParallelThreads;
     return typeof n2 === "number" && (n2 === -1 || n2 >= 2);
@@ -70602,19 +70646,19 @@ function xunitBefore28(repo, files) {
   const central = /* @__PURE__ */ new Map();
   for (const f of relevant.filter((x) => basename20(x) === CENTRAL_FILE)) {
     const versions = /* @__PURE__ */ new Map();
-    for (const r of xunitReferences(readSmall(join81(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
+    for (const r of xunitReferences(readSmall(join82(repo, f)) ?? "")) if (r.kind === "PackageVersion" && r.version !== null) versions.set(r.id.toLowerCase(), r.version);
     central.set(posix6.dirname(f), versions);
   }
-  const centralVersion = (project, id) => {
+  const centralVersion = (project, id2) => {
     for (let dir = posix6.dirname(project); ; dir = posix6.dirname(dir)) {
-      const v = central.get(dir)?.get(id.toLowerCase());
+      const v = central.get(dir)?.get(id2.toLowerCase());
       if (v !== void 0) return v;
       if (dir === "." || dir === "/" || dir === "") return null;
     }
   };
   const out = [];
   for (const project of relevant.filter((f) => PROJECT_FILE.test(f)).sort()) {
-    for (const r of xunitReferences(readSmall(join81(repo, project)) ?? "")) {
+    for (const r of xunitReferences(readSmall(join82(repo, project)) ?? "")) {
       if (r.kind !== "PackageReference") continue;
       const old = before28(r.version ?? centralVersion(project, r.id) ?? "");
       if (old === null || threadsLifted(repo, tracked, posix6.dirname(project))) continue;
@@ -70675,9 +70719,9 @@ function packageEvidence(repo, files) {
     const name = basename20(f);
     if (PACKAGE_FILES.has(name) || name === TOOL_MANIFEST) out.push(f);
     else if (MSBUILD_FILE.test(f) || MSBUILD_IMPORTS.has(name) || f === "global.json") {
-      const text2 = readSmall(join81(repo, f)) ?? "";
-      const id = PACKAGE_REFERENCE.exec(text2)?.[1];
-      if (id !== void 0) out.push(`${f}: PackageReference ${id.trim()}`);
+      const text2 = readSmall(join82(repo, f)) ?? "";
+      const id2 = PACKAGE_REFERENCE.exec(text2)?.[1];
+      if (id2 !== void 0) out.push(`${f}: PackageReference ${id2.trim()}`);
       for (const sdk of nugetSdks(f, text2)) out.push(`${f}: MSBuild SDK ${sdk}`);
     }
   }
@@ -70691,12 +70735,12 @@ function floatingVersions(repo, files) {
   const out = [];
   for (const f of files.slice(0, MAX_FILES * 4)) {
     if (!PROJECT_FILE.test(f) && !MSBUILD_IMPORTS.has(basename20(f)) && basename20(f) !== CENTRAL_FILE) continue;
-    for (const m of (readSmall(join81(repo, f)) ?? "").matchAll(ITEM)) {
+    for (const m of (readSmall(join82(repo, f)) ?? "").matchAll(ITEM)) {
       const attrs = m[2] ?? "";
       const body = m[3] ?? "";
-      const id = attribute(attrs, "Include") ?? attribute(attrs, "Update");
+      const id2 = attribute(attrs, "Include") ?? attribute(attrs, "Update");
       const version = attribute(attrs, "VersionOverride") ?? attribute(attrs, "Version") ?? element(body, "VersionOverride") ?? element(body, "Version");
-      if (id && version?.includes("*")) out.push(`${f}: ${id.trim()} ${version.trim()} floats, so every restore looks it up at nuget.org`);
+      if (id2 && version?.includes("*")) out.push(`${f}: ${id2.trim()} ${version.trim()} floats, so every restore looks it up at nuget.org`);
     }
   }
   return out;
@@ -70765,7 +70809,7 @@ function dotnetPackagesCheck(input) {
   const mac = nugetOnMac(input);
   if (!mac) return [];
   const { install, evidence } = mac;
-  const cache2 = join81(toolchainCacheRoot(input.orbitHome, repoKeyFor(repo)), "nuget");
+  const cache2 = join82(toolchainCacheRoot(input.orbitHome, repoKeyFor(repo)), "nuget");
   const count5 = cachedPackages(cache2);
   const empty = count5 === null || count5 === 0;
   const restores = install !== null && restoresPackages(install);
@@ -70882,7 +70926,7 @@ function auditFailures(input, mac) {
     if (restores) restorers.push({ label: `check ${c.id}`, check: c.id, commandField: `checks.${c.id}.command`, envField: `checks.${c.id}.env`, command: c.command, env: c.env, restores, mandatory: c.mandatory });
   }
   if (restorers.length === 0) return null;
-  const read2 = files.filter((f) => PROJECT_FILE.test(f) || AUDIT_FILE.test(f)).slice(0, MAX_FILES * 4).sort().map((f) => fileSettings(f, readSmall(join81(repo, f)) ?? ""));
+  const read2 = files.filter((f) => PROJECT_FILE.test(f) || AUDIT_FILE.test(f)).slice(0, MAX_FILES * 4).sort().map((f) => fileSettings(f, readSmall(join82(repo, f)) ?? ""));
   if (read2.some((r) => r.kept)) return null;
   const fileOn = read2.flatMap((r) => r.on);
   const fileErrors = read2.flatMap((r) => r.errors);
@@ -70981,7 +71025,7 @@ var init_doctor_dotnet = __esm({
 // src/cli/commands/doctor-sandbox.ts
 import { existsSync as existsSync58, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync9, realpathSync as realpathSync21, writeFileSync as writeFileSync11 } from "node:fs";
 import { tmpdir as tmpdir14 } from "node:os";
-import { basename as basename21, dirname as dirname38, isAbsolute as isAbsolute27, join as join82, resolve as resolve23 } from "node:path";
+import { basename as basename21, dirname as dirname38, isAbsolute as isAbsolute27, join as join83, resolve as resolve23 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
   return (check.command[0] ?? "").trim().split(/\s+/).find((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) ?? null;
@@ -71005,26 +71049,26 @@ function msbuildRefusal(checkId, shown3, d, msbuild) {
 function probeCacheRoot(input, toolchains, scratch) {
   if (!input.orbitHome || !input.repo) return null;
   const real = toolchainCacheRoot(input.orbitHome, repoKeyFor(input.repo));
-  const all = toolchains.every((id) => TOOLCHAIN_PROFILES[id].caches.every((c) => existsSync58(join82(real, c))));
-  return all ? real : join82(scratch, "cache-stand-in");
+  const all = toolchains.every((id2) => TOOLCHAIN_PROFILES[id2].caches.every((c) => existsSync58(join83(real, c))));
+  return all ? real : join83(scratch, "cache-stand-in");
 }
 async function probe(input, check, exe, args, cwd, project, nodeFix) {
-  const scratch = realpathSync21(mkdtempSync9(join82(tmpdir14(), "orbit-doctor-check-")));
+  const scratch = realpathSync21(mkdtempSync9(join83(tmpdir14(), "orbit-doctor-check-")));
   let tmp = null;
   try {
-    const checkout = join82(scratch, "checkout");
-    const home2 = join82(scratch, "home");
-    const artifacts = join82(scratch, "artifacts");
+    const checkout = join83(scratch, "checkout");
+    const home2 = join83(scratch, "home");
+    const artifacts = join83(scratch, "artifacts");
     for (const d of [checkout, home2, artifacts]) mkdirSync24(d, { recursive: true, mode: 448 });
     for (const [rel, text2] of Object.entries(project?.files ?? {})) {
-      mkdirSync24(dirname38(join82(checkout, rel)), { recursive: true, mode: 448 });
-      writeFileSync11(join82(checkout, rel), text2, { mode: 384 });
+      mkdirSync24(dirname38(join83(checkout, rel)), { recursive: true, mode: 448 });
+      writeFileSync11(join83(checkout, rel), text2, { mode: 384 });
     }
     prepareCheckHome(home2);
     tmp = prepareWorkerTmpDir(scratch);
     const snapshot2 = { schema: "orbit.policy/1", run_id: "doctor", created_at: "", repo_root: input.repo ?? scratch, config: input.config, effective_protected_paths: [], check_config_hashes: {} };
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: [...input.repo ? [input.repo] : [], ...cwd ? [cwd] : []] });
-    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join82(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
+    const toolchains = toolchainLayout({ toolchains: ids, mode: "check", cacheRoot: probeCacheRoot(input, ids, scratch), scratchRoot: join83(scratch, "toolchains"), tmpDir: tmp, hostHome: input.homeDir, hostEnv: input.env, platform: input.platform ?? process.platform, networkHosts: check.network_hosts });
     for (const d of toolchains.directories) if (!existsSync58(d)) mkdirSync24(d, { recursive: true, mode: 448 });
     const profile = profileForCheck({ worktree: checkout, check, snapshot: snapshot2, extraWritable: [artifacts, home2, tmp, ...toolchains.writable], readablePaths: toolchains.readOnly, nisDomainName: toolchains.nisDomainName, homeDir: input.homeDir, env: { ...input.env } });
     const env = checkEnv(check, { homeDir: home2, tmpDir: tmp, artifactsDir: artifacts }, input.env.PATH, toolchains.env);
@@ -71068,8 +71112,8 @@ async function probe(input, check, exe, args, cwd, project, nodeFix) {
   }
 }
 async function checkSandboxCheck(input) {
-  const id = "checks.sandbox";
-  const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id, area: "checks", status: status3, summary, details: details2, missing, fix });
+  const id2 = "checks.sandbox";
+  const result2 = (status3, summary, details2 = [], missing = null, fix = null) => ({ id: id2, area: "checks", status: status3, summary, details: details2, missing, fix });
   const checks = Object.values(input.config.checks).filter((c) => c.kind === "command");
   const others = sandboxedCommands(input.config);
   if (checks.length === 0 && others.length === 0) return result2("pass", "not needed: no command check is defined");
@@ -71081,7 +71125,7 @@ async function checkSandboxCheck(input) {
   const details = [];
   const refused = [];
   const platform3 = input.platform ?? process.platform;
-  const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join82(input.orbitHome ?? join82(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
+  const folderForm = platform3 !== "darwin" || repo === null || !checkoutBelowDenied({ checkout: join83(input.orbitHome ?? join83(input.homeDir, ".orbit"), "worktrees", repoKeyFor(repo), "run", "checkout"), repoRoot: repo, homeDir: input.homeDir, env: input.env });
   const undetermined = [];
   const uncertain = [];
   let started = 0;
@@ -71090,7 +71134,7 @@ async function checkSandboxCheck(input) {
   const judge = (check, usesDotnet, label = null, where2 = null, formats2 = label === null) => {
     const nodes2 = msbuildNodes(check, usesDotnet);
     const named2 = label ? { label } : {};
-    const id2 = label ?? check.id;
+    const id3 = label ?? check.id;
     const loads = formats2 ? formatLoadsProject(check) : null;
     const inProcess = loads !== null && repo !== null && sdkFormatsInProcess(resolve23(repo, check.cwd), repo);
     const restore = inProcess ? formatRestoresUnpinned(check) : null;
@@ -71100,8 +71144,8 @@ async function checkSandboxCheck(input) {
     const outside = host !== null && !folderForm || folder !== null ? formatOutsideFix(check, where2) : null;
     if (nodes2?.kind === "unpinned" || restore) {
       const causes = [...nodes2?.kind === "unpinned" ? [nodes2.reason] : [], ...restore ? [`runs "${restore.shown}", which restores the project first with a worker node per processor (SDK 8, which global.json pins, loads the project in its own process)`] : []];
-      for (const cause of causes) details.push(`${id2}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
-      for (const more of [host, folder]) if (more) details.push(`${id2}: ${more}, and the check sandbox refuses it`);
+      for (const cause of causes) details.push(`${id3}: ${cause}, and the check sandbox refuses every MSBuild worker node its named pipe under /tmp`);
+      for (const more of [host, folder]) if (more) details.push(`${id3}: ${more}, and the check sandbox refuses it`);
       const msbuild = restore ? formatRestoreFix(check, where2) : host && !outside ? formatAndNodeFix(check, where2) : msbuildFix(check, where2);
       const pipe = host !== null || folder !== null;
       refused.push({
@@ -71115,12 +71159,12 @@ async function checkSandboxCheck(input) {
       return true;
     }
     if (nodes2?.kind === "indirect") {
-      details.push(`${id2}: ${nodes2.reason}`);
+      details.push(`${id3}: ${nodes2.reason}`);
       undetermined.push({ check, msbuild: msbuildFix(check, where2), ...named2 });
     }
     const format = host ?? folder;
     if (format) {
-      details.push(`${id2}: ${format}, and the check sandbox refuses it`);
+      details.push(`${id3}: ${format}, and the check sandbox refuses it`);
       refused.push({ check, failure: { checkId: check.id, fingerprint: null, signals: ["pipe-denied"], cause: format, lines: [format] }, ...outside ? { outside } : { format: dotnetFormatFix(check, where2) }, ...named2 });
       return true;
     }
@@ -71129,9 +71173,9 @@ async function checkSandboxCheck(input) {
   for (const check of checks) {
     const ids = detectToolchains({ command: check.command, shell: check.shell, roots: repo ? [repo, resolve23(repo, check.cwd)] : [] });
     if (repo) {
-      for (const id2 of ids) {
-        used.add(id2);
-        users.set(id2, [...users.get(id2) ?? [], check]);
+      for (const id3 of ids) {
+        used.add(id3);
+        users.set(id3, [...users.get(id3) ?? [], check]);
       }
     }
     const located = repo ? deniedProgram(check, repo, input.homeDir) : null;
@@ -71176,13 +71220,13 @@ async function checkSandboxCheck(input) {
   const refusedToolchains = [];
   const unfilledCaches = [];
   if (repo && input.orbitHome) {
-    for (const id2 of [...used].sort()) {
-      const base = baseCheck(id2, users.get(id2) ?? []);
-      const line3 = await toolchainLine({ ...probeInput, repo }, input.orbitHome, id2, base);
+    for (const id3 of [...used].sort()) {
+      const base = baseCheck(id3, users.get(id3) ?? []);
+      const line3 = await toolchainLine({ ...probeInput, repo }, input.orbitHome, id3, base);
       details.push(line3.detail);
-      const runners = (users.get(id2) ?? []).filter((c) => c.mandatory && runsToolchain(c, id2)).map((check) => ({ check }));
-      if (line3.unfilled.length > 0 && runners.length > 0) unfilledCaches.push({ id: id2, caches: line3.unfilled, runners });
-      if (line3.refusal) refusedToolchains.push({ id: id2, failure: line3.refusal.failure, ...line3.refusal.fix ? { fix: line3.refusal.fix } : {}, ...line3.refusal.msbuild ? { msbuild: line3.refusal.msbuild } : {}, mandatory: base !== null && base.mandatory && runsToolchain(base, id2) });
+      const runners = (users.get(id3) ?? []).filter((c) => c.mandatory && runsToolchain(c, id3)).map((check) => ({ check }));
+      if (line3.unfilled.length > 0 && runners.length > 0) unfilledCaches.push({ id: id3, caches: line3.unfilled, runners });
+      if (line3.refusal) refusedToolchains.push({ id: id3, failure: line3.refusal.failure, ...line3.refusal.fix ? { fix: line3.refusal.fix } : {}, ...line3.refusal.msbuild ? { msbuild: line3.refusal.msbuild } : {}, mandatory: base !== null && base.mandatory && runsToolchain(base, id3) });
     }
   }
   const fixFor = (items) => {
@@ -71253,17 +71297,17 @@ function sandboxedCommands(config) {
     ])
   ];
 }
-function runsToolchain(check, id) {
-  return detectToolchains({ command: check.command, shell: check.shell }).includes(id);
+function runsToolchain(check, id2) {
+  return detectToolchains({ command: check.command, shell: check.shell }).includes(id2);
 }
-function baseCheck(id, users) {
-  const rank = (c) => (runsToolchain(c, id) ? 2 : 0) + (c.mandatory ? 1 : 0);
+function baseCheck(id2, users) {
+  const rank = (c) => (runsToolchain(c, id2) ? 2 : 0) + (c.mandatory ? 1 : 0);
   return [...users].sort((a, b) => rank(b) - rank(a))[0] ?? null;
 }
 function launchPath(found, repo) {
   const target = realpathSync21(found);
   if (repo && isWithin(target, repo)) return null;
-  const named2 = join82(realpathSync21(dirname38(found)), basename21(found));
+  const named2 = join83(realpathSync21(dirname38(found)), basename21(found));
   return repo && isWithin(named2, repo) ? target : named2;
 }
 async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
@@ -71274,11 +71318,11 @@ async function probeOrRefuse(input, check, exe, args, cwd, project, nodeFix) {
     return { kind: "refused", detail: `could not be started in the sandbox: ${why}`, failure: { checkId: check.id, fingerprint: null, signals: ["start-failed"], cause: "the check could not be started", lines: [why] } };
   }
 }
-async function toolchainLine(input, orbitHome, id, base) {
-  const p = TOOLCHAIN_PROFILES[id];
+async function toolchainLine(input, orbitHome, id2, base) {
+  const p = TOOLCHAIN_PROFILES[id2];
   const root = toolchainCacheRoot(orbitHome, repoKeyFor(input.repo));
-  const caches = p.caches.map((c) => join82(root, c));
-  const outside = id === "dotnet" && input.nugetPackages === true && (input.platform ?? process.platform) === "darwin";
+  const caches = p.caches.map((c) => join83(root, c));
+  const outside = id2 === "dotnet" && input.nugetPackages === true && (input.platform ?? process.platform) === "darwin";
   const nuget = "on macOS the dependency install cannot download NuGet packages, so this repository's are restored into it outside the sandbox, as checks.dotnet-packages says";
   const exists = caches.every((c) => existsSync58(c));
   const deps = input.config.dependencies;
@@ -71286,14 +71330,14 @@ async function toolchainLine(input, orbitHome, id, base) {
   const noInstall = deps.install_existing_lockfile ? "dependencies.install_command is not set" : "dependencies.install_existing_lockfile is false";
   const state = exists ? `read-only for checks and workers${outside ? `; ${nuget}` : installs ? ", written by the dependency install" : `; ${noInstall}, so no run writes it`}` : `not created yet${outside ? `: ${nuget}` : installs ? "; the first dependency install creates it" : `; ${noInstall}, so no run creates it`}`;
   const where2 = `${caches.length === 1 ? "dependency cache" : "dependency caches"} ${caches.join(", ")} (${state}); private per check attempt: ${p.scratchVars.join(", ")}`;
-  const label = `toolchain ${id}`;
+  const label = `toolchain ${id2}`;
   const unfilled = outside || installs ? [] : caches.filter((c) => !existsSync58(c));
   const found = p.probe.executables.map((e) => which(e, input.env.PATH)).find((x) => x !== null);
   if (!found) return { detail: `${label}: not started ("${p.probe.executables[0]}" was not found); ${where2}`, refusal: null, unfilled };
   const exe = launchPath(found, input.repo);
   if (!exe) return { detail: `${label}: not started ("${basename21(found)}" is the repository's own code, which only a run executes); ${where2}`, refusal: null, unfilled };
-  const args = id === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
-  const check = { ...base ?? defaultCheck(`toolchain-${id}`), id: `toolchain-${id}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
+  const args = id2 === "dotnet" ? [...p.probe.args, ...probeNodeSwitches(base)] : p.probe.args;
+  const check = { ...base ?? defaultCheck(`toolchain-${id2}`), id: `toolchain-${id2}`, command: [exe, ...args], shell: false, cwd: ".", mandatory: false };
   const project = p.probe.files ? { files: p.probe.files, about: p.probe.about ?? "a generated project" } : null;
   const out = await probeOrRefuse(input, check, exe, args, null, project, msbuildFix(base));
   return { detail: `${label}: ${out.detail}; ${where2}`, refusal: out.kind === "refused" ? out : null, unfilled };
@@ -71344,11 +71388,11 @@ ${r.stderr}`.trim() };
 // src/cli/commands/doctor-workers.ts
 import { basename as basename22 } from "node:path";
 function workerLoopbackCheck(input) {
-  const id = "workers.loopback";
+  const id2 = "workers.loopback";
   const area = "isolation";
   if (input.platform === "linux") {
     const summary = "workers can run test suites that listen on loopback: on Linux srt starts every worker sandbox in a network namespace of its own, with a loopback nothing outside it can reach (from srt's source, not measured by Orbit)";
-    return { id, area, status: "pass", summary, details: [], missing: null, fix: null };
+    return { id: id2, area, status: "pass", summary, details: [], missing: null, fix: null };
   }
   const cannot = `on macOS workers cannot run test hosts that need a loopback socket (${RUNNERS3}), in either worker tier`;
   const runners = [];
@@ -71356,13 +71400,13 @@ function workerLoopbackCheck(input) {
   if (input.files.some((f) => GRADLE_FILES.has(basename22(f)))) runners.push("this repository uses Gradle: its test workers connect to the build over loopback, so a worker's gradle test cannot run");
   if (runners.length === 0) {
     const summary = `${cannot}; this repository uses no runner that needs one on every run (.NET, Gradle), and a test that starts its own server runs in the checks`;
-    return { id, area, status: "pass", summary, details: [WHY], missing: null, fix: null };
+    return { id: id2, area, status: "pass", summary, details: [WHY], missing: null, fix: null };
   }
   const listening = Object.values(input.config.checks).filter((check) => check.local_binding !== false);
   const testing = listening.filter((check) => check.kind === "command" && checkCategory(check) === "test");
   const who = testing.length > 0 ? "the test checks that may listen run them" : listening.length > 0 ? "no test check may listen (local_binding: false on each), so nothing here runs them" : "no check may listen either (local_binding: false on every check), so nothing here runs them";
   return {
-    id,
+    id: id2,
     area,
     status: "warn",
     summary: `${cannot}, and this repository's tests need one, so a worker submits changes it could not test; ${who}`,
@@ -71409,7 +71453,7 @@ import { accessSync as accessSync5, constants as constants7, existsSync as exist
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
 import { homedir as homedir16, tmpdir as tmpdir15 } from "node:os";
-import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join83, resolve as resolve25, sep as sep17 } from "node:path";
+import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join84, resolve as resolve25, sep as sep17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
     try {
@@ -71424,7 +71468,7 @@ function which2(cmd, env, cwd = process.cwd()) {
   }
   for (const dir of (env.PATH ?? "").split(delimiter5)) {
     if (!dir) continue;
-    const p = join83(dir, cmd);
+    const p = join84(dir, cmd);
     if (ok(p)) return p;
   }
   return null;
@@ -71433,14 +71477,14 @@ function errText(err, max) {
   if (err instanceof OrbitError) return flat(err.message);
   return oneLine(err instanceof Error ? err.message : String(err), max);
 }
-function pass(id, area, summary, details = []) {
-  return { id, area, status: "pass", summary, details, missing: null, fix: null };
+function pass(id2, area, summary, details = []) {
+  return { id: id2, area, status: "pass", summary, details, missing: null, fix: null };
 }
-function warn2(id, area, summary, missing, fix, details = []) {
-  return { id, area, status: "warn", summary, details, missing, fix };
+function warn2(id2, area, summary, missing, fix, details = []) {
+  return { id: id2, area, status: "warn", summary, details, missing, fix };
 }
-function fail2(id, area, summary, missing, fix, details = []) {
-  return { id, area, status: "fail", summary, details, missing, fix };
+function fail2(id2, area, summary, missing, fix, details = []) {
+  return { id: id2, area, status: "fail", summary, details, missing, fix };
 }
 function toolEnv(env) {
   const out = {};
@@ -71552,13 +71596,13 @@ function checkStorage(p) {
   const { repo } = p;
   if (!repo) return warn2("storage", "storage", "no repository, so no state database to check", "a repository", null);
   const path = stateDbPath(repo);
-  const dir = join83(repo, ".orbit");
+  const dir = join84(repo, ".orbit");
   let db = null;
   try {
     if (!existsSync60(path)) {
-      const scratch = mkdtempSync10(join83(tmpdir15(), "orbit-doctor-"));
+      const scratch = mkdtempSync10(join84(tmpdir15(), "orbit-doctor-"));
       try {
-        db = openDb(join83(scratch, "probe.sqlite"));
+        db = openDb(join84(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
         if (mode2.toLowerCase() !== "wal") return fail2("storage", "storage", `SQLite cannot use WAL on this filesystem (journal_mode=${mode2})`, "WAL journaling", "use a local disk, not a network or container bind mount");
       } finally {
@@ -71619,7 +71663,7 @@ function checkConfiguredChecks(p) {
       details.push(`${c.id}: shell builtin "${word}" (not resolved)`);
       continue;
     }
-    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join83(repo, "node_modules", ".bin", word), ctx.env) : null);
+    const found = which2(word, ctx.env, cwd) ?? (repo && !word.includes("/") ? which2(join84(repo, "node_modules", ".bin", word), ctx.env) : null);
     if (!found && installMayCreate(word, cwd, repo, config)) {
       details.push(`${c.id}: "${word}" ${FROM_INSTALL}`);
       bump("warn");
@@ -71632,7 +71676,7 @@ function checkConfiguredChecks(p) {
     }
     const script = c.shell ? void 0 : packageScriptOf(c.command);
     if (script) {
-      const pj = join83(cwd, "package.json");
+      const pj = join84(cwd, "package.json");
       let defined = false;
       try {
         defined = typeof JSON.parse(readFileSync39(pj, "utf8")).scripts?.[script] === "string";
@@ -71702,7 +71746,7 @@ async function checkIsolation(p) {
   }
   if (!st.ok) {
     const pluginRoot = ctx.env.ORBIT_PLUGIN_ROOT;
-    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync60(join83(pluginRoot, "package.json")) && !existsSync60(join83(pluginRoot, "node_modules"))) {
+    if (provider.kind === "sandbox-runtime" && pluginRoot && existsSync60(join84(pluginRoot, "package.json")) && !existsSync60(join84(pluginRoot, "node_modules"))) {
       return {
         check: fail2(
           "isolation",
@@ -71740,56 +71784,56 @@ async function checkProviders(p, iso2, registry) {
   const mandatoryReviewer = mandatoryReviewProvider(config.review, "claude");
   if (mandatoryReviewer !== null && reviewProviderOrder(config.review).length === 1) required.add(mandatoryReviewer);
   const caps = await Promise.all(
-    ids.map(async (id) => {
+    ids.map(async (id2) => {
       try {
-        return await adapters[id].discoverCapabilities();
+        return await adapters[id2].discoverCapabilities();
       } catch (err) {
-        return { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: err instanceof Error ? err.message : String(err) };
+        return { provider: id2, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: err instanceof Error ? err.message : String(err) };
       }
     })
   );
-  ids.forEach((id, i) => facts.capabilities[id] = caps[i]);
-  const creds = await validateCredentials({ adapters, providers: ids.filter((id) => facts.capabilities[id].available || facts.capabilities[id].tierUnavailable === true), live: p.live, timeoutMs: 9e4 });
+  ids.forEach((id2, i) => facts.capabilities[id2] = caps[i]);
+  const creds = await validateCredentials({ adapters, providers: ids.filter((id2) => facts.capabilities[id2].available || facts.capabilities[id2].tierUnavailable === true), live: p.live, timeoutMs: 9e4 });
   for (const c of creds) facts.credentials[c.provider] = c.status ?? void 0;
-  for (const id of ids) {
-    const cap = facts.capabilities[id];
-    const needed = required.has(id);
+  for (const id2 of ids) {
+    const cap = facts.capabilities[id2];
+    const needed = required.has(id2);
     const level = needed ? fail2 : warn2;
-    const kind = providerKind(id);
-    const exe = config.providers[id].command;
+    const kind = providerKind(id2);
+    const exe = config.providers[id2].command;
     if (!cap.available && cap.tierUnavailable !== true) {
-      checks.push(level(`${id}.cli`, "providers", `${id} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === "claude" ? ", >= 2.1.284 for Sonnet 5.5" : ""}`, kind === "claude" ? "install Claude Code (https://code.claude.com)" : kind === "muse" ? `install Muse ${MUSE_MIN_VERSION} or later` : "install the Codex CLI", needed ? [] : ["not required for this configuration"]));
+      checks.push(level(`${id2}.cli`, "providers", `${id2} is not usable: ${flat(cap.detail)}`, `the ${kind} CLI (${exe}) on PATH${kind === "claude" ? ", >= 2.1.284 for Sonnet 5.5" : ""}`, kind === "claude" ? "install Claude Code (https://code.claude.com)" : kind === "muse" ? `install Muse ${MUSE_MIN_VERSION} or later` : "install the Codex CLI", needed ? [] : ["not required for this configuration"]));
       continue;
     }
     const cliDetails = [`structured output: ${cap.structuredOutput ? "yes" : "no"}`, `read-only sandbox: ${cap.readOnlySandbox ? "yes" : "no"}`, `usage reporting: ${cap.usageReporting}`, `cost reporting: ${cap.costReporting ? "yes" : "no"}`];
-    checks.push(pass(`${id}.cli`, "providers", `${kind} ${cap.version ?? "version unknown"} at ${which2(exe, ctx.env) ?? exe}`, cliDetails));
-    const cred = creds.find((c) => c.provider === id);
+    checks.push(pass(`${id2}.cli`, "providers", `${kind} ${cap.version ?? "version unknown"} at ${which2(exe, ctx.env) ?? exe}`, cliDetails));
+    const cred = creds.find((c) => c.provider === id2);
     if (!cred) continue;
     const st = cred.status;
     if (cred.verdict === "blocked" && st) {
       const alt = kind === "claude" ? 'or set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN from "claude setup-token")' : kind === "muse" ? "or set META_API_KEY" : "or set CODEX_API_KEY";
-      checks.push(level(`${id}.auth`, "providers", `${id} credentials are ${st.state}: ${flat(st.detail)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? "log in"} ${alt}`));
+      checks.push(level(`${id2}.auth`, "providers", `${id2} credentials are ${st.state}: ${flat(st.detail)}`, `a working ${kind} credential`, `${LOGIN_COMMANDS[kind] ?? "log in"} ${alt}`));
     } else if (cred.verdict === "error") {
-      checks.push(level(`${id}.auth`, "providers", `${id} credentials could not be checked: ${cred.error ?? "unknown error"}`, `a ${kind} credential check`, null));
+      checks.push(level(`${id2}.auth`, "providers", `${id2} credentials could not be checked: ${cred.error ?? "unknown error"}`, `a ${kind} credential check`, null));
     } else if (st) {
       const subscription = st.method === "claude.ai" || st.method === "chatgpt";
       const detail = [`method: ${st.method ?? "unknown"}`, flat(st.detail)];
       if (subscription) detail.push("unattended service runs should use API-key authentication (docs/decisions/0003-authentication.md); a subscription login is fine for foreground runs");
-      const summary = cred.verdict === "valid" ? `${id} credential valid (${st.method ?? "unknown method"})${cred.live ? ", confirmed by a live request" : ""}` : `${id} credential present (${st.method ?? "unknown method"}); not verified${p.live ? "" : " (use --probe for a live check)"}`;
-      checks.push(pass(`${id}.auth`, "providers", summary, detail));
+      const summary = cred.verdict === "valid" ? `${id2} credential valid (${st.method ?? "unknown method"})${cred.live ? ", confirmed by a live request" : ""}` : `${id2} credential present (${st.method ?? "unknown method"}); not verified${p.live ? "" : " (use --probe for a live check)"}`;
+      checks.push(pass(`${id2}.auth`, "providers", summary, detail));
     }
     if (kind === "claude") {
       const envCred = claudeEnvCredential(ctx.env);
-      if (claudeWorkerTier(iso2, ctx.env) === "os-sandbox") checks.push(pass(`${id}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
+      if (claudeWorkerTier(iso2, ctx.env) === "os-sandbox") checks.push(pass(`${id2}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
       else {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
-        checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
+        checks.push(warn2(`${id2}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
       }
-      const plugins = await workerPluginsCheck(id, adapters[id], config);
+      const plugins = await workerPluginsCheck(id2, adapters[id2], config);
       if (plugins) checks.push(plugins);
     } else if (kind === "muse") {
-      checks.push(museTierCheck(id, config.providers[id], museEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
-    } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
+      checks.push(museTierCheck(id2, config.providers[id2], museEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
+    } else checks.push(codexTierCheck(id2, config.providers[id2].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
   }
   checks.push(reviewCheck(config, facts, registry));
   return { checks, facts };
@@ -71803,9 +71847,9 @@ function reviewCheck(config, facts, registry) {
   const unmetPrerequisites = () => allReviewPrerequisites(sel.alternatives, (fixed, assumed) => {
     const hypothetical = structuredClone(config);
     const credentials = { ...facts.credentials };
-    for (const id of fixed) {
-      if (assumed.dataPolicy && hypothetical.providers[id]) hypothetical.providers[id].data_policy_eligible = true;
-      if (assumed.login && facts.capabilities[id]?.available) credentials[id] = { state: "valid", method: null, detail: "assumed once logged in" };
+    for (const id2 of fixed) {
+      if (assumed.dataPolicy && hypothetical.providers[id2]) hypothetical.providers[id2].data_policy_eligible = true;
+      if (assumed.login && facts.capabilities[id2]?.available) credentials[id2] = { state: "valid", method: null, detail: "assumed once logged in" };
     }
     return select(hypothetical, credentials).alternatives;
   });
@@ -71835,11 +71879,11 @@ function reviewCheck(config, facts, registry) {
   const summary = sel.needsApproval === true ? `same-provider review needs a person's yes: no independent reviewer is usable (${why}); a run asks a person before ${who} reviews in a separate session (review.when_unavailable: ask)` : `same-provider review: no independent reviewer is usable (${why}); ${who} reviews in a separate session at the opus-class floor, and reports say the review was not independent (review.when_unavailable: ${fallback})`;
   return warn2("review", "providers", summary, missing, `${fixFor(unmet)}; or set review.when_unavailable to ask or block to change what happens`, details);
 }
-function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
-  const check = `${id}.worker-tier`;
+function codexTierCheck(id2, setting, apiKeyVar, srtInUse, level) {
+  const check = `${id2}.worker-tier`;
   let decision;
   try {
-    decision = decideCodexTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: "sandbox-runtime isolation is not in use" } });
+    decision = decideCodexTier({ setting, providerId: id2, apiKeyVar, srt: { ok: srtInUse, why: "sandbox-runtime isolation is not in use" } });
   } catch (err) {
     return level(check, "providers", errText(err, 300), "sandbox-runtime isolation, or providers.<id>.tier set to auto or codex-sandbox", "set isolation.provider to sandbox-runtime, or set the tier to auto or codex-sandbox");
   }
@@ -71852,13 +71896,13 @@ function codexTierCheck(id, setting, apiKeyVar, srtInUse, level) {
   if (!decision.automatic) return pass(check, "providers", summary, limitations);
   return warn2(check, "providers", summary, "an exported API key (CODEX_API_KEY or OPENAI_API_KEY) plus sandbox-runtime for the os-sandbox tier", "export CODEX_API_KEY or OPENAI_API_KEY (an API-key login, not a ChatGPT login)", limitations);
 }
-function museTierCheck(id, provider, apiKeyVar, srtInUse, level) {
-  const check = `${id}.worker-tier`;
+function museTierCheck(id2, provider, apiKeyVar, srtInUse, level) {
+  const check = `${id2}.worker-tier`;
   const setting = provider.tier ?? "auto";
   const facts = [`credential source: ${apiKeyVar ?? "login file (muse login)"}`, `model: ${provider.model ?? "default"}`, `data_policy_eligible: ${provider.data_policy_eligible ? "true" : `false (${HUMAN_POLICY_CONFIG_NOTE})`}`];
   let decision;
   try {
-    decision = decideMuseTier({ setting, providerId: id, apiKeyVar, srt: { ok: srtInUse, why: "sandbox-runtime isolation is not in use" } });
+    decision = decideMuseTier({ setting, providerId: id2, apiKeyVar, srt: { ok: srtInUse, why: "sandbox-runtime isolation is not in use" } });
   } catch (err) {
     return level(check, "providers", errText(err, 300), "sandbox-runtime isolation and META_API_KEY, or providers.<id>.tier set to auto or muse-sandbox", "set isolation.provider to sandbox-runtime and export META_API_KEY, or set the tier to auto or muse-sandbox", facts);
   }
@@ -71905,9 +71949,9 @@ function liveProbeOf(adapter) {
   }
   return null;
 }
-function providerKindSafe(id) {
+function providerKindSafe(id2) {
   try {
-    return providerKind(id);
+    return providerKind(id2);
   } catch {
     return null;
   }
@@ -71936,9 +71980,9 @@ function packageInstalled(req, name) {
 function playwrightCache(env, home2, platform3) {
   const override = env.PLAYWRIGHT_BROWSERS_PATH;
   if (override && override !== "0") return override;
-  if (platform3 === "darwin") return join83(home2, "Library", "Caches", "ms-playwright");
-  if (platform3 === "win32") return join83(env.LOCALAPPDATA ?? join83(home2, "AppData", "Local"), "ms-playwright");
-  return join83(env.XDG_CACHE_HOME ?? join83(home2, ".cache"), "ms-playwright");
+  if (platform3 === "darwin") return join84(home2, "Library", "Caches", "ms-playwright");
+  if (platform3 === "win32") return join84(env.LOCALAPPDATA ?? join84(home2, "AppData", "Local"), "ms-playwright");
+  return join84(env.XDG_CACHE_HOME ?? join84(home2, ".cache"), "ms-playwright");
 }
 function checkPlaywright(p) {
   const { config, repo, ctx } = p;
@@ -71946,7 +71990,7 @@ function checkPlaywright(p) {
   if (!wanted) return pass("playwright", "ui", "not required: no ui section and no playwright check is configured");
   const level = fail2;
   if (!repo) return level("playwright", "ui", "no repository to look for Playwright in", "a repository", null);
-  const req = createRequire4(join83(repo, "package.json"));
+  const req = createRequire4(join84(repo, "package.json"));
   let pwTest = null;
   try {
     pwTest = req.resolve("@playwright/test/package.json");
@@ -71964,7 +72008,7 @@ function checkPlaywright(p) {
   if (!core) return level("playwright", "ui", "playwright-core is missing next to @playwright/test", "playwright-core", "reinstall dependencies");
   let revisions = {};
   try {
-    const bj = JSON.parse(readFileSync39(join83(core, "..", "browsers.json"), "utf8"));
+    const bj = JSON.parse(readFileSync39(join84(core, "..", "browsers.json"), "utf8"));
     revisions = Object.fromEntries((bj.browsers ?? []).map((b) => [b.name, b.revision]));
   } catch {
     details.push("browsers.json could not be read; browser revisions are not checked");
@@ -71975,7 +72019,7 @@ function checkPlaywright(p) {
   for (const b of names) {
     const dirs = b === "chromium" ? ["chromium", "chromium_headless_shell"] : [b];
     const revs = dirs.map((d) => ({ d, rev: revisions[d] ?? revisions[b] ?? null }));
-    const present = revs.some((r) => r.rev ? existsSync60(join83(cache2, `${r.d}-${r.rev}`)) : false);
+    const present = revs.some((r) => r.rev ? existsSync60(join84(cache2, `${r.d}-${r.rev}`)) : false);
     details.push(`${b}: ${present ? `installed (${cache2})` : `not found in ${cache2}`}`);
     if (!present && revs.some((r) => r.rev)) missing.push(b);
   }
@@ -72005,7 +72049,7 @@ function headlessShellLayouts(arch) {
 function headlessChromiumOf(repo, cache2, arch = process.arch) {
   let browsersJson;
   try {
-    browsersJson = join83(createRequire4(join83(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
+    browsersJson = join84(createRequire4(join84(repo, "package.json")).resolve("playwright-core/package.json"), "..", "browsers.json");
   } catch {
     return { problem: "Playwright is not installed in this repository" };
   }
@@ -72018,8 +72062,8 @@ function headlessChromiumOf(repo, cache2, arch = process.arch) {
     return { problem: `Playwright's browsers.json could not be read (${browsersJson})` };
   }
   if (!revision) return { problem: "Playwright's browsers.json names no Chromium revision" };
-  const dir = join83(cache2, `chromium_headless_shell-${revision}`);
-  const exe = headlessShellLayouts(arch).map((rel) => join83(dir, rel)).find((p) => isExecutable2(p));
+  const dir = join84(cache2, `chromium_headless_shell-${revision}`);
+  const exe = headlessShellLayouts(arch).map((rel) => join84(dir, rel)).find((p) => isExecutable2(p));
   return exe ? { exe, revision } : { problem: `Playwright's headless Chromium (revision ${revision}) is not installed in ${cache2}` };
 }
 function noncePage() {
@@ -72029,27 +72073,27 @@ function noncePage() {
   return { url: `data:text/html,${encodeURIComponent(html)}`, expect: `orbit-${a}-${b}` };
 }
 async function browserIsolationCheck(input) {
-  const id = "ui.browser-isolation";
-  if (!input.wanted) return pass(id, "ui", "not required: no ui section and no playwright check is configured");
+  const id2 = "ui.browser-isolation";
+  if (!input.wanted) return pass(id2, "ui", "not required: no ui section and no playwright check is configured");
   const provider = input.provider;
-  if (!provider || !input.available) return warn2(id, "ui", "not checked: isolation is unavailable (see the isolation check)", "an available isolation provider", null);
-  if (provider.kind !== "sandbox-runtime" || !("browserIsolation" in provider)) return pass(id, "ui", `not needed: browser checks run under ${provider.kind}, which needs no browser rule`);
+  if (!provider || !input.available) return warn2(id2, "ui", "not checked: isolation is unavailable (see the isolation check)", "an available isolation provider", null);
+  if (provider.kind !== "sandbox-runtime" || !("browserIsolation" in provider)) return pass(id2, "ui", `not needed: browser checks run under ${provider.kind}, which needs no browser rule`);
   const info = provider.browserIsolation();
   const limitation = `limitation: ${CHROMIUM_MACH_RENDEZVOUS_LIMITATION}`;
   if (!info.rules) {
-    return pass(id, "ui", `Linux: no Mach rule is needed; every srt sandbox has its own loopback, so each journey check runs the application and the browser in one sandbox (${UI_SINGLE_SANDBOX}); UI exploration is not available under srt on Linux`, [info.detail, `limitation: ${UI_SINGLE_SANDBOX_LIMITATION}`]);
+    return pass(id2, "ui", `Linux: no Mach rule is needed; every srt sandbox has its own loopback, so each journey check runs the application and the browser in one sandbox (${UI_SINGLE_SANDBOX}); UI exploration is not available under srt on Linux`, [info.detail, `limitation: ${UI_SINGLE_SANDBOX_LIMITATION}`]);
   }
   if (!info.verified) {
-    return fail2(id, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
+    return fail2(id2, "ui", `${info.detail}; browser checks are refused`, `srt ${SRT_VERIFIED_VERSION} (@anthropic-ai/sandbox-runtime)`, `install @anthropic-ai/sandbox-runtime@${SRT_VERIFIED_VERSION}`, [info.detail, limitation]);
   }
-  if (!input.repo) return warn2(id, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
+  if (!input.repo) return warn2(id2, "ui", "not launched: no repository to find Playwright in", "a repository", null, [info.detail, limitation]);
   const home2 = input.homeDir ?? input.env.HOME ?? homedir16();
   const cache2 = playwrightCache(input.env, home2, "darwin");
   const browser = headlessChromiumOf(input.repo, cache2);
   if ("problem" in browser) {
-    return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
+    return warn2(id2, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync22(mkdtempSync10(join83(tmpdir15(), "orbit-doctor-browser-")));
+  const dir = realpathSync22(mkdtempSync10(join84(tmpdir15(), "orbit-doctor-browser-")));
   try {
     const repo = realpathSync22(input.repo);
     const exe = realpathSync22(browser.exe);
@@ -72057,7 +72101,7 @@ async function browserIsolationCheck(input) {
     const profile = { writablePaths: [dir], denyReadPaths, allowedHosts: [], allowLocalBinding: false, chromiumMachRendezvous: true, limits: { timeoutMs: 9e4, memoryMb: null, cpus: null, pids: null } };
     const env = { ...safeBaseEnv(input.env), TMPDIR: dir };
     const page = noncePage();
-    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join83(dir, "profile")}`, "--dump-dom", page.url];
+    const argv2 = [browser.exe, "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", `--user-data-dir=${join84(dir, "profile")}`, "--dump-dom", page.url];
     const wrapped = provider.wrap(argv2, profile, { cwd: dir, env });
     let r;
     try {
@@ -72067,14 +72111,14 @@ async function browserIsolationCheck(input) {
     }
     const details = [info.detail, `browser: ${browser.exe} (revision ${browser.revision})`, limitation];
     if (r.exitCode !== 0) {
-      return fail2(id, "ui", `headless Chromium did not start under srt ${info.srtVersion} (exit ${r.exitCode ?? "timeout"}): ${oneLine(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
+      return fail2(id2, "ui", `headless Chromium did not start under srt ${info.srtVersion} (exit ${r.exitCode ?? "timeout"}): ${oneLine(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
     }
     if (!r.output.includes(page.expect)) {
-      return fail2(id, "ui", `headless Chromium did not render the test page under srt ${info.srtVersion} (exit 0): ${oneLine(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
+      return fail2(id2, "ui", `headless Chromium did not render the test page under srt ${info.srtVersion} (exit 0): ${oneLine(redact(r.output), 240) || "(no output)"}`, "a Chromium that starts under srt (Playwright's bundled Chromium)", "npx playwright install chromium; see docs/troubleshooting.md", details);
     }
-    return pass(id, "ui", `Chromium starts under srt ${info.srtVersion} with the two Mach rendezvous rules`, details);
+    return pass(id2, "ui", `Chromium starts under srt ${info.srtVersion} with the two Mach rendezvous rules`, details);
   } catch (err) {
-    return fail2(id, "ui", `headless Chromium could not be launched under srt: ${errText(err, 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
+    return fail2(id2, "ui", `headless Chromium could not be launched under srt: ${errText(err, 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
   } finally {
     rmSync21(dir, { recursive: true, force: true });
   }
@@ -72143,7 +72187,7 @@ async function checkService(p) {
   if (linger === "no") details.push(`lingering is off for ${ctx.user}: the service stops at logout (loginctl enable-linger ${ctx.user})`);
   if (!status2.installed) return warn2("service", "service", "no service is installed, so runs only progress while a terminal is attached", "an installed background service (survives terminal closure and restarts after failure)", orbitHint("service install", void 0, { quote: false }), details);
   if (status2.loaded !== true) return warn2("service", "service", `service installed but ${status2.loaded === false ? "not loaded" : `state unknown (${status2.detail})`}`, "a loaded service", `${orbitHint("service install", void 0, { quote: false })} (reloads it)`, details);
-  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join83(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
+  if (stale) return warn2("service", "service", "service is loaded but its controller heartbeat is stale", "a fresh controller heartbeat (it may be wedged or still starting)", `check ${join84(ctx.orbitHome, "logs")}, then ${orbitHint("service install", void 0, { quote: false })} to restart it`, details);
   if (linger === "no") return warn2("service", "service", "service is loaded; lingering is off", "systemd lingering", `loginctl enable-linger ${ctx.user}`, details);
   return pass("service", "service", live ? "service loaded and its controller heartbeat is fresh" : "service loaded; the controller has not published a heartbeat yet", details);
 }
@@ -72181,12 +72225,12 @@ async function runDoctor(ctx, opts) {
   } else configError2 = new OrbitError("NOT_FOUND", "not inside a git repository");
   const p = { ctx, repo, config, configLoaded, policyPath, live: opts.probe };
   const checks = [];
-  const safely = async (id, area, fn) => {
+  const safely = async (id2, area, fn) => {
     try {
       const r = await fn();
       checks.push(...Array.isArray(r) ? r : [r]);
     } catch (err) {
-      checks.push(fail2(id, area, `this check crashed: ${errText(err, 200)}`, null, "report this as an Orbit bug"));
+      checks.push(fail2(id2, area, `this check crashed: ${errText(err, 200)}`, null, "report this as an Orbit bug"));
     }
   };
   await safely("runtime.node", "runtime", checkNode);
@@ -72444,17 +72488,17 @@ function probeEnv(env) {
   for (const k of ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME", "CODEX_API_KEY", "CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) if (env[k] !== void 0) out[k] = env[k];
   return out;
 }
-async function readCodexCatalog(registry, id, command, repo, ctx, timeoutMs = 6e4) {
+async function readCodexCatalog(registry, id2, command, repo, ctx, timeoutMs = 6e4) {
   const r = await execCapture([...commandArgv(command), "debug", "models"], { env: probeEnv(ctx.env), timeoutMs, cwd: repo }).catch((err) => err);
-  if (r instanceof Error) return { note: `provider ${id}: ${flat(r.message)}` };
-  if (r.exitCode !== 0) return { note: `provider ${id}: "${command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was` };
+  if (r instanceof Error) return { note: `provider ${id2}: ${flat(r.message)}` };
+  if (r.exitCode !== 0) return { note: `provider ${id2}: "${command} debug models" exited ${r.exitCode ?? "by signal"}; registry availability left as it was` };
   try {
     const catalog = JSON.parse(r.stdout);
     const res = registry.registerCodexCatalog(catalog, { source: "live" });
     saveSharedCatalog(sharedCatalogPath(ctx.orbitHome), catalog, ctx.clock.now());
-    return { change: res, note: `provider ${id}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}` };
+    return { change: res, note: `provider ${id2}: ${res.listed.length} model(s) listed${res.hidden.length ? `, ${res.hidden.length} hidden` : ""}${res.absent.length ? `, ${res.absent.length} no longer offered` : ""}${res.providerDefault ? `; default ${res.providerDefault}` : ""}` };
   } catch (err) {
-    return { note: `${id}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`, malformed: true };
+    return { note: `${id2}: "debug models" printed something that is not a model catalog (${err instanceof Error ? flat(err.message) : "unreadable"})`, malformed: true };
   }
 }
 async function modelsRefreshCommand(args, ctx) {
@@ -72469,22 +72513,22 @@ async function modelsRefreshCommand(args, ctx) {
     const seeded = registry.seed();
     changes.seed = seeded;
     notes.push(`seeded the registry: ${seeded.inserted.length} added, ${seeded.updated.length} refreshed`);
-    for (const [id, pc] of Object.entries(config.providers)) {
+    for (const [id2, pc] of Object.entries(config.providers)) {
       let kind;
       try {
-        kind = providerKind(id);
+        kind = providerKind(id2);
       } catch (err) {
-        notes.push(`provider ${id}: skipped (${err instanceof Error ? err.message : String(err)})`);
+        notes.push(`provider ${id2}: skipped (${err instanceof Error ? err.message : String(err)})`);
         continue;
       }
       if (kind === "claude") {
-        const adapter = createAdapter(id, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
+        const adapter = createAdapter(id2, pc, { baseEnv: { ...probeEnv(ctx.env) }, clock: ctx.clock });
         const caps = await adapter.discoverCapabilities();
         if (!caps.available || !caps.version) {
-          notes.push(`provider ${id}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
+          notes.push(`provider ${id2}: claude CLI unavailable (${flat(caps.detail)}); registry availability left as it was`);
           continue;
         }
-        notes.push(`provider ${id}: claude ${caps.version}`);
+        notes.push(`provider ${id2}: claude ${caps.version}`);
         for (const e of registry.list().filter((m) => m.provider === "claude")) {
           const min = e.eligibility.minCliVersion;
           if (min && compareVersions(caps.version, min) < 0) {
@@ -72495,7 +72539,7 @@ async function modelsRefreshCommand(args, ctx) {
         if (args.bool("probe")) {
           const probe2 = adapter.probeCredentials;
           if (typeof probe2 !== "function") {
-            notes.push(`  --probe: ${id} has no live probe`);
+            notes.push(`  --probe: ${id2} has no live probe`);
             continue;
           }
           for (const e of registry.list().filter((m) => m.provider === "claude" && allowMatch(m, config.routing.allowed_models) !== null)) {
@@ -72508,10 +72552,10 @@ async function modelsRefreshCommand(args, ctx) {
           }
         }
       } else if (kind === "muse") {
-        notes.push(`provider ${id}: Muse has no model catalog; it reviews with providers.${id}.model (${pc.model ?? "default"})`);
+        notes.push(`provider ${id2}: Muse has no model catalog; it reviews with providers.${id2}.model (${pc.model ?? "default"})`);
       } else {
-        const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx);
-        if (outcome.change !== void 0) changes[`catalog:${id}`] = outcome.change;
+        const outcome = await readCodexCatalog(registry, id2, pc.command, repo, ctx);
+        if (outcome.change !== void 0) changes[`catalog:${id2}`] = outcome.change;
         if (outcome.malformed) throw new OrbitError("MALFORMED_OUTPUT", outcome.note);
         notes.push(outcome.note);
       }
@@ -72546,7 +72590,7 @@ var init_models2 = __esm({
 
 // src/cli/check-detect.ts
 import { existsSync as existsSync62, readFileSync as readFileSync40 } from "node:fs";
-import { basename as basename23, dirname as dirname39, join as join84 } from "node:path";
+import { basename as basename23, dirname as dirname39, join as join85 } from "node:path";
 function read(path) {
   try {
     return readFileSync40(path, "utf8").slice(0, MAX_READ_BYTES);
@@ -72557,9 +72601,38 @@ function read(path) {
 function slug(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
 }
+function documentedCommands(repo, files) {
+  const readDocs = [];
+  const commands = [];
+  for (const doc of REPO_INSTRUCTION_FILES) {
+    if (!files.includes(doc)) continue;
+    const text2 = read(join85(repo, doc));
+    if (text2 === null) continue;
+    readDocs.push(doc);
+    let fenced2 = false;
+    text2.split(/\r?\n/).forEach((lineText, i) => {
+      if (/^\s*(```|~~~)/.test(lineText)) {
+        fenced2 = !fenced2;
+        return;
+      }
+      const candidates = fenced2 ? [lineText.replace(/\s+#.*$/, "")] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+      for (const raw of candidates) {
+        const cmd = raw.trim().replace(/^\$\s+/, "");
+        if (cmd === "" || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
+        const argv2 = cmd.split(/\s+/);
+        const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv2[0]) ? TOOL_ECOSYSTEM[argv2[0]] : void 0;
+        if (ecosystem === void 0) continue;
+        const words2 = new Set(argv2.flatMap((a) => a.toLowerCase().split(":")));
+        const category = CATEGORY_WORDS.find(([, set2]) => [...set2].some((w) => words2.has(w)))?.[0];
+        if (category !== void 0) commands.push({ command: argv2, ecosystem, category, source: `${doc} line ${i + 1}` });
+      }
+    });
+  }
+  return { read: readDocs, commands };
+}
 function nodeDrafts(input, out) {
   const { repo, files, pathEnv } = input;
-  const manifest = read(join84(repo, "package.json"));
+  const manifest = read(join85(repo, "package.json"));
   if (manifest === null) return [];
   let pkg;
   try {
@@ -72574,9 +72647,9 @@ function nodeDrafts(input, out) {
   const has2 = (name) => typeof scripts[name] === "string" && scripts[name].trim() !== "";
   let pm = "npm";
   let pmFrom = "no lockfile, so npm";
-  if (existsSync62(join84(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
-  else if (existsSync62(join84(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
-  else if (existsSync62(join84(repo, "package-lock.json")) || existsSync62(join84(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
+  if (existsSync62(join85(repo, "pnpm-lock.yaml"))) [pm, pmFrom] = ["pnpm", "pnpm-lock.yaml"];
+  else if (existsSync62(join85(repo, "yarn.lock"))) [pm, pmFrom] = ["yarn", "yarn.lock"];
+  else if (existsSync62(join85(repo, "package-lock.json")) || existsSync62(join85(repo, "npm-shrinkwrap.json"))) pmFrom = "package-lock.json";
   else {
     const declared = typeof pkg.packageManager === "string" ? /^(npm|pnpm|yarn)@/.exec(pkg.packageManager)?.[1] : void 0;
     if (declared === "pnpm" || declared === "yarn") [pm, pmFrom] = [declared, "package.json packageManager"];
@@ -72585,10 +72658,10 @@ function nodeDrafts(input, out) {
     out.skip("node", `package.json declares checks, but ${pm} (chosen from ${pmFrom}) was not found on PATH`);
     return [];
   }
-  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync62(join84(repo, "pnpm-workspace.yaml"));
+  const workspaceDeclared = Array.isArray(pkg.workspaces) || typeof pkg.workspaces === "object" && pkg.workspaces !== null || existsSync62(join85(repo, "pnpm-workspace.yaml"));
   const nestedManifests = files.filter((f) => f.endsWith("package.json") && f !== "package.json" && !f.split("/").includes("node_modules"));
   const nestedHas = (name) => nestedManifests.some((f) => {
-    const t = read(join84(repo, f));
+    const t = read(join85(repo, f));
     if (t === null) return false;
     try {
       const s = JSON.parse(t).scripts;
@@ -72622,7 +72695,7 @@ function nodeDrafts(input, out) {
   const typed = script("typecheck", ["typecheck", "type-check", "check-types"], "typecheck", TIMEOUT.typecheck);
   if (!typed) {
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (existsSync62(join84(repo, "tsconfig.json")) && "typescript" in deps) {
+    if (existsSync62(join85(repo, "tsconfig.json")) && "typescript" in deps) {
       const tsc = pm === "npm" ? ["npx", "--no-install", "tsc", "--noEmit"] : pm === "pnpm" ? ["pnpm", "exec", "tsc", "--noEmit"] : ["yarn", "tsc", "--noEmit"];
       drafts.push({ name: "typecheck", command: tsc, category: "typecheck", timeout_seconds: TIMEOUT.typecheck, reason: `tsconfig.json and the typescript dependency (${pm}, from ${pmFrom})` });
     }
@@ -72636,7 +72709,7 @@ function nodeDrafts(input, out) {
 function dotnetTestProjects(repo, projects) {
   const found = [];
   for (const p of projects.slice(0, MAX_PROJECT_READS)) {
-    const text2 = read(join84(repo, p)) ?? "";
+    const text2 = read(join85(repo, p)) ?? "";
     if (/Microsoft\.NET\.Test\.Sdk/i.test(text2) || /<IsTestProject>\s*true/i.test(text2) || /tests?\.[cfv]sproj$/i.test(basename23(p))) found.push(p);
   }
   return found;
@@ -72678,19 +72751,19 @@ function dotnetDrafts(input, out) {
 }
 function pythonDrafts(input, out) {
   const { repo, files, pathEnv } = input;
-  const pyproject = read(join84(repo, "pyproject.toml"));
-  const setupCfg = read(join84(repo, "setup.cfg"));
-  const toxIni = read(join84(repo, "tox.ini"));
+  const pyproject = read(join85(repo, "pyproject.toml"));
+  const setupCfg = read(join85(repo, "setup.cfg"));
+  const toxIni = read(join85(repo, "tox.ini"));
   const rootFiles = files.filter((f) => !f.includes("/"));
-  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join84(repo, f)) ?? "");
+  const requirements = rootFiles.filter((f) => /^requirements.*\.(txt|in)$/i.test(f)).map((f) => read(join85(repo, f)) ?? "");
   const markers = ["pyproject.toml", "setup.cfg", "tox.ini", "pytest.ini", "mypy.ini", "ruff.toml", ".flake8"];
-  if (!markers.some((m) => existsSync62(join84(repo, m)))) return [];
+  if (!markers.some((m) => existsSync62(join85(repo, m)))) return [];
   const listed3 = (name) => {
     const re = new RegExp(`(^|[^\\w-])${name}([^\\w-]|$)`, "im");
     return [pyproject, setupCfg, toxIni, ...requirements].some((t) => t !== null && re.test(t));
   };
   const section = (text2, re) => text2 !== null && re.test(text2);
-  const exists = (f) => existsSync62(join84(repo, f));
+  const exists = (f) => existsSync62(join85(repo, f));
   const declared = {
     pytest: exists("pytest.ini") ? "pytest.ini" : section(pyproject, /^\[tool\.pytest/m) ? "pyproject.toml" : section(setupCfg, /^\[tool:pytest\]/m) ? "setup.cfg" : section(toxIni, /^\[pytest\]/m) ? "tox.ini" : listed3("pytest") ? "the declared dependencies" : null,
     ruff: exists("ruff.toml") ? "ruff.toml" : exists(".ruff.toml") ? ".ruff.toml" : section(pyproject, /^\[tool\.ruff/m) ? "pyproject.toml" : listed3("ruff") ? "the declared dependencies" : null,
@@ -72723,8 +72796,8 @@ function goWorkModules(text2) {
 }
 function goDrafts(input, out) {
   const { repo, pathEnv } = input;
-  const work = read(join84(repo, "go.work"));
-  if (!existsSync62(join84(repo, "go.mod")) && work === null) return [];
+  const work = read(join85(repo, "go.work"));
+  if (!existsSync62(join85(repo, "go.mod")) && work === null) return [];
   if (which("go", pathEnv) === null) {
     out.skip("go", "the repository has a Go module, but go was not found on PATH");
     return [];
@@ -72732,7 +72805,7 @@ function goDrafts(input, out) {
   const modules = work === null ? [] : goWorkModules(work);
   const patterns = modules.length > 0 ? modules.map((m) => `./${m}/...`) : ["./..."];
   const reason = modules.length > 0 ? `go.work lists ${modules.length} module(s), so one root command covers them` : "go.mod";
-  if (modules.length === 0 && !existsSync62(join84(repo, "go.mod"))) {
+  if (modules.length === 0 && !existsSync62(join85(repo, "go.mod"))) {
     out.skip("go", "go.work names no module directory and there is no root go.mod");
     return [];
   }
@@ -72744,7 +72817,7 @@ function goDrafts(input, out) {
 }
 async function rustDrafts(input, out) {
   const { repo, pathEnv } = input;
-  const manifest = read(join84(repo, "Cargo.toml"));
+  const manifest = read(join85(repo, "Cargo.toml"));
   if (manifest === null) return [];
   const cargo = which("cargo", pathEnv);
   if (cargo === null) {
@@ -72779,12 +72852,36 @@ async function detectChecks(input) {
     ["go", goDrafts(input, out)],
     ["rust", await rustDrafts(input, out)]
   ];
+  const docs = documentedCommands(input.repo, input.files);
+  const taken = /* @__PURE__ */ new Set();
+  for (const d of docs.commands) {
+    const key2 = `${d.ecosystem}/${d.category}`;
+    if (taken.has(key2)) continue;
+    const tool = d.command[0];
+    if (which(tool, input.pathEnv) === null) {
+      out.skip(d.ecosystem, `${d.source} documents ${d.command.join(" ")}, but ${tool} was not found on PATH`);
+      continue;
+    }
+    taken.add(key2);
+    const drafts = groups.find(([e]) => e === d.ecosystem)[1];
+    const i = drafts.findIndex((x) => x.category === d.category);
+    const derived = i >= 0 ? drafts[i] : null;
+    const draft = {
+      name: derived?.name ?? DRAFT_NAME[d.category],
+      command: d.command,
+      category: d.category,
+      timeout_seconds: derived?.timeout_seconds ?? CATEGORY_TIMEOUT[d.category],
+      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(" ")} from the manifests` : ""}`
+    };
+    if (derived) drafts[i] = draft;
+    else drafts.push(draft);
+  }
   const active = groups.filter(([, d]) => d.length > 0);
   const mixed = active.length > 1;
   for (const [ecosystem, drafts] of active) {
     for (const { name, ...rest } of drafts) out.add({ id: mixed ? `${ecosystem}-${name}` : name, ecosystem, ...rest });
   }
-  return { proposed: out.proposed, notProposed: out.notProposed };
+  return { proposed: out.proposed, notProposed: out.notProposed, readDocs: docs.read };
 }
 function renderChecksYaml(proposed) {
   let text2 = "";
@@ -72802,16 +72899,43 @@ function renderChecksYaml(proposed) {
   }
   return text2;
 }
-var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON;
+var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, TOOL_ECOSYSTEM, CATEGORY_WORDS, DRAFT_NAME, CATEGORY_TIMEOUT, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON;
 var init_check_detect = __esm({
   "src/cli/check-detect.ts"() {
     "use strict";
     init_exec();
     init_util();
+    init_prompt();
     TIMEOUT = { lint: 300, typecheck: 300, nodeTest: 900, nodeBuild: 600, compile: 900, rustBuild: 1200, rustTest: 1200, rustLint: 900, pyType: 600 };
     MAX_READ_BYTES = 256 * 1024;
     MAX_PROJECT_READS = 200;
     MAX_TARGETS2 = 3;
+    TOOL_ECOSYSTEM = {
+      npm: "node",
+      pnpm: "node",
+      yarn: "node",
+      npx: "node",
+      dotnet: "dotnet",
+      pytest: "python",
+      python: "python",
+      python3: "python",
+      ruff: "python",
+      mypy: "python",
+      flake8: "python",
+      tox: "python",
+      uv: "python",
+      poetry: "python",
+      go: "go",
+      cargo: "rust"
+    };
+    CATEGORY_WORDS = [
+      ["typecheck", /* @__PURE__ */ new Set(["typecheck", "type-check", "check-types", "tsc", "mypy", "pyright"])],
+      ["lint", /* @__PURE__ */ new Set(["lint", "eslint", "ruff", "flake8", "clippy", "vet"])],
+      ["test", /* @__PURE__ */ new Set(["test", "tests", "vitest", "jest", "mocha", "pytest"])],
+      ["build", /* @__PURE__ */ new Set(["build"])]
+    ];
+    DRAFT_NAME = { test: "unit-tests", lint: "lint", typecheck: "typecheck", build: "build" };
+    CATEGORY_TIMEOUT = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
     Collector = class {
       proposed = [];
       notProposed = [];
@@ -72829,7 +72953,7 @@ var init_check_detect = __esm({
 
 // src/cli/commands/init.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync63, mkdirSync as mkdirSync25, readFileSync as readFileSync41, realpathSync as realpathSync23, writeFileSync as writeFileSync12 } from "node:fs";
-import { dirname as dirname40, join as join85 } from "node:path";
+import { dirname as dirname40, join as join86 } from "node:path";
 function reviewPolicyProposal(codexEligible) {
   return codexEligible ? "review: Codex reviews independently when it is usable (review.providers: [codex]); when it is not, Claude reviews in a separate session and every report says the review was not independent and why (review.when_unavailable: claude). Set review.when_unavailable to ask to be asked first, or to block to require an independent reviewer." : REVIEW_POLICY_PROPOSAL;
 }
@@ -72844,7 +72968,7 @@ function declaredCheckIds(path) {
   }
 }
 function templatePath() {
-  return join85(orbitInstallDir(), "templates", "config.yaml");
+  return join86(orbitInstallDir(), "templates", "config.yaml");
 }
 function templateText() {
   if (true) return `# Orbit configuration (.orbit/config.yaml)
@@ -73418,15 +73542,15 @@ async function seedModels(ctx, repo) {
     const registry = new ModelRegistry(db, ctx.clock).useSharedCatalog(sharedCatalogPath(ctx.orbitHome));
     const seeded = registry.seed();
     notes.push(`model registry seeded with ${seeded.inserted.length + seeded.updated.length} shipped model(s)`);
-    for (const [id, pc] of Object.entries(config.providers)) {
+    for (const [id2, pc] of Object.entries(config.providers)) {
       let kind;
       try {
-        kind = providerKind(id);
+        kind = providerKind(id2);
       } catch {
         continue;
       }
       if (kind !== "codex") continue;
-      const outcome = await readCodexCatalog(registry, id, pc.command, repo, ctx, 3e4);
+      const outcome = await readCodexCatalog(registry, id2, pc.command, repo, ctx, 3e4);
       notes.push(outcome.change !== void 0 ? outcome.note : `${outcome.note}; run ${orbitHint("models refresh")} once it works`);
     }
   } catch (err) {
@@ -73439,7 +73563,7 @@ async function seedModels(ctx, repo) {
 async function initCommand(args, ctx) {
   args.expect(0);
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const configPath = join85(repo, ".orbit", "config.yaml");
+  const configPath = join86(repo, ".orbit", "config.yaml");
   let config;
   let derivedPaths = [];
   let noScopeWarning;
@@ -73448,7 +73572,7 @@ async function initCommand(args, ctx) {
   let baseBranch = null;
   let baseBranchNote = null;
   let baseBranchWarning = null;
-  let checkProposal = { proposed: [], notProposed: [] };
+  let checkProposal = { proposed: [], notProposed: [], readDocs: [] };
   let unreadDocs = [];
   if (existsSync63(configPath)) config = "exists";
   else {
@@ -73487,7 +73611,7 @@ ${block2}`);
       if (err.code !== "EEXIST") throw err;
       config = "exists";
     }
-    if (config === "created" && checkProposal.proposed.length > 0) unreadDocs = ["CLAUDE.md", "AGENTS.md", "AGENTS.override.md"].filter((f) => files.includes(f));
+    if (config === "created" && checkProposal.proposed.length > 0) unreadDocs = ["AGENTS.override.md"].filter((f) => files.includes(f));
   }
   const excludePath = await excludeFile(ctx, repo);
   const sharedAcrossWorktrees = await inLinkedWorktree(ctx, repo);
@@ -73519,7 +73643,7 @@ ${block2}`);
   if (config === "created") {
     if (noScopeWarning !== void 0) warnings.push(noScopeWarning);
     if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
-    if (unreadDocs.length > 0) warnings.push(`the proposed checks come from manifests only; init did not read ${unreadDocs.join(", ")}: compare the commands documented there and edit .orbit/config.yaml`);
+    if (unreadDocs.length > 0) warnings.push(`init does not read ${unreadDocs.join(", ")}: compare the commands documented there with the proposed checks and edit .orbit/config.yaml`);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
   const models = await seedModels(ctx, repo);
@@ -73533,7 +73657,7 @@ ${block2}`);
   } else defined = declaredCheckIds(configPath);
   const reviewPolicy = reviewPolicyProposal(codexEligible);
   if (args.bool("json")) {
-    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...advice !== null ? { commit_advice: advice } : {}, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {} }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === "created" ? reviewPolicy : null, config: { path: configPath, status: config, ...advice !== null ? { commit_advice: advice } : {}, ...derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}, ...protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}, ...excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}, ...baseBranch !== null ? { base_branch: baseBranch } : {} }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...checkProposal.readDocs.length > 0 ? { read_docs: checkProposal.readDocs } : {}, ...unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {} }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === "created" ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -73544,6 +73668,7 @@ ${block2}`);
   if (config === "created" && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(", ")} (CI pipeline and build-system definitions found in the repository)`);
   if (config === "created" && derivedPaths.length > 0) line(ctx.io, "Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.");
   if (config === "created") {
+    if (checkProposal.readDocs.length > 0) line(ctx.io, `read ${checkProposal.readDocs.join(", ")} for the commands the repository documents`);
     if (checkProposal.proposed.length > 0) {
       line(ctx.io, `checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):`);
       for (const c of checkProposal.proposed) line(ctx.io, `  ${c.id}: ${c.command.join(" ")} (${c.category}, ${c.timeout_seconds}s): ${c.reason}`);
@@ -73612,14 +73737,14 @@ async function checkRunnerCommand(rawArgs, ctx) {
   }
   mkdirSync26(runDir2, { recursive: true });
   const shim = ensureShim(runDir2);
-  return new Promise((resolve29) => {
+  return new Promise((resolve30) => {
     const child = spawn6(process.execPath, [shim, checkDir2], { stdio: "inherit", env: process.env });
     child.on("error", (err) => {
       ctx.io.err(`check-runner: cannot start the check shim: ${err.message}
 `);
-      resolve29(EXIT.FAILURE);
+      resolve30(EXIT.FAILURE);
     });
-    child.on("exit", (code2, signal) => resolve29(code2 ?? (signal ? 128 : EXIT.FAILURE)));
+    child.on("exit", (code2, signal) => resolve30(code2 ?? (signal ? 128 : EXIT.FAILURE)));
   });
 }
 var init_internal = __esm({
@@ -73740,9 +73865,9 @@ var init_ingest = __esm({
 
 // src/cli/commands/learn.ts
 import { existsSync as existsSync64, mkdirSync as mkdirSync27, readFileSync as readFileSync42, statSync as statSync17 } from "node:fs";
-import { basename as basename24, isAbsolute as isAbsolute30, join as join86, relative as relative11, resolve as resolve26 } from "node:path";
+import { basename as basename24, isAbsolute as isAbsolute30, join as join87, relative as relative11, resolve as resolve26 } from "node:path";
 function knowledgePath(ctx, repo, global) {
-  return global ? join86(ctx.orbitHome, "knowledge.sqlite") : join86(repo, ".orbit", "knowledge.sqlite");
+  return global ? join87(ctx.orbitHome, "knowledge.sqlite") : join87(repo, ".orbit", "knowledge.sqlite");
 }
 function openExisting(ctx, repo, global) {
   const path = knowledgePath(ctx, repo, global);
@@ -73872,12 +73997,12 @@ async function runIngestCurator(ctx, repo, config, prompt) {
     const deps = factory({ repoRoot: repo, db, clock: ctx.clock, config, env: ctx.env, orbitHome: ctx.orbitHome });
     if (!deps.adapters.claude) throw new OrbitError("PROVIDER_UNAVAILABLE", "no claude provider is configured; the curator runs on Claude");
     deps.registry.seed();
-    const id = `ingest-${ctx.clock.now().toString(36)}`;
-    const dir = join86(ctx.orbitHome, "ingest", repoKey(repo), id);
+    const id2 = `ingest-${ctx.clock.now().toString(36)}`;
+    const dir = join87(ctx.orbitHome, "ingest", repoKey(repo), id2);
     mkdirSync27(dir, { recursive: true, mode: 448 });
-    const snap = snapshotPolicy(config, { runId: id, repoRoot: repo, runDir: dir, clock: ctx.clock });
+    const snap = snapshotPolicy(config, { runId: id2, repoRoot: repo, runDir: dir, clock: ctx.clock });
     const out = await runCurator(
-      { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
+      { deps, clock: ctx.clock, snapshot: snap.snapshot, policyPath: snap.path, policyHash: snap.hash, runId: id2, dir, budgetUsd: config.knowledge.curator_budget_usd, env: ctx.env, homeDir: ctx.homeDir },
       { prompt }
     );
     return { output: out.output, model: out.model };
@@ -73909,8 +74034,8 @@ async function learnIngestCommand(args, ctx) {
     }
   } else ({ output, model } = await runIngestCurator(ctx, repo, config, task.prompt));
   const result2 = acceptIngestOutput(output, source, ctx.clock, model ? { curatorModel: model } : {});
-  mkdirSync27(join86(repo, ".orbit"), { recursive: true });
-  const store = KnowledgeStore.open(join86(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  mkdirSync27(join87(repo, ".orbit"), { recursive: true });
+  const store = KnowledgeStore.open(join87(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const created = [];
   const merged = [];
   const rejected = [...result2.rejected];
@@ -73938,13 +74063,13 @@ function overlayMetrics(m) {
   return m ? `pass ${(m.verified_pass_rate * 100).toFixed(0)}%, attempts ${m.mean_attempts.toFixed(1)}, cost ${m.mean_cost_usd === null ? "unknown" : `$${m.mean_cost_usd.toFixed(2)}`}, false-pass ${(m.false_pass_rate * 100).toFixed(0)}%` : "-";
 }
 async function learnOverlaysCommand(args, ctx) {
-  const [action, id] = args.positionals;
+  const [action, id2] = args.positionals;
   const repo = await resolveRepo(ctx, args.str("repo"));
   const store = openExisting(ctx, repo, args.bool("global"));
   try {
     if (action === "rollback") {
-      if (!id) throw new UsageError("an overlay id is required", "orbit learn overlays rollback <overlay-id> [--reason text]");
-      const r = rollbackOverlay(store, id, args.str("reason") ?? `rolled back by ${ctx.user}`);
+      if (!id2) throw new UsageError("an overlay id is required", "orbit learn overlays rollback <overlay-id> [--reason text]");
+      const r = rollbackOverlay(store, id2, args.str("reason") ?? `rolled back by ${ctx.user}`);
       if (args.bool("json")) json(ctx.io, r);
       else line(ctx.io, `overlay ${r.rolledBack.id} (${r.rolledBack.role} v${r.rolledBack.version}) rolled back${r.restored ? `; restored ${r.restored.id} (v${r.restored.version})` : "; the base prompt is in force again"}`);
       return EXIT.OK;
@@ -73986,7 +74111,7 @@ async function learnEvalCommand(args, ctx) {
   if (!(config.knowledge.eval_budget_usd > 0)) throw new OrbitError("CONFIG_INVALID", "knowledge.eval_budget_usd is 0, which disables replay evaluations and with them automatic overlay adoption; set a budget to evaluate");
   const metricsFile = args.str("metrics");
   const db = openState(repo);
-  const store = KnowledgeStore.open(join86(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
+  const store = KnowledgeStore.open(join87(repo, ".orbit", "knowledge.sqlite"), { clock: ctx.clock });
   const runner = metricsFile ? null : ctx.seams.evalRunner ? budgeted(ctx.seams.evalRunner, config.knowledge.eval_budget_usd) : new ReplayEvalRunner({
     repoRoot: repo,
     config,
@@ -74114,7 +74239,7 @@ var init_learn2 = __esm({
 
 // src/cli/commands/logs.ts
 import { closeSync as closeSync10, existsSync as existsSync65, fstatSync as fstatSync5, openSync as openSync10, readSync as readSync6, statSync as statSync18 } from "node:fs";
-import { dirname as dirname41, join as join87 } from "node:path";
+import { dirname as dirname41, join as join88 } from "node:path";
 function readTail(path, lines) {
   const size = statSync18(path).size;
   const fd = openSync10(path, "r");
@@ -74188,13 +74313,13 @@ async function logsCommand(args, ctx) {
         sources.push({ ...s, offset: 0 });
       };
       if (wantController) {
-        add({ label: "controller", kind: "controller", path: join87(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
-        add({ label: "controller", kind: "controller", path: join87(runDir2, "logs", "controller.jsonl") });
+        add({ label: "controller", kind: "controller", path: join88(ctx.orbitHome, "logs", "controller.jsonl"), runId: run.id });
+        add({ label: "controller", kind: "controller", path: join88(runDir2, "logs", "controller.jsonl") });
       }
       if (wantWorkers) {
         for (const w of listWorkers(db, { runId: run.id })) {
           if (args.str("worker") && w.id !== args.str("worker")) continue;
-          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join87(w.workerDir, f) });
+          for (const f of ["log.jsonl", "stderr.log", "shim.log"]) add({ label: `${w.id}${f === "log.jsonl" ? "" : `:${f.split(".")[0]}`}`, kind: "worker", path: join88(w.workerDir, f) });
         }
       }
     };
@@ -74267,11 +74392,11 @@ var init_logs = __esm({
 
 // src/cli/commands/policy.ts
 async function policyShowCommand(args, ctx) {
-  const [id] = args.expect(1);
-  if (!id) throw new UsageError("a run id is required", "orbit policy show <run-id>");
+  const [id2] = args.expect(1);
+  if (!id2) throw new UsageError("a run id is required", "orbit policy show <run-id>");
   const repo = await resolveRepo(ctx, args.str("repo"));
   return withState(repo, (db) => {
-    const run = findRunByPrefix(db, id);
+    const run = findRunByPrefix(db, id2);
     const snap = verifySnapshot(run.policyPath, run.policyHash);
     const amendments = listAmendments(db, run.id).map((a) => ({ id: a.id, status: a.status, field: a.record.field, reason: a.record.reason, approved_by: a.approvedBy }));
     if (args.bool("json")) {
@@ -74407,18 +74532,145 @@ var init_release3 = __esm({
   }
 });
 
+// src/observability/otel.ts
+function inputTokens(provider, u) {
+  if (u.input === null) return null;
+  return u.input + (u.cacheWrite ?? 0) + (inputIncludesCacheRead(provider) ? 0 : u.cacheRead ?? 0);
+}
+function workerSpan(w, u, traceId, parent, runEnd) {
+  const family = providerFamily(w.provider);
+  const attributes = [
+    str7("gen_ai.operation.name", "invoke_agent"),
+    str7("gen_ai.provider.name", (family && GENAI_PROVIDER[family]) ?? w.provider),
+    str7("gen_ai.agent.name", w.role),
+    str7("gen_ai.agent.id", w.id)
+  ];
+  if (w.model) attributes.push(str7("gen_ai.request.model", w.model));
+  const input = u ? inputTokens(w.provider, u) : null;
+  if (input !== null) attributes.push(int3("gen_ai.usage.input_tokens", input));
+  if (u?.output != null) attributes.push(int3("gen_ai.usage.output_tokens", u.output));
+  if (u?.cost != null) attributes.push({ key: "orbit.cost_usd", value: { doubleValue: u.cost } });
+  attributes.push(str7("orbit.cost_source", u?.source ?? "unavailable"));
+  attributes.push(str7("orbit.worker.state", w.state));
+  if (w.attempt !== null) attributes.push(int3("orbit.attempt", w.attempt));
+  const failed = w.state === "FAILED" || w.state === "LOST";
+  if (failed) attributes.push(str7("error.type", w.resultStatus ?? w.state.toLowerCase()));
+  const start = w.spawnedAt ?? w.createdAt;
+  return {
+    traceId,
+    spanId: id(`span:${w.id}`, 16),
+    parentSpanId: parent,
+    name: `invoke_agent ${w.role}`,
+    kind: 3,
+    startTimeUnixNano: nanos(start),
+    endTimeUnixNano: nanos(Math.max(start, w.endedAt ?? runEnd)),
+    attributes,
+    status: { code: failed ? 2 : 0 }
+  };
+}
+function exportRunOtel(db, run, now) {
+  const traceId = id(`trace:${run.id}`, 32);
+  const rootId = id(`span:${run.id}`, 16);
+  const runEnd = run.endedAt ?? now;
+  const rows = db.all(
+    `SELECT worker_id, SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache_read, SUM(cache_write_tokens) AS cache_write,
+            SUM(cost_usd) AS cost, SUM(cost_usd IS NOT NULL AND cost_source != 'unavailable') AS priced, SUM(cost_source = 'estimated') AS estimated, COUNT(*) AS n
+       FROM usage WHERE run_id = ? AND worker_id IS NOT NULL GROUP BY worker_id`,
+    run.id
+  );
+  const usage = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const complete2 = r.priced === r.n;
+    usage.set(r.worker_id, { input: r.input, output: r.output, cacheRead: r.cache_read, cacheWrite: r.cache_write, cost: complete2 ? r.cost : null, source: !complete2 ? "unavailable" : r.estimated > 0 ? "estimated" : "reported" });
+  }
+  const root = {
+    traceId,
+    spanId: rootId,
+    name: "orbit run",
+    kind: 1,
+    startTimeUnixNano: nanos(run.createdAt),
+    endTimeUnixNano: nanos(Math.max(run.createdAt, runEnd)),
+    attributes: [str7("orbit.run.id", run.id), str7("orbit.run.state", run.state), str7("orbit.run.mode", run.mode), str7("orbit.version", orbitVersionOf(run)), ...run.failureClass ? [str7("orbit.failure_class", run.failureClass)] : []],
+    status: { code: 0 }
+  };
+  const spans = [root, ...listWorkers(db, { runId: run.id }).map((w) => workerSpan(w, usage.get(w.id), traceId, rootId, runEnd))];
+  return {
+    resourceSpans: [
+      {
+        resource: { attributes: [str7("service.name", "orbit"), str7("service.version", ORBIT_VERSION)] },
+        schemaUrl: OTEL_SCHEMA_URL,
+        scopeSpans: [{ scope: { name: "orbit", version: ORBIT_VERSION }, schemaUrl: OTEL_SCHEMA_URL, spans }]
+      }
+    ]
+  };
+}
+var GENAI_SEMCONV_VERSION, OTEL_SCHEMA_URL, GENAI_PROVIDER, str7, int3, nanos, id;
+var init_otel = __esm({
+  "src/observability/otel.ts"() {
+    "use strict";
+    init_run_store();
+    init_workers();
+    init_pricing();
+    init_config();
+    init_hash();
+    init_version();
+    GENAI_SEMCONV_VERSION = "1.37.0";
+    OTEL_SCHEMA_URL = `https://opentelemetry.io/schemas/${GENAI_SEMCONV_VERSION}`;
+    GENAI_PROVIDER = { claude: "anthropic", codex: "openai", muse: "meta" };
+    str7 = (key2, v) => ({ key: key2, value: { stringValue: v } });
+    int3 = (key2, v) => ({ key: key2, value: { intValue: String(Math.round(v)) } });
+    nanos = (ms) => `${Math.round(ms)}000000`;
+    id = (text2, hexChars) => sha256(text2).replace(/^sha256:/, "").slice(0, hexChars);
+  }
+});
+
+// src/cli/commands/export.ts
+import { resolve as resolve27 } from "node:path";
+async function exportCommand(args, ctx) {
+  const [runRef] = args.expect(1);
+  if (!args.bool("otel")) throw new UsageError("name the format to export: --otel", EXPORT_USAGE);
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  return withState(repo, (db) => {
+    const run = findRunByPrefix(db, runRef);
+    const text2 = `${JSON.stringify(exportRunOtel(db, run, ctx.clock.now()))}
+`;
+    const out = args.str("out");
+    if (out) {
+      atomicWrite(resolve27(ctx.cwd, out), text2);
+      line(ctx.io, `exported run ${run.id} as OpenTelemetry traces (semantic conventions ${GENAI_SEMCONV_VERSION}) to ${resolve27(ctx.cwd, out)}`);
+    } else ctx.io.out(text2);
+    return EXIT.OK;
+  });
+}
+var EXPORT_USAGE, EXPORT_OPTIONS;
+var init_export = __esm({
+  "src/cli/commands/export.ts"() {
+    "use strict";
+    init_fsx();
+    init_otel();
+    init_context();
+    init_exit();
+    init_io();
+    EXPORT_USAGE = "orbit export <run-id> --otel [--out file]";
+    EXPORT_OPTIONS = {
+      otel: { type: "boolean", description: `OpenTelemetry traces (OTLP/JSON) under the GenAI semantic conventions ${GENAI_SEMCONV_VERSION}` },
+      out: { type: "string", description: "write the export here instead of standard output", valueName: "file" }
+    };
+  }
+});
+
 // src/cli/commands/report.ts
 import { existsSync as existsSync66, readFileSync as readFileSync43 } from "node:fs";
-import { dirname as dirname42, join as join88 } from "node:path";
+import { dirname as dirname42, join as join89 } from "node:path";
 async function reportCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
   if (args.bool("learning")) return withState(repo, (db) => learningReport(ctx, repo, db, args.bool("json")));
-  const [id] = args.expect(1);
+  const [id2] = args.expect(1);
   return withState(repo, (db) => {
-    const run = findRunByPrefix(db, id);
+    const run = findRunByPrefix(db, id2);
     const runDir2 = dirname42(run.policyPath);
-    const finalMd = join88(runDir2, "final.md");
-    const finalJson = join88(runDir2, "final.json");
+    const finalMd = join89(runDir2, "final.md");
+    const finalJson = join89(runDir2, "final.json");
     const asJson = args.bool("json");
     if (isTerminal(run.state) && !args.bool("interim") && existsSync66(finalMd)) {
       if (asJson) {
@@ -74459,7 +74711,7 @@ function snapshotOrNull(path, hash) {
 function learningReport(ctx, repo, db, asJson) {
   const runs = db.all("SELECT id, state, created_at FROM runs WHERE state IN ('SUCCEEDED','EXHAUSTED','IMPOSSIBLE','BLOCKED') ORDER BY created_at");
   const windows = [{ label: "base prompt", from: 0, to: Number.POSITIVE_INFINITY }];
-  const kPath = join88(repo, ".orbit", "knowledge.sqlite");
+  const kPath = join89(repo, ".orbit", "knowledge.sqlite");
   const overlays = [];
   if (existsSync66(kPath)) {
     const store = KnowledgeStore.open(kPath, { clock: ctx.clock });
@@ -74531,7 +74783,7 @@ var init_report4 = __esm({
 // src/cli/admission.ts
 import { existsSync as existsSync67 } from "node:fs";
 import { createRequire as createRequire5 } from "node:module";
-import { join as join89 } from "node:path";
+import { join as join90 } from "node:path";
 async function admitRun(ctx, input) {
   const check = ctx.seams.admission ?? checkAdmission;
   const refusal2 = await check(ctx, input);
@@ -74550,7 +74802,7 @@ async function repositoryHasCommits(repo) {
 }
 function playwrightInstalled(repo) {
   try {
-    createRequire5(join89(repo, "package.json")).resolve("@playwright/test/package.json");
+    createRequire5(join90(repo, "package.json")).resolve("@playwright/test/package.json");
     return true;
   } catch {
     return false;
@@ -74577,11 +74829,11 @@ async function environmentProblems(ctx, input) {
       isolation = { error: err instanceof Error ? err.message : String(err) };
     }
     const capabilities = {};
-    for (const [id, adapter] of Object.entries(deps.adapters)) {
+    for (const [id2, adapter] of Object.entries(deps.adapters)) {
       try {
-        capabilities[id] = await adapter.discoverCapabilities();
+        capabilities[id2] = await adapter.discoverCapabilities();
       } catch (err) {
-        capabilities[id] = { provider: id, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: err instanceof Error ? err.message : String(err) };
+        capabilities[id2] = { provider: id2, available: false, version: null, models: [], structuredOutput: false, readOnlySandbox: false, usageReporting: "none", costReporting: false, detail: err instanceof Error ? err.message : String(err) };
       }
     }
     const required = /* @__PURE__ */ new Set([IMPLEMENTER_PROVIDER]);
@@ -74681,7 +74933,7 @@ var init_admission = __esm({
 
 // src/cli/commands/spec.ts
 import { existsSync as existsSync68, readFileSync as readFileSync44, statSync as statSync19 } from "node:fs";
-import { resolve as resolve27 } from "node:path";
+import { resolve as resolve28 } from "node:path";
 async function issueReader(ctx, repo, config) {
   return ctx.seams.issues ? ctx.seams.issues(repo, config) : issueReaderFor(repo, config, ctx.env);
 }
@@ -74703,7 +74955,7 @@ async function specCheckCommand(args, ctx) {
     name = `the body of issue ${issue.repo}#${issue.number}`;
     source = { issue: { repo: issue.repo, number: issue.number, updated_at: issue.updatedAt } };
   } else {
-    const path = resolve27(ctx.cwd, target);
+    const path = resolve28(ctx.cwd, target);
     if (!existsSync68(path) || !statSync19(path).isFile()) throw new OrbitError("NOT_FOUND", `no such file: ${target} (an issue is named by its number, #number, owner/repo#number or URL)`);
     if (statSync19(path).size > FILE_MAX_BYTES) throw new OrbitError("SCHEMA_INVALID", `${target} is larger than ${FILE_MAX_BYTES} bytes; that is not a spec`);
     body = readFileSync44(path, "utf8");
@@ -74714,7 +74966,7 @@ async function specCheckCommand(args, ctx) {
   const check = checkSpec(body);
   const scenarios = scenariosOf(check.parsed);
   if (args.bool("json")) {
-    json(ctx.io, { ok: check.ok, ...source, problems: check.problems, stories: check.parsed.stories.length, scenarios: scenarios.map((s) => s.key), requirements: check.parsed.requirements.map((r) => r.id), success_criteria: check.parsed.successCriteria.map((c) => c.id), implementation_notes: check.parsed.hints !== null });
+    json(ctx.io, { schema: "orbit.spec-check/1", ok: check.ok, ...source, problems: check.problems, stories: check.parsed.stories.length, scenarios: scenarios.map((s) => s.key), requirements: check.parsed.requirements.map((r) => r.id), success_criteria: check.parsed.successCriteria.map((c) => c.id), implementation_notes: check.parsed.hints !== null });
   } else if (check.ok) {
     line(ctx.io, `${prefix}spec check passed: ${count2(check.parsed.stories.length, "story", "stories")}, ${count2(scenarios.length, "acceptance scenario")}, ${count2(check.parsed.requirements.length, "requirement")}, ${count2(check.parsed.successCriteria.length, "success criterion", "success criteria")}`);
   } else {
@@ -74747,7 +74999,7 @@ var init_spec2 = __esm({
 
 // src/cli/commands/run.ts
 import { existsSync as existsSync69 } from "node:fs";
-import { join as join90 } from "node:path";
+import { join as join91 } from "node:path";
 async function runCommand(args, ctx) {
   const usage = RUN_USAGE;
   if (args.bool("foreground") && args.bool("detach")) throw new UsageError("--foreground and --detach cannot be combined", usage);
@@ -74831,7 +75083,7 @@ function refuseUnfinished(db, repo, goal, issue) {
   if (existing) throw new OrbitError("POLICY_DENIED", `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
   if (!issue) return;
   const taken = unfinished.find((r) => {
-    const g = readIssueGoal(join90(orbitDir(repo), "runs", r.id));
+    const g = readIssueGoal(join91(orbitDir(repo), "runs", r.id));
     return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
   });
   if (taken) throw new OrbitError("POLICY_DENIED", `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
@@ -74872,7 +75124,7 @@ var init_run = __esm({
 });
 
 // src/cli/commands/repair.ts
-import { resolve as resolve28 } from "node:path";
+import { resolve as resolve29 } from "node:path";
 function runArgv(args, goal) {
   const argv2 = ["--goal", goal];
   for (const name of ["repo", "mode", "policy"]) {
@@ -74937,7 +75189,7 @@ async function repairCommand(args, ctx) {
         line(ctx.io, `run ${after.id}: repairing failure ${fingerprint}; the controller writes the brief to ${brief}. Driving it in the foreground (Ctrl-C pauses it)`);
       }
       const policy = args.str("policy");
-      const config = loadConfig(repo, policy ? resolve28(ctx.cwd, policy) : void 0);
+      const config = loadConfig(repo, policy ? resolve29(ctx.cwd, policy) : void 0);
       const result2 = await driveForeground(ctx, { repoRoot: repo, config, db, runId: after.id, fromStart: false, json: args.bool("json") });
       return result2.exitCode;
     }
@@ -75087,7 +75339,7 @@ var init_backlog = __esm({
 
 // src/cli/commands/queue.ts
 import { existsSync as existsSync70 } from "node:fs";
-import { join as join91 } from "node:path";
+import { join as join92 } from "node:path";
 function labelOption(args, name, fallback, usage) {
   const v = (args.str(name) ?? fallback).trim();
   if (!LABEL3.test(v)) throw new UsageError(`--${name} must be a label name of 1 to 50 characters without commas, got ${JSON.stringify(v.slice(0, 60))}`, usage);
@@ -75115,11 +75367,11 @@ async function openQueue(args, ctx, usage, mode) {
   }
   return { repo, config, tracker, query: { parent: parent?.number ?? null, label }, humanLabel, base: config.repository.base_branch };
 }
-function runDirOf(repo, id) {
-  return join91(orbitDir(repo), "runs", id);
+function runDirOf(repo, id2) {
+  return join92(orbitDir(repo), "runs", id2);
 }
 function deliveryOf(runDir2) {
-  const d = readJsonIfExists(join91(runDir2, DELIVERY_FILE));
+  const d = readJsonIfExists(join92(runDir2, DELIVERY_FILE));
   const n2 = d?.pr?.number;
   return {
     branch: typeof d?.branch === "string" ? d.branch : null,
@@ -75290,7 +75542,7 @@ async function queueRunCommand(args, ctx) {
     closed: [],
     remaining: null
   };
-  const recordPath = join91(orbitDir(q.repo), QUEUE_DIR, `${record.id}.json`);
+  const recordPath = join92(orbitDir(q.repo), QUEUE_DIR, `${record.id}.json`);
   const save = () => atomicWriteJson(recordPath, record);
   const say = (event, text2, data = {}) => {
     if (asJson) ctx.io.out(`${JSON.stringify({ type: "queue", event, ...data })}
@@ -75432,7 +75684,7 @@ async function workIssue(ctx, q, record, issue, o) {
       o.say("run", `#${issue.number}: attempt ${n2} of ${o.attempts}, run ${run.id}`, { number: issue.number, attempt: n2, run_id: run.id });
       const result2 = await driveForeground(ctx, { repoRoot: q.repo, config, db, runId: run.id, fromStart: true, json: o.asJson });
       const runDir2 = runDirOf(q.repo, run.id);
-      const report2 = readJsonIfExists(join91(runDir2, "final.json"));
+      const report2 = readJsonIfExists(join92(runDir2, "final.json"));
       const cost = report2?.budget?.cost_usd;
       const open2 = listQuestions(db, run.id, { status: "open" }).length;
       const held = heldVerifiedCandidate(result2.run) !== null;
@@ -76137,8 +76389,8 @@ function renderRunStatus(s, now) {
 }
 async function statusCommand(args, ctx) {
   const repo = await resolveRepo(ctx, args.str("repo"));
-  const [id] = args.expect(0, 1);
-  if (id === void 0 && !existsSync71(stateDbPath(repo)) && initialised(repo)) {
+  const [id2] = args.expect(0, 1);
+  if (id2 === void 0 && !existsSync71(stateDbPath(repo)) && initialised(repo)) {
     if (args.bool("json")) json(ctx.io, { runs: [], controllers: [] });
     else line(ctx.io, 'no runs yet; start one with: orbit run --goal "..."');
     return EXIT.OK;
@@ -76146,8 +76398,8 @@ async function statusCommand(args, ctx) {
   return withState(repo, (db) => {
     pruneDeadControllers(db, ctx.clock);
     const now = ctx.clock.now();
-    if (id) {
-      const status2 = buildRunStatus(ctx, db, findRunByPrefix(db, id));
+    if (id2) {
+      const status2 = buildRunStatus(ctx, db, findRunByPrefix(db, id2));
       if (args.bool("json")) json(ctx.io, status2);
       else ctx.io.out(renderRunStatus(status2, now));
       return EXIT.OK;
@@ -76240,22 +76492,22 @@ function loadLookups(db, runId) {
   return l;
 }
 function describeRoute(d) {
-  const workKind = str7(d.work_kind) ?? "work";
-  const to = `${str7(d.provider) ?? "?"}/${str7(d.model) ?? "?"}`;
-  const effort = str7(d.effort);
+  const workKind = str8(d.work_kind) ?? "work";
+  const to = `${str8(d.provider) ?? "?"}/${str8(d.model) ?? "?"}`;
+  const effort = str8(d.effort);
   const ref3 = (v) => {
     const r = rec(v);
-    return `${str7(r.provider) ?? "?"}/${str7(r.model) ?? "?"}`;
+    return `${str8(r.provider) ?? "?"}/${str8(r.model) ?? "?"}`;
   };
   const escalated = d.escalated_from !== void 0 ? ref3(d.escalated_from) : null;
   const down = d.down_routed_from !== void 0 ? ref3(d.down_routed_from) : null;
   const just = rec(d.justification);
   const signals = (Array.isArray(just.signals) ? just.signals : []).map((s) => {
     const x = rec(s);
-    return `${str7(x.signal) ?? "signal"}${str7(x.detail) ? ` (${str7(x.detail)})` : ""}`;
+    return `${str8(x.signal) ?? "signal"}${str8(x.detail) ? ` (${str8(x.detail)})` : ""}`;
   });
   const evidence = list2(just.evidence);
-  const reason = str7(d.reason);
+  const reason = str8(d.reason);
   const parts = [];
   const head = escalated ? `${workKind}: escalated ${escalated} -> ${to}` : down ? `${workKind}: down-routed ${down} -> ${to}` : `${workKind} -> ${to}`;
   if (reason) parts.push(reason);
@@ -76287,8 +76539,8 @@ function describeBaselineClassification(kind, data) {
       g = { ids: [], keys: [], first };
       groups.push(g);
     }
-    g.ids.push(str7(c.check_id) ?? "?");
-    const key2 = str7(c.config_key);
+    g.ids.push(str8(c.check_id) ?? "?");
+    const key2 = str8(c.config_key);
     if (key2) g.keys.push(key2);
   }
   const parts = groups.map((g) => `${g.ids.join(", ")} classified as ${label}${g.keys.length > 0 ? ` (${g.keys.join(", ")})` : ""}, not a pre-existing failure${g.first ? `: ${JSON.stringify(g.first)}` : ""}`);
@@ -76345,17 +76597,17 @@ function generic(type, data) {
   return flat2 ? `${type}  ${flat2.length > 240 ? `${flat2.slice(0, 237)}...` : flat2}` : type;
 }
 function renderEvent(e, data, l) {
-  const candidateSeq = (id) => {
-    const c = typeof id === "string" ? l.candidates.get(id) : void 0;
+  const candidateSeq = (id2) => {
+    const c = typeof id2 === "string" ? l.candidates.get(id2) : void 0;
     return c ? String(c.seq) : "?";
   };
   switch (e.type) {
     case "run.created":
-      return { text: `run created in ${str7(data.mode) ?? "?"} mode${str7(data.environment) ? ` for environment ${str7(data.environment)}` : ""}${str7(data.orbit_version) ? ` by Orbit ${str7(data.orbit_version)}` : ""}` };
+      return { text: `run created in ${str8(data.mode) ?? "?"} mode${str8(data.environment) ? ` for environment ${str8(data.environment)}` : ""}${str8(data.orbit_version) ? ` by Orbit ${str8(data.orbit_version)}` : ""}` };
     case "state.transition": {
-      const cls = str7(data.failure_class);
-      const why = cls ? ` [${cls}${str7(data.failure_secondary) ? `, secondary ${str7(data.failure_secondary)}` : ""}]` : "";
-      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str7(data.reason) ? `: ${str7(data.reason).replace(/\s+/g, " ").trim()}` : ""}${why}` };
+      const cls = str8(data.failure_class);
+      const why = cls ? ` [${cls}${str8(data.failure_secondary) ? `, secondary ${str8(data.failure_secondary)}` : ""}]` : "";
+      return { text: `${e.from_state ?? "?"} -> ${e.to_state ?? "?"}${str8(data.reason) ? `: ${str8(data.reason).replace(/\s+/g, " ").trim()}` : ""}${why}` };
     }
     case "run.paused":
       return { text: `run paused by ${e.actor}` };
@@ -76364,101 +76616,101 @@ function renderEvent(e, data, l) {
     case "run.cancel-requested":
       return { text: `cancellation requested by ${e.actor}` };
     case "run.resumed":
-      return { text: `run resumed from ${str7(data.from) ?? "?"} to ${str7(data.to) ?? "?"} by ${e.actor}${data.forced === true ? " (forced past open questions)" : ""}` };
+      return { text: `run resumed from ${str8(data.from) ?? "?"} to ${str8(data.to) ?? "?"} by ${e.actor}${data.forced === true ? " (forced past open questions)" : ""}` };
     case "run.repair-requested":
-      return { text: `repair requested by ${e.actor} from ${str7(data.from) ?? "?"}${str7(data.fingerprint) ? `, failure ${str7(data.fingerprint)}` : ""}` };
+      return { text: `repair requested by ${e.actor} from ${str8(data.from) ?? "?"}${str8(data.fingerprint) ? `, failure ${str8(data.fingerprint)}` : ""}` };
     case "lease.takeover":
-      return { category: "recovery", text: `${e.actor} took over the run from ${str7(data.previous_owner) ?? "a previous owner"} (its lease had expired)` };
+      return { category: "recovery", text: `${e.actor} took over the run from ${str8(data.previous_owner) ?? "a previous owner"} (its lease had expired)` };
     case "recovery.crash-handled":
-      return { text: `crash handled: ${str7(data.outcome) ?? "recovered"}${str7(data.resume_state) ? `, resuming at ${str7(data.resume_state)}` : ""}` };
+      return { text: `crash handled: ${str8(data.outcome) ?? "recovered"}${str8(data.resume_state) ? `, resuming at ${str8(data.resume_state)}` : ""}` };
     case "watchdog.stall":
-      return { category: "recovery", text: `stall detected in ${str7(data.state) ?? "?"}: no activity for ${duration(num6(data.idle_ms) ?? 0)}` };
+      return { category: "recovery", text: `stall detected in ${str8(data.state) ?? "?"}: no activity for ${duration(num6(data.idle_ms) ?? 0)}` };
     case "step.error":
-      return { text: `step error in ${str7(data.state) ?? "?"}${str7(data.code) ? ` (${str7(data.code)})` : ""}: ${str7(data.message) ?? "unknown error"}` };
+      return { text: `step error in ${str8(data.state) ?? "?"}${str8(data.code) ? ` (${str8(data.code)})` : ""}: ${str8(data.message) ?? "unknown error"}` };
     case "budget.exhausted": {
-      const session = str7(data.session);
+      const session = str8(data.session);
       const which3 = session === null ? "" : data.ended_by_cap === true ? `; the cap ended session ${session}` : data.ended_by_cap === false ? `; session ${session} went past the cap` : ` in session ${session}`;
-      return { text: `budget exhausted: ${str7(data.counter) ?? "?"} ${num6(data.used) ?? "?"} of ${num6(data.allowance) ?? "?"}${str7(data.limit) ? ` (${str7(data.limit)})` : ""}${which3}` };
+      return { text: `budget exhausted: ${str8(data.counter) ?? "?"} ${num6(data.used) ?? "?"} of ${num6(data.allowance) ?? "?"}${str8(data.limit) ? ` (${str8(data.limit)})` : ""}${which3}` };
     }
     case "budget.session-turns-recounted": {
       const before = num6(data.recorded_before);
-      return { text: `session ${str7(data.session) ?? "?"} made ${num6(data.model_requests) ?? "?"} model requests, counted from its transcript${before === null ? "" : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
+      return { text: `session ${str8(data.session) ?? "?"} made ${num6(data.model_requests) ?? "?"} model requests, counted from its transcript${before === null ? "" : `; it was recorded before 0.3.1 as num_turns ${before}`}` };
     }
     case "budget.usage-charged": {
       if (data.source === "collected" || data.source === "precharge") return null;
       const c = num6(data.charged_usd);
-      const role = str7(data.role);
-      const who = [role ?? "a session", str7(data.worker_id)].filter((x) => x !== null).join(" ");
+      const role = str8(data.role);
+      const who = [role ?? "a session", str8(data.worker_id)].filter((x) => x !== null).join(" ");
       const by = role === null || role === "inquisitor" ? "the Inquisition recorded" : "was recorded before it was charged";
       return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${who}, whose usage ${by}` };
     }
     case "budget.cost-ceiling-charged": {
       const c = num6(data.ceiling_usd);
-      return { category: "cost", text: `charged a ceiling of ${c === null ? "?" : usd3(c)} for ${str7(data.role) ?? "a session"}: no cost was reported` };
+      return { category: "cost", text: `charged a ceiling of ${c === null ? "?" : usd3(c)} for ${str8(data.role) ?? "a session"}: no cost was reported` };
     }
     case "budget.cost-token-estimated": {
       const c = num6(data.charged_usd);
-      return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${str7(data.role) ?? "a session"}, estimated from its tokens${str7(data.model) ? ` at ${str7(data.model)} list pricing` : ""}` };
+      return { category: "cost", text: `charged ${c === null ? "?" : usd3(c)} for ${str8(data.role) ?? "a session"}, estimated from its tokens${str8(data.model) ? ` at ${str8(data.model)} list pricing` : ""}` };
     }
     case "implementation.attempt": {
       const cap = num6(data.spend_cap_usd);
-      return { text: `attempt ${num6(data.attempt) ?? "?"} started${str7(data.route) ? ` (route ${str7(data.route)}${cap !== null ? `, spend cap ${usd3(cap)}` : ""})` : cap !== null ? ` (spend cap ${usd3(cap)})` : ""}` };
+      return { text: `attempt ${num6(data.attempt) ?? "?"} started${str8(data.route) ? ` (route ${str8(data.route)}${cap !== null ? `, spend cap ${usd3(cap)}` : ""})` : cap !== null ? ` (spend cap ${usd3(cap)})` : ""}` };
     }
     case "implementation.candidate":
       if (data.reused === true) return { category: "candidate", text: `attempt ${num6(data.attempt) ?? "?"} ended on the tree of candidate ${num6(data.seq) ?? "?"}, which already existed` };
       if (data.rebase === true) return { category: "candidate", text: `candidate ${num6(data.seq) ?? "?"} is the rebased tree of attempt ${num6(data.attempt) ?? "?"}` };
       return null;
     case "candidate.created":
-      return { category: "candidate", text: `candidate ${num6(data.seq) ?? "?"} created for attempt ${num6(data.attempt) ?? "?"} (tree ${short2(str7(data.tree_hash))}${str7(data.worker_id) ? `, by ${str7(data.worker_id)}` : ""})` };
+      return { category: "candidate", text: `candidate ${num6(data.seq) ?? "?"} created for attempt ${num6(data.attempt) ?? "?"} (tree ${short2(str8(data.tree_hash))}${str8(data.worker_id) ? `, by ${str8(data.worker_id)}` : ""})` };
     case "worker.started": {
-      const w = l.workers.get(str7(data.worker_id) ?? "");
-      return w ? { text: `${w.id} ${w.role} ${w.provider}/${w.model ?? "default"} started${w.attempt !== null ? ` (attempt ${w.attempt})` : ""}`, data: { ...data, role: w.role, provider: w.provider, model: w.model, attempt: w.attempt } } : { text: `${str7(data.worker_id) ?? "a worker"} started` };
+      const w = l.workers.get(str8(data.worker_id) ?? "");
+      return w ? { text: `${w.id} ${w.role} ${w.provider}/${w.model ?? "default"} started${w.attempt !== null ? ` (attempt ${w.attempt})` : ""}`, data: { ...data, role: w.role, provider: w.provider, model: w.model, attempt: w.attempt } } : { text: `${str8(data.worker_id) ?? "a worker"} started` };
     }
     case "worker.finished": {
-      const id = str7(data.worker_id) ?? "a worker";
-      const w = l.workers.get(id);
-      const state = str7(data.state) ?? w?.state ?? "?";
-      const status2 = str7(data.result_status) ?? w?.result_status ?? null;
+      const id2 = str8(data.worker_id) ?? "a worker";
+      const w = l.workers.get(id2);
+      const state = str8(data.state) ?? w?.state ?? "?";
+      const status2 = str8(data.result_status) ?? w?.result_status ?? null;
       const exit = num6(data.exit_code) ?? w?.exit_code ?? null;
-      const signal = str7(data.signal) ?? w?.signal ?? null;
+      const signal = str8(data.signal) ?? w?.signal ?? null;
       const detail = [status2 && status2 !== "succeeded" ? status2 : null, signal ? `signal ${signal}` : null, exit !== null ? `exit ${exit}` : null].filter(Boolean).join(", ");
       const took = w && w.spawned_at !== null && w.ended_at !== null ? ` after ${duration(w.ended_at - w.spawned_at)}` : "";
-      return { text: `${id} ${state}${took}${detail ? ` (${detail})` : ""}${w?.error ? `: ${w.error.replace(/\s+/g, " ").trim()}` : ""}`, data: { ...data, ...w ? { role: w.role, provider: w.provider, model: w.model } : {} } };
+      return { text: `${id2} ${state}${took}${detail ? ` (${detail})` : ""}${w?.error ? `: ${w.error.replace(/\s+/g, " ").trim()}` : ""}`, data: { ...data, ...w ? { role: w.role, provider: w.provider, model: w.model } : {} } };
     }
     case "worker.cancel-requested":
-      return { text: `${str7(data.worker_id) ?? "a worker"} cancellation requested${str7(data.reason) ? `: ${str7(data.reason)}` : ""}` };
+      return { text: `${str8(data.worker_id) ?? "a worker"} cancellation requested${str8(data.reason) ? `: ${str8(data.reason)}` : ""}` };
     case "worker.restart-planned":
-      return { text: `${str7(data.worker_id) ?? "a worker"} restart planned (restart ${num6(data.restart_count) ?? "?"})` };
+      return { text: `${str8(data.worker_id) ?? "a worker"} restart planned (restart ${num6(data.restart_count) ?? "?"})` };
     case "check.finished": {
-      const c = l.checks.get(str7(data.check_run_id) ?? "");
-      const status2 = str7(data.status) ?? c?.status ?? "?";
+      const c = l.checks.get(str8(data.check_run_id) ?? "");
+      const status2 = str8(data.status) ?? c?.status ?? "?";
       const exit = num6(data.exit_code) ?? c?.exit_code ?? null;
       const took = c && c.ended_at !== null ? ` in ${duration(c.ended_at - c.started_at)}` : "";
       const cand = c?.candidate_id ? ` on candidate ${candidateSeq(c.candidate_id)}` : "";
-      const fp = str7(data.fingerprint) ?? c?.fingerprint ?? null;
-      return { text: `${str7(data.check_id) ?? c?.check_id ?? "check"} ${status2}${exit !== null ? ` (exit ${exit})` : ""}${cand}${took}${c?.flaky ? " (flaky)" : ""}${fp && status2 !== "PASSED" ? `; fingerprint ${fp}` : ""}` };
+      const fp = str8(data.fingerprint) ?? c?.fingerprint ?? null;
+      return { text: `${str8(data.check_id) ?? c?.check_id ?? "check"} ${status2}${exit !== null ? ` (exit ${exit})` : ""}${cand}${took}${c?.flaky ? " (flaky)" : ""}${fp && status2 !== "PASSED" ? `; fingerprint ${fp}` : ""}` };
     }
     case "check.fail-before-probe-started":
-      return { text: `fail-before probe of ${str7(data.check_id) ?? "a check"} started on tree ${short2(str7(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
+      return { text: `fail-before probe of ${str8(data.check_id) ?? "a check"} started on tree ${short2(str8(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
     case "check.fail-before-probe-finished": {
       const exit = num6(data.exit_code);
-      return { text: `fail-before probe of ${str7(data.check_id) ?? "a check"} ${str7(data.status) ?? "?"}${exit !== null ? ` (exit ${exit})` : ""} on tree ${short2(str7(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
+      return { text: `fail-before probe of ${str8(data.check_id) ?? "a check"} ${str8(data.status) ?? "?"}${exit !== null ? ` (exit ${exit})` : ""} on tree ${short2(str8(data.tree_hash))} (attempt ${num6(data.attempt) ?? "?"})` };
     }
     case "evidence.report": {
-      const verdict = str7(data.verdict) ?? "?";
-      const report2 = l.evidence.get(str7(data.report_id) ?? "")?.report ?? {};
-      const failing = (Array.isArray(report2.checks) ? report2.checks : []).map(rec).filter((c) => c.status !== "PASSED").map((c) => str7(c.id) ?? "?");
+      const verdict = str8(data.verdict) ?? "?";
+      const report2 = l.evidence.get(str8(data.report_id) ?? "")?.report ?? {};
+      const failing = (Array.isArray(report2.checks) ? report2.checks : []).map(rec).filter((c) => c.status !== "PASSED").map((c) => str8(c.id) ?? "?");
       const unverified = num6(data.unverified) ?? 0;
       const more = [failing.length > 0 ? `failing checks: ${failing.join(", ")}` : null, unverified > 0 ? `${unverified} unverified` : null].filter(Boolean).join("; ");
       return { category: "verdict", text: `candidate ${candidateSeq(data.candidate_id)} ${verdict}${more ? `: ${more}` : ""}` };
     }
     case "evidence.invalidated":
-      return { category: "verdict", text: `evidence invalidated: ${str7(data.reason) ?? "the candidate changed"}` };
+      return { category: "verdict", text: `evidence invalidated: ${str8(data.reason) ?? "the candidate changed"}` };
     case "review.recorded": {
-      const r = l.reviews.get(str7(data.review_id) ?? "");
-      const provider = r?.provider ?? str7(data.provider) ?? "?";
-      const model = r ? r.model : str7(data.model);
-      const verdict = r?.verdict ?? str7(data.verdict) ?? "?";
+      const r = l.reviews.get(str8(data.review_id) ?? "");
+      const provider = r?.provider ?? str8(data.provider) ?? "?";
+      const model = r ? r.model : str8(data.model);
+      const verdict = r?.verdict ?? str8(data.verdict) ?? "?";
       const counts = r?.counts ?? {};
       const total = Object.values(counts).reduce((a, b) => a + b, 0) || (num6(data.findings) ?? 0);
       const bySeverity = SEVERITY_ORDER.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`).join(", ");
@@ -76466,36 +76718,36 @@ function renderEvent(e, data, l) {
       return { category: "review", text: `round ${r?.round ?? num6(data.round) ?? "?"} ${verdict} by ${provider}/${model ?? "default"} on candidate ${r ? candidateSeq(r.candidate_id) : "?"} (${plural(total, "finding")}${bySeverity ? `: ${bySeverity}` : ""})`, data: { ...data, ...extra } };
     }
     case "review.invalidated":
-      return { category: "review", text: `review ${str7(data.review_id) ?? "?"} no longer counts: ${str7(data.reason) ?? "the candidate changed"}` };
+      return { category: "review", text: `review ${str8(data.review_id) ?? "?"} no longer counts: ${str8(data.reason) ?? "the candidate changed"}` };
     case "finding.status":
-      return { category: "review", text: `finding ${str7(data.finding_id) ?? "?"} ${str7(data.from) ?? "?"} -> ${str7(data.to) ?? "?"}${str7(data.reason) ? `: ${str7(data.reason)}` : ""}` };
+      return { category: "review", text: `finding ${str8(data.finding_id) ?? "?"} ${str8(data.from) ?? "?"} -> ${str8(data.to) ?? "?"}${str8(data.reason) ? `: ${str8(data.reason)}` : ""}` };
     case "question.created": {
-      const q = l.questions.get(str7(data.question_id) ?? "");
-      const id = str7(data.question_id) ?? "?";
+      const q = l.questions.get(str8(data.question_id) ?? "");
+      const id2 = str8(data.question_id) ?? "?";
       const material = q ? q.material : data.material === true;
       const affected = q ? q.affected : list2(data.affected);
-      return { category: "question", text: `${id} asked${material ? " [material]" : ""}: ${(q?.question ?? "a question").replace(/\s+/g, " ").trim()}${affected.length ? ` (affects ${affected.join(", ")})` : ""}`, data: { ...data, ...q ? { question: q.question } : {} } };
+      return { category: "question", text: `${id2} asked${material ? " [material]" : ""}: ${(q?.question ?? "a question").replace(/\s+/g, " ").trim()}${affected.length ? ` (affects ${affected.join(", ")})` : ""}`, data: { ...data, ...q ? { question: q.question } : {} } };
     }
     case "question.answered": {
-      const q = l.questions.get(str7(data.question_id) ?? "");
-      return { category: "question", text: `${str7(data.question_id) ?? "?"} answered by ${q?.answered_by ?? e.actor}: ${(q?.answer ?? "").replace(/\s+/g, " ").trim()}`, data: { ...data, ...q ? { answer: q.answer, answered_by: q.answered_by } : {} } };
+      const q = l.questions.get(str8(data.question_id) ?? "");
+      return { category: "question", text: `${str8(data.question_id) ?? "?"} answered by ${q?.answered_by ?? e.actor}: ${(q?.answer ?? "").replace(/\s+/g, " ").trim()}`, data: { ...data, ...q ? { answer: q.answer, answered_by: q.answered_by } : {} } };
     }
     case "question.withdrawn":
-      return { category: "question", text: `${str7(data.question_id) ?? "?"} withdrawn${str7(data.reason) ? `: ${str7(data.reason)}` : ""}` };
+      return { category: "question", text: `${str8(data.question_id) ?? "?"} withdrawn${str8(data.reason) ? `: ${str8(data.reason)}` : ""}` };
     case "action.intent":
-      return { category: "delivery", text: `${str7(data.kind) ?? "action"}: intent recorded${str7(data.commit_sha) ? ` for ${short2(str7(data.commit_sha))}` : ""}` };
+      return { category: "delivery", text: `${str8(data.kind) ?? "action"}: intent recorded${str8(data.commit_sha) ? ` for ${short2(str8(data.commit_sha))}` : ""}` };
     case "action.executing":
-      return { category: "delivery", text: `${str7(data.kind) ?? "action"}: executing (attempt ${num6(data.attempt) ?? "?"})` };
+      return { category: "delivery", text: `${str8(data.kind) ?? "action"}: executing (attempt ${num6(data.attempt) ?? "?"})` };
     case "action.succeeded": {
       const attempts = num6(data.attempts) ?? 1;
-      return { category: "delivery", text: `${str7(data.kind) ?? "action"}: succeeded${attempts > 1 ? ` after ${attempts} attempts` : ""}${str7(data.via) && data.via !== "execute" ? ` (${str7(data.via)})` : ""}` };
+      return { category: "delivery", text: `${str8(data.kind) ?? "action"}: succeeded${attempts > 1 ? ` after ${attempts} attempts` : ""}${str8(data.via) && data.via !== "execute" ? ` (${str8(data.via)})` : ""}` };
     }
     case "action.denied":
-      return { category: "delivery", text: `${str7(data.kind) ?? "action"}: denied${str7(data.rule) ? ` by ${str7(data.rule)}` : ""}${str7(data.reason) ? `: ${str7(data.reason)}` : ""}` };
+      return { category: "delivery", text: `${str8(data.kind) ?? "action"}: denied${str8(data.rule) ? ` by ${str8(data.rule)}` : ""}${str8(data.reason) ? `: ${str8(data.reason)}` : ""}` };
     case "action.reconciled":
-      return { category: "delivery", text: `${str7(data.kind) ?? "action"}: reconciled with the remote (${data.found === true ? "the effect was there" : "no effect found"})` };
+      return { category: "delivery", text: `${str8(data.kind) ?? "action"}: reconciled with the remote (${data.found === true ? "the effect was there" : "no effect found"})` };
     default:
-      if (e.type.startsWith("action.")) return { category: "delivery", text: `${str7(data.kind) ?? "action"}: ${e.type.slice("action.".length)}${num6(data.attempts) !== null ? ` (attempt ${num6(data.attempts)})` : ""}${str7(data.error) ? `: ${str7(data.error)}` : ""}` };
+      if (e.type.startsWith("action.")) return { category: "delivery", text: `${str8(data.kind) ?? "action"}: ${e.type.slice("action.".length)}${num6(data.attempts) !== null ? ` (attempt ${num6(data.attempts)})` : ""}${str8(data.error) ? `: ${str8(data.error)}` : ""}` };
       return { text: generic(e.type, data) };
   }
 }
@@ -76529,8 +76781,8 @@ function buildTimeline(db, run, opts = {}) {
   for (const e of db.all("SELECT id, ts, type, from_state, to_state, actor, data_json FROM events WHERE run_id = ? ORDER BY id", run.id)) {
     const data = parse5(e.data_json);
     if (e.type === "decision.recorded") {
-      const id = str7(data.decision_id);
-      const d = id ? l.decisions.get(id) : void 0;
+      const id2 = str8(data.decision_id);
+      const d = id2 ? l.decisions.get(id2) : void 0;
       if (!d) continue;
       mirrored.add(d.id);
       const r2 = describeDecision(d);
@@ -76593,14 +76845,14 @@ function buildTimeline(db, run, opts = {}) {
     cost
   };
 }
-var HOUSEKEEPING, str7, num6, rec, list2, plural, short2, round6, SEVERITY_ORDER, BASELINE_CLASSIFICATIONS;
+var HOUSEKEEPING, str8, num6, rec, list2, plural, short2, round6, SEVERITY_ORDER, BASELINE_CLASSIFICATIONS;
 var init_timeline = __esm({
   "src/observability/timeline.ts"() {
     "use strict";
     init_run_store();
     init_budget();
     HOUSEKEEPING = /* @__PURE__ */ new Set(["progress", "lease.acquired", "lease.released", "check.planned", "check.started", "worker.planned", "worker.start-charged"]);
-    str7 = (v) => typeof v === "string" && v.length > 0 ? v : null;
+    str8 = (v) => typeof v === "string" && v.length > 0 ? v : null;
     num6 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
     rec = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
     list2 = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
@@ -76731,7 +76983,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname43, isAbsolute as isAbsolute31, join as join92, relative as relative12 } from "node:path";
+import { dirname as dirname43, isAbsolute as isAbsolute31, join as join93, relative as relative12 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -76782,7 +77034,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join92(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join93(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -76807,7 +77059,7 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname43(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute31(given) ? given : join92(runDir2, given);
+    const p = isAbsolute31(given) ? given : join93(runDir2, given);
     const r = relative12(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
@@ -77057,6 +77309,7 @@ var init_cli = __esm({
     init_notify2();
     init_policy2();
     init_release3();
+    init_export();
     init_report4();
     init_run();
     init_service2();
@@ -77081,6 +77334,7 @@ var init_cli = __esm({
       { name: "resume", summary: "unpause a run, or resume a BLOCKED one after a decision or an environment repair", usage: "orbit resume <run-id> [--foreground | --detach] [--force]", options: RESUME_OPTIONS, run: resumeCommand },
       { name: "cancel", summary: "cancel a run durably (works for blocked or ownerless runs too)", usage: "orbit cancel <run-id> [--wait seconds]", options: CANCEL_OPTIONS, run: cancelCommand },
       { name: "report", summary: "the final report of a run, or a live interim report while it runs (--learning: improvement over time)", usage: "orbit report <run-id> [--interim] [--json]   |   orbit report --learning", options: REPORT_OPTIONS, run: reportCommand },
+      { name: "export", summary: "a run as OpenTelemetry traces (--otel): a span per worker with model, tokens and cost, never prompt or source text", usage: EXPORT_USAGE, options: EXPORT_OPTIONS, run: exportCommand },
       { name: "decide", summary: "record your answer to a question the run persisted", usage: "orbit decide <run-id> <question-id> <answer...> [--by name]", options: DECIDE_OPTIONS, run: decideCommand },
       { name: "questions", summary: "the questions a run is waiting on (--pending: those of every unfinished run)", usage: QUESTIONS_USAGE, options: QUESTIONS_OPTIONS, run: questionsCommand },
       { name: "models list", summary: "the model registry with availability and eligibility under the policy", usage: "orbit models list [--json]", run: modelsListCommand },

@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/run-report.schema.json",
+  "title": "Orbit run report (orbit.final/1)",
+  "description": "The machine-readable report of one run: .orbit/runs/<run-id>/final.json, and `orbit report <run-id> --json` (which adds `interim` when the run has not ended or --interim rebuilds it). Built only from durable records; anything not established is listed in `unverified`, and unmeasured cost is said to be. Every field Orbit writes at the top level is listed here; nested objects may gain fields within a version. Removing or retyping a field is a new version (orbit.final/2) and a new schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "outcome", "outcome_reason", "mode", "original_goal", "objective", "criteria", "checks", "evidence", "reviews", "decisions", "assumptions", "repairs", "revision", "budget", "unverified", "residual_risks", "next_action", "generated_at"],
+  "properties": {
+    "schema": { "const": "orbit.final/1" },
+    "interim": { "type": "boolean", "description": "True while the run has not ended: nothing in the report is final. Only in `orbit report --json`." },
+    "run_id": { "type": "string" },
+    "outcome": { "type": "string", "description": "The run state, for example SUCCEEDED, BLOCKED, EXHAUSTED, IMPOSSIBLE or CANCELLED." },
+    "outcome_reason": { "type": ["string", "null"] },
+    "failure_class": { "type": ["string", "null"], "description": "Why the run ended: a value of failure-class.schema.json, or null when it succeeded or has not ended. Absent only in a report saved before Orbit recorded it." },
+    "failure_secondary": { "type": ["string", "null"], "description": "The second cause of a run that had two." },
+    "orbit_version": { "type": "string", "description": "The Orbit version that started the run; unknown for a run created before it was recorded." },
+    "mode": { "type": "string" },
+    "original_goal": { "type": "string" },
+    "objective": { "type": ["string", "null"] },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "mandatory", "status", "artifacts"],
+        "properties": {
+          "id": { "type": "string" },
+          "statement": { "type": "string" },
+          "mandatory": { "type": "boolean" },
+          "status": { "type": "string" },
+          "artifacts": { "type": "array", "items": { "type": "string" } },
+          "check_wide": { "type": "string" },
+          "fail_before": { "type": "object" }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "exit_code", "flaky", "log"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string" },
+          "exit_code": { "type": ["integer", "null"] },
+          "flaky": { "type": "boolean" },
+          "log": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": ["object", "null"],
+      "required": ["report_id", "verdict", "tree_hash", "candidate_revision"],
+      "properties": {
+        "report_id": { "type": "string" },
+        "verdict": { "type": "string" },
+        "tree_hash": { "type": "string" },
+        "candidate_revision": { "type": "string" }
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "provider", "model", "verdict", "tree_hash", "findings"],
+        "properties": {
+          "id": { "type": "string" },
+          "provider": { "type": "string" },
+          "model": { "type": ["string", "null"] },
+          "verdict": { "type": "string" },
+          "tree_hash": { "type": "string" },
+          "findings": { "type": "integer", "minimum": 0 },
+          "tool_calls": { "type": ["integer", "null"] },
+          "reasoning_tokens": { "type": ["integer", "null"] }
+        }
+      }
+    },
+    "review_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "review_id", "severity", "status", "claim"],
+        "properties": {
+          "id": { "type": "string" },
+          "review_id": { "type": "string" },
+          "severity": { "type": "string" },
+          "status": { "type": "string" },
+          "claim": { "type": "string" }
+        }
+      }
+    },
+    "reviewer": {
+      "type": ["object", "null"],
+      "required": ["provider", "model", "independent"],
+      "properties": {
+        "provider": { "type": "string" },
+        "model": { "type": ["string", "null"] },
+        "independent": { "type": "boolean" }
+      }
+    },
+    "no_standing_review": {
+      "type": "object",
+      "required": ["failed_reviewers"],
+      "properties": { "failed_reviewers": { "type": "array", "items": { "type": "object" } } }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "summary", "at"],
+        "properties": {
+          "kind": { "type": "string" },
+          "summary": { "type": "string" },
+          "at": { "type": "integer", "description": "Epoch milliseconds." }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "statement": { "type": "string" },
+          "status": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "practices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["practice", "applicable", "justification"],
+        "properties": {
+          "practice": { "type": "string" },
+          "applicable": { "type": "boolean" },
+          "justification": { "type": "string" }
+        }
+      }
+    },
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["attempt", "source", "fingerprint"],
+        "properties": {
+          "attempt": { "type": "integer" },
+          "source": { "type": "string" },
+          "fingerprint": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "worker_plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "scope", "allowed_by", "workers"],
+        "properties": {
+          "id": { "type": ["string", "null"] },
+          "scope": { "type": ["string", "null"] },
+          "allowed_by": { "type": ["string", "null"] },
+          "workers": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "revision": {
+      "type": "object",
+      "required": ["base", "candidate", "tree", "branch", "delivered_commit", "pull_request"],
+      "properties": {
+        "base": { "type": ["string", "null"] },
+        "candidate": { "type": ["string", "null"] },
+        "tree": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "candidate_ref": { "type": ["string", "null"] },
+        "delivered_commit": { "type": ["string", "null"] },
+        "pull_request": {
+          "type": ["object", "null"],
+          "required": ["number", "url"],
+          "properties": { "number": { "type": "integer" }, "url": { "type": ["string", "null"] } }
+        }
+      }
+    },
+    "budget": {
+      "type": ["object", "null"],
+      "required": ["counters", "cost_measurement", "cost_usd", "cost_complete", "tokens"],
+      "properties": {
+        "counters": { "type": "array", "items": { "type": "object" } },
+        "sessions": { "type": "array", "items": { "type": "object" } },
+        "num_turns_sessions": { "type": "array", "items": { "type": "object" } },
+        "cost_measurement": { "type": "string" },
+        "cost_usd": { "type": "number", "minimum": 0, "description": "Measured and estimated spend only; cost_complete says whether every session was measured." },
+        "cost_complete": { "type": "boolean" },
+        "tokens": {
+          "type": "object",
+          "required": ["input", "output", "cache_read", "cache_write"],
+          "properties": {
+            "input": { "type": "integer", "minimum": 0 },
+            "output": { "type": "integer", "minimum": 0 },
+            "cache_read": { "type": "integer", "minimum": 0 },
+            "cache_write": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "spend": { "type": "object" }
+      }
+    },
+    "unverified": { "type": "array", "items": { "type": "string" } },
+    "residual_risks": { "type": "array", "items": { "type": "string" } },
+    "worktrees": {
+      "type": "object",
+      "required": ["preserved", "retained"],
+      "properties": {
+        "preserved": { "type": "array", "items": { "type": "object" } },
+        "retained": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "verified_candidate": {
+      "type": "object",
+      "required": ["candidate_id", "seq", "commit", "tree", "ref", "checks_passed", "open_findings", "deliver_command", "discard_command"],
+      "properties": {
+        "candidate_id": { "type": "string" },
+        "seq": { "type": "integer" },
+        "commit": { "type": "string" },
+        "tree": { "type": "string" },
+        "ref": { "type": "string" },
+        "checks_passed": { "type": "array", "items": { "type": "string" } },
+        "open_findings": { "type": "array", "items": { "type": "object" } },
+        "deliver_command": { "type": "string" },
+        "discard_command": { "type": "string" }
+      }
+    },
+    "next_action": { "type": "string" },
+    "generated_at": { "type": "integer", "description": "Epoch milliseconds." }
+  }
+}
