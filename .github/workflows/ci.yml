@@ -105,6 +105,59 @@ jobs:
       - name: Plugin validation
         run: node scripts/check-plugin.mjs
 
+  # Ubuntu 26.04 as a user installs it (#181). The verify jobs unload AppArmor's bwrap-userns-restrict profile; here it
+  # stays loaded, so this job checks what such a user sees (no sandbox starts, and doctor says why and names the fix),
+  # then applies that fix and runs the sandbox tests: srt's own, and the real claude CLI's claude-sandbox tier.
+  stock-apparmor:
+    name: sandbox (ubuntu-26.04, stock AppArmor)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sandbox prerequisites, AppArmor as installed
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat ripgrep
+
+      # As in verify (#180): the worker loopback tests run dotnet in the sandbox.
+      - name: Keep .NET on the newest SDK before 11
+        run: |
+          command -v dotnet >/dev/null || exit 0
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          sudo rm -rf "$root"/sdk/11.*
+          dotnet --version
+
+      - name: Install the Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code
+
+      - name: No sandbox starts, and doctor names the cause and the fix
+        env:
+          ORBIT_STOCK_APPARMOR: '1'
+        run: npx vitest run tests/integration/isolation/apparmor-stock.int.test.ts
+
+      # The commands `orbit doctor` names for this host (isolationFix in src/cli/commands/doctor.ts), as a user runs them.
+      - name: Apply the fix doctor names
+        run: |
+          sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n' | sudo tee /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
+      - name: Sandbox tests
+        run: npx vitest run tests/integration/isolation tests/integration/adapters
+
   # Tests quarantined for a failure whose cause is not established yet (tests/support/quarantine.ts, each with an open
   # issue) still run here on every change, so quarantine does not become deletion. The job never fails the workflow
   # and is not a required check: a red run here is the evidence the test's issue is waiting for.

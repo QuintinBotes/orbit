@@ -386,6 +386,15 @@ const SRT_INSTALL = 'npm install --global @anthropic-ai/sandbox-runtime';
 function isolationFix(kind: IsolationProvider['kind'], detail: string): string {
   if (kind === 'container') return 'start the Docker daemon (for example "open -a Docker" on macOS, or "sudo systemctl start docker" on Linux); Orbit refuses to degrade to less isolation';
   if (/not found|install @anthropic-ai\/sandbox-runtime/i.test(detail)) return `${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+  // Measured on ubuntu-26.04 (#181); .github/workflows/ci.yml applies these commands before its sandbox tests.
+  if (detail.includes('bwrap-userns-restrict')) {
+    return (
+      'give bubblewrap an AppArmor profile that grants it user namespaces in place of bwrap-userns-restrict (what bubblewrap starts gets capabilities in its user namespace again; other programs keep the restriction): ' +
+      'sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/; ' +
+      "printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\\n  userns,\\n}\\n' | sudo tee /etc/apparmor.d/bwrap; " +
+      'sudo apparmor_parser -r /etc/apparmor.d/bwrap; Orbit refuses to degrade to less isolation'
+    );
+  }
   return `fix the cause named above, or reinstall with: ${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
 }
 

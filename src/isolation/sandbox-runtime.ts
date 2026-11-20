@@ -284,6 +284,9 @@ export function srtPackageOf(srtPath: string): { cli: string; name: string | nul
 
 const LINUX_LIMITATION = 'On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.';
 
+/** Measured on GitHub's ubuntu-26.04 image 20261116.202 with srt 0.0.78 and Claude Code 2.1.329's sandbox (#181). */
+const BWRAP_APPARMOR = "AppArmor's bwrap-userns-restrict profile, the default on Ubuntu 26.04, leaves the processes bubblewrap starts no capabilities in their user namespace, and srt needs them to block Unix sockets";
+
 /** srt's seccomp helper is prebuilt for these architectures only (srt 0.0.78 `getVendorArchitecture`). */
 const SECCOMP_ARCHES: Record<string, string> = { x64: 'x64', arm64: 'arm64' };
 
@@ -388,7 +391,12 @@ export class SandboxRuntimeIsolation implements IsolationProvider {
       mkdirSync(canaryDir);
       const canary = join(canaryDir, 'orbit-canary');
       const probe = await runBounded(srt.path, ['--settings', file, '--', '/bin/sh', '-c', 'echo x > "$1" 2>/dev/null; exit 0', 'sh', canary], { timeoutMs });
-      if (probe.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe)})` };
+      if (probe.code !== 0) {
+        const failure = probeFailure(probe);
+        // srt's seccomp helper nests a user namespace and needs capabilities in it; Ubuntu 26.04's AppArmor takes them (#181).
+        const apparmor = failure.includes('nested userns is capability-restricted') ? `; ${BWRAP_APPARMOR}` : '';
+        return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${failure})${apparmor}` };
+      }
       if (existsSync(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
     } finally {
       rmSync(dir, { recursive: true, force: true });

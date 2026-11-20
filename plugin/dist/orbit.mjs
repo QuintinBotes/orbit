@@ -16352,37 +16352,6 @@ var require_utils2 = __commonJS({
       }
       return output.join("");
     }
-    function removeDotSegmentsRelative(path) {
-      if (path === "" || path[0] === "/") {
-        return removeDotSegments(path);
-      }
-      const segments2 = path.split("/");
-      const last = segments2.length - 1;
-      const output = [];
-      let trailingDirectory = false;
-      for (let i = 0; i <= last; i++) {
-        const segment = segments2[i];
-        if (segment === "." || segment === "..") {
-          if (segment === "..") {
-            if (output.length !== 0 && output[output.length - 1] !== "..") {
-              output.pop();
-            } else {
-              output.push("..");
-            }
-          }
-          trailingDirectory = i === last;
-        } else {
-          output.push(segment);
-        }
-      }
-      if (trailingDirectory && output[output.length - 1] !== "..") {
-        output.push("");
-      }
-      if (output.length === 0 || output[0] === "" || output[0].includes(":")) {
-        output.unshift(".");
-      }
-      return output.join("/");
-    }
     var HOST_DELIMS = { "@": "%40", "/": "%2F", "?": "%3F", "#": "%23", ":": "%3A" };
     var HOST_DELIM_RE = /[@/?#:]/g;
     var HOST_DELIM_NO_COLON_RE = /[@/?#]/g;
@@ -16643,7 +16612,6 @@ var require_utils2 = __commonJS({
       encodeFragment,
       escapePreservingEscapes,
       removeDotSegments,
-      removeDotSegmentsRelative,
       isIPv4,
       isUUID,
       normalizeIPv6,
@@ -16867,18 +16835,16 @@ var require_schemes = __commonJS({
 var require_fast_uri = __commonJS({
   "node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
-    var { normalizeIPv6, removeDotSegments, removeDotSegmentsRelative, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils2();
+    var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils2();
     var { SCHEMES, getSchemeHandler } = require_schemes();
     var VALID_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/u;
     var MALFORMED_SCHEME_ERROR = "URI scheme is malformed.";
-    var MALFORMED_HOST_ERROR = "URI host is malformed.";
-    var FORBIDDEN_DOMAIN_HOST_CHARACTER = /[\0-\x20"#/:<>?@[\\\]^`{|}\x7F]/u;
-    function validateScheme(scheme) {
-      const stringScheme = String(scheme);
-      if (!VALID_SCHEME.test(stringScheme)) {
+    function decodeValidScheme(scheme) {
+      const decodedScheme = unescape(String(scheme));
+      if (!VALID_SCHEME.test(decodedScheme)) {
         throw new TypeError(MALFORMED_SCHEME_ERROR);
       }
-      return stringScheme;
+      return decodedScheme;
     }
     function normalize4(uri, options) {
       if (typeof uri === "string") {
@@ -16915,9 +16881,6 @@ var require_fast_uri = __commonJS({
       const resolvedSchemeHandler = getSchemeHandler(options && options.scheme || resolved.scheme);
       const resolvedHost = resolved.host;
       const resolvedHostIsIP = resolvedHost !== void 0 && resolvedHost !== "" && (isIPv4(resolvedHost) || normalizeIPv6(resolvedHost).isIPV6);
-      if (hasForbiddenDomainHost(resolved, options || {}, resolvedSchemeHandler, resolvedHostIsIP)) {
-        throw new Error(MALFORMED_HOST_ERROR);
-      }
       canonicalizeHost(resolved, options || {}, resolvedSchemeHandler, resolvedHostIsIP);
       const encodedASCIIHost = resolvedHost && resolvedHost.indexOf("%") !== -1 && !new RegExp("\\P{ASCII}", "u").test(resolvedHost);
       if (resolved.error && !encodedASCIIHost) {
@@ -16959,15 +16922,14 @@ var require_fast_uri = __commonJS({
             if (relative13.path[0] === "/") {
               target.path = removeDotSegments(relative13.path);
             } else {
-              const baseHasAuthority = base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0;
-              if (baseHasAuthority && !base.path) {
+              if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
                 target.path = "/" + relative13.path;
               } else if (!base.path) {
                 target.path = relative13.path;
               } else {
                 target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative13.path;
               }
-              target.path = base.scheme === void 0 && !baseHasAuthority && target.path[0] !== "/" ? removeDotSegmentsRelative(target.path) : removeDotSegments(target.path);
+              target.path = removeDotSegments(target.path);
             }
             target.query = relative13.query;
           }
@@ -17005,13 +16967,12 @@ var require_fast_uri = __commonJS({
       const options = Object.assign({}, opts);
       const uriTokens = [];
       if (component.scheme) {
-        component.scheme = validateScheme(component.scheme);
+        component.scheme = decodeValidScheme(component.scheme);
       }
       const schemeHandler = getSchemeHandler(options.scheme || component.scheme);
       if (schemeHandler && schemeHandler.serialize) schemeHandler.serialize(component, options);
       const hasAuthority = component.userinfo !== void 0 || component.host !== void 0 || component.port !== void 0;
-      const schemelessReference = (component.scheme === void 0 || options.reference === "suffix") && !hasAuthority;
-      const pathNoScheme = !options.skipEscape && schemelessReference;
+      const pathNoScheme = !options.skipEscape && component.scheme === void 0 && !hasAuthority;
       if (component.path !== void 0) {
         if (!options.skipEscape) {
           component.path = serializePathEncoding(component.path, pathNoScheme);
@@ -17020,7 +16981,7 @@ var require_fast_uri = __commonJS({
         }
       }
       if (options.reference !== "suffix" && component.scheme) {
-        component.scheme = validateScheme(component.scheme);
+        component.scheme = decodeValidScheme(component.scheme);
         uriTokens.push(component.scheme, ":");
       }
       const authority = recomposeAuthority(component);
@@ -17036,9 +16997,9 @@ var require_fast_uri = __commonJS({
       if (component.path !== void 0) {
         let s = component.path;
         if (!options.absolutePath && (!schemeHandler || !schemeHandler.absolutePath)) {
-          s = schemelessReference && s[0] !== "/" ? removeDotSegmentsRelative(s) : removeDotSegments(s);
+          s = removeDotSegments(s);
         }
-        if (schemelessReference) {
+        if (pathNoScheme) {
           s = serializePathEncoding(s, true);
         }
         if (authority === void 0 && s[0] === "/" && s[1] === "/") {
@@ -17085,33 +17046,15 @@ var require_fast_uri = __commonJS({
       return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
     }
     function canonicalizeHost(parsed3, options, schemeHandler, isIP) {
-      if (hasForbiddenDomainHost(parsed3, options, schemeHandler, isIP)) {
-        parsed3.error = parsed3.error || MALFORMED_HOST_ERROR;
-        return true;
-      }
       if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed3.host && !isIPLiteral(parsed3.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed3.host)) {
-        let url;
         try {
-          url = new URL("http://" + parsed3.host);
+          parsed3.host = new URL("http://" + parsed3.host).hostname;
         } catch (e) {
           parsed3.error = parsed3.error || "Host's domain name can not be converted to ASCII: " + e;
           return true;
         }
-        if (!isHostOnlyURL(url)) {
-          parsed3.error = parsed3.error || MALFORMED_HOST_ERROR;
-          return true;
-        }
-        parsed3.host = url.hostname;
       }
       return false;
-    }
-    function hasForbiddenDomainHost(parsed3, options, schemeHandler, isIP) {
-      return Boolean(
-        parsed3.host && isIP === false && !isIPLiteral(parsed3.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && FORBIDDEN_DOMAIN_HOST_CHARACTER.test(parsed3.host)
-      );
-    }
-    function isHostOnlyURL(url) {
-      return url.username === "" && url.password === "" && url.port === "" && url.pathname === "/" && url.search === "" && url.hash === "" && url.hostname !== "";
     }
     function parseWithStatus(uri, opts) {
       const options = Object.assign({}, opts);
@@ -17167,8 +17110,9 @@ var require_fast_uri = __commonJS({
         parsed3.query = matches[7];
         parsed3.fragment = matches[8];
         if (parsed3.scheme !== void 0) {
-          if (VALID_SCHEME.test(parsed3.scheme)) {
-            parsed3.scheme = parsed3.scheme.toLowerCase();
+          const decodedScheme = unescape(parsed3.scheme);
+          if (VALID_SCHEME.test(decodedScheme)) {
+            parsed3.scheme = decodedScheme.toLowerCase();
           } else {
             parsed3.error = parsed3.error || MALFORMED_SCHEME_ERROR;
             malformedScheme = true;
@@ -17196,7 +17140,7 @@ var require_fast_uri = __commonJS({
             malformedIPLiteral = hasIPLiteralBracket && (!bracketedIPLiteral || ipv6result.error === true);
             parsed3.host = isIP ? ipv6result.host : ipv6result.host.toLowerCase();
             if (malformedIPLiteral) {
-              parsed3.error = parsed3.error || MALFORMED_HOST_ERROR;
+              parsed3.error = parsed3.error || "URI host is malformed.";
               malformedAuthorityOrPort = true;
             }
           } else {
@@ -17224,7 +17168,7 @@ var require_fast_uri = __commonJS({
           if (!isIP) {
             host = normalizePercentEncoding(host.toLowerCase());
           }
-          parsed3.host = isIP || options.scheme !== "null" ? reescapeHostDelimiters(host, isIP) : host;
+          parsed3.host = reescapeHostDelimiters(host, isIP);
         }
         if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
           if (parsed3.path) {
@@ -32692,7 +32636,7 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, BWRAP_APPARMOR, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
@@ -32725,6 +32669,7 @@ var init_sandbox_runtime = __esm({
     DOTNET_IPV4_ENV = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: "1" });
     DOTNET_POLLING_WATCHER_ENV = Object.freeze({ DOTNET_USE_POLLING_FILE_WATCHER: "1" });
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
+    BWRAP_APPARMOR = "AppArmor's bwrap-userns-restrict profile, the default on Ubuntu 26.04, leaves the processes bubblewrap starts no capabilities in their user namespace, and srt needs them to block Unix sockets";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
       kind = "sandbox-runtime";
@@ -32819,7 +32764,11 @@ var init_sandbox_runtime = __esm({
           mkdirSync10(canaryDir);
           const canary = join20(canaryDir, "orbit-canary");
           const probe2 = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
-          if (probe2.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe2)})` };
+          if (probe2.code !== 0) {
+            const failure = probeFailure(probe2);
+            const apparmor = failure.includes("nested userns is capability-restricted") ? `; ${BWRAP_APPARMOR}` : "";
+            return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${failure})${apparmor}` };
+          }
           if (existsSync18(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
           rmSync7(dir, { recursive: true, force: true });
@@ -71658,6 +71607,9 @@ function checkConfiguredChecks(p) {
 function isolationFix(kind, detail) {
   if (kind === "container") return 'start the Docker daemon (for example "open -a Docker" on macOS, or "sudo systemctl start docker" on Linux); Orbit refuses to degrade to less isolation';
   if (/not found|install @anthropic-ai\/sandbox-runtime/i.test(detail)) return `${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+  if (detail.includes("bwrap-userns-restrict")) {
+    return "give bubblewrap an AppArmor profile that grants it user namespaces in place of bwrap-userns-restrict (what bubblewrap starts gets capabilities in its user namespace again; other programs keep the restriction): sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/; printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\\n  userns,\\n}\\n' | sudo tee /etc/apparmor.d/bwrap; sudo apparmor_parser -r /etc/apparmor.d/bwrap; Orbit refuses to degrade to less isolation";
+  }
   return `fix the cause named above, or reinstall with: ${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
 }
 async function checkScope(p) {
