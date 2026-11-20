@@ -40,7 +40,17 @@ export function citationProblem(lesson: Lesson, env: Pick<RecheckEnv, 'root' | '
       isFile = false;
     }
     if (!isFile) return `cited path ${c.path} no longer exists`;
-    if (c.line !== null && readFileSync(full, 'utf8').split('\n').length < c.line) return `cited line ${c.path}:${c.line} no longer exists`;
+    if (c.line !== null) {
+      let text: string;
+      try {
+        text = readFileSync(full, 'utf8');
+      } catch {
+        return `cited path ${c.path} cannot be read`;
+      }
+      // A final newline ends the last line; it does not start another.
+      const lines = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+      if (lines < c.line) return `cited line ${c.path}:${c.line} no longer exists`;
+    }
   }
   return null;
 }

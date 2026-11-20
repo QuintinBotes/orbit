@@ -560,7 +560,7 @@ const RUN_END_LISTS = ['environment_failures', 'incomplete_checks', 'misconfigur
  * succeeded or has not ended.
  */
 export function runEndObservation(db: OrbitDb, runId: string): RunEndObservation | null {
-  const run = db.get<{ state: string; failure_class: string | null; failure_secondary: string | null; outcome_json: string | null }>('SELECT state, failure_class, failure_secondary, outcome_json FROM runs WHERE id = ?', runId);
+  const run = db.get<{ state: string; failure_class: string | null; failure_secondary: string | null; outcome_json: string | null; ended_at: number | null }>('SELECT state, failure_class, failure_secondary, outcome_json, ended_at FROM runs WHERE id = ?', runId);
   if (!run || run.state === 'SUCCEEDED' || !TERMINAL_STATES.has(run.state as RunState)) return null;
   const checks = new Map<string, { check_id: string; signature: string }>();
   const add = (checkId: unknown, signature: unknown): void => {
@@ -586,7 +586,8 @@ export function runEndObservation(db: OrbitDb, runId: string): RunEndObservation
     }
   }
   return {
-    id: `obs-${sha256(`${runId}\u0000run-end`).slice(0, 12)}`,
+    // One per ending: a run resumed from BLOCKED can end again, in another class.
+    id: `obs-${sha256(`${runId}\u0000run-end\u0000${run.ended_at ?? ''}\u0000${run.state}`).slice(0, 12)}`,
     run_id: runId,
     state: run.state,
     failure_class: run.failure_class,

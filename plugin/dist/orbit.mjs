@@ -49118,7 +49118,16 @@ function citationProblem(lesson, env) {
       isFile = false;
     }
     if (!isFile) return `cited path ${c.path} no longer exists`;
-    if (c.line !== null && readFileSync24(full, "utf8").split("\n").length < c.line) return `cited line ${c.path}:${c.line} no longer exists`;
+    if (c.line !== null) {
+      let text2;
+      try {
+        text2 = readFileSync24(full, "utf8");
+      } catch {
+        return `cited path ${c.path} cannot be read`;
+      }
+      const lines = text2 === "" ? 0 : text2.split("\n").length - (text2.endsWith("\n") ? 1 : 0);
+      if (lines < c.line) return `cited line ${c.path}:${c.line} no longer exists`;
+    }
   }
   return null;
 }
@@ -51616,7 +51625,7 @@ function touchedArea(db, runId) {
   return { paths: [...paths].sort(), checkIds: checks.map((c) => c.check_id).sort() };
 }
 function runEndObservation(db, runId) {
-  const run = db.get("SELECT state, failure_class, failure_secondary, outcome_json FROM runs WHERE id = ?", runId);
+  const run = db.get("SELECT state, failure_class, failure_secondary, outcome_json, ended_at FROM runs WHERE id = ?", runId);
   if (!run || run.state === "SUCCEEDED" || !TERMINAL_STATES.has(run.state)) return null;
   const checks = /* @__PURE__ */ new Map();
   const add = (checkId, signature) => {
@@ -51642,7 +51651,8 @@ function runEndObservation(db, runId) {
     }
   }
   return {
-    id: `obs-${sha256(`${runId}\0run-end`).slice(0, 12)}`,
+    // One per ending: a run resumed from BLOCKED can end again, in another class.
+    id: `obs-${sha256(`${runId}\0run-end\0${run.ended_at ?? ""}\0${run.state}`).slice(0, 12)}`,
     run_id: runId,
     state: run.state,
     failure_class: run.failure_class,
@@ -57088,16 +57098,6 @@ async function learnAtTerminal(ctx) {
       store.recordObservation(observation);
       summary.observed = observation.id;
     }
-    const admitted = curationAdmitted(ctx);
-    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
-    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = "the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way";
-    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = "the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson";
-    else if (!admitted.ok) summary.skipped = admitted.why;
-    else {
-      const host = curatorHostFor(ctx);
-      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
-    }
-    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
     const ev = listEvidenceReports(ctx.db, run.id).at(-1);
     summary.settled = settleRun(store, run.id, {
       succeeded: run.state === "SUCCEEDED",
@@ -57110,6 +57110,16 @@ async function learnAtTerminal(ctx) {
     const lessons = store.listLessons({ statuses: ["candidate", "validated"] });
     const eligible = recheckLessons(store, lessons, { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: k.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS });
     summary.rechecked = { lessons: lessons.length, stale: lessons.length - eligible.length };
+    const admitted = curationAdmitted(ctx);
+    if (run.state === "CANCELLED") summary.skipped = "cancelled runs are not curated";
+    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = "the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way";
+    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = "the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson";
+    else if (!admitted.ok) summary.skipped = admitted.why;
+    else {
+      const host = curatorHostFor(ctx);
+      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? "claude-default", runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
+    }
+    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.curation-skipped", ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
       const global = KnowledgeStore.open(globalKnowledgePath(ctx), { clock: ctx.clock });

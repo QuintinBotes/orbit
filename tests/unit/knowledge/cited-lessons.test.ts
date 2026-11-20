@@ -1,6 +1,6 @@
 /** Issue #173: lessons that are cited, re-checked, contradicted and expired. */
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -39,11 +39,23 @@ describe('citationProblem (FR-002)', () => {
     ['a file that is gone', cite({ path: 'src/gone.ts' }), 'cited path src/gone.ts no longer exists'],
     ['a directory, not a file', cite({ path: 'src' }), 'cited path src no longer exists'],
     ['a line past the end of the file', cite({ line: 9 }), 'cited line src/calc.ts:9 no longer exists'],
+    ['the line after the final newline', cite({ line: 4 }), 'cited line src/calc.ts:4 no longer exists'],
     ['a check no longer configured', cite({ path: null, check_id: 'lint' }), 'cited check lint is no longer configured'],
     ['a path outside the repository', cite({ path: '../elsewhere.ts' }), 'cited path ../elsewhere.ts is outside the repository'],
     ['a citation with only a finding', cite({ path: null, finding_id: 'F-1' }), 'it cites no file or check to re-check'],
   ] as const)('%s', (_name, citation, problem) => {
     expect(citationProblem(makeLesson({ citation }), env)).toBe(problem);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('a cited file that cannot be read makes that lesson stale, not the whole re-check fail', () => {
+    const root = repo();
+    writeFileSync(join(root, 'src', 'locked.ts'), 'one\n');
+    chmodSync(join(root, 'src', 'locked.ts'), 0o000);
+    const { store } = openStore();
+    const locked = store.upsertLesson(makeLesson({ statement: 'Name each calculator test after its operation.', citation: cite({ path: 'src/locked.ts', line: 1 }) })).lesson;
+    const kept = store.upsertLesson(makeLesson({ citation: cite({ line: 1 }) })).lesson;
+    expect(recheckLessons(store, [locked, kept], { root, checkIds: [], expiryDays: 28 }).map((l) => l.id)).toEqual([kept.id]);
+    expect(store.freshness([locked.id]).get(locked.id)?.stale_reason).toBe('cited path src/locked.ts cannot be read');
   });
 
   it('a run lesson without a citation cannot be re-checked; a seed or ingested lesson cites its source, not the repository', () => {
@@ -246,6 +258,16 @@ describe('runEndObservation (FR-006, User Story 3)', () => {
     expect(runEndObservation(db, 'r1')?.id).toBe(obs?.id);
     db.run("UPDATE runs SET state = 'SUCCEEDED', failure_class = NULL WHERE id = 'r1'");
     expect(runEndObservation(db, 'r1')).toBeNull();
+  });
+
+  it('keeps each ending of a run resumed from BLOCKED', () => {
+    const db = runDb();
+    const { store } = openStore();
+    db.run("UPDATE runs SET state = 'BLOCKED', failure_class = 'environment', ended_at = 1 WHERE id = 'r1'");
+    expect(store.recordObservation(runEndObservation(db, 'r1')!)).toBe(true);
+    db.run("UPDATE runs SET state = 'EXHAUSTED', failure_class = 'budget', ended_at = 2 WHERE id = 'r1'");
+    expect(store.recordObservation(runEndObservation(db, 'r1')!)).toBe(true);
+    expect(store.observations().map((o) => o.failure_class).sort()).toEqual(['budget', 'environment']);
   });
 });
 

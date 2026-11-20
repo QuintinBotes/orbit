@@ -162,6 +162,35 @@ describe('SC-001: one lesson goes from candidate to validated to deprecated on r
   });
 });
 
+describe('a curator that fails skips neither settling nor the re-check', () => {
+  it('the contradiction and the re-check are recorded before the curator runs', async () => {
+    const failing = {
+      id: 'claude',
+      async startTask(): Promise<TaskHandle> {
+        throw new Error('the provider is down');
+      },
+      async collectResult(): Promise<TaskResult | null> {
+        return null;
+      },
+      async cancelTask(): Promise<void> {},
+    } as unknown as ProviderAdapter;
+    lab = makeUnitLab({ tweak: on, adapters: { claude: failing } });
+    mkdirSync(join(lab.repo, 'apps'), { recursive: true });
+    writeFileSync(join(lab.repo, CITED), 'x\n');
+    const id = withStore((s) =>
+      s.upsertLesson(makeLesson({ status: 'validated', applicability: { roles: ['implementer'], check_ids: ['unit'] }, evidence: [ev('orb-0'), ev('orb-00')], citation: { run_id: 'orb-0', path: CITED, line: null, check_id: null, finding_id: null } })).lesson.id,
+    );
+    const r = nextRun('orb-2');
+    planWorker(lab.db, { id: 'wrk-2', runId: 'orb-2', role: 'implementer', provider: 'claude', workerDir: join(lab.base, 'orb-2'), cwd: lab.repo }, lab.clock, OWNER);
+    expect(advisoryBlockFor(r, { role: 'implementer', workerId: 'wrk-2', paths: [CITED], checkIds: ['unit'], fingerprints: ['fp-unit'] })).toContain(id);
+    attempt(r, 'wrk-2', 1, { status: 'FAILED', fingerprint: 'fp-unit' });
+    attempt(r, 'wrk-2', 2, { status: 'PASSED' });
+    await expect(end(r, 'EXHAUSTED', 'budget')).rejects.toThrow('the provider is down');
+    expect(withStore((s) => s.stats(id))).toMatchObject({ contradict: 1 });
+    expect(withStore((s) => s.freshness([id]).get(id))).toMatchObject({ stale_reason: null, verified_at: lab.clock.now() });
+  });
+});
+
 describe('User Story 1: a lesson whose cited file is gone, or that had no support for the expiry period, is not retrieved', () => {
   it('the end-of-run sweep marks it stale even with lessons out of prompts, and it is eligible again once the file is back', async () => {
     lab = makeUnitLab({ tweak: (c) => void (c.knowledge.enabled = true) });

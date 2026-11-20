@@ -749,17 +749,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
       store.recordObservation(observation);
       summary.observed = observation.id;
     }
-    const admitted = curationAdmitted(ctx);
-    if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
-    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
-    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = 'the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson';
-    else if (!admitted.ok) summary.skipped = admitted.why;
-    else {
-      const host = curatorHostFor(ctx);
-      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
-    }
-    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
-
+    // Settling and re-checking read run records and the file system only, so a curator that fails cannot skip them.
     const ev = listEvidenceReports(ctx.db, run.id).at(-1);
     summary.settled = settleRun(store, run.id, {
       succeeded: run.state === 'SUCCEEDED',
@@ -774,6 +764,17 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     const lessons = store.listLessons({ statuses: ['candidate', 'validated'] });
     const eligible = recheckLessons(store, lessons, { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: k.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS });
     summary.rechecked = { lessons: lessons.length, stale: lessons.length - eligible.length };
+
+    const admitted = curationAdmitted(ctx);
+    if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
+    else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
+    else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = 'the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson';
+    else if (!admitted.ok) summary.skipped = admitted.why;
+    else {
+      const host = curatorHostFor(ctx);
+      summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
+    }
+    if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
 
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
