@@ -70,6 +70,8 @@ const DOC_1 = {
   evidence: 'README.md mentions "not found" as the body of unknown paths.',
   suggested_validation: 'Update the README sentence about unknown paths.',
 };
+/** The proof checks before delivery under fail_before required (#200): the auditor says the test fails if the criterion were false. */
+const AUDIT_FAILS_IF_FALSE = review('APPROVE', [{ id: 'AUDIT-1', severity: 'info', category: 'criterion-audit', location: 'tests/unit/server.test.ts:28', claim: 'The body assertion fails for any other not-found text, so the test would fail if the criterion were false.', evidence: 'assert.equal(...body, ...)', suggested_validation: null }]);
 const BUNDLE = { op: 'write' as const, path: 'src/generated/bundle.js', content: `${Array.from({ length: 300 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n` };
 
 /** A check that cannot run without the dependency install: it imports a package of the lockfile. */
@@ -293,8 +295,8 @@ export const LAB_SCENARIOS: readonly LabScenario[] = [
     issue: 65,
     title: 'under fail_before required, new tests that pass on the base revision do not support the criterion, and the repair whose tests fail there does',
     tweak: (c) => void (c.verification.fail_before = 'required'),
-    roles: { implementer: [implementer([SRC_TEXT, TEST_TAUTOLOGY]), implementer([TEST_TEXT])] },
-    expect: { state: 'SUCCEEDED', attempts: 2, decisions: ['verification.fail-before'] },
+    roles: { implementer: [implementer([SRC_TEXT, TEST_TAUTOLOGY]), implementer([TEST_TEXT])], auditor: [AUDIT_FAILS_IF_FALSE], artifacts: [APPROVE] },
+    expect: { state: 'SUCCEEDED', attempts: 2, decisions: ['verification.criterion-probe'] },
   },
   {
     id: 'expired-credentials-classified',

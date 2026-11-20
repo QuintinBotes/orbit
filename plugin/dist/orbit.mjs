@@ -70399,7 +70399,7 @@ async function runLabTier(opts = {}) {
 function defaultParallel() {
   return Math.max(1, Math.min(4, availableParallelism3() - 1));
 }
-var LOW, TEST_1, DOC_1, BUNDLE, NEEDS_DEP, STATUS_LINE2, TEST_TAUTOLOGY, NEW_TEST_FILE, NEW_TEST_WITH_DIRECTIVE, WIDEN_POLICY, WEAKEN_MANIFEST, REVIEWER_EXIT, TEST_1_GONE, LAB_SCENARIOS, counter;
+var LOW, TEST_1, DOC_1, AUDIT_FAILS_IF_FALSE, BUNDLE, NEEDS_DEP, STATUS_LINE2, TEST_TAUTOLOGY, NEW_TEST_FILE, NEW_TEST_WITH_DIRECTIVE, WIDEN_POLICY, WEAKEN_MANIFEST, REVIEWER_EXIT, TEST_1_GONE, LAB_SCENARIOS, counter;
 var init_scenarios = __esm({
   "src/bench/scenarios.ts"() {
     "use strict";
@@ -70436,6 +70436,7 @@ var init_scenarios = __esm({
       evidence: 'README.md mentions "not found" as the body of unknown paths.',
       suggested_validation: "Update the README sentence about unknown paths."
     };
+    AUDIT_FAILS_IF_FALSE = review("APPROVE", [{ id: "AUDIT-1", severity: "info", category: "criterion-audit", location: "tests/unit/server.test.ts:28", claim: "The body assertion fails for any other not-found text, so the test would fail if the criterion were false.", evidence: "assert.equal(...body, ...)", suggested_validation: null }]);
     BUNDLE = { op: "write", path: "src/generated/bundle.js", content: `${Array.from({ length: 300 }, (_, i) => `export const line${i} = ${i};`).join("\n")}
 ` };
     NEEDS_DEP = "import 'typescript';\nconsole.log('the installed dependency was imported');\n";
@@ -70643,8 +70644,8 @@ it('answers unknown paths with the not-found text', () => {
         issue: 65,
         title: "under fail_before required, new tests that pass on the base revision do not support the criterion, and the repair whose tests fail there does",
         tweak: (c) => void (c.verification.fail_before = "required"),
-        roles: { implementer: [implementer([SRC_TEXT, TEST_TAUTOLOGY]), implementer([TEST_TEXT])] },
-        expect: { state: "SUCCEEDED", attempts: 2, decisions: ["verification.fail-before"] }
+        roles: { implementer: [implementer([SRC_TEXT, TEST_TAUTOLOGY]), implementer([TEST_TEXT])], auditor: [AUDIT_FAILS_IF_FALSE], artifacts: [APPROVE2] },
+        expect: { state: "SUCCEEDED", attempts: 2, decisions: ["verification.criterion-probe"] }
       },
       {
         id: "expired-credentials-classified",
