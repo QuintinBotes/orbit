@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -128,6 +128,28 @@ describe('the repository map (#175 FR-001)', () => {
       'HEAD',
     );
     expect(map.files.filter((f) => f.generated).map((f) => f.path).sort()).toEqual(['gen/auto.py', 'gen/make.js', 'gen/relay.ts']);
+  });
+
+  it('reads the attribute on a git without check-attr --source (before 2.40), and never from the user\'s attributes file', async () => {
+    const repo = repoWith({ '.gitattributes': 'dist/** linguist-generated\n', 'dist/a.mjs': '', 'src/b.ts': '' });
+    const bin = join(top, `oldgit${(n += 1)}`);
+    mkdirSync(bin);
+    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" check-attr --source "*) echo "error: unknown option \\\`source'" >&2; exit 129;; esac\nexec '${real}' "$@"\n`, { mode: 0o755 });
+    // gitEnv's HOME is the temp directory, which other accounts can write on Linux.
+    const userAttrs = join(tmpdir(), '.config', 'git', 'attributes');
+    const hadUserAttrs = existsSync(userAttrs);
+    if (!hadUserAttrs) write(tmpdir(), { '.config/git/attributes': 'src/** linguist-generated\n' });
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      const map = await buildRepoMap(repo, 'HEAD');
+      expect(file(map, 'dist/a.mjs').generated).toBe(true);
+      expect(file(map, 'src/b.ts').generated).toBe(false);
+    } finally {
+      process.env.PATH = path;
+      if (!hadUserAttrs) rmSync(userAttrs);
+    }
   });
 
   it('links each check to the tracked paths its command names', async () => {

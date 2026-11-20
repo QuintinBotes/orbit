@@ -1563,9 +1563,9 @@ and the paths each check names. It is built from git objects with no model
 call and cached by tree hash in the clone's git directory. Two gates always use
 it: scope inspection leaves files marked generated in both the base and the
 candidate tree out of `changed_lines` (mark a committed bundle with
-`dist/** linguist-generated` in `.gitattributes`; a source file up to 1 MiB
-may instead open with an `@generated` comment line, or have a line that says
-both generated and `DO NOT EDIT`), and a review finding filed as `missing-test` is refuted
+`dist/** linguist-generated` in `.gitattributes`; a TypeScript, JavaScript,
+Python, Rust or Go file up to 1 MiB may instead open with an `@generated`
+comment line, or have a line that says both generated and `DO NOT EDIT`), and a review finding filed as `missing-test` is refuted
 when the map links a test in the candidate to its file. `prompt_slice` adds
 the map's slice for the files a goal names to the planner and reviewer
 prompts, and tells the implementer about `orbit map query`.

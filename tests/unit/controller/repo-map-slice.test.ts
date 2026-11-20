@@ -63,7 +63,10 @@ async function plannerPrompt(tweak: (c: OrbitConfig) => void): Promise<string> {
 
 describe("the planner's repository map slice (#175 US2)", () => {
   it('is off by default: the prompt has no map', async () => {
-    const prompt = await plannerPrompt(() => {});
+    // No file minimum, so only the switch keeps the slice out.
+    const prompt = await plannerPrompt((c) => {
+      c.repo_map = { ...c.repo_map!, prompt_slice_min_files: 0 };
+    });
     expect(prompt).not.toContain('Repository map of tree');
   });
 

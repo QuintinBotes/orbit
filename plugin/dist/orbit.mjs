@@ -35692,7 +35692,8 @@ var init_imports = __esm({
 
 // src/repomap/map.ts
 import { execFile } from "node:child_process";
-import { readdirSync as readdirSync8, statSync as statSync10, unlinkSync as unlinkSync3 } from "node:fs";
+import { mkdtempSync as mkdtempSync6, readdirSync as readdirSync8, rmSync as rmSync9, statSync as statSync10, unlinkSync as unlinkSync3 } from "node:fs";
+import { tmpdir as tmpdir10 } from "node:os";
 import { join as join25, posix as posix5 } from "node:path";
 async function buildRepoMap(repoRoot, rev, opts = {}) {
   if (rev.startsWith("-")) throw new OrbitError("GIT_FAILED", `refusing revision ${JSON.stringify(rev)}: it would be read as an option`);
@@ -35701,7 +35702,7 @@ async function buildRepoMap(repoRoot, rev, opts = {}) {
   const hit = dir === null ? null : readStored(join25(dir, `${tree}.json`), tree);
   if (hit) return derive(hit, opts.checks ?? {}, { cached: true, parsed: 0, reused: 0 });
   const listed3 = parseLsTree(await gitBuf(repoRoot, ["ls-tree", "-r", "-l", "-z", "--full-tree", tree]));
-  const attrs = parseCheckAttr(await gitBuf(repoRoot, ["check-attr", "--source", tree, "-z", "--stdin", "linguist-generated"], listed3.map((e) => e.path).join("\0")));
+  const attrs = await generatedByAttribute(repoRoot, tree, listed3.map((e) => e.path));
   const previous = dir === null ? /* @__PURE__ */ new Map() : newestBlobs(dir);
   const wanted = [...new Set(listed3.filter((e) => readable(e.path, e.size) && !previous.has(blobKey(e))).map((e) => e.blob))];
   const texts = wanted.length === 0 ? /* @__PURE__ */ new Map() : parseBatch(await gitBuf(repoRoot, ["cat-file", "--batch"], `${wanted.join("\n")}
@@ -35914,6 +35915,16 @@ function parseLsTree(out) {
   }
   return entries;
 }
+async function generatedByAttribute(repoRoot, tree, paths) {
+  const dir = mkdtempSync6(join25(tmpdir10(), "orbit-repomap-"));
+  try {
+    const env = { GIT_INDEX_FILE: join25(dir, "index") };
+    await gitBuf(repoRoot, ["read-tree", tree], void 0, env);
+    return parseCheckAttr(await gitBuf(repoRoot, ["check-attr", "--cached", "-z", "--stdin", "linguist-generated"], paths.join("\0"), env));
+  } finally {
+    rmSync9(dir, { recursive: true, force: true });
+  }
+}
 function parseCheckAttr(out) {
   const parts = out.toString("utf8").split("\0");
   const set2 = /* @__PURE__ */ new Set();
@@ -35937,13 +35948,14 @@ function parseBatch(out) {
   }
   return texts;
 }
-function gitBuf(cwd, args, input) {
+function gitBuf(cwd, args, input, env = {}) {
   return new Promise((resolve29, reject2) => {
     const child = execFile(
       "git",
-      ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", ...args],
-      // No system attributes: what a tree marks generated comes from the tree (and the clone's own info/attributes).
-      { cwd, env: gitEnv3({ GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1" }), encoding: "buffer", maxBuffer: 1024 * 1024 * 1024, windowsHide: true },
+      ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null", ...args],
+      // No system or user attributes (gitEnv's HOME is the shared temp directory): what a tree marks generated comes
+      // from the tree (and the clone's own info/attributes).
+      { cwd, env: gitEnv3({ GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", ...env }), encoding: "buffer", maxBuffer: 1024 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         if (err) reject2(new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${stderr.toString("utf8").trim().slice(0, 300) || err.message}`, { args: args.slice(0, 3) }));
         else resolve29(stdout);
@@ -39241,8 +39253,8 @@ var init_store = __esm({
 });
 
 // src/evidence/candidate.ts
-import { chmodSync as chmodSync8, existsSync as existsSync24, lstatSync as lstatSync7, mkdirSync as mkdirSync11, mkdtempSync as mkdtempSync6, readdirSync as readdirSync9, realpathSync as realpathSync9, rmSync as rmSync9, writeFileSync as writeFileSync7 } from "node:fs";
-import { tmpdir as tmpdir10 } from "node:os";
+import { chmodSync as chmodSync8, existsSync as existsSync24, lstatSync as lstatSync7, mkdirSync as mkdirSync11, mkdtempSync as mkdtempSync7, readdirSync as readdirSync9, realpathSync as realpathSync9, rmSync as rmSync10, writeFileSync as writeFileSync7 } from "node:fs";
+import { tmpdir as tmpdir11 } from "node:os";
 import { dirname as dirname18, join as join27, parse as parse4, sep as sep5 } from "node:path";
 function candidateRef(runId, seq2) {
   return `refs/orbit/${runId}/candidates/${seq2}`;
@@ -39302,18 +39314,18 @@ async function pinCheckout(input) {
   return { ref: input.ref, commit, tree };
 }
 async function withStagingView(run) {
-  const scratch = mkdtempSync6(join27(tmpdir10(), "orbit-view-"));
+  const scratch = mkdtempSync7(join27(tmpdir11(), "orbit-view-"));
   try {
     const excludes = join27(scratch, "exclude");
     writeFileSync7(excludes, `${BUILTIN_EXCLUDES.join("\n")}
 `);
     return await run({ "core.excludesFile": excludes });
   } finally {
-    rmSync9(scratch, { recursive: true, force: true });
+    rmSync10(scratch, { recursive: true, force: true });
   }
 }
 async function stageTree(o) {
-  const scratch = mkdtempSync6(join27(tmpdir10(), "orbit-index-"));
+  const scratch = mkdtempSync7(join27(tmpdir11(), "orbit-index-"));
   try {
     const excludes = join27(scratch, "exclude");
     writeFileSync7(excludes, `${[...BUILTIN_EXCLUDES, ...o.extraExcludes].join("\n")}
@@ -39324,7 +39336,7 @@ async function stageTree(o) {
     await git2(o.worktree, ["add", "-A", "--", "."], opts);
     return (await git2(o.worktree, ["write-tree"], opts)).trim();
   } finally {
-    rmSync9(scratch, { recursive: true, force: true });
+    rmSync10(scratch, { recursive: true, force: true });
   }
 }
 async function diffStat(repoRoot, fromTree, toTree) {
@@ -39362,9 +39374,9 @@ async function cleanupCandidateCheckout(repoRoot, dir) {
   try {
     await git2(repoRoot, ["worktree", "remove", "--force", dir]);
   } catch {
-    rmSync9(dir, { recursive: true, force: true });
+    rmSync10(dir, { recursive: true, force: true });
   }
-  rmSync9(dir, { recursive: true, force: true });
+  rmSync10(dir, { recursive: true, force: true });
   await git2(repoRoot, ["worktree", "prune"]).catch(() => {
   });
 }
@@ -42018,7 +42030,7 @@ var init_dotnet_format = __esm({
 
 // src/evidence/runner.ts
 import { createHash as createHash3, randomBytes as randomBytes6 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync26, lstatSync as lstatSync10, mkdirSync as mkdirSync12, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync10, realpathSync as realpathSync11, rmSync as rmSync10, statSync as statSync11 } from "node:fs";
+import { closeSync as closeSync7, existsSync as existsSync26, lstatSync as lstatSync10, mkdirSync as mkdirSync12, openSync as openSync7, readSync as readSync4, readdirSync as readdirSync10, realpathSync as realpathSync11, rmSync as rmSync11, statSync as statSync11 } from "node:fs";
 import { homedir as homedir9, platform } from "node:os";
 import { join as join30, resolve as resolve9, sep as sep7 } from "node:path";
 function recordsOf(ctx) {
@@ -42816,7 +42828,7 @@ function hashFile(path) {
 }
 function removeLeftovers(subject, checkId, index) {
   const dirs = dirsFor(subject, checkId, index);
-  rmSync10(shimPath(dirs.checkDir, "output"), { force: true });
+  rmSync11(shimPath(dirs.checkDir, "output"), { force: true });
   for (const d of [dirs.homeDir, dirs.tmpDir, dirs.toolchainsDir]) removeScratch(d);
 }
 var DEFAULT_POLL_MS, DEFAULT_KILL_GRACE_MS2, DEFAULT_MAX_OUTPUT_BYTES2, LAUNCH_GRACE_MS, SHIM_SEARCH_MS, MAX_ARTIFACTS, MAX_RAW_READ, CHECK_ID, FORMAT_PROBE_RERUNS, CHECK_RUN_RECORDS, INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID, INSTALL_CHECK_IDS, WORKTREE_INSTALL_IDS, ALL_INSTALL_IDS, CHECKOUT_BOUND_CHECK_IDS, DEFINITION_FILE, DOTNET_CHECK_ENV, NUGET_MIGRATIONS_DIR, NUGET_LATEST_MIGRATION, DENIAL_FILE, DENIAL_SCAN_MS;
@@ -43265,8 +43277,8 @@ var init_baseline = __esm({
 });
 
 // src/evidence/fail-before.ts
-import { existsSync as existsSync28, mkdtempSync as mkdtempSync7, readdirSync as readdirSync11, readFileSync as readFileSync22, realpathSync as realpathSync12, rmSync as rmSync11 } from "node:fs";
-import { tmpdir as tmpdir11 } from "node:os";
+import { existsSync as existsSync28, mkdtempSync as mkdtempSync8, readdirSync as readdirSync11, readFileSync as readFileSync22, realpathSync as realpathSync12, rmSync as rmSync12 } from "node:fs";
+import { tmpdir as tmpdir12 } from "node:os";
 import { dirname as dirname20, isAbsolute as isAbsolute17, join as join32, relative as relative4, sep as sep8 } from "node:path";
 function acceptableCause(cause) {
   return !NEVER_ACCEPTED.has(cause);
@@ -43408,7 +43420,7 @@ async function buildProbeTree(repoRoot, base, changes, baseName = FAIL_BEFORE_PR
       if (kept.length > 0) return { refused: `${c.path} is a directory on ${baseName} whose files the probe keeps (${kept[0]}${kept.length > 1 ? ` and ${kept.length - 1} more` : ""}), so a test-owned file cannot replace it` };
     }
   }
-  const scratch = mkdtempSync7(join32(tmpdir11(), "orbit-probe-index-"));
+  const scratch = mkdtempSync8(join32(tmpdir12(), "orbit-probe-index-"));
   try {
     const env = { GIT_INDEX_FILE: join32(scratch, "index") };
     await git2(repoRoot, ["read-tree", base], { env });
@@ -43416,7 +43428,7 @@ async function buildProbeTree(repoRoot, base, changes, baseName = FAIL_BEFORE_PR
     if (info.length > 0) await git2(repoRoot, ["update-index", "-z", "--index-info"], { env, input: info });
     return { tree: (await git2(repoRoot, ["write-tree"], { env })).trim() };
   } finally {
-    rmSync11(scratch, { recursive: true, force: true });
+    rmSync12(scratch, { recursive: true, force: true });
   }
 }
 async function commitProbeTree(repoRoot, o) {
@@ -46182,7 +46194,7 @@ var init_text2 = __esm({
 });
 
 // src/controller/worktree-cleanup.ts
-import { existsSync as existsSync30, readdirSync as readdirSync12, realpathSync as realpathSync15, rmSync as rmSync12 } from "node:fs";
+import { existsSync as existsSync30, readdirSync as readdirSync12, realpathSync as realpathSync15, rmSync as rmSync13 } from "node:fs";
 import { join as join35, resolve as resolve11, sep as sep10 } from "node:path";
 async function hasUnsavedWork(worktree, repoRoot, baseRevision) {
   const admin = await adminDirFor(repoRoot, worktree);
@@ -46273,7 +46285,7 @@ async function releaseWorktrees(input) {
     }
   }
   out.kept = out.retained.map((r) => r.worktree);
-  if (out.retained.length === 0) rmSync12(root, { recursive: true, force: true });
+  if (out.retained.length === 0) rmSync13(root, { recursive: true, force: true });
   input.db.tx(() => appendEvent(input.db, run.id, WORKTREES_RELEASED_EVENT, input.ownerId, out, input.clock.now()));
   return out;
 }
@@ -49988,7 +50000,7 @@ var init_store3 = __esm({
 });
 
 // src/controller/eval-runner.ts
-import { existsSync as existsSync33, mkdirSync as mkdirSync14, rmSync as rmSync13 } from "node:fs";
+import { existsSync as existsSync33, mkdirSync as mkdirSync14, rmSync as rmSync14 } from "node:fs";
 import { join as join38 } from "node:path";
 function measureRun(db, runId, requiredCheckIds) {
   const run = getRun(db, runId);
@@ -50049,7 +50061,7 @@ function replayConfig(config, remainingUsd) {
   return c;
 }
 async function cloneAt(source, dest, revision) {
-  if (existsSync33(dest)) rmSync13(dest, { recursive: true, force: true });
+  if (existsSync33(dest)) rmSync14(dest, { recursive: true, force: true });
   try {
     await git2(join38(dest, ".."), ["clone", "--local", "--no-checkout", "--quiet", source, dest]);
     await git2(dest, ["cat-file", "-e", `${revision}^{commit}`]);
@@ -50173,8 +50185,8 @@ var init_eval_runner = __esm({
           } catch {
           }
           if (!this.o.keepClones) {
-            rmSync13(dir, { recursive: true, force: true });
-            if (cloneWorktrees) rmSync13(cloneWorktrees, { recursive: true, force: true });
+            rmSync14(dir, { recursive: true, force: true });
+            if (cloneWorktrees) rmSync14(cloneWorktrees, { recursive: true, force: true });
           }
         }
       }
@@ -57984,7 +57996,7 @@ var init_report3 = __esm({
 });
 
 // src/ui/runner.ts
-import { closeSync as closeSync9, copyFileSync, existsSync as existsSync38, mkdirSync as mkdirSync18, openSync as openSync9, readFileSync as readFileSync29, realpathSync as realpathSync16, rmSync as rmSync14, statSync as statSync14, writeFileSync as writeFileSync8 } from "node:fs";
+import { closeSync as closeSync9, copyFileSync, existsSync as existsSync38, mkdirSync as mkdirSync18, openSync as openSync9, readFileSync as readFileSync29, realpathSync as realpathSync16, rmSync as rmSync15, statSync as statSync14, writeFileSync as writeFileSync8 } from "node:fs";
 import { createRequire as createRequire3 } from "node:module";
 import { basename as basename17, dirname as dirname27, isAbsolute as isAbsolute21, join as join53, relative as relative7, resolve as resolve14, sep as sep14 } from "node:path";
 async function runUiChecks(input) {
@@ -58262,8 +58274,8 @@ async function runOneCheck(ctx) {
     // The browser run, and only it: Chromium's Mach rendezvous rules under srt on macOS (never the application or a worker).
     chromiumMachRendezvous: true
   };
-  rmSync14(reportPath2, { force: true });
-  rmSync14(outputDir, { recursive: true, force: true });
+  rmSync15(reportPath2, { force: true });
+  rmSync15(outputDir, { recursive: true, force: true });
   const spec = launch ? launchSpec(launch, { baseUrl: ctx.baseUrl, checkoutDir, argv: argv2, cwd, env }) : null;
   const wrapped = spec ? input.isolation.wrap(launcherArgv(input.isolation.launcherNode), profile, { cwd, env: { ...env, [LAUNCH_ENV]: JSON.stringify(spec) } }) : input.isolation.wrap(argv2, profile, { cwd, env });
   const started = clock.now();
@@ -58374,7 +58386,7 @@ ${exec.stderr}`,
 function launchSpec(launch, c) {
   const logPath = join53(launch.stateDir, APP_LOG_FILE);
   const statusPath = join53(launch.stateDir, LAUNCH_STATUS_FILE);
-  rmSync14(statusPath, { force: true });
+  rmSync15(statusPath, { force: true });
   closeSync9(openSync9(logPath, "a", 384));
   return {
     baseUrl: c.baseUrl,
@@ -59098,9 +59110,9 @@ var init_gates = __esm({
 });
 
 // src/controller/security.ts
-import { accessSync as accessSync4, constants as constants6, existsSync as existsSync39, mkdirSync as mkdirSync19, readFileSync as readFileSync30, rmSync as rmSync15, statSync as statSync15 } from "node:fs";
+import { accessSync as accessSync4, constants as constants6, existsSync as existsSync39, mkdirSync as mkdirSync19, readFileSync as readFileSync30, rmSync as rmSync16, statSync as statSync15 } from "node:fs";
 import { delimiter as delimiter3, dirname as dirname28, join as join54, normalize as normalize3, sep as sep15 } from "node:path";
-import { tmpdir as tmpdir12 } from "node:os";
+import { tmpdir as tmpdir13 } from "node:os";
 import { spawn as spawn5 } from "node:child_process";
 function findOnPath(name, pathVar = process.env.PATH) {
   for (const dir of (pathVar ?? "").split(delimiter3)) {
@@ -59269,7 +59281,7 @@ function judgeSastResult(result2, checkId, policy, now) {
 }
 async function runGitleaks(bin, input, files, reportPath2) {
   const work = join54(input.outDir, "secret-scan");
-  rmSync15(work, { recursive: true, force: true });
+  rmSync16(work, { recursive: true, force: true });
   const scanRoot = join54(work, "tree");
   const tree = join54(scanRoot, "files");
   const trusted = join54(work, "trusted");
@@ -59289,7 +59301,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
   const raw = join54(work, "gitleaks-report.json");
   const r = await execCapture([bin, "dir", scanRoot, "-c", config, "-i", trusted, "--ignore-gitleaks-allow", "--redact", "-f", "json", "-r", raw, "--no-banner", "--exit-code", "1"], {
     // GITLEAKS_CONFIG and friends from the host would outrank nothing here (-c wins), but the scan needs nothing from it either.
-    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir12() },
+    env: { PATH: input.hostPath ?? process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir13() },
     cwd: work,
     timeoutMs: input.timeoutMs ?? 12e4
   });
@@ -59297,7 +59309,7 @@ async function runGitleaks(bin, input, files, reportPath2) {
   const parsed3 = existsSync39(raw) ? readJsonIfExists(raw) ?? [] : [];
   const findings = parsed3.map((f) => ({ file: relativeTo3(tree, f.File ?? ""), line: typeof f.StartLine === "number" ? f.StartLine : null, rule: String(f.RuleID ?? "secret") }));
   if (r.exitCode === 1 && findings.length === 0) throw new Error("reported leaks but wrote no readable report");
-  rmSync15(scanRoot, { recursive: true, force: true });
+  rmSync16(scanRoot, { recursive: true, force: true });
   return { scanner: "gitleaks", completed: true, findings, files: copied, note: "gitleaks with Orbit's trusted configuration and --ignore-gitleaks-allow", reportPath: reportPath2 };
 }
 function relativeTo3(root, p) {
@@ -62055,7 +62067,7 @@ var init_worker_plugins = __esm({
 });
 
 // src/controller/steps/preflight.ts
-import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync16 } from "node:fs";
+import { existsSync as existsSync42, mkdirSync as mkdirSync20, rmSync as rmSync17 } from "node:fs";
 import { dirname as dirname31, isAbsolute as isAbsolute24, join as join62, resolve as resolve17 } from "node:path";
 async function preflightStep(ctx) {
   const stop = await safePoint(ctx);
@@ -62316,7 +62328,7 @@ async function preinstallWorktree(ctx, repo, worktree, head, tree) {
   }
   const left = await worktreeChanges(worktree);
   if (left.length === 0) return;
-  await git2(repo, ["worktree", "remove", "--force", "--force", worktree]).catch(() => rmSync16(worktree, { recursive: true, force: true }));
+  await git2(repo, ["worktree", "remove", "--force", "--force", worktree]).catch(() => rmSync17(worktree, { recursive: true, force: true }));
   await ensureWorktree(repo, worktree, head);
   const still = await worktreeChanges(worktree);
   if (still.length > 0) throw new OrbitError("INTERNAL", `the implementer's worktree was made again after the dependency install but still shows ${listed(still)}`);
@@ -62340,7 +62352,7 @@ async function ensureWorktree(repo, path, base) {
       return (await adminDirFor(repo, path)).worktree;
     } catch (err) {
       if (!isOrbitError(err)) throw err;
-      rmSync16(path, { recursive: true, force: true });
+      rmSync17(path, { recursive: true, force: true });
     }
   }
   mkdirSync20(dirname31(path), { recursive: true, mode: 448 });
@@ -62849,7 +62861,7 @@ var init_deliver = __esm({
 });
 
 // src/delivery/release.ts
-import { existsSync as existsSync43, mkdirSync as mkdirSync21, rmSync as rmSync17 } from "node:fs";
+import { existsSync as existsSync43, mkdirSync as mkdirSync21, rmSync as rmSync18 } from "node:fs";
 import { homedir as homedir14, platform as platform2 } from "node:os";
 import { join as join64 } from "node:path";
 function releaseConfig(snapshot2) {
@@ -63290,8 +63302,8 @@ async function resolveDeploy(input) {
     atomicWriteJson(files.outcome, { environment: t.environment, branch: t.branch, sha: t.sha, tree: receipt.tree, attempt: action.attempts, exitCode: 0, timedOut: false, durationMs: 0, isolation: receipt.isolation, limitations: receipt.limitations, output: receipt.output }, 384);
     ledger.recordReceipt(action, receipt, "reconcile");
   } else {
-    rmSync17(files.started, { force: true });
-    rmSync17(files.outcome, { force: true });
+    rmSync18(files.started, { force: true });
+    rmSync18(files.outcome, { force: true });
     ledger.markUnknown(action, `resolved: the deploy did not take effect (${detail})`);
   }
   recordDecision(
@@ -64919,8 +64931,8 @@ var init_contracting = __esm({
 });
 
 // src/controller/parallel-writers.ts
-import { existsSync as existsSync44, mkdtempSync as mkdtempSync8, rmSync as rmSync18, writeFileSync as writeFileSync10 } from "node:fs";
-import { tmpdir as tmpdir13 } from "node:os";
+import { existsSync as existsSync44, mkdtempSync as mkdtempSync9, rmSync as rmSync19, writeFileSync as writeFileSync10 } from "node:fs";
+import { tmpdir as tmpdir14 } from "node:os";
 import { join as join66 } from "node:path";
 function splitAttempt(ctx, contract, fresh) {
   if (!fresh || ctx.run.mode === "supervised") return null;
@@ -65106,7 +65118,7 @@ async function changedFiles3(c) {
   return out.split("\0").filter((e) => e.length > 3).map((e) => e.slice(3)).sort();
 }
 async function commitWorktree(repoRoot, c, base, message) {
-  const scratch = mkdtempSync8(join66(tmpdir13(), "orbit-unit-"));
+  const scratch = mkdtempSync9(join66(tmpdir14(), "orbit-unit-"));
   try {
     const excludes = join66(scratch, "exclude");
     writeFileSync10(excludes, `${UNIT_EXCLUDES.join("\n")}
@@ -65118,7 +65130,7 @@ async function commitWorktree(repoRoot, c, base, message) {
     const id = { GIT_AUTHOR_NAME: ORBIT_GIT_IDENTITY.name, GIT_AUTHOR_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_COMMITTER_NAME: ORBIT_GIT_IDENTITY.name, GIT_COMMITTER_EMAIL: ORBIT_GIT_IDENTITY.email, GIT_AUTHOR_DATE: "946684800 +0000", GIT_COMMITTER_DATE: "946684800 +0000" };
     return (await git2(repoRoot, ["commit-tree", tree, "-p", base, "-m", message], { env: id })).trim();
   } finally {
-    rmSync18(scratch, { recursive: true, force: true });
+    rmSync19(scratch, { recursive: true, force: true });
   }
 }
 async function changedBetween2(repoRoot, from, to) {
@@ -68940,7 +68952,7 @@ var init_steps = __esm({
 });
 
 // src/storage/retention.ts
-import { existsSync as existsSync51, lstatSync as lstatSync11, realpathSync as realpathSync20, rmSync as rmSync19 } from "node:fs";
+import { existsSync as existsSync51, lstatSync as lstatSync11, realpathSync as realpathSync20, rmSync as rmSync20 } from "node:fs";
 import { homedir as homedir15 } from "node:os";
 import { dirname as dirname32, isAbsolute as isAbsolute25, join as join75, resolve as resolve18 } from "node:path";
 function repoKeyFor(repoRoot) {
@@ -69010,7 +69022,7 @@ async function pruneExpiredRuns(db, opts) {
       }
     }
     if (!opts.dryRun) {
-      for (const t of targets) rmSync19(t, { recursive: true, force: true });
+      for (const t of targets) rmSync20(t, { recursive: true, force: true });
       db.tx(() => appendEvent(db, row.id, ARTIFACTS_PRUNED_EVENT, "gc", { keep_runs_days: opts.keepDays, removed: targets }, now));
       if (targets.some((t) => t.startsWith(worktreesRoot))) removedWorktree = true;
     }
@@ -69680,7 +69692,7 @@ var init_loop = __esm({
 });
 
 // src/controller/service.ts
-import { chmodSync as chmodSync9, existsSync as existsSync53, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync36, readdirSync as readdirSync17, rmSync as rmSync20, rmdirSync, statSync as statSync16 } from "node:fs";
+import { chmodSync as chmodSync9, existsSync as existsSync53, lstatSync as lstatSync12, mkdirSync as mkdirSync23, readFileSync as readFileSync36, readdirSync as readdirSync17, rmSync as rmSync21, rmdirSync, statSync as statSync16 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
 import { dirname as dirname34, isAbsolute as isAbsolute26, join as join77, resolve as resolve19 } from "node:path";
 function serviceLabel(repoRoot) {
@@ -69954,14 +69966,14 @@ async function uninstallService(label, opts) {
   if (opts.platform === "darwin") {
     const plist = launchdPlistPath(opts.homeDir, label);
     await must(run, launchctlCommands(label, opts.uid, plist).bootout, [0, 3]);
-    rmSync20(plist, { force: true });
+    rmSync21(plist, { force: true });
     return withLauncherCleanup(await waitUntilGone(label, opts), opts);
   }
   if (opts.platform === "linux") {
     const unit = systemdUnitPath(opts.homeDir, label);
     const cmd = systemctlCommands(label);
     if (existsSync53(unit)) await run(cmd.disable);
-    rmSync20(unit, { force: true });
+    rmSync21(unit, { force: true });
     await must(run, cmd.daemonReload, [0]);
     return withLauncherCleanup(await waitUntilGone(label, opts), opts);
   }
@@ -69979,7 +69991,7 @@ function withLauncherCleanup(status2, opts) {
   if (!opts.orbitHome || installedDefinitions(opts).length > 0) return status2;
   const path = launcherPath(opts.orbitHome);
   if (readLauncher(path) === null) return status2;
-  rmSync20(path, { force: true });
+  rmSync21(path, { force: true });
   try {
     rmdirSync(dirname34(path));
   } catch {
@@ -71500,8 +71512,8 @@ var init_doctor_dotnet = __esm({
 });
 
 // src/cli/commands/doctor-sandbox.ts
-import { existsSync as existsSync58, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync9, realpathSync as realpathSync21, writeFileSync as writeFileSync11 } from "node:fs";
-import { tmpdir as tmpdir14 } from "node:os";
+import { existsSync as existsSync58, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync10, realpathSync as realpathSync21, writeFileSync as writeFileSync11 } from "node:fs";
+import { tmpdir as tmpdir15 } from "node:os";
 import { basename as basename21, dirname as dirname38, isAbsolute as isAbsolute27, join as join83, resolve as resolve23 } from "node:path";
 function checkWord(check) {
   if (!check.shell) return check.command[0] ?? null;
@@ -71530,7 +71542,7 @@ function probeCacheRoot(input, toolchains, scratch) {
   return all ? real : join83(scratch, "cache-stand-in");
 }
 async function probe(input, check, exe, args, cwd, project, nodeFix) {
-  const scratch = realpathSync21(mkdtempSync9(join83(tmpdir14(), "orbit-doctor-check-")));
+  const scratch = realpathSync21(mkdtempSync10(join83(tmpdir15(), "orbit-doctor-check-")));
   let tmp = null;
   try {
     const checkout = join83(scratch, "checkout");
@@ -71926,10 +71938,10 @@ var init_policy_file = __esm({
 });
 
 // src/cli/commands/doctor.ts
-import { accessSync as accessSync5, constants as constants7, existsSync as existsSync60, mkdtempSync as mkdtempSync10, readFileSync as readFileSync39, realpathSync as realpathSync22, rmSync as rmSync21, statSync as statSync17 } from "node:fs";
+import { accessSync as accessSync5, constants as constants7, existsSync as existsSync60, mkdtempSync as mkdtempSync11, readFileSync as readFileSync39, realpathSync as realpathSync22, rmSync as rmSync22, statSync as statSync17 } from "node:fs";
 import { randomInt } from "node:crypto";
 import { createRequire as createRequire4 } from "node:module";
-import { homedir as homedir16, tmpdir as tmpdir15 } from "node:os";
+import { homedir as homedir16, tmpdir as tmpdir16 } from "node:os";
 import { delimiter as delimiter5, isAbsolute as isAbsolute28, join as join84, resolve as resolve25, sep as sep17 } from "node:path";
 function which2(cmd, env, cwd = process.cwd()) {
   const ok = (p) => {
@@ -72077,7 +72089,7 @@ function checkStorage(p) {
   let db = null;
   try {
     if (!existsSync60(path)) {
-      const scratch = mkdtempSync10(join84(tmpdir15(), "orbit-doctor-"));
+      const scratch = mkdtempSync11(join84(tmpdir16(), "orbit-doctor-"));
       try {
         db = openDb(join84(scratch, "probe.sqlite"));
         const mode2 = String((db.get("PRAGMA journal_mode") ?? {}).journal_mode);
@@ -72085,7 +72097,7 @@ function checkStorage(p) {
       } finally {
         db?.close();
         db = null;
-        rmSync21(scratch, { recursive: true, force: true });
+        rmSync22(scratch, { recursive: true, force: true });
       }
       try {
         accessSync5(existsSync60(dir) ? dir : repo, constants7.W_OK);
@@ -72570,7 +72582,7 @@ async function browserIsolationCheck(input) {
   if ("problem" in browser) {
     return warn2(id, "ui", `not launched: ${browser.problem}`, "Playwright's headless Chromium for the repository's Playwright", "npm install -D @playwright/test, then npx playwright install chromium", [info.detail, limitation]);
   }
-  const dir = realpathSync22(mkdtempSync10(join84(tmpdir15(), "orbit-doctor-browser-")));
+  const dir = realpathSync22(mkdtempSync11(join84(tmpdir16(), "orbit-doctor-browser-")));
   try {
     const repo = realpathSync22(input.repo);
     const exe = realpathSync22(browser.exe);
@@ -72597,7 +72609,7 @@ async function browserIsolationCheck(input) {
   } catch (err) {
     return fail2(id, "ui", `headless Chromium could not be launched under srt: ${errText(err, 240)}`, "a sandbox-runtime that can wrap the browser", "see docs/troubleshooting.md", [info.detail, limitation]);
   } finally {
-    rmSync21(dir, { recursive: true, force: true });
+    rmSync22(dir, { recursive: true, force: true });
   }
 }
 async function checkDelivery(p) {
@@ -73811,9 +73823,9 @@ knowledge:
 # Repository map (orbit map build|query): files, generated files, tests,
 # imports and check paths of a tree, built from git without a model. The
 # scope gate leaves generated files (linguist-generated in .gitattributes, or
-# a generated header in a source file up to 1 MiB) out of changed_lines, and a
-# review finding filed as missing-test is refuted when the map links a test to
-# its file. Those uses are always on.
+# a generated header in a JS, TS, Python, Rust or Go file up to 1 MiB) out of
+# changed_lines, and a review finding filed as missing-test is refuted when the
+# map links a test to its file. Those uses are always on.
 repo_map:
   # Give the planner and the reviewer the map's slice for the files a goal
   # names. Off until a full benchmark shows it helps.

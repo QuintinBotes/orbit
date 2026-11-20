@@ -60,6 +60,18 @@ async function settle(max = 10) {
   return out;
 }
 
+describe('the repository map as a tool (#175 FR-005)', () => {
+  it('names orbit map query to the implementer only with repo_map.prompt_slice on', async () => {
+    const off = await setup();
+    await run();
+    expect(off.adapter.specs[0]!.prompt).not.toContain('Plain search stays your default');
+    lab.cleanup();
+    const on = await setup({ tweak: (c) => (c.repo_map = { ...c.repo_map!, prompt_slice: true }) });
+    await run();
+    expect(on.adapter.specs[0]!.prompt).toMatch(/Plain search stays your default\..*map query <path>/);
+  });
+});
+
 describe('a first attempt', () => {
   it('is counted, routed, funded and given to an implementer in the run\'s worktree, then snapshotted into a candidate and sent to verification', async () => {
     const { adapter } = await setup({ onStart: (s) => edit('apps/calc.mjs', 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n')(s.cwd) });

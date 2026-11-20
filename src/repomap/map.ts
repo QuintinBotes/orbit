@@ -6,13 +6,15 @@
  * package), the import edges of TypeScript, JavaScript, Python, Rust and Go (imports.ts), and which paths each
  * configured check's command names. Any other language gets the file list and the test links only.
  *
- * A map is built from git objects only (ls-tree, check-attr --source, cat-file), never from a working tree, and is
- * cached under the clone's common git directory by tree hash: a cached map is served only for the tree it names. A
- * new tree reuses what the newest cached map read from every unchanged blob, so a rebuild reads only changed files.
+ * A map is built from git objects only (ls-tree, read-tree into a scratch index, check-attr, cat-file), never from a
+ * working tree, and is cached under the clone's common git directory by tree hash: a cached map is served only for the
+ * tree it names. A new tree reuses what the newest cached map read from every unchanged blob, so a rebuild reads only
+ * changed files.
  * The cache is a convenience: a cache that cannot be read or written makes a full build, never a failed one.
  */
 import { execFile } from 'node:child_process';
-import { readdirSync, statSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { atomicWrite, readJsonIfExists } from '../core/fsx.ts';
@@ -83,7 +85,7 @@ export async function buildRepoMap(repoRoot: string, rev: string, opts: { checks
   if (hit) return derive(hit, opts.checks ?? {}, { cached: true, parsed: 0, reused: 0 });
 
   const listed = parseLsTree(await gitBuf(repoRoot, ['ls-tree', '-r', '-l', '-z', '--full-tree', tree]));
-  const attrs = parseCheckAttr(await gitBuf(repoRoot, ['check-attr', '--source', tree, '-z', '--stdin', 'linguist-generated'], listed.map((e) => e.path).join('\0')));
+  const attrs = await generatedByAttribute(repoRoot, tree, listed.map((e) => e.path));
   const previous = dir === null ? new Map<string, Pick<Entry, 'marker' | 'facts'>>() : newestBlobs(dir);
   const wanted = [...new Set(listed.filter((e) => readable(e.path, e.size) && !previous.has(blobKey(e))).map((e) => e.blob))];
   const texts = wanted.length === 0 ? new Map<string, string>() : parseBatch(await gitBuf(repoRoot, ['cat-file', '--batch'], `${wanted.join('\n')}\n`));
@@ -341,7 +343,22 @@ function parseLsTree(out: Buffer): Pick<Entry, 'path' | 'blob' | 'size'>[] {
   return entries;
 }
 
-/** The paths whose linguist-generated attribute is set (or true) in the tree. */
+/**
+ * The paths the tree's linguist-generated attribute marks. check-attr reads the tree's .gitattributes from a scratch
+ * index of it, as git before 2.40 has no check-attr --source.
+ */
+async function generatedByAttribute(repoRoot: string, tree: string, paths: string[]): Promise<Set<string>> {
+  const dir = mkdtempSync(join(tmpdir(), 'orbit-repomap-'));
+  try {
+    const env = { GIT_INDEX_FILE: join(dir, 'index') };
+    await gitBuf(repoRoot, ['read-tree', tree], undefined, env);
+    return parseCheckAttr(await gitBuf(repoRoot, ['check-attr', '--cached', '-z', '--stdin', 'linguist-generated'], paths.join('\0'), env));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The paths whose linguist-generated attribute is set (or true) in check-attr's output. */
 function parseCheckAttr(out: Buffer): Set<string> {
   const parts = out.toString('utf8').split('\0');
   const set = new Set<string>();
@@ -367,13 +384,14 @@ function parseBatch(out: Buffer): Map<string, string> {
   return texts;
 }
 
-function gitBuf(cwd: string, args: string[], input?: string): Promise<Buffer> {
+function gitBuf(cwd: string, args: string[], input?: string, env: Record<string, string> = {}): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'git',
-      ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args],
-      // No system attributes: what a tree marks generated comes from the tree (and the clone's own info/attributes).
-      { cwd, env: gitEnv({ GIT_ATTR_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1' }), encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024, windowsHide: true },
+      ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null', ...args],
+      // No system or user attributes (gitEnv's HOME is the shared temp directory): what a tree marks generated comes
+      // from the tree (and the clone's own info/attributes).
+      { cwd, env: gitEnv({ GIT_ATTR_NOSYSTEM: '1', GIT_NO_REPLACE_OBJECTS: '1', ...env }), encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024, windowsHide: true },
       (err, stdout, stderr) => {
         if (err) reject(new OrbitError('GIT_FAILED', `git ${args[0]} failed: ${stderr.toString('utf8').trim().slice(0, 300) || err.message}`, { args: args.slice(0, 3) }));
         else resolve(stdout);
