@@ -239,6 +239,7 @@ fix the config, cancel the run and start a new one
 | `orbit verify [run-id]` | Independent verification of a run's latest candidate: a verdict per criterion with its evidence. Exit 14 for FAIL, 15 for INCOMPLETE. |
 | `orbit repair <run-id \| description \| ->` | Repair a failed run (BLOCKED or paused with FAIL evidence), or start a run to repair a described failure (`--foreground`, `--detach`, `--mode`, `--policy`). `-` reads the description from stdin. |
 | `orbit stats` | Success rate, cost, repair loops, time to green, the pass rate and cost per accepted task of each route, and why runs ended, per failure class and per Orbit version, for this repository (`--since`, `--until`, `--orbit-version`). |
+| `orbit bench --tier lab \| live` | Score this Orbit version and store the scorecard in `docs/scorecards/` (from a source checkout). `lab` replays Orbit's fixed issues with fake providers, no model, and exits 1 naming any scenario whose fixed failure came back; `--without diagnosis` compares a stage off. `live` runs pinned goals with real providers and needs `--budget <usd>` and `--approved-by <name>`; `--baseline` adds a plain `claude -p` session. See [the benchmark](docs/operations.md#benchmark). |
 | `orbit gc` | Apply artifact retention to finished runs (`--keep-days`, `--dry-run`). |
 | `orbit pause <run-id>` | Pause durably. |
 | `orbit resume <run-id>` | Unpause, or continue a blocked run. Needs a controller: with a service it leaves the run to it; with none it refuses (changing nothing) unless you pass `--foreground`, or `--detach` to release it to a service you start later (`--force`). On a terminal with no service it drives the run itself. |
@@ -290,6 +291,10 @@ repaired, reverified, reviewed and delivered as a draft pull request); a live
 run on 2026-10-06 also went from a failed browser check through diagnosis to a
 repair attempt, though that failure came from a sandbox defect that is now fixed
 (see [the testing journal](docs/testing-journal.md)).
+
+These outcomes are the demo's, not a benchmark score. `orbit bench` stores a
+scorecard per version in [docs/scorecards](docs/scorecards); no live-tier
+scorecard is published yet, so no claim here rests on one.
 
 No CI ran in the demo repository, so the reports say CI is unverified. These
 have **not** been run against real providers: CI observation and repair, release
