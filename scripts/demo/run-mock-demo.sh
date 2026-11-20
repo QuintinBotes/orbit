@@ -44,4 +44,4 @@ fi
 unset GH_TOKEN GITHUB_TOKEN ANTHROPIC_API_KEY CODEX_API_KEY OPENAI_API_KEY
 
 cd "$root"
-exec node --experimental-transform-types --no-warnings scripts/demo/mock-demo.ts "$@"
+exec node --experimental-strip-types --no-warnings scripts/demo/mock-demo.ts "$@"
