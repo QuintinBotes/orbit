@@ -205,7 +205,7 @@ describe('User Story 1: a lesson whose cited file is gone, or that had no suppor
     expect(withStore((s) => s.freshness([id]).get(id))).toMatchObject({ stale_reason: null, verified_at: lab.clock.now() });
     lab.clock.advance(29 * 24 * 3_600_000);
     await end(nextRun('orb-4'), 'SUCCEEDED');
-    expect(withStore((s) => s.freshness([id]).get(id)?.stale_reason)).toBe('expired: no support for 29 days (limit 28)');
+    expect(withStore((s) => s.freshness([id]).get(id)?.stale_reason)).toBe('expired: no support for more than 28 days');
   });
 });
 
@@ -260,6 +260,12 @@ describe('overlays with lessons out of prompts', () => {
     const ctx = nextRun('orb-last');
     await end(ctx, 'EXHAUSTED', 'budget');
     expect(learning(ctx).overlays).toMatchObject({ live: [] });
+    expect(withStore((s) => s.getOverlay(overlay.id)!.status)).toBe('active');
+    // Once prompts carry it, the runs from before are still not evidence about it: one run is too few to judge.
+    lab.config.knowledge.lessons_in_prompts = true;
+    const carried = nextRun('orb-on');
+    await end(carried, 'EXHAUSTED', 'budget');
+    expect(learning(carried).overlays).toMatchObject({ live: [{ overlay_id: overlay.id, tasks: 1, rollback: false }] });
     expect(withStore((s) => s.getOverlay(overlay.id)!.status)).toBe('active');
   });
 });

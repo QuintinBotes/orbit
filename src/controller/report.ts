@@ -797,7 +797,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     store.close();
   }
   atomicWriteJson(join(ctx.runDir, 'learning.json'), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0, in_prompts: k.lessons_in_prompts === true }, ctx.clock.now()));
 }
 
 /**

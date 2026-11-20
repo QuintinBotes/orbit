@@ -68,7 +68,7 @@ export function recheckLessons(store: KnowledgeStore, lessons: readonly Lesson[]
     const t = times.get(lesson.id);
     if (!t) continue;
     const idle = now - t.last_support_at;
-    const reason = idle > days * DAY_MS ? `expired: no support for ${Math.floor(idle / DAY_MS)} days (limit ${days})` : citationProblem(lesson, env);
+    const reason = idle > days * DAY_MS ? `expired: no support for more than ${days} days` : citationProblem(lesson, env);
     store.markChecked(lesson.id, reason);
     if (reason === null) eligible.push(lesson);
   }

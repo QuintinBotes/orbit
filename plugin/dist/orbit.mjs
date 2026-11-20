@@ -48472,6 +48472,7 @@ function mergeEvidence(a, b) {
   return out.length > CAPS.evidence ? out.slice(out.length - CAPS.evidence) : out;
 }
 function mergeLessons(existing, incoming) {
+  const citation = [incoming.citation, existing.citation].find((c) => c && (c.path !== null || c.check_id !== null)) ?? incoming.citation ?? existing.citation;
   const a = existing.applicability;
   const b = incoming.applicability;
   return {
@@ -48496,8 +48497,8 @@ function mergeLessons(existing, incoming) {
     confidence: CONFIDENCE_ORDER[incoming.confidence] > CONFIDENCE_ORDER[existing.confidence] ? incoming.confidence : existing.confidence,
     code_free: existing.code_free && incoming.code_free,
     supersedes: existing.supersedes ?? (incoming.supersedes === existing.id ? null : incoming.supersedes),
-    // The newer run's citation names the code as it is now.
-    ...incoming.citation || existing.citation ? { citation: incoming.citation ?? existing.citation } : {}
+    // The newer run's citation names the code as it is now, unless it names no file or check and the older one does.
+    ...citation ? { citation } : {}
   };
 }
 function assertAdvisory(lesson) {
@@ -48927,7 +48928,7 @@ var init_store2 = __esm({
           if (before.stale_reason !== staleReason) this.appendEvent(id, staleReason === null ? "fresh" : "stale", staleReason === null ? null : { reason: staleReason }, now);
         });
       }
-      /** Store a run-end observation once; false when the run's observation is already stored. */
+      /** Store the observation of one end of a run once; false when that end is already stored. */
       recordObservation(o) {
         const { id, run_id, state, failure_class, ...data } = o;
         return this.db.run("INSERT OR IGNORE INTO observations (id, run_id, state, failure_class, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, run_id, state, failure_class, JSON.stringify(data), this.clock.now()).changes === 1;
@@ -49140,7 +49141,7 @@ function recheckLessons(store, lessons, env) {
     const t = times.get(lesson.id);
     if (!t) continue;
     const idle = now - t.last_support_at;
-    const reason = idle > days * DAY_MS ? `expired: no support for ${Math.floor(idle / DAY_MS)} days (limit ${days})` : citationProblem(lesson, env);
+    const reason = idle > days * DAY_MS ? `expired: no support for more than ${days} days` : citationProblem(lesson, env);
     store.markChecked(lesson.id, reason);
     if (reason === null) eligible.push(lesson);
   }
@@ -49689,7 +49690,7 @@ function measureRun(db, runId, requiredCheckIds) {
 }
 function liveWindow(db, sinceMs) {
   const rows = db.all(
-    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => "?").join(", ")}) OR ${SETTLED_BLOCK}) AND created_at >= ? ORDER BY created_at, id`,
+    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => "?").join(", ")}) OR ${SETTLED_BLOCK}) AND created_at >= ? AND NOT ${OUT_OF_PROMPTS} ORDER BY created_at, id`,
     ...SETTLED_STATES,
     sinceMs
   );
@@ -49778,7 +49779,7 @@ async function autoEvaluateOverlays(ctx, store) {
     return { skipped: null, overlay: overlay.id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300) };
   }
 }
-var SETTLED_STATES, SETTLED_BLOCK, ReplayEvalRunner, AUTO_EVAL_CASES;
+var SETTLED_STATES, SETTLED_BLOCK, OUT_OF_PROMPTS, ReplayEvalRunner, AUTO_EVAL_CASES;
 var init_eval_runner = __esm({
   "src/controller/eval-runner.ts"() {
     "use strict";
@@ -49803,6 +49804,7 @@ var init_eval_runner = __esm({
     init_start();
     SETTLED_STATES = ["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE"];
     SETTLED_BLOCK = "(state = 'BLOCKED' AND CASE WHEN json_valid(outcome_json) THEN json_extract(outcome_json, '$.decided') = 'EXHAUSTED' ELSE 0 END)";
+    OUT_OF_PROMPTS = "EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.type = 'learning.completed' AND CASE WHEN json_valid(e.data_json) THEN json_extract(e.data_json, '$.in_prompts') = 0 ELSE 0 END)";
     ReplayEvalRunner = class {
       o;
       spent = 0;
@@ -57138,7 +57140,7 @@ async function learnAtTerminal(ctx) {
     store.close();
   }
   atomicWriteJson(join51(ctx.runDir, "learning.json"), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, "learning.completed", ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0, in_prompts: k.lessons_in_prompts === true }, ctx.clock.now()));
 }
 function refusedWithoutOutput(db, run) {
   return outcomeHas(run, "worker_refusal") && db.get("SELECT 1 AS x FROM candidates WHERE run_id = ? LIMIT 1", run.id) === void 0;

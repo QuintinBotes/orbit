@@ -30,7 +30,7 @@ Lesson statuses:
 
 | Status | Meaning |
 |---|---|
-| `candidate` | newly extracted or ingested; retrieved only with a clear label |
+| `candidate` | newly extracted or ingested; never put in a prompt (only validated lessons are) |
 | `validated` | supported by evidence from at least two distinct runs and not contradicted |
 | `deprecated` | contradictions outnumber support, or two distinct runs contradicted it |
 | `rejected` | refused by validation or by the publication guard |
@@ -53,9 +53,12 @@ this section runs either way. With it on, a worker prompt gets at most
 
 ## Cited, re-checked, contradicted and expired lessons
 
-Every lesson curated from a run cites that run and the file and line, the check
-or the review finding it came from (`citation` in `schemas/lesson.schema.json`),
-taken from the controller's own observations, never from the curator. A lesson
+Every lesson curated from a run cites that run and, where the run's records name
+one, the file and line, the check or the review finding it came from (`citation`
+in `schemas/lesson.schema.json`), taken from the controller's own observations,
+never from the curator. A run lesson that cites no file or check (one resting
+only on a CI failure or a decision, say) cannot be re-checked and stays out of
+prompts. A lesson
 that names a secret or a person (an email address, a home directory, a value the
 redactor masks) is refused when it is written.
 
@@ -202,7 +205,8 @@ it there is the point. When live metrics of an
 active overlay regress past a threshold, it is rolled back automatically and the
 previous known-good overlay is restored. Live runs judge an overlay only while
 `knowledge.lessons_in_prompts` is on: with it off no prompt carries the
-overlay. Every version is kept.
+overlay, and the runs that ended with it off are left out of the window when it
+is turned on again. Every version is kept.
 
 Roll back by hand:
 

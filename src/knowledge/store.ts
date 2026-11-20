@@ -9,7 +9,6 @@ import { lessonIdFor, lessonKey, redactText, searchTerms, unionCapped } from './
 import { fromJsonLd, toJsonLd, type JsonLdDocument } from './jsonld.ts';
 import {
   EDGE_TYPES,
-  type Citation,
   type Confidence,
   type EdgeType,
   type EvidenceRef,
@@ -174,6 +173,7 @@ export function mergeEvidence(a: readonly EvidenceRef[], b: readonly EvidenceRef
  * code_free holds only if both sides claim it.
  */
 export function mergeLessons(existing: Lesson, incoming: Lesson): Lesson {
+  const citation = [incoming.citation, existing.citation].find((c) => c && (c.path !== null || c.check_id !== null)) ?? incoming.citation ?? existing.citation;
   const a = existing.applicability;
   const b = incoming.applicability;
   return {
@@ -198,8 +198,8 @@ export function mergeLessons(existing: Lesson, incoming: Lesson): Lesson {
     confidence: CONFIDENCE_ORDER[incoming.confidence] > CONFIDENCE_ORDER[existing.confidence] ? incoming.confidence : existing.confidence,
     code_free: existing.code_free && incoming.code_free,
     supersedes: existing.supersedes ?? (incoming.supersedes === existing.id ? null : incoming.supersedes),
-    // The newer run's citation names the code as it is now.
-    ...(incoming.citation || existing.citation ? { citation: (incoming.citation ?? existing.citation) as Citation } : {}),
+    // The newer run's citation names the code as it is now, unless it names no file or check and the older one does.
+    ...(citation ? { citation } : {}),
   };
 }
 
@@ -639,7 +639,7 @@ export class KnowledgeStore {
     });
   }
 
-  /** Store a run-end observation once; false when the run's observation is already stored. */
+  /** Store the observation of one end of a run once; false when that end is already stored. */
   recordObservation(o: RunEndObservation): boolean {
     const { id, run_id, state, failure_class, ...data } = o;
     return this.db.run('INSERT OR IGNORE INTO observations (id, run_id, state, failure_class, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, run_id, state, failure_class, JSON.stringify(data), this.clock.now()).changes === 1;

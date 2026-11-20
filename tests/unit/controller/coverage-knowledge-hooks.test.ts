@@ -110,6 +110,20 @@ describe('lessons in prompts (issue #173)', () => {
     const rows = withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id).map((r) => store.getLesson(r.lesson_id)!.status));
     expect(rows).toEqual(['validated', 'validated']);
   });
+
+  it('leave a candidate out even when the prompt has room for it', () => {
+    lab = makeUnitLab({ tweak: enabled });
+    const ctx = lab.ctx();
+    mkdirSync(join(lab.repo, 'apps'), { recursive: true });
+    writeFileSync(join(lab.repo, 'apps', 'calc.mjs'), 'a\nb\n');
+    withStore(repoKnowledgePath(ctx), (store) => {
+      store.upsertLesson(cited('apps/calc.mjs'));
+      store.upsertLesson({ ...cited('apps/calc.mjs'), statement: 'Round calculator results only when they are shown.', id: makeLesson({ statement: 'Round calculator results only when they are shown.' }).id, status: 'candidate' });
+    });
+    advisoryBlockFor(ctx, { role: 'implementer', workerId: 'w', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: [] });
+    const rows = withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id).map((r) => store.getLesson(r.lesson_id)!.status));
+    expect(rows).toEqual(['validated']);
+  });
 });
 
 describe('knowledge hooks with learning on', () => {

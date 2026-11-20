@@ -104,6 +104,9 @@ export function measureRun(db: OrbitDb, runId: string, requiredCheckIds?: readon
 const SETTLED_STATES = ['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE'] as const;
 const SETTLED_BLOCK = "(state = 'BLOCKED' AND CASE WHEN json_valid(outcome_json) THEN json_extract(outcome_json, '$.decided') = 'EXHAUSTED' ELSE 0 END)";
 
+// A run whose learning recorded that lessons and overlays were out of its prompts (issue #173) never carried an overlay.
+const OUT_OF_PROMPTS = "EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.type = 'learning.completed' AND CASE WHEN json_valid(e.data_json) THEN json_extract(e.data_json, '$.in_prompts') = 0 ELSE 0 END)";
+
 export interface LiveWindow extends EvalMetrics {
   /** Settled tasks in the window. */
   tasks: number;
@@ -116,7 +119,7 @@ export interface LiveWindow extends EvalMetrics {
  */
 export function liveWindow(db: OrbitDb, sinceMs: number): LiveWindow | null {
   const rows = db.all<{ id: string }>(
-    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => '?').join(', ')}) OR ${SETTLED_BLOCK}) AND created_at >= ? ORDER BY created_at, id`,
+    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => '?').join(', ')}) OR ${SETTLED_BLOCK}) AND created_at >= ? AND NOT ${OUT_OF_PROMPTS} ORDER BY created_at, id`,
     ...SETTLED_STATES,
     sinceMs,
   );

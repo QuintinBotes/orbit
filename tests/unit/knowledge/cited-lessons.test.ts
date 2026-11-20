@@ -89,7 +89,11 @@ describe('retrieval re-checks each lesson first (User Story 1)', () => {
     expect(retrieve(store, ctx(root))).toHaveLength(1);
     clock.advance(DAY);
     expect(retrieve(store, ctx(root))).toEqual([]);
-    expect(store.freshness([lesson.id]).get(lesson.id)?.stale_reason).toBe('expired: no support for 29 days (limit 28)');
+    expect(store.freshness([lesson.id]).get(lesson.id)?.stale_reason).toBe('expired: no support for more than 28 days');
+    // Another day expired is the same verdict: no second event.
+    clock.advance(DAY);
+    expect(retrieve(store, ctx(root))).toEqual([]);
+    expect(store.events(lesson.id).filter((e) => e.type === 'stale')).toHaveLength(1);
     store.addEvidence(lesson.id, ev('r3', 'final.md'));
     expect(retrieve(store, ctx(root)).map((r) => r.lesson.id)).toEqual([lesson.id]);
     expect(store.events(lesson.id).map((e) => e.type).slice(-2)).toEqual(['evidence', 'fresh']);
@@ -268,6 +272,17 @@ describe('runEndObservation (FR-006, User Story 3)', () => {
     db.run("UPDATE runs SET state = 'EXHAUSTED', failure_class = 'budget', ended_at = 2 WHERE id = 'r1'");
     expect(store.recordObservation(runEndObservation(db, 'r1')!)).toBe(true);
     expect(store.observations().map((o) => o.failure_class).sort()).toEqual(['budget', 'environment']);
+  });
+});
+
+describe('a merge keeps a citation that can be re-checked', () => {
+  it('a lesson re-derived from an observation that names no file or check keeps the file it cited', () => {
+    const { store } = openStore();
+    const id = store.upsertLesson(makeLesson({ citation: cite({ path: 'src/calc.ts' }) })).lesson.id;
+    store.upsertLesson(makeLesson({ citation: cite({ run_id: 'r2', path: null }) }));
+    expect(store.getLesson(id)!.citation).toMatchObject({ run_id: 'r1', path: 'src/calc.ts' });
+    store.upsertLesson(makeLesson({ citation: cite({ run_id: 'r3', path: 'src/other.ts' }) }));
+    expect(store.getLesson(id)!.citation).toMatchObject({ run_id: 'r3', path: 'src/other.ts' });
   });
 });
 
