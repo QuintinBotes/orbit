@@ -462,7 +462,7 @@ Use transactions, owner leases, heartbeats, process reconciliation, and atomic a
 
 API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets. Time a run spends paused, or BLOCKED waiting for a person, is not charged to the wall-time budget.
 
-A worker session's turn cap is the 75th percentile of the turns that earlier successful sessions of the same role and task class took, a session the cap stopped or that asked to continue counting as the ceiling, within a configured floor and ceiling and never above the hard cap; with no history the configured default applies. From 80% of its cap a session is told how many turns remain. An implementer session that reaches that point and states what remains gets one extension for its attempt, and its unfinished work is neither verified nor diagnosed as a defect; a session the cap stops is recorded as `turn-cap`.
+A worker session's turn cap is the 75th percentile of the turns that earlier successful sessions of the same role and task class took, a session the cap stopped or that asked to continue counting as the ceiling, within a configured floor and ceiling and never above the hard cap; with no history the configured default applies, and once a session of a role in a run outgrew its cap the run's later sessions of that role get the ceiling. From 80% of its cap a session is told how many turns remain. An implementer session that reaches that point and states what remains gets one extension for its attempt, and its unfinished work is neither verified nor diagnosed as a defect; a session the cap stops is recorded as `turn-cap`.
 
 ### Initial allowance
 

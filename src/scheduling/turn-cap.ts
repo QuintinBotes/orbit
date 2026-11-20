@@ -49,15 +49,10 @@ export function deriveTurnCap(history: readonly number[], bounds: TurnCapBounds)
   return Math.min(bounds.ceiling, Math.max(bounds.floor, Math.ceil(p)));
 }
 
-/**
- * Turns taken by worker sessions of `role` in runs of the same repository and difficulty. A successful session counts its
- * model requests; a session that ended at its cap, or asked to continue past it, counts as `ceiling`. Counted alone, the
- * sessions that finished would ratchet the cap down: under a cap of C each of them took at most C turns, so the next
- * percentile is at most C, while the sessions C was too small for drop out of the record. Other sessions do not count.
- */
-export function turnHistory(db: OrbitDb, runId: string, role: string, ceiling: number): number[] {
-  const rows = db.all<{ status: string; turns: number | null; next: string | null }>(
-    `SELECT w.result_status AS status, json_extract(w.result_json, '$.modelRequests') AS turns,
+/** Sessions of `role` in runs of the same repository and difficulty as `runId`: whether each outgrew its cap, and its turns. */
+function sessionsLike(db: OrbitDb, runId: string, role: string): { mine: boolean; outgrew: boolean; turns: unknown }[] {
+  const rows = db.all<{ mine: number; status: string; turns: unknown; next: string | null }>(
+    `SELECT w.run_id = me.id AS mine, w.result_status AS status, json_extract(w.result_json, '$.modelRequests') AS turns,
             json_extract(w.result_json, '$.structured.next_action.kind') AS next
        FROM workers w
        JOIN runs r ON r.id = w.run_id
@@ -67,12 +62,27 @@ export function turnHistory(db: OrbitDb, runId: string, role: string, ceiling: n
     runId,
     role,
   );
-  return rows.flatMap((r) => (r.status === 'max_turns' || r.next === 'continue-implementation' ? [ceiling] : typeof r.turns === 'number' && Number.isSafeInteger(r.turns) && r.turns > 0 ? [r.turns] : []));
+  return rows.map((r) => ({ mine: r.mine === 1, outgrew: r.status === 'max_turns' || r.next === 'continue-implementation', turns: r.turns }));
 }
 
-/** The cap a new session of `role` in run `runId` starts with. */
+/**
+ * Turns taken by worker sessions of `role` in runs of the same repository and difficulty. A successful session counts its
+ * model requests; a session that ended at its cap, or asked to continue past it, counts as `ceiling`. Counted alone, the
+ * sessions that finished would ratchet the cap down: under a cap of C each of them took at most C turns, so the next
+ * percentile is at most C, while the sessions C was too small for drop out of the record. Other sessions do not count.
+ */
+export function turnHistory(db: OrbitDb, runId: string, role: string, ceiling: number): number[] {
+  return sessionsLike(db, runId, role).flatMap((s) => (s.outgrew ? [ceiling] : typeof s.turns === 'number' && Number.isSafeInteger(s.turns) && s.turns > 0 ? [s.turns] : []));
+}
+
+/**
+ * The cap a new session of `role` in run `runId` starts with. The percentile is a guess about the task class: once a
+ * session of this role in this run outgrew its cap, the task has shown it does not fit, and a retry under the same cap
+ * would stop again, so the rest of the run's sessions of the role get the ceiling.
+ */
 export function turnCapFor(db: OrbitDb, runId: string, role: string, config: Pick<OrbitConfig, 'scheduler'>): number {
   const bounds = turnCapBounds(config);
+  if (sessionsLike(db, runId, role).some((s) => s.mine && s.outgrew)) return bounds.ceiling;
   return deriveTurnCap(turnHistory(db, runId, role, bounds.ceiling), bounds);
 }
 

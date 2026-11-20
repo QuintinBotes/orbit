@@ -85,6 +85,23 @@ describe('turn history (AC-1)', () => {
     expect(turnCapFor(db, 'now', 'implementer', cfg)).toBe(30);
   });
 
+  it("gives the ceiling to the rest of a run's sessions of a role once one of them outgrew its cap", () => {
+    // Twenty reviews of 6 turns put the reviewer at the floor. A review this run needs more: retried under the same cap
+    // it would stop again and block the run, so its next session, and the run's later reviews, get the ceiling.
+    const db = seed();
+    const cfg = config();
+    for (let i = 0; i < 20; i++) worker(db, `r${i}`, 'old', 'reviewer', 'succeeded', 6);
+    expect(turnCapFor(db, 'now', 'reviewer', cfg)).toBe(10);
+    worker(db, 'other-run', 'old', 'reviewer', 'max_turns', 10);
+    expect(turnCapFor(db, 'now', 'reviewer', cfg)).toBe(10);
+    worker(db, 'capped', 'now', 'reviewer', 'max_turns', 10);
+    expect(turnCapFor(db, 'now', 'reviewer', cfg)).toBe(30);
+    expect(turnCapFor(db, 'now', 'planner', cfg)).toBe(30);
+    for (let i = 0; i < 20; i++) worker(db, `i${i}`, 'old', 'implementer', 'succeeded', 12);
+    worker(db, 'asked', 'now', 'implementer', 'succeeded', 11, 'continue-implementation');
+    expect(turnCapFor(db, 'now', 'implementer', cfg)).toBe(30);
+  });
+
   it('gives a new session the derived cap, and the configured default without history', () => {
     const db = seed();
     const cfg = config({ floor: 5, ceiling: 28, default: 22, reminder_fraction: 0.8 });

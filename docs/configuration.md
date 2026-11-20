@@ -343,7 +343,10 @@ same role and difficulty took in this repository, kept within
 `scheduler.turn_cap.floor` and `ceiling`, and `default` when there is no
 history. A session that ended at its cap, or asked to continue, counts as the
 ceiling: counting only the sessions that finished would lower the cap run after
-run, since none of them can have taken more turns than the cap allowed. Without a `turn_cap` section the floor is 10 and the ceiling and the
+run, since none of them can have taken more turns than the cap allowed.
+Once a session of a role in a run has done so, the run's later sessions of that
+role (a retry of a planner or a review, the next implementation attempt) get the
+ceiling, since under the same cap they would stop again. Without a `turn_cap` section the floor is 10 and the ceiling and the
 default are `worker_turns_per_session`, so a repository with no history runs as
 before. Each session's cap is recorded as a `worker.turn-cap` event. From
 `reminder_fraction` (0.8) of its cap on, Orbit's guard hook tells the session

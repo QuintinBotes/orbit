@@ -157,7 +157,8 @@ scheduler:
   # earlier successful sessions of the same role and difficulty took (a
   # session the cap stopped, or that asked to continue, counts as the
   # ceiling), kept within floor..ceiling (never above
-  # hard_limits.worker_turns_per_session).
+  # hard_limits.worker_turns_per_session). Once a session of a role outgrew
+  # its cap, the run's later sessions of that role get the ceiling.
   # With no history, default applies. A session is told the turns it has left
   # from reminder_fraction of its cap on, and an implementer that states what
   # remains gets one extension per attempt. Without this section: floor 10,
