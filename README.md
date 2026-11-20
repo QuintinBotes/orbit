@@ -29,6 +29,46 @@ claude.ai login or subscription limits to anyone else (see
 - It does not merge or deploy to production unless you enable `release` mode
   and the matching action.
 
+## Orbit, /goal, /loop and scheduled tasks
+
+Claude Code has its own ways to keep work going. Each runs a Claude session on
+a prompt; none sets a policy, checks the result, or decides when the work is
+done on evidence of its own:
+
+- `/goal` keeps one session working until an evaluator model, which reads only
+  the transcript, judges a condition you wrote to be met.
+- `/loop` runs a prompt or slash command again on an interval, in the session.
+- scheduled tasks start a prompt on a schedule, with no session open.
+
+What Orbit does that they do not:
+
+- It turns the goal into a contract with acceptance criteria and holds every
+  worker to the policy frozen when the run starts: scope, protected paths,
+  network, and attempt, turn, time and cost budgets.
+- It runs each worker in its own worktree under a sandbox, and keeps the run
+  durable: it survives a closed terminal, a crash or a restart, and resumes
+  where it stopped.
+- It decides done from the checks you defined, run by the controller on the
+  exact candidate, and from a review by another provider, never from what a
+  session says about its own work.
+- It repairs failures within those budgets, asks you a question instead of
+  guessing a material decision, delivers only a verified candidate (a task
+  branch and a draft pull request, within the policy), and ends with a report
+  that says what was and was not verified.
+
+When to use them instead:
+
+- `/goal` for work you watch and judge yourself: a small change in an
+  interactive session, or to keep a supervised session on an Orbit run
+  ([how](docs/operations.md#using-the-native-goal-command)).
+- `/loop` to repeat something while a session is open: watch a deploy, re-run a
+  report, or show `/orbit:status` every few minutes.
+- scheduled tasks for recurring jobs where an unattended session's own judgement
+  is enough: a triage, a summary, a dependency check.
+- Any of them when a wrong "done" costs less than the checks, the review and
+  the extra spend Orbit adds to every change. Use Orbit when the change must be
+  proven before anyone relies on it.
+
 ## Status
 
 Orbit 0.1.0 is the first release. Where this document says what Orbit does, it describes the
@@ -229,7 +269,7 @@ fix the config, cancel the run and start a new one
 | Command | Purpose |
 |---|---|
 | `orbit doctor [--policy <path>] [--probe] [--verbose]` | Check every capability a run depends on, including an alternative policy before using it. `--probe` makes live requests; `--verbose` includes passing checks and full sandbox and plugin detail. |
-| `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares. |
+| `orbit init` | Write `.orbit/config.yaml` from the starter template, with checks proposed from what the repository declares, preferring the commands its `AGENTS.md`, then `CLAUDE.md`, document. |
 | `orbit run --goal <text>` | Freeze the policy and start a run (`--mode`, `--environment`, `--policy`, `--foreground`, `--detach`). `--issue <number \| url>` starts it from a GitHub issue instead: a spec that passes `orbit spec check`, or an issue labelled `bug` with a reproduction section. |
 | `orbit spec check <file \| issue>` | Check that a Markdown file or an issue is a spec a run can start from. Deterministic; no model call. Exit 4 with one line per problem. |
 | `orbit queue list` / `orbit queue run` | Work a backlog of issues in dependency order: the open, unblocked issues labelled `ready-for-agent` (or the sub-issues of `--parent`), one at a time, each from the current base branch (`--base`). `queue list` shows the frontier and what holds the rest; `queue run` stops at an empty frontier, `--max-issues`, `--budget-usd` or two runs in a row that end without a delivered change. |
@@ -243,7 +283,8 @@ fix the config, cancel the run and start a new one
 | `orbit pause <run-id>` | Pause durably. |
 | `orbit resume <run-id>` | Unpause, or continue a blocked run. Needs a controller: with a service it leaves the run to it; with none it refuses (changing nothing) unless you pass `--foreground`, or `--detach` to release it to a service you start later (`--force`). On a terminal with no service it drives the run itself. |
 | `orbit cancel <run-id>` | Cancel durably (`--wait <seconds>`). |
-| `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. |
+| `orbit report <run-id>` | Final or interim report (`--interim`); `orbit report --learning` shows improvement over time. `--json` follows a [published schema](docs/operations.md#exports-and-published-schemas). |
+| `orbit export <run-id> --otel` | The run as OpenTelemetry traces (OTLP/JSON, one line, `--out <file>`): a span per worker with its model, tokens and cost under the GenAI semantic conventions 1.37.0. Never prompt or source text. See [exports and schemas](docs/operations.md#exports-and-published-schemas). |
 | `orbit questions <run-id>` | Questions a run is waiting on (`--all` includes answered ones). `orbit questions --pending` lists those of every unfinished run (`--quiet` prints nothing when there are none). |
 | `orbit decide <run-id> <question-id> <answer>` | Record your answer (`--by`). Approving a baseline-exception question puts the exception in the run's contract. With remote answers on, a `/orbit answer <question-id> <choice>` comment on the run's pull request by someone with write access does the same. |
 | `orbit notify test` | Send a test notification through the configured channels (desktop on Linux only, webhook, GitHub comment). See [notifications](docs/operations.md#notifications-and-remote-answers). |

@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { execCapture } from '../core/exec.ts';
 import { which } from '../isolation/util.ts';
+import { REPO_INSTRUCTION_FILES } from '../adapters/prompt.ts';
 
 export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build';
 export type Ecosystem = 'node' | 'dotnet' | 'python' | 'go' | 'rust';
@@ -35,7 +36,19 @@ export interface NotProposed {
 export interface CheckProposal {
   proposed: ProposedCheck[];
   notProposed: NotProposed[];
+  /** The tracked root instruction files read for documented commands, in reading order (issue #178, FR-001). */
+  readDocs: string[];
 }
+
+/** A command an instruction file documents, as argv, with the check it would be and where it was read. */
+interface DocumentedCommand {
+  command: string[];
+  ecosystem: Ecosystem;
+  category: CheckCategory;
+  /** "AGENTS.md line 7". */
+  source: string;
+}
+
 
 export interface DetectInput {
   repo: string;
@@ -62,6 +75,61 @@ function read(path: string): string | null {
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x';
+}
+
+/** The program a documented command starts, for the ecosystem it belongs to; anything else is not read as a check. */
+const TOOL_ECOSYSTEM: Readonly<Record<string, Ecosystem>> = {
+  npm: 'node', pnpm: 'node', yarn: 'node', npx: 'node',
+  dotnet: 'dotnet',
+  pytest: 'python', python: 'python', python3: 'python', ruff: 'python', mypy: 'python', flake8: 'python', tox: 'python', uv: 'python', poetry: 'python',
+  go: 'go',
+  cargo: 'rust',
+};
+
+/** The words that make a command a check of a category, first match wins: `npm run test:unit` is a test, `cargo clippy` lint. */
+const CATEGORY_WORDS: readonly [CheckCategory, ReadonlySet<string>][] = [
+  ['typecheck', new Set(['typecheck', 'type-check', 'check-types', 'tsc', 'mypy', 'pyright'])],
+  ['lint', new Set(['lint', 'eslint', 'ruff', 'flake8', 'clippy', 'vet'])],
+  ['test', new Set(['test', 'tests', 'vitest', 'jest', 'mocha', 'pytest'])],
+  ['build', new Set(['build'])],
+];
+
+const DRAFT_NAME: Readonly<Record<CheckCategory, string>> = { test: 'unit-tests', lint: 'lint', typecheck: 'typecheck', build: 'build' };
+const CATEGORY_TIMEOUT: Readonly<Record<CheckCategory, number>> = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
+
+/**
+ * The commands the repository's tracked root AGENTS.md, then CLAUDE.md, document (issue #138): every line of a fenced
+ * code block and every inline code span, read as argv when it starts with a known tool, needs no shell (no operator,
+ * quote, variable or leading assignment) and names a check category. Prose is never parsed into a command.
+ */
+export function documentedCommands(repo: string, files: readonly string[]): { read: string[]; commands: DocumentedCommand[] } {
+  const readDocs: string[] = [];
+  const commands: DocumentedCommand[] = [];
+  for (const doc of REPO_INSTRUCTION_FILES) {
+    if (!files.includes(doc)) continue;
+    const text = read(join(repo, doc));
+    if (text === null) continue;
+    readDocs.push(doc);
+    let fenced = false;
+    text.split(/\r?\n/).forEach((lineText, i) => {
+      if (/^\s*(```|~~~)/.test(lineText)) {
+        fenced = !fenced;
+        return;
+      }
+      const candidates = fenced ? [lineText.replace(/\s+#.*$/, '')] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!);
+      for (const raw of candidates) {
+        const cmd = raw.trim().replace(/^\$\s+/, '');
+        if (cmd === '' || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
+        const argv = cmd.split(/\s+/);
+        const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv[0]!) ? TOOL_ECOSYSTEM[argv[0]!] : undefined;
+        if (ecosystem === undefined) continue;
+        const words = new Set(argv.flatMap((a) => a.toLowerCase().split(':')));
+        const category = CATEGORY_WORDS.find(([, set]) => [...set].some((w) => words.has(w)))?.[0];
+        if (category !== undefined) commands.push({ command: argv, ecosystem, category, source: `${doc} line ${i + 1}` });
+      }
+    });
+  }
+  return { read: readDocs, commands };
 }
 
 class Collector {
@@ -328,12 +396,38 @@ export async function detectChecks(input: DetectInput): Promise<CheckProposal> {
     ['go', goDrafts(input, out)],
     ['rust', await rustDrafts(input, out)],
   ];
+  // A command the repository documents wins over the one derived from its manifests (issue #138): the first one per
+  // ecosystem and category, in reading order, so AGENTS.md comes before CLAUDE.md. It is proposed only when its tool is on PATH.
+  const docs = documentedCommands(input.repo, input.files);
+  const taken = new Set<string>();
+  for (const d of docs.commands) {
+    const key = `${d.ecosystem}/${d.category}`;
+    if (taken.has(key)) continue;
+    const tool = d.command[0]!;
+    if (which(tool, input.pathEnv) === null) {
+      out.skip(d.ecosystem, `${d.source} documents ${d.command.join(' ')}, but ${tool} was not found on PATH`);
+      continue;
+    }
+    taken.add(key);
+    const drafts = groups.find(([e]) => e === d.ecosystem)![1];
+    const i = drafts.findIndex((x) => x.category === d.category);
+    const derived = i >= 0 ? drafts[i]! : null;
+    const draft: Draft = {
+      name: derived?.name ?? DRAFT_NAME[d.category],
+      command: d.command,
+      category: d.category,
+      timeout_seconds: derived?.timeout_seconds ?? CATEGORY_TIMEOUT[d.category],
+      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(' ')} from the manifests` : ''}`,
+    };
+    if (derived) drafts[i] = draft;
+    else drafts.push(draft);
+  }
   const active = groups.filter(([, d]) => d.length > 0);
   const mixed = active.length > 1;
   for (const [ecosystem, drafts] of active) {
     for (const { name, ...rest } of drafts) out.add({ id: mixed ? `${ecosystem}-${name}` : name, ecosystem, ...rest });
   }
-  return { proposed: out.proposed, notProposed: out.notProposed };
+  return { proposed: out.proposed, notProposed: out.notProposed, readDocs: docs.read };
 }
 
 /** The `checks:` entries for the written config, each under a comment saying init proposed it. Empty when nothing was proposed. */

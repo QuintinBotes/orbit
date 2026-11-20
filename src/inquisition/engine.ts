@@ -11,6 +11,7 @@ import { appendEvent } from '../storage/events.ts';
 import { finishWorker, isWorkerActive, listWorkers, markWorkerRunning, planWorker, type FinishedWorkerState, type WorkerRecord } from '../storage/workers.ts';
 import { recordUsage } from '../routing/usage.ts';
 import type { ProviderAdapter, TaskResult, TaskSpec } from '../adapters/types.ts';
+import { DEFAULT_BLOCK_CHARS, type RepoInstruction } from '../adapters/prompt.ts';
 import type { SandboxProfile } from '../isolation/types.ts';
 import { assessAmendment, applyAmendment, type AmendmentProposal, type HumanAmendmentProposal } from '../contract/amend.ts';
 import { MODEL_OUTPUT_SCHEMAS, validateModelOutput, type InquisitorOutput, type InquisitorQuestion } from '../contract/model-outputs.ts';
@@ -142,6 +143,8 @@ export interface InquisitionContext {
   worker?: InquisitorWorkerOptions;
   supportedCriteria?: readonly string[];
   dependsOn?: Readonly<Record<string, readonly string[]>>;
+  /** The repository's AGENTS.md, then CLAUDE.md, at the base revision (issue #178, FR-001); data like every block. */
+  repoInstructions?: readonly RepoInstruction[];
 }
 
 export interface RunInquisitionInput {
@@ -310,6 +313,7 @@ export function renderInquisitorPrompt(trigger: Trigger, ctx: InquisitionContext
     block('trigger-evidence', redact(trigger.evidence.join('\n'))),
     block('contract', JSON.stringify(contract, null, 1)),
   ];
+  for (const d of ctx.repoInstructions ?? []) parts.push(block(`repository instructions ${d.path}`, d.content.slice(0, DEFAULT_BLOCK_CHARS)));
   if (ctx.ambiguities && ctx.ambiguities.length > 0) {
     parts.push(block('ambiguities', redact(JSON.stringify(ctx.ambiguities.map((a) => ({ id: a.id, description: a.description, kind: a.kind, affects: a.affects, evidence: a.evidence, options: a.options })), null, 1))));
   }
