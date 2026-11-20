@@ -106,8 +106,14 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const textChanges = changes.filter((c) => !binary.has(c.path));
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ''));
+  // Generated files are named by the frozen policy only, never by the candidate (a .gitattributes the worker can edit).
+  const isGenerated = compileGlobs(config.scope.generated_paths ?? [], { nocase: false });
   let changedLines = 0;
-  for (const n of linesByPath.values()) changedLines += n;
+  let generatedLines = 0;
+  for (const [p, n] of linesByPath) {
+    if (isGenerated(p)) generatedLines += n;
+    else changedLines += n;
+  }
   const weakeningInputs: WeakeningInput[] = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? '' }));
   // Which changed files are tests depends on project files of both trees (.NET test projects, Rust crates; ADR 0011).
   const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString('utf8')), base, cand, changes.map((c) => c.path));
@@ -122,7 +128,8 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
     changed_files: changes.length,
     changed_lines: changedLines,
     within_size_limits: withinSize,
-    ...(withinSize ? {} : { largest_changes: [...linesByPath].map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) }),
+    ...(generatedLines > 0 ? { generated_lines: generatedLines } : {}),
+    ...(withinSize ? {} : { largest_changes: [...linesByPath].filter(([path]) => !isGenerated(path)).map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) }),
     lockfile_changed: lockfileChanged,
     dependency_manifest_changed: manifests,
     symlinks_escaping: symlinks,

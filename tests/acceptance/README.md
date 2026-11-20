@@ -77,7 +77,7 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | #144 | `attempts-and-size.test.ts` | issue #144: a diagnosis after a session that ended at its turn cap is told so ... |
 | #154 | `service-and-launcher.test.ts` | issue #154: a development build does not take over the launcher ... |
 | #156 | `review-gate.test.ts` | issue #156, User Story 3.2: every finding of a REPAIR_REQUIRED review is briefed ... |
-| #157 | `attempts-and-size.test.ts` | issue #157: a size denial names the files that carry the lines ... |
+| #157 | `attempts-and-size.test.ts` | issue #157: a size denial names the files that carry the lines ...; issue #157: a committed generated bundle the policy names in scope.generated_paths is not counted in the size limit |
 
 ### User stories of issue #166
 

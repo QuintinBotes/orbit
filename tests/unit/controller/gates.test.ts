@@ -269,6 +269,10 @@ describe('implementationScopeGate', () => {
     expect(g.reasons).toEqual(['the change is over the size limits (2 files, 3010 lines); the largest changes: dist/b.mjs (3000 lines), src/a.ts (10 lines)']);
   });
 
+  it('says how many generated lines it left out of the count (#157)', () => {
+    expect(implementationScopeGate(scope({ changed_files: 2, changed_lines: 10, generated_lines: 300 }), snap()).evidence).toEqual(['2 file(s), 10 line(s) changed, and 300 generated line(s) not counted (scope.generated_paths)']);
+  });
+
   it('drops control characters from the paths it names and clips long ones (#157)', () => {
     const long = `dist/${'x'.repeat(300)}.mjs`;
     const g = implementationScopeGate(scope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/\u001b]0;owned\u0007b.mjs', lines: 3000 }, { path: long, lines: 10 }] }), snap());

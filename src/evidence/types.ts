@@ -59,6 +59,8 @@ export interface ScopeReport {
   within_size_limits: boolean;
   /** Only when over a size limit: the five files with the most added plus deleted lines, heaviest first. */
   largest_changes?: { path: string; lines: number }[];
+  /** Only when files the policy names in scope.generated_paths changed lines: those added plus deleted lines, left out of changed_lines and largest_changes. */
+  generated_lines?: number;
   lockfile_changed: boolean;
   dependency_manifest_changed: string[];
   symlinks_escaping: string[];

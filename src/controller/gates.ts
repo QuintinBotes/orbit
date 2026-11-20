@@ -300,7 +300,7 @@ export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnap
   if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)${scope.largest_changes?.length ? `; the largest changes: ${describeLargestChanges(scope)}` : ''}`);
   if (scope.lockfile_changed && !deps.change_lockfile) add('a lockfile changed, which the policy does not allow');
   if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(', ')}`);
-  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
+  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed${scope.generated_lines ? `, and ${scope.generated_lines} generated line(s) not counted (scope.generated_paths)` : ''}`];
   const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
   return result('implementation', reasons, evidence, notes, { policyViolation, repairable });
 }

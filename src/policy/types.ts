@@ -237,6 +237,8 @@ export interface OrbitConfig {
     protected_paths: string[];
     /** Credential locations workers may not read (OS read-deny, Read tool, Bash reads), in addition to the built-ins. */
     credential_paths?: string[];
+    /** Committed generated files (a bundle a check rebuilds): their lines are reported apart and not counted against changed_lines. */
+    generated_paths?: string[];
   };
   actions: {
     edit: boolean;

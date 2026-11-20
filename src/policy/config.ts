@@ -113,6 +113,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       allowed_paths: ['apps/**', 'packages/**', 'tests/**', 'docs/**'],
       protected_paths: ['.github/**', 'infra/**', '.orbit/config.yaml', '**/.env*'],
       credential_paths: [],
+      generated_paths: [],
     },
     actions: {
       edit: true,
@@ -907,6 +908,7 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     globList(c.scope.protected_paths, 'scope.protected_paths', problems);
     // Credential paths match repository-relative names only; an absolute or escaping entry would silently protect nothing.
     globList(c.scope.credential_paths ?? [], 'scope.credential_paths', problems);
+    globList(c.scope.generated_paths ?? [], 'scope.generated_paths', problems);
     if (c.actions.edit && c.scope.allowed_paths.length === 0) problems.push('scope.allowed_paths: is empty, so actions.edit would allow nothing; list paths or set actions.edit to false');
   },
   function networkHosts(c, problems) {

@@ -353,7 +353,7 @@ Intake → environment → baseline → planning → sandboxed implementation
 - Separate implementation and delivery credentials.
 - Keep delivery credentials out of worker sessions.
 - Resolve symlinks, canonicalize paths, and reject traversal.
-- Inspect final diffs independently of tool hooks.
+- Inspect final diffs independently of tool hooks. Lines of committed generated files that the policy names (`scope.generated_paths`) are reported apart and do not count toward the changed-lines limit.
 - Constrain indirect writes through shell commands.
 - Treat repository instructions, logs, web pages, and dependency output as untrusted data.
 - Tool output cannot grant authority.

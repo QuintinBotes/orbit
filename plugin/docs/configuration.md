@@ -61,12 +61,22 @@ scope:
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
   credential_paths: []
+  generated_paths: []
 ```
 
 `scope.credential_paths` (list of globs, default empty): files workers may never
 read, enforced by the OS read-deny list, the Read tool and the Bash read check,
 in addition to the built-in credential patterns. Use it for credentials whose
 names do not say so.
+
+`scope.generated_paths` (list of globs, default empty): committed generated
+files, such as a bundle a mandatory check rebuilds and compares. Their changed
+lines are reported apart (`generated_lines` in the scope report) and do not count
+against `scheduler.hard_limits.changed_lines`; the files still count against
+`changed_files` and still need `allowed_paths`. Only this list marks a file as
+generated, never a file in the candidate such as `.gitattributes`. List only
+files a check regenerates, since a worker's hand edits there are not counted
+either.
 
 The template's `allowed_paths` are examples (`apps/`, `packages/`, `tests/`,
 `docs/`) that match nothing in most repositories, and a worker can then change
@@ -312,12 +322,14 @@ start reviewers again spend `recovery_attempts`. The cost, wall-clock and every
 other hard limit stay as they are.
 
 `changed_files` and `changed_lines` bound each candidate against the base
-revision, counting every text line added or deleted, generated files included.
+revision, counting every text line added or deleted, except the lines of
+files listed in `scope.generated_paths`.
 A candidate over either limit is denied before any check runs; the denial and
 the repair brief name the five files with the most changed lines. When a repair
 comes back with the same tree, the run blocks and names the limit instead of
 spending more attempts: if one of those files is a generated file the task
-requires, raise the limit and start a new run.
+requires, list it in `scope.generated_paths` (or raise the limit) and start a
+new run.
 `worker_turns_per_session` is passed to every Claude worker session as
 `--max-turns`; the curator also keeps its smaller six-turn cap. Every attempt
 is a new session, never a resumed one, so the cap applies to each session
