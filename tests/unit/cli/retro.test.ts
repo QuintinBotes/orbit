@@ -206,6 +206,23 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(third.out).toContain('not repeated');
   });
 
+  it('leaves the names of denied rules out of an issue draft: a worker can print any name in its transcript', async () => {
+    const l = lab();
+    // A failing command that prints "Orbit policy (<name>): ..." is read back as a denial: here a hex-encoded secret.
+    const forged = `x${Buffer.from('db01.internal:hunter2').toString('hex')}`;
+    endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK, { denials: [forged, 'bash.unparseable'] });
+    const yes = fake(true);
+    const r = await retro(l, [], yes);
+    expect(r.code, r.err).toBe(0);
+    expect(yes.sent).toHaveLength(1);
+    const text = readFileSync(join(l.repo, '.orbit', 'runs', 'retro-drafts', draftFiles(l)[0]!), 'utf8');
+    for (const where of [yes.sent[0]!.title, yes.sent[0]!.body, text, r.out]) {
+      expect(where).not.toContain(forged);
+      expect(where).not.toContain('bash.unparseable');
+    }
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('sent');
+  });
+
   it('keeps the draft and reports the error when sending fails, and exits non-zero', async () => {
     const l = lab();
     endRun(l, 'orb-dead-1', 'BLOCKED', DEADLOCK);
@@ -417,6 +434,22 @@ describe('orbit retro: an approved check is added to the configuration on a bran
     expect(again.out).toContain('1 proposal(s) were answered before and are not repeated');
   });
 
+  it('builds the branch from the base branch tip and its committed configuration, wherever the checkout stands', async () => {
+    const d = disputed();
+    const base = git(d, 'rev-parse', 'main');
+    git(d, 'checkout', '-q', '-b', 'feature');
+    writeFileSync(join(d.repo, 'notes.txt'), 'work in progress\n');
+    git(d, 'add', 'notes.txt');
+    git(d, 'commit', '-q', '-m', 'wip');
+    writeFileSync(join(d.repo, '.orbit', 'config.yaml'), `${CONFIG}# not committed\n`);
+    const r = await run(d, fake(true));
+    expect(r.code, r.err).toBe(0);
+    expect(git(d, 'rev-parse', 'orbit/retro/check-lint^')).toBe(base);
+    expect(git(d, 'show', 'orbit/retro/check-lint:.orbit/config.yaml')).not.toContain('# not committed');
+    expect(git(d, 'symbolic-ref', 'HEAD')).toBe('refs/heads/feature');
+    expect(readFileSync(join(d.repo, '.orbit', 'config.yaml'), 'utf8')).toContain('# not committed');
+  });
+
   it('nothing is applied without a yes: a no, or nobody to ask, creates no branch', async () => {
     const d = disputed();
     const before = git(d, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads');
@@ -439,6 +472,18 @@ describe('orbit retro: an approved check is added to the configuration on a bran
     expect(findDecision(d.db(), 'check:review-dispute:open_findings')?.decision).toBe('drafted');
   });
 
+  it('a yes to a second proposal of the same check finds it on the branch the first yes made', async () => {
+    const d = disputed();
+    // Another review-dispute signature proposes the same missing check.
+    for (const id of ['orb-hf-1', 'orb-hf-2']) endRun(d, id, 'BLOCKED', { held_findings: [{ id: 'f2' }] });
+    const yes = fake(true);
+    const r = await run(d, yes);
+    expect(r.code, r.err).toBe(0);
+    expect(yes.asked).toHaveLength(2);
+    expect(listDecisions(d.db()).map((x) => `${x.key} ${x.decision}`).sort()).toEqual(['check:review-dispute:held_findings applied', 'check:review-dispute:open_findings applied']);
+    expect(git(d, 'rev-list', '--count', 'main..orbit/retro/check-lint')).toBe('1');
+  });
+
   it('a configuration that already runs a check of every declared category gets a reviewer standard instead', async () => {
     const d = disputed(`${CONFIG}  lint:\n    command: [npm, run, lint]\n    category: lint\n`);
     const r = await run(d, fake(null), ['--json']);
@@ -459,6 +504,15 @@ describe('orbit retro: the person is asked on a terminal, and only an explicit y
 
   it.each([['y', true], ['YES', true], [' yes ', true], ['n', false], ['', false], ['yep', false], ['sure', false]])('answer %j is %s', async (text, expected) => {
     expect(await answer(text)).toBe(expected);
+  });
+
+  it('takes the end of input (Ctrl-D) as no answer, and asks nothing after it', async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const ask = terminalAsk(ctxWith(true), input, new PassThrough());
+    const pending = ask('Send it?');
+    input.end();
+    expect(await pending).toBeNull();
+    expect(await ask('And this?')).toBeNull();
   });
 
   it('cannot ask without a terminal on both ends', async () => {

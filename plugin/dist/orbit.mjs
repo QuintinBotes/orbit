@@ -24641,8 +24641,9 @@ var init_schema4 = __esm({
       /* 9: what orbit retro proposed and what the person decided, so a proposal is not made twice (issue #174) */
       `
   -- One row per proposal, keyed by its kind, failure class and signature (never by wording). A row is written when a
-  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'declined'). Any row, whatever
-  -- its decision, keeps the same proposal from being made again. run_ids_json lists the runs that motivated it.
+  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'applied', 'accepted',
+  -- 'declined'). A 'drafted' row is made again by the next retro; an answered one keeps the same proposal from being
+  -- made again. run_ids_json lists the runs that motivated it.
   CREATE TABLE retro_decisions (
     key            TEXT PRIMARY KEY,
     kind           TEXT NOT NULL,
@@ -75575,9 +75576,9 @@ function evidenceFor(db, row, cls) {
     denials: denials2
   };
 }
-function signatureOf(ev) {
+function signatureOf(ev, withDenials) {
   const names = [...new Set(ev.markers.map((m) => m.replace(/ \(\d+\)$/, "")))].sort();
-  const parts = [...names, ...ev.denials.map((r) => `denied:${r}`)];
+  const parts = [...names, ...withDenials ? ev.denials.map((r) => `denied:${r}`) : []];
   return parts.length > 0 ? parts.join("+") : "unmarked";
 }
 function kindFor(cls, missingCheck2) {
@@ -75671,7 +75672,7 @@ function retroProposals(db, opts) {
     const kind = cls === null ? null : kindFor(cls, missingCheck2);
     if (cls === null || kind === null) continue;
     const ev = evidenceFor(db, row, cls);
-    const signature = signatureOf(ev);
+    const signature = signatureOf(ev, kind !== "issue-draft");
     const key2 = proposalKey(kind, cls, signature);
     const g = groups.get(key2) ?? { kind, cls, signature, runs: [] };
     g.runs.push(ev);
@@ -76233,11 +76234,17 @@ import { tmpdir as tmpdir16 } from "node:os";
 import { join as join92, relative as relative12 } from "node:path";
 import { createInterface } from "node:readline/promises";
 function terminalAsk(ctx, input = process.stdin, output = process.stderr) {
+  let ended = false;
   return async (question2) => {
-    if (!ctx.io.stdoutIsTty || input.isTTY !== true) return null;
+    if (ended || !ctx.io.stdoutIsTty || input.isTTY !== true) return null;
     const rl = createInterface({ input, output });
     try {
-      const answer = await rl.question(`${question2} [y/N] `);
+      const closed = new Promise((resolve29) => rl.once("close", () => resolve29(null)));
+      const answer = await Promise.race([rl.question(`${question2} [y/N] `).catch(() => null), closed]);
+      if (answer === null) {
+        ended = true;
+        return null;
+      }
       return /^\s*y(es)?\s*$/i.test(answer);
     } finally {
       rl.close();
@@ -76286,6 +76293,11 @@ async function applyCheckOnBranch(ctx, repo, baseBranch, check) {
   };
   try {
     const base = await git6(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]);
+    const made = await git6(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`]).catch(() => null);
+    if (made !== null) {
+      const onBranch = await git6(["show", `${made}:${CONFIG_RELATIVE_PATH}`]).catch(() => "");
+      if (parseDocument(onBranch).hasIn(["checks", check.id])) return { branch, commit: made };
+    }
     const text2 = await git6(["show", `${base}:${CONFIG_RELATIVE_PATH}`]).catch(() => readFileSync45(join92(repo, CONFIG_RELATIVE_PATH), "utf8"));
     const blob2 = await git6(["hash-object", "-w", "--stdin"], withCheck(text2, check));
     await git6(["read-tree", base]);

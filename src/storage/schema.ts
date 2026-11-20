@@ -431,8 +431,9 @@ export const MIGRATIONS: readonly string[] = [
   `,
   /* 9: what orbit retro proposed and what the person decided, so a proposal is not made twice (issue #174) */ `
   -- One row per proposal, keyed by its kind, failure class and signature (never by wording). A row is written when a
-  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'declined'). Any row, whatever
-  -- its decision, keeps the same proposal from being made again. run_ids_json lists the runs that motivated it.
+  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'applied', 'accepted',
+  -- 'declined'). A 'drafted' row is made again by the next retro; an answered one keeps the same proposal from being
+  -- made again. run_ids_json lists the runs that motivated it.
   CREATE TABLE retro_decisions (
     key            TEXT PRIMARY KEY,
     kind           TEXT NOT NULL,

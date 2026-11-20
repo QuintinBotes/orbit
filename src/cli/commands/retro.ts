@@ -52,11 +52,18 @@ export interface RetroDeps {
 
 /** Asks on the terminal the command runs in; null when stdin or stdout is not one. The question goes to stderr so --json stays clean. */
 export function terminalAsk(ctx: CliContext, input: Readable = process.stdin, output: Writable = process.stderr): RetroDeps['ask'] {
+  let ended = false;
   return async (question) => {
-    if (!ctx.io.stdoutIsTty || (input as { isTTY?: boolean }).isTTY !== true) return null;
+    if (ended || !ctx.io.stdoutIsTty || (input as { isTTY?: boolean }).isTTY !== true) return null;
     const rl = createInterface({ input, output });
     try {
-      const answer = await rl.question(`${question} [y/N] `);
+      // Ctrl-D closes the interface and leaves the question unsettled: nobody answered, and nobody is asked again.
+      const closed = new Promise<null>((resolve) => rl.once('close', () => resolve(null)));
+      const answer = await Promise.race([rl.question(`${question} [y/N] `).catch(() => null), closed]);
+      if (answer === null) {
+        ended = true;
+        return null;
+      }
       return /^\s*y(es)?\s*$/i.test(answer);
     } finally {
       rl.close();
@@ -105,7 +112,9 @@ export function withCheck(text: string, check: DeclaredCheck): string {
 
 /**
  * AC-2: commit the configuration with `check` added on a new branch from the tip of the base branch. Plumbing only: no
- * hook runs, the checkout, its index and the base branch are not touched, and an existing branch is never replaced.
+ * commit hook runs (a reference-transaction hook still does), the checkout, its index and the base branch are not
+ * touched, and an existing branch is never replaced:
+ * one that already holds the check is where it was applied, any other fails the apply.
  */
 export async function applyCheckOnBranch(ctx: CliContext, repo: string, baseBranch: string, check: DeclaredCheck): Promise<{ branch: string; commit: string }> {
   const branch = checkBranch(check);
@@ -117,6 +126,12 @@ export async function applyCheckOnBranch(ctx: CliContext, repo: string, baseBran
   };
   try {
     const base = await git(['rev-parse', '--verify', `refs/heads/${baseBranch}^{commit}`]);
+    // A yes to another proposal of the same check already made the branch (each review-dispute signature proposes it).
+    const made = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]).catch(() => null);
+    if (made !== null) {
+      const onBranch = await git(['show', `${made}:${CONFIG_RELATIVE_PATH}`]).catch(() => '');
+      if (parseDocument(onBranch).hasIn(['checks', check.id])) return { branch, commit: made };
+    }
     // The configuration as the base branch holds it; one never committed is taken from the checkout.
     const text = await git(['show', `${base}:${CONFIG_RELATIVE_PATH}`]).catch(() => readFileSync(join(repo, CONFIG_RELATIVE_PATH), 'utf8'));
     const blob = await git(['hash-object', '-w', '--stdin'], withCheck(text, check));

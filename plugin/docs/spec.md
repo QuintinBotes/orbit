@@ -835,6 +835,7 @@ Do not expose sensitive content in logs. Make missing usage measurements explici
 `orbit retro [--since <when>] [--issue-repo <owner/repo>] [--json]` looks back over the runs that ended and proposes what would have prevented the failures that repeat. It calls no model, and it applies or sends nothing without a person's yes.
 
 - Terminal runs are grouped by failure class and signature. The signature is the names of the outcome markers that set the class and of the policy rules that denied the run's calls, never the wording of a reason or a value.
+  A worker can print any rule name in its transcript, so an issue draft, the one proposal that leaves the machine, leaves the rule names out of its signature.
 - A group of two runs or more is one proposal that cites every run in it. A single run makes none, except a run of an Orbit-fault class (`gate-deadlock`), which is one proposal on its own. Runs that succeeded or were `cancelled` make none.
 - A proposal is one of four kinds:
   - an Orbit-fault class is a draft Orbit issue;

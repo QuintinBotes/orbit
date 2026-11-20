@@ -10,7 +10,8 @@
  * draft only from structured fields: run ids, states, the failure class, the names of the outcome markers, the names
  * of the policy rules that denied calls, and the sequence of states the run went through. It never reads a reason, an
  * outcome value, a goal or a path, so nothing a run quoted (source, a secret, a directory name) can reach a draft; a
- * final pass redacts what the draft still holds as defence. Nothing here sends or applies anything.
+ * final pass redacts what the draft still holds as defence. A rule name comes from the worker's transcript, so a worker
+ * can choose one: only local drafts carry rule names, never an issue draft. Nothing here sends or applies anything.
  */
 import { createHash } from 'node:crypto';
 import type { OrbitDb } from '../storage/db.ts';
@@ -131,10 +132,13 @@ function evidenceFor(db: OrbitDb, row: RunRow, cls: FailureClass): RetroRunEvide
   };
 }
 
-/** The signature of a failure: the marker names its outcome carries and the rules that denied its calls, never the wording of a reason. */
-function signatureOf(ev: RetroRunEvidence): string {
+/**
+ * The signature of a failure: the marker names its outcome carries and, unless `withDenials` is false, the rules that
+ * denied its calls; never the wording of a reason.
+ */
+function signatureOf(ev: RetroRunEvidence, withDenials: boolean): string {
   const names = [...new Set(ev.markers.map((m) => m.replace(/ \(\d+\)$/, '')))].sort();
-  const parts = [...names, ...ev.denials.map((r) => `denied:${r}`)];
+  const parts = [...names, ...(withDenials ? ev.denials.map((r) => `denied:${r}`) : [])];
   return parts.length > 0 ? parts.join('+') : 'unmarked';
 }
 
@@ -266,7 +270,8 @@ export function retroProposals(db: OrbitDb, opts: { since: number | null; roots?
     const kind = cls === null ? null : kindFor(cls, missingCheck);
     if (cls === null || kind === null) continue;
     const ev = evidenceFor(db, row, cls);
-    const signature = signatureOf(ev);
+    // A rule name is read from the worker's transcript, where any failing command can print one: it stays out of an issue draft, the one proposal that leaves the machine.
+    const signature = signatureOf(ev, kind !== 'issue-draft');
     const key = proposalKey(kind, cls, signature);
     const g = groups.get(key) ?? { kind, cls, signature, runs: [] };
     g.runs.push(ev);
