@@ -154,8 +154,10 @@ scheduler:
   # independent review and the report.
   final_reserve_fraction: 0.2
   # A session's turn cap follows the task: the 75th percentile of the turns
-  # earlier successful sessions of the same role and difficulty took, kept
-  # within floor..ceiling (never above hard_limits.worker_turns_per_session).
+  # earlier successful sessions of the same role and difficulty took (a
+  # session the cap stopped, or that asked to continue, counts as the
+  # ceiling), kept within floor..ceiling (never above
+  # hard_limits.worker_turns_per_session).
   # With no history, default applies. A session is told the turns it has left
   # from reminder_fraction of its cap on, and an implementer that states what
   # remains gets one extension per attempt. Without this section: floor 10,

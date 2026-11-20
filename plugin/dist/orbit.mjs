@@ -25338,21 +25338,23 @@ function deriveTurnCap(history, bounds) {
   if (p === null) return bounds.default;
   return Math.min(bounds.ceiling, Math.max(bounds.floor, Math.ceil(p)));
 }
-function successfulTurnHistory(db, runId, role) {
+function turnHistory(db, runId, role, ceiling) {
   const rows = db.all(
-    `SELECT json_extract(w.result_json, '$.modelRequests') AS turns
+    `SELECT w.result_status AS status, json_extract(w.result_json, '$.modelRequests') AS turns,
+            json_extract(w.result_json, '$.structured.next_action.kind') AS next
        FROM workers w
        JOIN runs r ON r.id = w.run_id
        JOIN runs me ON me.id = ?
-      WHERE w.role = ? AND w.result_status = 'succeeded'
+      WHERE w.role = ? AND w.result_status IN ('succeeded', 'max_turns')
         AND r.repo_root = me.repo_root AND r.difficulty IS me.difficulty`,
     runId,
     role
   );
-  return rows.map((r) => r.turns).filter((t) => typeof t === "number" && Number.isSafeInteger(t) && t > 0);
+  return rows.flatMap((r) => r.status === "max_turns" || r.next === "continue-implementation" ? [ceiling] : typeof r.turns === "number" && Number.isSafeInteger(r.turns) && r.turns > 0 ? [r.turns] : []);
 }
 function turnCapFor(db, runId, role, config) {
-  return deriveTurnCap(successfulTurnHistory(db, runId, role), turnCapBounds(config));
+  const bounds = turnCapBounds(config);
+  return deriveTurnCap(turnHistory(db, runId, role, bounds.ceiling), bounds);
 }
 function reminderThreshold(cap, fraction = DEFAULT_REMINDER_FRACTION) {
   return Math.min(Math.max(1, Math.ceil(cap * fraction)), Math.max(1, cap - 1));
@@ -73171,8 +73173,10 @@ scheduler:
   # independent review and the report.
   final_reserve_fraction: 0.2
   # A session's turn cap follows the task: the 75th percentile of the turns
-  # earlier successful sessions of the same role and difficulty took, kept
-  # within floor..ceiling (never above hard_limits.worker_turns_per_session).
+  # earlier successful sessions of the same role and difficulty took (a
+  # session the cap stopped, or that asked to continue, counts as the
+  # ceiling), kept within floor..ceiling (never above
+  # hard_limits.worker_turns_per_session).
   # With no history, default applies. A session is told the turns it has left
   # from reminder_fraction of its cap on, and an implementer that states what
   # remains gets one extension per attempt. Without this section: floor 10,

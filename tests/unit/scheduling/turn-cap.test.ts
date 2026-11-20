@@ -3,7 +3,7 @@ import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { createRun } from '../../../src/controller/run-store.ts';
 import { sessionTurnCap } from '../../../src/controller/workers.ts';
-import { decideTurnExtension, deriveTurnCap, percentile, reminderThreshold, successfulTurnHistory, turnCapBounds, turnCapFor, turnReminder, type TurnCapBounds } from '../../../src/scheduling/turn-cap.ts';
+import { decideTurnExtension, deriveTurnCap, percentile, reminderThreshold, turnCapBounds, turnCapFor, turnHistory, turnReminder, type TurnCapBounds } from '../../../src/scheduling/turn-cap.ts';
 
 const bounds: TurnCapBounds = { floor: 8, ceiling: 25, default: 20, reminderFraction: 0.8 };
 
@@ -42,34 +42,47 @@ describe('turn history (AC-1)', () => {
     }
     return db;
   }
-  function worker(db: OrbitDb, id: string, runId: string, role: string, status: string, requests: number): void {
+  function worker(db: OrbitDb, id: string, runId: string, role: string, status: string, requests: number, nextAction?: string): void {
     db.run(
       `INSERT INTO workers (id, run_id, role, provider, state, worker_dir, cwd, result_status, result_json, created_at) VALUES (?, ?, ?, 'claude', 'SUCCEEDED', '/w', '/c', ?, ?, 1)`,
       id,
       runId,
       role,
       status,
-      JSON.stringify({ modelRequests: requests }),
+      JSON.stringify({ modelRequests: requests, ...(nextAction ? { structured: { next_action: { kind: nextAction, detail: 'the rest' } } } : {}) }),
     );
   }
 
-  it('counts successful sessions of the same role and repository only', () => {
+  it('counts finished sessions of the same role and repository only, and a session its cap stopped as the ceiling', () => {
     const db = seed();
     worker(db, 'w1', 'old', 'implementer', 'succeeded', 10);
     worker(db, 'w2', 'old', 'implementer', 'succeeded', 14);
-    worker(db, 'w3', 'old', 'implementer', 'max_turns', 30);
+    worker(db, 'w3', 'old', 'implementer', 'max_turns', 16);
     worker(db, 'w4', 'old', 'implementer', 'failed', 3);
     worker(db, 'w5', 'old', 'reviewer', 'succeeded', 6);
     worker(db, 'w6', 'other', 'implementer', 'succeeded', 29);
-    expect(successfulTurnHistory(db, 'now', 'implementer').sort((a, b) => a - b)).toEqual([10, 14]);
-    expect(successfulTurnHistory(db, 'now', 'reviewer')).toEqual([6]);
+    expect(turnHistory(db, 'now', 'implementer', 30).sort((a, b) => a - b)).toEqual([10, 14, 30]);
+    expect(turnHistory(db, 'now', 'reviewer', 30)).toEqual([6]);
   });
 
   it('keeps difficulties (task classes) separate', () => {
     const db = seed();
     db.run("UPDATE runs SET difficulty = 'complex' WHERE id = 'old'");
     worker(db, 'w1', 'old', 'implementer', 'succeeded', 20);
-    expect(successfulTurnHistory(db, 'now', 'implementer')).toEqual([]);
+    expect(turnHistory(db, 'now', 'implementer', 30)).toEqual([]);
+  });
+
+  it('does not ratchet the cap down: sessions the cap was too small for lift it back to the ceiling', () => {
+    // Under a cap of 16 every session that finishes took at most 16 turns. Counted alone, they would give the next
+    // session at most 16, run after run, while the sessions that needed more drop out of the record.
+    const db = seed();
+    const cfg = config();
+    for (const [i, n] of [10, 12, 16, 18].entries()) worker(db, `w${i}`, 'old', 'implementer', 'succeeded', n);
+    expect(turnCapFor(db, 'now', 'implementer', cfg)).toBe(16);
+    worker(db, 'capped', 'now', 'implementer', 'max_turns', 16);
+    worker(db, 'asked', 'now', 'implementer', 'succeeded', 14, 'continue-implementation');
+    expect(turnHistory(db, 'now', 'implementer', 30).sort((a, b) => a - b)).toEqual([10, 12, 16, 18, 30, 30]);
+    expect(turnCapFor(db, 'now', 'implementer', cfg)).toBe(30);
   });
 
   it('gives a new session the derived cap, and the configured default without history', () => {

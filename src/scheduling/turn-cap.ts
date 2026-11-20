@@ -5,7 +5,8 @@ import type { OrbitConfig } from '../policy/types.ts';
  * Task-sized per-session turn caps (issue #177).
  *
  * A session's cap is the 75th percentile of the model requests that successful sessions of the same role and task class
- * (the run's difficulty) took in this repository, kept within floor..ceiling and never above the policy hard cap.
+ * (the run's difficulty) took in this repository, a session its cap stopped counting as the ceiling, kept within
+ * floor..ceiling and never above the policy hard cap.
  * Without history the default applies. Without a `scheduler.turn_cap` section the floor is 10 and the ceiling and the
  * default are the hard cap, so a repository with no history runs as before.
  */
@@ -49,26 +50,30 @@ export function deriveTurnCap(history: readonly number[], bounds: TurnCapBounds)
 }
 
 /**
- * Turns taken by successful worker sessions of `role` in runs of the same repository and difficulty. Only a session
- * that returned its result with a recorded model-request count contributes; failed and capped sessions do not.
+ * Turns taken by worker sessions of `role` in runs of the same repository and difficulty. A successful session counts its
+ * model requests; a session that ended at its cap, or asked to continue past it, counts as `ceiling`. Counted alone, the
+ * sessions that finished would ratchet the cap down: under a cap of C each of them took at most C turns, so the next
+ * percentile is at most C, while the sessions C was too small for drop out of the record. Other sessions do not count.
  */
-export function successfulTurnHistory(db: OrbitDb, runId: string, role: string): number[] {
-  const rows = db.all<{ turns: number | null }>(
-    `SELECT json_extract(w.result_json, '$.modelRequests') AS turns
+export function turnHistory(db: OrbitDb, runId: string, role: string, ceiling: number): number[] {
+  const rows = db.all<{ status: string; turns: number | null; next: string | null }>(
+    `SELECT w.result_status AS status, json_extract(w.result_json, '$.modelRequests') AS turns,
+            json_extract(w.result_json, '$.structured.next_action.kind') AS next
        FROM workers w
        JOIN runs r ON r.id = w.run_id
        JOIN runs me ON me.id = ?
-      WHERE w.role = ? AND w.result_status = 'succeeded'
+      WHERE w.role = ? AND w.result_status IN ('succeeded', 'max_turns')
         AND r.repo_root = me.repo_root AND r.difficulty IS me.difficulty`,
     runId,
     role,
   );
-  return rows.map((r) => r.turns).filter((t): t is number => typeof t === 'number' && Number.isSafeInteger(t) && t > 0);
+  return rows.flatMap((r) => (r.status === 'max_turns' || r.next === 'continue-implementation' ? [ceiling] : typeof r.turns === 'number' && Number.isSafeInteger(r.turns) && r.turns > 0 ? [r.turns] : []));
 }
 
 /** The cap a new session of `role` in run `runId` starts with. */
 export function turnCapFor(db: OrbitDb, runId: string, role: string, config: Pick<OrbitConfig, 'scheduler'>): number {
-  return deriveTurnCap(successfulTurnHistory(db, runId, role), turnCapBounds(config));
+  const bounds = turnCapBounds(config);
+  return deriveTurnCap(turnHistory(db, runId, role, bounds.ceiling), bounds);
 }
 
 /** The number of turns taken at which the worker is first reminded: 80% of the cap, and at least one turn before it. */

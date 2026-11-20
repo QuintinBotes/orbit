@@ -341,7 +341,9 @@ Within that hard cap, each session's `--max-turns` follows the task: it is the
 75th percentile of the model requests that earlier successful sessions of the
 same role and difficulty took in this repository, kept within
 `scheduler.turn_cap.floor` and `ceiling`, and `default` when there is no
-history. Without a `turn_cap` section the floor is 10 and the ceiling and the
+history. A session that ended at its cap, or asked to continue, counts as the
+ceiling: counting only the sessions that finished would lower the cap run after
+run, since none of them can have taken more turns than the cap allowed. Without a `turn_cap` section the floor is 10 and the ceiling and the
 default are `worker_turns_per_session`, so a repository with no history runs as
 before. Each session's cap is recorded as a `worker.turn-cap` event. From
 `reminder_fraction` (0.8) of its cap on, Orbit's guard hook tells the session
