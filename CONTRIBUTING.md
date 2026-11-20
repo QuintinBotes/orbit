@@ -66,6 +66,11 @@ Every change, including a bug fix, comes with a test that fails before the
 change and passes after it; never loosen or delete an assertion to make a test
 pass. Design decisions get a short record under `docs/decisions/`.
 
+A fixed issue also adds a lab scenario to `src/bench/scenarios.ts`: the issue's
+failure replayed on the demo app with the fake providers, and how the run ends
+now. `orbit bench --tier lab` runs them all (CI does, on every change) and names
+any scenario whose fixed failure came back; `--only <id>` runs one.
+
 ## Pull requests
 
 `main` is protected. Changes land through a pull request that:
@@ -93,7 +98,9 @@ A release is a tag. Pushing a tag named `v*` runs
 2. In `CHANGELOG.md`, rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)` and
    start a fresh `## Unreleased` above it. That section is the text of the
    release notes, so write it for readers of the release page.
-3. Rebuild the bundle (`npm run build`) if anything under `src/` changed, and merge.
+3. Rebuild the bundle (`npm run build`) if anything under `src/` changed. Run
+   `node plugin/dist/orbit.mjs bench --tier lab` and commit the scorecard it writes,
+   `docs/scorecards/orbit-X.Y.Z-lab.json`, so every version keeps its own. Then merge.
 4. Tag the merge commit on `main` and push the tag:
 
    ```bash

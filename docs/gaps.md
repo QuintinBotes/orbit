@@ -109,7 +109,27 @@ and a private repository, so it cannot be closed from the test suite):
 
 ## Should
 
-None.
+### G58. The live benchmark has three seed goals and no published scorecard (should)
+
+Covers I172.SC2 (missing) and I172.SC3 (partial). `orbit bench --tier live`
+is implemented and tested with a fake executor and a fixture catalog of twenty
+goals, but `data/bench/live-goals.json` holds three seed goals (owner decision
+on #172) and the live tier has never run: it spends money, and every run needs
+the owner's approval. The README makes no result claim that rests on a
+scorecard.
+
+Fix (needs the owner's approval and a budget, so it cannot be closed from the
+test suite):
+
+1. Add goals to `data/bench/live-goals.json` until there are twenty, each at a
+   commit of an owner repository where a real failure happened, with the
+   accepted fix as `reference` and its test files as the held-out check.
+2. With the owner's approval, run `orbit bench --tier live --budget <usd>
+   --approved-by <owner> --baseline` from an Orbit checkout, and commit
+   `docs/scorecards/orbit-<version>-live.json` after reading it for tokens,
+   personal names and host paths.
+3. Cite that scorecard wherever the README states a result, and set I172.SC2
+   and I172.SC3 to done in `docs/traceability.md`.
 
 ## Nice
 
