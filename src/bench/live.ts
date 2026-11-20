@@ -130,6 +130,11 @@ function rowOf(g: LiveGoal, n: number, t: LiveTrial): ScenarioRow {
   return { id: `${g.id}#${n}`, issue: g.issue, title: title(g), result: t.accepted ? 'pass' : 'fail', failure_class: t.failure_class, end_state: t.end_state, attempts: t.attempts, spend_usd: t.spend_usd, wall_ms: t.wall_ms, delivered: t.delivered, problems: [...t.problems] };
 }
 
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** A session that threw: kept as a failed row, so the tier goes on and the sessions already paid for still reach the scorecard. */
+const crashed = (err: unknown): LiveTrial => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed, and its spend is unknown: ${messageOf(err)}`.slice(0, 1000)] });
+
 const skipped = (g: LiveGoal, id: string, why: string): ScenarioRow => ({ id, issue: g.issue, title: title(g), result: 'invalid', failure_class: null, end_state: null, attempts: 0, spend_usd: 0, wall_ms: null, delivered: false, problems: [why] });
 
 /** Every goal, three times by Orbit and (with the baseline) three times by a plain session; every result is kept. */
@@ -140,13 +145,13 @@ export async function runLiveTier(o: LiveTierOptions): Promise<{ rows: ScenarioR
   const plain: ScenarioRow[] = [];
   const session = async (g: LiveGoal, n: number, run: (g: LiveGoal, cap: number) => Promise<LiveTrial>, into: ScenarioRow[]): Promise<void> => {
     // Each session is held to its cap, so this only trips when sessions overran theirs.
-    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n, await run(g, cap));
+    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n, await run(g, cap).catch(crashed));
     spent += row.spend_usd;
     into.push(row);
     o.onRow?.(row);
   };
   for (const g of o.goals) {
-    const invalid = await o.executor.validate(g);
+    const invalid = await o.executor.validate(g).catch((err: unknown) => [`could not check the goal: ${messageOf(err)}`]);
     if (invalid.length > 0) {
       const row = { ...skipped(g, g.id, ''), problems: invalid };
       rows.push(row);
@@ -165,21 +170,25 @@ export async function runLiveTier(o: LiveTierOptions): Promise<{ rows: ScenarioR
 // ---------------------------------------------------------------------------
 // The real executor. Nothing above calls it; `orbit bench --tier live` does, after the approval and budget checks.
 
-function sh(cmd: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 3_600_000): { status: number; out: string } {
+function sh(cmd: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 3_600_000): { status: number; out: string; stdout: string } {
   const r = spawnSync(cmd[0]!, cmd.slice(1), { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
-  return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? String(r.error) : ''}` };
+  return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? String(r.error) : ''}`, stdout: r.stdout ?? '' };
 }
 
-function must(cmd: readonly string[], cwd: string): void {
-  const r = sh(cmd, cwd);
+function must(cmd: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): void {
+  const r = sh(cmd, cwd, env);
   if (r.status !== 0) throw new Error(`${cmd.join(' ')} failed (exit ${r.status}): ${r.out.slice(-1000)}`);
 }
 
-/** A fresh clone of the goal's repository at `rev`, in its own temp directory. */
+/**
+ * A fresh repository at `rev`, in its own temp directory: `rev` and its history only, fetched by commit id, with no
+ * remote. A full clone would hold the accepted fix and its held-out tests (FR-003); they are fetched only to grade.
+ */
 function cloneAt(url: string, g: LiveGoal, rev: string): string {
   const base = mkdtempSync(join(tmpdir(), `orbit-bench-live-${g.id}-`));
   const repo = join(base, 'repo');
-  must(['git', 'clone', '--quiet', url, repo], base);
+  must(['git', 'init', '--quiet', repo], base);
+  must(['git', 'fetch', '--quiet', url, rev], repo);
   must(['git', 'checkout', '--quiet', '-B', 'orbit-bench', rev], repo);
   return repo;
 }
@@ -190,7 +199,7 @@ const cleanup = (repo: string): void => {
 };
 
 /** Lay the held-out files of the accepted fix over `tree`, set it up, and run the check. */
-function heldOut(g: LiveGoal, tree: string, from: string): { passed: boolean; out: string } {
+function heldOut(g: LiveGoal, tree: string, from: string): { passed: boolean; out: string; setupFailed?: boolean } {
   for (const p of g.acceptance.paths) {
     const r = sh(['git', '-C', from, 'show', `${g.reference}:${p}`], from);
     if (r.status !== 0) return { passed: false, out: `held-out file ${p} is not in ${g.reference}: ${r.out}` };
@@ -199,7 +208,7 @@ function heldOut(g: LiveGoal, tree: string, from: string): { passed: boolean; ou
   }
   if (g.setup) {
     const s = sh(g.setup, tree);
-    if (s.status !== 0) return { passed: false, out: `setup failed: ${s.out.slice(-1000)}` };
+    if (s.status !== 0) return { passed: false, out: `setup failed: ${s.out.slice(-1000)}`, setupFailed: true };
   }
   const c = sh(g.acceptance.command, tree);
   return { passed: c.status === 0, out: c.out.slice(-1000) };
@@ -215,17 +224,22 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
   const orbitCommand = opts.orbitCommand ?? [process.execPath, ...process.execArgv, process.argv[1]!];
   const remote = opts.remote ?? ((r: string): string => `https://github.com/${r}.git`);
   const clone = (g: LiveGoal, rev: string): string => cloneAt(remote(g.repository), g, rev);
+  /** The accepted fix, brought into the clone once the session in it has ended. */
+  const fetchReference = (g: LiveGoal, repo: string): void => must(['git', 'fetch', '--quiet', remote(g.repository), g.reference], repo);
   return {
     async validate(g) {
       const repo = clone(g, g.commit);
       try {
-        // The check judges the goal only when it fails before the fix and passes with it.
-        if (heldOut(g, repo, repo).passed) return [`the held-out check already passes on ${g.commit}, so it cannot tell a fix from none`];
+        fetchReference(g, repo);
+        // The check judges the goal only when it fails before the fix and passes with it; a setup that fails says nothing.
+        const before = heldOut(g, repo, repo);
+        if (before.passed) return [`the held-out check already passes on ${g.commit}, so it cannot tell a fix from none`];
+        if (before.setupFailed) return [`the setup fails on ${g.commit}, so the check cannot tell a fix from none: ${before.out}`];
         must(['git', 'checkout', '--quiet', '--force', g.reference], repo);
         const fixed = heldOut(g, repo, repo);
         return fixed.passed ? [] : [`the held-out check does not pass on the accepted fix ${g.reference}: ${fixed.out}`];
       } catch (err) {
-        return [`could not check the goal: ${err instanceof Error ? err.message : String(err)}`];
+        return [`could not check the goal: ${messageOf(err)}`];
       } finally {
         cleanup(repo);
       }
@@ -234,7 +248,7 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
       const repo = clone(g, g.commit);
       const env = { ...process.env, ORBIT_HOME: join(dirname(repo), 'orbit-home') };
       try {
-        must([...orbitCommand, 'init'], repo);
+        must([...orbitCommand, 'init'], repo, env);
         const policy = join(repo, '.orbit', 'config.yaml');
         const doc = parseDocument(readFileSync(policy, 'utf8'));
         doc.setIn(['scheduler', 'hard_limits', 'model_cost_usd'], Number(cap.toFixed(4)));
@@ -247,9 +261,17 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
           const run = listRuns(db, { limit: 1 })[0];
           if (!run) return { end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: wall, delivered: false, accepted: false, problems: [`orbit run started no run: ${r.out.slice(-1000)}`] };
           const used = (c: string): number => db.get<{ used: number }>('SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?', run.id, c)?.used ?? 0;
-          const delivered = run.state === 'SUCCEEDED' && run.worktreePath !== null;
-          const check = delivered ? heldOut(g, run.worktreePath!, repo) : null;
-          return { end_state: run.state, failure_class: run.failureClass, attempts: used('implementation_attempts'), spend_usd: used('cost_usd'), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems: check && !check.passed ? [`held-out check failed: ${check.out}`] : run.state === 'SUCCEEDED' ? [] : [`${run.state}: ${run.outcomeReason ?? ''}`.slice(0, 500)] };
+          // SUCCEEDED releases the run's checkouts (finishRun), so the delivered tree is graded from the commit the outcome
+          // names (autonomous mode delivers a local branch at it), checked out in the clone.
+          const commit = run.state === 'SUCCEEDED' ? (JSON.parse(run.outcomeJson ?? '{}') as { commit?: unknown }).commit : undefined;
+          const delivered = typeof commit === 'string';
+          if (delivered) {
+            must(['git', 'checkout', '--quiet', '--force', commit], repo);
+            fetchReference(g, repo);
+          }
+          const check = delivered ? heldOut(g, repo, repo) : null;
+          const problems = check ? (check.passed ? [] : [`held-out check failed: ${check.out}`]) : [`${run.state}: ${run.state === 'SUCCEEDED' ? 'the outcome names no delivered commit' : (run.outcomeReason ?? '')}`.slice(0, 500)];
+          return { end_state: run.state, failure_class: run.failureClass, attempts: used('implementation_attempts'), spend_usd: used('cost_usd'), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems };
         } finally {
           db.close();
         }
@@ -265,10 +287,11 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
         const wall = Date.now() - t0;
         let spend = 0;
         try {
-          spend = Number((JSON.parse(r.out.trim().split('\n').at(-1) ?? '{}') as { total_cost_usd?: number }).total_cost_usd ?? 0);
+          spend = Number((JSON.parse(r.stdout.trim().split('\n').at(-1) ?? '{}') as { total_cost_usd?: number }).total_cost_usd ?? 0);
         } catch {
           // An unreadable result still keeps the run; its spend is unknown, not free, and the problem says so.
         }
+        fetchReference(g, repo);
         const check = heldOut(g, repo, repo);
         return { end_state: r.status === 0 ? 'DONE' : 'FAILED', failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...(spend === 0 ? ['the session reported no cost'] : []), ...(check.passed ? [] : [`held-out check failed: ${check.out}`])] };
       } finally {

@@ -9,7 +9,7 @@
  * check does not hold on the reference solution) is `invalid`: it is listed, and left out of every count.
  */
 import { join } from 'node:path';
-import { FAILURE_CLASSES, type FailureClass } from '../controller/failure-class.ts';
+import type { FailureClass } from '../controller/failure-class.ts';
 
 export const SCORECARD_SCHEMA_VERSION = 1;
 
@@ -235,15 +235,6 @@ export function renderScorecard(card: Scorecard): string {
     out.push(`Orbit minus the plain session: pass rate ${sign(b.difference.pass_rate, (v) => `${(v * 100).toFixed(1)} points`)}, cost per accepted task ${sign(b.difference.cost_per_pass_usd, usd)}`);
   }
   return `${out.join('\n')}\n`;
-}
-
-/** The scenarios a regression is reported for: those that ran and did not hold. */
-export function failedScenarios(card: Scorecard): ScenarioRow[] {
-  return card.scenarios.filter((r) => r.result === 'fail');
-}
-
-export function isFailureClassName(v: string): v is FailureClass {
-  return (FAILURE_CLASSES as readonly string[]).includes(v);
 }
 
 /** The false-done file: a list of records, each checked. Anything malformed is an error naming the record, never skipped. */

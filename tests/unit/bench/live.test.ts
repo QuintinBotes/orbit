@@ -122,6 +122,27 @@ describe('live tier (#172 User Story 2)', () => {
     expect(ex.calls.filter((c) => c.id === 'goal-2').map((c) => c.kind)).toEqual(['validate']);
   });
 
+  it('a session or a goal check that throws is kept as a row, and the tier goes on, so the sessions already paid for reach the scorecard', async () => {
+    const goals = parseLiveCatalog(JSON.stringify(fixtureCatalog(2)));
+    const ex = fakeExecutor((_k, g, n) => {
+      if (g.id === 'goal-1' && n === 1) throw new Error('git fetch failed');
+      return trial();
+    });
+    ex.validate = async (g) => {
+      if (g.id === 'goal-2') throw new Error('no such commit');
+      return [];
+    };
+    const out = await runLiveTier({ goals, budgetUsd: 6, baseline: false, executor: ex });
+    expect(out.rows.map((r) => [r.id, r.result])).toEqual([
+      ['goal-1#1', 'fail'],
+      ['goal-1#2', 'pass'],
+      ['goal-1#3', 'pass'],
+      ['goal-2', 'invalid'],
+    ]);
+    expect(out.rows[0]!.problems).toEqual(['the session failed, and its spend is unknown: git fetch failed']);
+    expect(out.rows[3]!.problems).toEqual(['could not check the goal: no such commit']);
+  });
+
   it('stops starting sessions once what is left of the budget is less than one session cap', async () => {
     const goals = parseLiveCatalog(JSON.stringify(fixtureCatalog(1)));
     const ex = fakeExecutor(() => trial({ spend_usd: 2.5 }));
@@ -164,5 +185,68 @@ describe('live executor: the held-out check judges a goal only when it fails bef
     expect(await ex.validate(goal(p))).toEqual([]);
     expect((await ex.validate(goal(p, ['true'])))[0]).toMatch(/already passes on/);
     expect((await ex.validate(goal(p, ['false'])))[0]).toMatch(/does not pass on the accepted fix/);
+  });
+
+  it('is invalid when the setup fails on the commit: a check that never ran there cannot tell a fix from none', async () => {
+    const p = pinned();
+    const ex = localExecutor({ remote: () => p.url, orbitCommand: ['false'] });
+    const g = { ...goal(p, ['true']), setup: ['node', '-e', "process.exit(require('fs').readFileSync('value.mjs', 'utf8').includes('1') ? 1 : 0)"] };
+    expect((await ex.validate(g))[0]).toMatch(/^the setup fails on /);
+  });
+
+  /** A script that fails when the accepted fix is in the session's clone: the held-out check is one the worker never sees. */
+  const blind = (reference: string): string => `git cat-file -e ${reference} 2>/dev/null`;
+
+  it("grades the commit an Orbit run delivered, after the run released its worktree, and the run's clone never held the accepted fix", async () => {
+    const p = pinned();
+    const fake = join(dirs[0]!, 'fake-orbit.mjs');
+    const src = (f: string): string => JSON.stringify(new URL(`../../../src/${f}`, import.meta.url).href);
+    // `orbit init` writes a policy; `orbit run` delivers the fix on a branch, puts the clone's checkout back at the failure,
+    // and records a SUCCEEDED run whose worktree is gone, as finishRun leaves it.
+    writeFileSync(
+      fake,
+      `import { execSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { openDb } from ${src('storage/db.ts')};
+import { stateDbPath } from ${src('controller/start.ts')};
+import { createRun } from ${src('controller/run-store.ts')};
+const git = (a) => execSync('git -c user.name=w -c user.email=w@w.test ' + a, { encoding: 'utf8' }).trim();
+if (process.argv[2] === 'init') {
+  mkdirSync('.orbit', { recursive: true });
+  writeFileSync('.orbit/config.yaml', 'scheduler:\\n  hard_limits:\\n    model_cost_usd: 5\\n');
+  process.exit(0);
+}
+let seen = true;
+try { execSync(${JSON.stringify(blind(p.reference))}); } catch { seen = false; }
+git('checkout -q -b orbit/run-1');
+writeFileSync('value.mjs', 'export const value = 2;\\n');
+git('commit -q -am fix');
+const commit = git('rev-parse HEAD');
+git('checkout -q orbit-bench');
+const db = openDb(stateDbPath(process.cwd()));
+createRun(db, { id: 'run-1', repoRoot: process.cwd(), goal: 'g', mode: 'autonomous', policyHash: 'h', policyPath: '.orbit/config.yaml' }, { now: () => 1 });
+db.run('UPDATE runs SET state = ?, worktree_path = ?, outcome_json = ? WHERE id = ?', seen ? 'BLOCKED' : 'SUCCEEDED', join(process.cwd(), 'released'), JSON.stringify({ commit }), 'run-1');
+db.close();
+`,
+    );
+    const ex = localExecutor({ remote: () => p.url, orbitCommand: [process.execPath, fake] });
+    const t = await ex.orbit(goal(p), 1);
+    expect([t.end_state, t.delivered, t.accepted, t.problems]).toEqual(['SUCCEEDED', true, true, []]);
+  });
+
+  it('runs the plain session in a clone without the accepted fix, grades its tree, and reads its spend from stdout alone', async () => {
+    const p = pinned();
+    const bin = join(dirs[0]!, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'claude'), `#!/bin/sh\n${blind(p.reference)} && exit 7\necho 'export const value = 2;' > value.mjs\necho '{"type":"result","total_cost_usd":0.42}'\necho 'a warning on stderr' >&2\n`, { mode: 0o755 });
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path ?? ''}`;
+    try {
+      const t = await localExecutor({ remote: () => p.url }).plain(goal(p), 1);
+      expect([t.end_state, t.accepted, t.spend_usd, t.problems]).toEqual(['DONE', true, 0.42, []]);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 });

@@ -69876,13 +69876,13 @@ async function runLiveTier(o) {
   const rows = [];
   const plain2 = [];
   const session = async (g, n2, run, into) => {
-    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n2}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n2, await run(g, cap));
+    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n2}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n2, await run(g, cap).catch(crashed));
     spent += row.spend_usd;
     into.push(row);
     o.onRow?.(row);
   };
   for (const g of o.goals) {
-    const invalid3 = await o.executor.validate(g);
+    const invalid3 = await o.executor.validate(g).catch((err) => [`could not check the goal: ${messageOf6(err)}`]);
     if (invalid3.length > 0) {
       const row = { ...skipped(g, g.id, ""), problems: invalid3 };
       rows.push(row);
@@ -69899,16 +69899,17 @@ async function runLiveTier(o) {
 }
 function sh(cmd, cwd, env = process.env, timeoutMs = 36e5) {
   const r = spawnSync5(cmd[0], cmd.slice(1), { cwd, env, encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
-  return { status: r.status ?? 1, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}` };
+  return { status: r.status ?? 1, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}`, stdout: r.stdout ?? "" };
 }
-function must(cmd, cwd) {
-  const r = sh(cmd, cwd);
+function must(cmd, cwd, env = process.env) {
+  const r = sh(cmd, cwd, env);
   if (r.status !== 0) throw new Error(`${cmd.join(" ")} failed (exit ${r.status}): ${r.out.slice(-1e3)}`);
 }
 function cloneAt2(url, g, rev) {
   const base = mkdtempSync10(join77(tmpdir15(), `orbit-bench-live-${g.id}-`));
   const repo = join77(base, "repo");
-  must(["git", "clone", "--quiet", url, repo], base);
+  must(["git", "init", "--quiet", repo], base);
+  must(["git", "fetch", "--quiet", url, rev], repo);
   must(["git", "checkout", "--quiet", "-B", "orbit-bench", rev], repo);
   return repo;
 }
@@ -69921,7 +69922,7 @@ function heldOut(g, tree, from) {
   }
   if (g.setup) {
     const s = sh(g.setup, tree);
-    if (s.status !== 0) return { passed: false, out: `setup failed: ${s.out.slice(-1e3)}` };
+    if (s.status !== 0) return { passed: false, out: `setup failed: ${s.out.slice(-1e3)}`, setupFailed: true };
   }
   const c = sh(g.acceptance.command, tree);
   return { passed: c.status === 0, out: c.out.slice(-1e3) };
@@ -69930,16 +69931,20 @@ function localExecutor(opts = {}) {
   const orbitCommand = opts.orbitCommand ?? [process.execPath, ...process.execArgv, process.argv[1]];
   const remote = opts.remote ?? ((r) => `https://github.com/${r}.git`);
   const clone2 = (g, rev) => cloneAt2(remote(g.repository), g, rev);
+  const fetchReference = (g, repo) => must(["git", "fetch", "--quiet", remote(g.repository), g.reference], repo);
   return {
     async validate(g) {
       const repo = clone2(g, g.commit);
       try {
-        if (heldOut(g, repo, repo).passed) return [`the held-out check already passes on ${g.commit}, so it cannot tell a fix from none`];
+        fetchReference(g, repo);
+        const before = heldOut(g, repo, repo);
+        if (before.passed) return [`the held-out check already passes on ${g.commit}, so it cannot tell a fix from none`];
+        if (before.setupFailed) return [`the setup fails on ${g.commit}, so the check cannot tell a fix from none: ${before.out}`];
         must(["git", "checkout", "--quiet", "--force", g.reference], repo);
         const fixed = heldOut(g, repo, repo);
         return fixed.passed ? [] : [`the held-out check does not pass on the accepted fix ${g.reference}: ${fixed.out}`];
       } catch (err) {
-        return [`could not check the goal: ${err instanceof Error ? err.message : String(err)}`];
+        return [`could not check the goal: ${messageOf6(err)}`];
       } finally {
         cleanup(repo);
       }
@@ -69948,7 +69953,7 @@ function localExecutor(opts = {}) {
       const repo = clone2(g, g.commit);
       const env = { ...process.env, ORBIT_HOME: join77(dirname34(repo), "orbit-home") };
       try {
-        must([...orbitCommand, "init"], repo);
+        must([...orbitCommand, "init"], repo, env);
         const policy = join77(repo, ".orbit", "config.yaml");
         const doc = parseDocument(readFileSync36(policy, "utf8"));
         doc.setIn(["scheduler", "hard_limits", "model_cost_usd"], Number(cap.toFixed(4)));
@@ -69961,9 +69966,15 @@ function localExecutor(opts = {}) {
           const run = listRuns(db, { limit: 1 })[0];
           if (!run) return { end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: wall, delivered: false, accepted: false, problems: [`orbit run started no run: ${r.out.slice(-1e3)}`] };
           const used = (c) => db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?", run.id, c)?.used ?? 0;
-          const delivered = run.state === "SUCCEEDED" && run.worktreePath !== null;
-          const check = delivered ? heldOut(g, run.worktreePath, repo) : null;
-          return { end_state: run.state, failure_class: run.failureClass, attempts: used("implementation_attempts"), spend_usd: used("cost_usd"), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems: check && !check.passed ? [`held-out check failed: ${check.out}`] : run.state === "SUCCEEDED" ? [] : [`${run.state}: ${run.outcomeReason ?? ""}`.slice(0, 500)] };
+          const commit = run.state === "SUCCEEDED" ? JSON.parse(run.outcomeJson ?? "{}").commit : void 0;
+          const delivered = typeof commit === "string";
+          if (delivered) {
+            must(["git", "checkout", "--quiet", "--force", commit], repo);
+            fetchReference(g, repo);
+          }
+          const check = delivered ? heldOut(g, repo, repo) : null;
+          const problems = check ? check.passed ? [] : [`held-out check failed: ${check.out}`] : [`${run.state}: ${run.state === "SUCCEEDED" ? "the outcome names no delivered commit" : run.outcomeReason ?? ""}`.slice(0, 500)];
+          return { end_state: run.state, failure_class: run.failureClass, attempts: used("implementation_attempts"), spend_usd: used("cost_usd"), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems };
         } finally {
           db.close();
         }
@@ -69979,9 +69990,10 @@ function localExecutor(opts = {}) {
         const wall = Date.now() - t0;
         let spend = 0;
         try {
-          spend = Number(JSON.parse(r.out.trim().split("\n").at(-1) ?? "{}").total_cost_usd ?? 0);
+          spend = Number(JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}").total_cost_usd ?? 0);
         } catch {
         }
+        fetchReference(g, repo);
         const check = heldOut(g, repo, repo);
         return { end_state: r.status === 0 ? "DONE" : "FAILED", failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...spend === 0 ? ["the session reported no cost"] : [], ...check.passed ? [] : [`held-out check failed: ${check.out}`]] };
       } finally {
@@ -69990,7 +70002,7 @@ function localExecutor(opts = {}) {
     }
   };
 }
-var LIVE_CATALOG_SCHEMA_VERSION, RUNS_PER_GOAL, OWNER_REPOSITORIES, SHA, isStrings, relPath, title2, skipped, cleanup;
+var LIVE_CATALOG_SCHEMA_VERSION, RUNS_PER_GOAL, OWNER_REPOSITORIES, SHA, isStrings, relPath, title2, messageOf6, crashed, skipped, cleanup;
 var init_live = __esm({
   "src/bench/live.ts"() {
     "use strict";
@@ -70005,6 +70017,8 @@ var init_live = __esm({
     isStrings = (v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x !== "");
     relPath = (p) => !p.startsWith("/") && !p.split("/").includes("..");
     title2 = (g) => (g.goal.split("\n")[0] ?? "").slice(0, 120);
+    messageOf6 = (err) => err instanceof Error ? err.message : String(err);
+    crashed = (err) => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed, and its spend is unknown: ${messageOf6(err)}`.slice(0, 1e3)] });
     skipped = (g, id, why) => ({ id, issue: g.issue, title: title2(g), result: "invalid", failure_class: null, end_state: null, attempts: 0, spend_usd: 0, wall_ms: null, delivered: false, problems: [why] });
     cleanup = (repo) => {
       spawnSync5("chmod", ["-R", "u+w", dirname34(repo)]);
@@ -70136,7 +70150,6 @@ var SCORECARD_SCHEMA_VERSION, FALSE_DONE_SOURCES, round5, diff, SCORECARD_DIR, p
 var init_scorecard = __esm({
   "src/bench/scorecard.ts"() {
     "use strict";
-    init_failure_class();
     SCORECARD_SCHEMA_VERSION = 1;
     FALSE_DONE_SOURCES = ["hidden-check", "review-finding", "reopened-issue", "revert"];
     round5 = (n2, digits = 4) => Number(n2.toFixed(digits));
@@ -70150,10 +70163,9 @@ var init_scorecard = __esm({
 
 // src/bench/stages.ts
 function stageOff(name) {
-  const stage = BENCH_STAGES[name];
-  if (stage) return stage;
+  if (Object.hasOwn(BENCH_STAGES, name)) return BENCH_STAGES[name];
   const known = `stages that can be turned off: ${Object.keys(BENCH_STAGES).join(", ")}`;
-  if (FIXED_GATES[name]) throw new Error(`${name} is a gate no bench may turn off (${FIXED_GATES[name]}); ${known}`);
+  if (Object.hasOwn(FIXED_GATES, name)) throw new Error(`${name} is a gate no bench may turn off (${FIXED_GATES[name]}); ${known}`);
   throw new Error(`unknown stage "${name}"; ${known}`);
 }
 var BENCH_STAGES, FIXED_GATES;

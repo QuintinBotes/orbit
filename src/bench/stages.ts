@@ -25,9 +25,9 @@ export const FIXED_GATES: Readonly<Record<string, string>> = {
 
 /** The stage `name` names, or why it cannot be turned off. */
 export function stageOff(name: string): StageOff {
-  const stage = BENCH_STAGES[name];
-  if (stage) return stage;
+  // Own keys only: `constructor` or `toString` must not pass as a stage that turns nothing off.
+  if (Object.hasOwn(BENCH_STAGES, name)) return BENCH_STAGES[name]!;
   const known = `stages that can be turned off: ${Object.keys(BENCH_STAGES).join(', ')}`;
-  if (FIXED_GATES[name]) throw new Error(`${name} is a gate no bench may turn off (${FIXED_GATES[name]}); ${known}`);
+  if (Object.hasOwn(FIXED_GATES, name)) throw new Error(`${name} is a gate no bench may turn off (${FIXED_GATES[name]}); ${known}`);
   throw new Error(`unknown stage "${name}"; ${known}`);
 }

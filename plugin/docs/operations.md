@@ -554,9 +554,11 @@ orbit bench --tier live --budget 40 --approved-by <owner> [--baseline]   # spend
   accepted fix laid over the tree the run delivered, and a command that must
   pass. A goal whose check does not fail on its commit and pass on the fix
   is invalid and excluded. Each goal runs three times (Orbit in `autonomous`
-  mode on a fresh clone, with the policy `orbit init` writes), and with
-  `--baseline` three times more as one plain `claude -p` session; every
-  result is kept. The report gives pass rate, cost per accepted task and time,
+  mode, with the policy `orbit init` writes), and with `--baseline` three
+  times more as one plain `claude -p` session; every result is kept. Each
+  session works in a fresh repository that holds the pinned commit and its
+  history only, with no remote, so the accepted fix is not there to read; it
+  is fetched only to grade. The report gives pass rate, cost per accepted task and time,
   and the difference to the plain session. It refuses to start without
   `--budget <usd>` (no default) and `--approved-by <name>`; each session is
   capped at an equal share of the budget.

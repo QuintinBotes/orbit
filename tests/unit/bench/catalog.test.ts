@@ -25,6 +25,8 @@ describe('stages a bench may turn off (#172 FR-006)', () => {
       expect(() => stageOff(gate)).toThrow(new RegExp(`^${gate} is a gate no bench may turn off .*; stages that can be turned off: diagnosis, fail-before$`));
     }
     expect(() => stageOff('review')).toThrow(/^unknown stage "review"/);
+    // An inherited property is not a stage: it would run the comparison with nothing turned off.
+    for (const inherited of ['constructor', 'toString', '__proto__']) expect(() => stageOff(inherited)).toThrow(/^unknown stage/);
   });
 
   it('turns the diagnosis stage off through the controller and fail-before through the policy', () => {
