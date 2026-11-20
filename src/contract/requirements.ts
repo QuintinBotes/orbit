@@ -55,7 +55,9 @@ export function extractRequirements(texts: readonly string[]): Requirement[] {
   };
   for (const text of texts) {
     let fenced = false;
-    for (const raw of text.split(/\r?\n/)) {
+    for (const line of text.split(/\r?\n/)) {
+      // Emphasis around the modal (**MUST**, _MUST NOT_) does not hide a requirement.
+      const raw = line.replace(/(\*\*|__|\*|_)(MUST(?:\s+NOT)?)\1/g, '$2');
       if (/^\s*(```|~~~)/.test(raw)) {
         fenced = !fenced;
         continue;

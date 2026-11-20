@@ -133,6 +133,8 @@ export function changedLines(diff: string): Set<number> {
   for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
     const start = Number(m[1]);
     const count = m[2] === undefined ? 1 : Number(m[2]);
+    // A deletion-only hunk (+start,0) changes the code around new-side line start, so its function is changed too.
+    if (count === 0) out.add(Math.max(start, 1));
     for (let i = 0; i < count; i++) out.add(start + i);
   }
   return out;
@@ -268,6 +270,8 @@ export function judgeProof(input: { treeHash: string; criteria: CriterionInput[]
     ...requirements.filter((r) => r.status === 'unmet').map((r) => `${r.id} is unmet: ${r.reason}`),
     ...caller_findings.map((f) => `${f.id}${f.location ? ` at ${f.location}` : ''}: ${f.claim}`),
     ...(input.artifacts?.missing ? [`the artifact check gave no answer: ${input.artifacts.missing}`] : []),
+    // Only APPROVE says the documents match: another verdict with no finding names nothing to repair, and is never passed.
+    ...(input.artifacts && !input.artifacts.missing && input.artifacts.verdict !== 'APPROVE' && artifact_findings.length === 0 ? [`the artifact check answered ${input.artifacts.verdict ?? 'no verdict'} with no finding`] : []),
     ...artifact_findings.map((f) => `${f.id}${f.location ? ` at ${f.location}` : ''}: "${f.sentence}": ${f.claim}`),
   ];
   return { tree_hash: input.treeHash, criteria, requirements, caller_findings, artifact_findings, open };

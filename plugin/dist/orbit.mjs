@@ -52779,6 +52779,7 @@ function changedLines(diff) {
   for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
     const start = Number(m[1]);
     const count5 = m[2] === void 0 ? 1 : Number(m[2]);
+    if (count5 === 0) out.add(Math.max(start, 1));
     for (let i = 0; i < count5; i++) out.add(start + i);
   }
   return out;
@@ -52842,6 +52843,8 @@ ${f.claim}`;
     ...requirements.filter((r) => r.status === "unmet").map((r) => `${r.id} is unmet: ${r.reason}`),
     ...caller_findings.map((f) => `${f.id}${f.location ? ` at ${f.location}` : ""}: ${f.claim}`),
     ...input.artifacts?.missing ? [`the artifact check gave no answer: ${input.artifacts.missing}`] : [],
+    // Only APPROVE says the documents match: another verdict with no finding names nothing to repair, and is never passed.
+    ...input.artifacts && !input.artifacts.missing && input.artifacts.verdict !== "APPROVE" && artifact_findings.length === 0 ? [`the artifact check answered ${input.artifacts.verdict ?? "no verdict"} with no finding`] : [],
     ...artifact_findings.map((f) => `${f.id}${f.location ? ` at ${f.location}` : ""}: "${f.sentence}": ${f.claim}`)
   ];
   return { tree_hash: input.treeHash, criteria, requirements, caller_findings, artifact_findings, open: open2 };
@@ -59786,7 +59789,7 @@ function criterionTests(contract, snapshot2, isTestOwned) {
       if (!isTestOwned(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a test file, so it cannot prove ${c.id} on its own` };
       const checkId = (c.check_ids ?? []).find((id) => {
         const def = snapshot2.config.checks[id];
-        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def);
+        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def) && safeTestPath(relativeToCheck(def, path));
       });
       if (checkId === void 0) return { path, checkId: null, unitId: null, problem: `no check ${c.id} cites has a tests_command that runs ${path} alone` };
       return { path, checkId, unitId: unitIdFor(checkId, path), problem: null };
@@ -59795,9 +59798,11 @@ function criterionTests(contract, snapshot2, isTestOwned) {
   });
 }
 function criterionTestDefinition(def, unitId, path) {
+  return { ...def, id: unitId, command: [...def.tests_command, relativeToCheck(def, path)], shell: false, flaky_reruns: 0 };
+}
+function relativeToCheck(def, path) {
   const dir = checkDir(def);
-  const rel = dir === "" ? path : path.slice(dir.length + 1);
-  return { ...def, id: unitId, command: [...def.tests_command, rel], shell: false, flaky_reruns: 0 };
+  return dir === "" ? path : path.slice(dir.length + 1);
 }
 function criterionProofEntry(c, p) {
   const accepted = p.accepted.find((a) => a.criterionId === c.criterionId);
@@ -67892,7 +67897,8 @@ function extractRequirements(texts) {
   };
   for (const text2 of texts) {
     let fenced2 = false;
-    for (const raw of text2.split(/\r?\n/)) {
+    for (const line3 of text2.split(/\r?\n/)) {
+      const raw = line3.replace(/(\*\*|__|\*|_)(MUST(?:\s+NOT)?)\1/g, "$2");
       if (/^\s*(```|~~~)/.test(raw)) {
         fenced2 = !fenced2;
         continue;
@@ -68072,14 +68078,15 @@ async function auditFiles(repoRoot, commit, tests, testOwned) {
       }
     }
   }
-  return { files, missing };
+  return { files, missing, truncated: queue.some((p) => !files.has(p)) };
 }
 async function auditPacket(ctx, cand, c) {
   const tests = c.tests ?? [];
   if (tests.length === 0) return { missing: `no test is mapped to ${c.id}, so there is nothing to audit` };
   const layout = await loadTestLayout(gitTreeReader((args) => git3(ctx.run.repoRoot, args)), ctx.run.baseRevision, cand.commitSha, tests, { allDotnetOwners: true });
-  const { files, missing } = await auditFiles(ctx.run.repoRoot, cand.commitSha, tests, (p) => isTestOwnedPath(p, layout));
+  const { files, missing, truncated } = await auditFiles(ctx.run.repoRoot, cand.commitSha, tests, (p) => isTestOwnedPath(p, layout));
   if (missing.length > 0) return { missing: `the mapped test ${missing.join(", ")} is not in the candidate, so it cannot be audited` };
+  if (truncated) return { missing: `the mapped tests and their helpers are more than ${AUDIT_MAX_FILES} files, over the auditor's limit, so ${c.id} cannot be audited` };
   const size = [...files.values()].reduce((n2, t) => n2 + t.length, 0);
   if (size > AUDIT_MAX_CHARS) return { missing: `the mapped tests and their helpers are ${size} characters, over the auditor's limit of ${AUDIT_MAX_CHARS}, so ${c.id} cannot be audited` };
   const dir = auditDir(ctx, cand, c.id);

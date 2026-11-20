@@ -46,6 +46,15 @@ describe('auditFiles (FR-001)', () => {
     const { root, commit } = repo({ 'tests/a.test.ts': 'x\n' });
     expect((await auditFiles(root, commit, ['tests/gone.test.ts'], () => true)).missing).toEqual(['tests/gone.test.ts']);
   });
+
+  it('edge case: says when the test-owned files it imports are more than the auditor takes, so the packet is never short without saying so', async () => {
+    const helpers = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`tests/h${i}.ts`, i < 29 ? `import './h${i + 1}.ts';\n` : 'export const done = true;\n']));
+    const { root, commit } = repo({ 'tests/a.test.ts': "import './h0.ts';\n", ...helpers });
+    const long = await auditFiles(root, commit, ['tests/a.test.ts'], () => true);
+    expect(long.files.size).toBe(25);
+    expect(long.truncated).toBe(true);
+    expect((await auditFiles(root, commit, ['tests/h25.ts'], () => true)).truncated).toBe(false);
+  });
 });
 
 describe('documentationPaths (FR-009)', () => {

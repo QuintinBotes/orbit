@@ -231,7 +231,7 @@ const EXTENSIONS = ['', '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.
  * shortcut: imports are found by their relative specifiers in JS/TS syntax (from, import(), require()); a helper another
  * language imports by module name is not added, and the auditor then sees the test alone.
  */
-export async function auditFiles(repoRoot: string, commit: string, tests: readonly string[], testOwned: (p: string) => boolean): Promise<{ files: Map<string, string>; missing: string[] }> {
+export async function auditFiles(repoRoot: string, commit: string, tests: readonly string[], testOwned: (p: string) => boolean): Promise<{ files: Map<string, string>; missing: string[]; truncated: boolean }> {
   const files = new Map<string, string>();
   const missing: string[] = [];
   const queue = [...tests];
@@ -258,15 +258,16 @@ export async function auditFiles(repoRoot: string, commit: string, tests: readon
       }
     }
   }
-  return { files, missing };
+  return { files, missing, truncated: queue.some((p) => !files.has(p)) };
 }
 
 async function auditPacket(ctx: RunContext, cand: CandidateRecord, c: AcceptanceCriterion): Promise<{ cwd: string; task: string[]; blocks: { label: string; content: string }[] } | { missing: string }> {
   const tests = c.tests ?? [];
   if (tests.length === 0) return { missing: `no test is mapped to ${c.id}, so there is nothing to audit` };
   const layout = await loadTestLayout(gitTreeReader((args) => git(ctx.run.repoRoot, args)), ctx.run.baseRevision!, cand.commitSha, tests, { allDotnetOwners: true });
-  const { files, missing } = await auditFiles(ctx.run.repoRoot, cand.commitSha, tests, (p) => isTestOwnedPath(p, layout));
+  const { files, missing, truncated } = await auditFiles(ctx.run.repoRoot, cand.commitSha, tests, (p) => isTestOwnedPath(p, layout));
   if (missing.length > 0) return { missing: `the mapped test ${missing.join(', ')} is not in the candidate, so it cannot be audited` };
+  if (truncated) return { missing: `the mapped tests and their helpers are more than ${AUDIT_MAX_FILES} files, over the auditor's limit, so ${c.id} cannot be audited` };
   const size = [...files.values()].reduce((n, t) => n + t.length, 0);
   if (size > AUDIT_MAX_CHARS) return { missing: `the mapped tests and their helpers are ${size} characters, over the auditor's limit of ${AUDIT_MAX_CHARS}, so ${c.id} cannot be audited` };
   // The auditor's directory holds only these files: no implementation, plan or worker report (FR-001).

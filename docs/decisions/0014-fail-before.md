@@ -265,7 +265,7 @@ records and the person-only setting stay as they are.
    contract, plan, implementation or worker report. It answers "would these tests still pass if the criterion were
    false?" in the review output: `APPROVE` with one info finding `AUDIT-1` is "no", `REPAIR_REQUIRED` with a blocking
    `AUDIT-1` is "yes", each with a one-sentence reason. "Yes", any other answer, a session that gives none, and tests
-   too long to audit (over 60,000 characters with their helpers) leave the criterion unproven. A criterion is proven
+   too long to audit (over 60,000 characters or 25 files with their helpers) leave the criterion unproven. A criterion is proven
    only by its own fail-before (or a person's acceptance of it for the tree) and the auditor's "no".
 4. **Conformance.** Each MUST of the goal (MUST as a verb, in the issue spec a run started from, the goal and the
    objective; a labelled line keeps its id, such as FR-004) gets one fresh session that quotes the lines implementing
@@ -279,7 +279,7 @@ records and the person-only setting stay as they are.
    candidate adds or changes (docs, changelog, ADRs, README; generated paths skipped) against the candidate; each
    sentence describing behaviour the candidate does not have is a finding (`DOC-n`) with its file, the sentence and the
    reason. An untouched document that names a removed or renamed command, option or state is one too; documents are not
-   otherwise searched.
+   otherwise searched. An answer other than `APPROVE` with no finding is open, never passed.
 6. **Done.** The three run in DELIVERING, on the final candidate, before any delivery action, each answer a
    `proof.answer` decision and the judgement one `proof.result` decision of the tree. An open result goes to repair
    (`DELIVERING -> REPAIRING`, a `proof` repair brief naming each) within the attempt budget; a repair that leaves the

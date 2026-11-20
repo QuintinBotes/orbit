@@ -57,7 +57,8 @@ export function criterionTests(contract: Pick<GoalContract, 'acceptance_criteria
       if (!isTestOwned(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a test file, so it cannot prove ${c.id} on its own` };
       const checkId = (c.check_ids ?? []).find((id) => {
         const def = snapshot.config.checks[id];
-        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def);
+        // The argument is the path relative to the check's cwd, so it is that path that must not read as an option.
+        return isTestCommandCheck(def) && (def.tests_command?.length ?? 0) > 0 && underCheck(path, def) && safeTestPath(relativeToCheck(def, path));
       });
       if (checkId === undefined) return { path, checkId: null, unitId: null, problem: `no check ${c.id} cites has a tests_command that runs ${path} alone` };
       return { path, checkId, unitId: unitIdFor(checkId, path), problem: null };
@@ -68,9 +69,12 @@ export function criterionTests(contract: Pick<GoalContract, 'acceptance_criteria
 
 /** The definition that runs one test file alone: the check's own, with its tests_command and the path relative to its cwd. */
 export function criterionTestDefinition(def: CheckDefinition, unitId: string, path: string): CheckDefinition {
+  return { ...def, id: unitId, command: [...def.tests_command!, relativeToCheck(def, path)], shell: false, flaky_reruns: 0 };
+}
+
+function relativeToCheck(def: Pick<CheckDefinition, 'cwd'>, path: string): string {
   const dir = checkDir(def);
-  const rel = dir === '' ? path : path.slice(dir.length + 1);
-  return { ...def, id: unitId, command: [...def.tests_command!, rel], shell: false, flaky_reruns: 0 };
+  return dir === '' ? path : path.slice(dir.length + 1);
 }
 
 export interface CriterionProbes {

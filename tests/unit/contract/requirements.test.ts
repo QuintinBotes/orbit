@@ -29,6 +29,13 @@ describe('extractRequirements (issue #200, FR-005)', () => {
     expect(extractRequirements([text])).toEqual([]);
   });
 
+  it('finds a MUST written with emphasis, labelled or not', () => {
+    expect(extractRequirements(['The service **MUST** redirect legacy URLs.', '- **FR-009**: Logs _MUST NOT_ hold tokens.'])).toEqual([
+      { id: 'MUST-1', wording: 'The service MUST redirect legacy URLs.' },
+      { id: 'FR-009', wording: 'Logs MUST NOT hold tokens.' },
+    ]);
+  });
+
   it('does not end a sentence at a full stop inside a quotation', () => {
     expect(extractRequirements(['Be kind: unknown paths MUST answer 404 with the text "Page not found. Try /reports." Add a test.'])).toEqual([{ id: 'MUST-1', wording: 'Be kind: unknown paths MUST answer 404 with the text "Page not found. Try /reports."' }]);
   });

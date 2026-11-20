@@ -129,7 +129,14 @@ describe('the function a quoted line lies in, by search (FR-008)', () => {
 
   it('reads the changed lines of a zero-context diff', () => {
     const diff = ['diff --git a/x b/x', '@@ -3 +3 @@', '-a', '+b', '@@ -10,0 +11,2 @@', '+c', '+d', '@@ -20,2 +22,0 @@'].join('\n');
-    expect([...changedLines(diff)]).toEqual([3, 11, 12]);
+    expect([...changedLines(diff)]).toEqual([3, 11, 12, 22]);
+  });
+
+  it('FR-008: a change that only deletes lines (an early return removed) still marks its function as changed', () => {
+    const text = ['export function route(x) {', '  const y = x + 1;', '  return y;', '}'].join('\n');
+    const lines = changedLines(['diff --git a/r.ts b/r.ts', '@@ -3 +2,0 @@', '-  if (x) return 0;'].join('\n'));
+    expect([...lines].map((l) => enclosingFunction(text, l)?.name)).toEqual(['route']);
+    expect([...changedLines('@@ -1,2 +0,0 @@')]).toEqual([1]);
   });
 });
 
@@ -198,6 +205,11 @@ describe('the artifact check and the whole judgement (FR-009, FR-010, FR-012)', 
 
   it('an artifact check that gave no answer is open, never passed', () => {
     expect(judgeProof({ treeHash: 't', criteria: [], requirements: [], artifacts: { verdict: null, findings: [], missing: 'the session failed' } }).open).toEqual(['the artifact check gave no answer: the session failed']);
+  });
+
+  it('an artifact check that answered BLOCK or REPAIR_REQUIRED with no finding is open, never passed', () => {
+    expect(judgeProof({ treeHash: 't', criteria: [], requirements: [], artifacts: { verdict: 'BLOCK', findings: [], missing: null } }).open).toEqual(['the artifact check answered BLOCK with no finding']);
+    expect(judgeProof({ treeHash: 't', criteria: [], requirements: [], artifacts: { verdict: 'REPAIR_REQUIRED', findings: [{ ...DOC, severity: 'info' }], missing: null } }).open).toEqual(['the artifact check answered REPAIR_REQUIRED with no finding']);
   });
 
   it('a person-checked criterion is listed as waiting and opens nothing', () => {
