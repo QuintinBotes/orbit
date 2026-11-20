@@ -197,6 +197,7 @@ orbit pause <run-id>
 orbit resume <run-id>
 orbit cancel <run-id>
 orbit report <run-id>
+orbit bench --tier lab
 ```
 
 `orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly.
@@ -839,6 +840,26 @@ Track verified pass rate, false-pass rate from subsequent review, escalation qua
 
 Do not expose sensitive content in logs. Make missing usage measurements explicit.
 
+### Retro
+
+`orbit retro [--since <when>] [--issue-repo <owner/repo>] [--json]` looks back over the runs that ended and proposes what would have prevented the failures that repeat. It calls no model, and it applies or sends nothing without a person's yes.
+
+- Terminal runs are grouped by failure class and signature. The signature is the names of the outcome markers that set the class and of the policy rules that denied the run's calls, never the wording of a reason or a value.
+  A worker can print any rule name in its transcript, so an issue draft, the one proposal that leaves the machine, leaves the rule names out of its signature.
+- A group of two runs or more is one proposal that cites every run in it. A single run makes none, except a run of an Orbit-fault class (`gate-deadlock`), which is one proposal on its own. Runs that succeeded or were `cancelled` make none.
+- A proposal is one of four kinds:
+  - an Orbit-fault class is a draft Orbit issue;
+  - a `review-dispute` is a check when the repository declares one, as `orbit init` detects them, of a category its Orbit configuration does not run, and a reviewer standard otherwise;
+  - every other class is a policy change.
+- Each proposal is written to a draft file in `.orbit/runs/retro-drafts/`. The draft is built from run records only: run ids, states, classes, the names of markers and rules, and the states each run went through. Paths are redacted, and no goal, reason, finding text, source code or secret reaches it.
+- Each proposal is one question at a terminal, and only an explicit yes acts:
+  - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`, once the publication guard clears it;
+  - a yes to a check commits `.orbit/config.yaml` with the check added, on a new branch `orbit/retro/check-<id>` from the tip of `repository.base_branch`, with the repository's hooks off. The base branch, the checkout and its index are not touched, and an existing branch is never replaced; one that already holds the check counts as applied;
+  - a yes to a reviewer standard or a policy change records it as accepted, and the person makes the change.
+- Without a terminal, or with `--json`, nobody is asked and nothing is sent or applied. The proposal stays a draft, and the next retro makes it again with the runs it then cites.
+- Every proposal and answer is recorded in the state database, keyed by kind, class and signature. A proposal that was declined, sent, applied or accepted is not made again.
+- `orbit retro` is refused inside a worker.
+
 ## 17. Acceptance and fault testing
 
 ### Unit tests
@@ -875,6 +896,15 @@ Kill worker during edit; kill controller mid-transition; lose PR response; malfo
 18. Visual baseline changes cannot hide regressions.
 19. Security findings follow severity/exception policy.
 20. Cancellation remains effective after restart.
+
+### Benchmark
+
+`orbit bench` scores one Orbit version on a fixed set of goals and stores a scorecard per version and tier, `docs/scorecards/orbit-<version>-<tier>.json`: stable JSON (sorted keys, one value per line), so two versions diff line by line, and the same results give the same bytes apart from `generated_at`. It runs from an Orbit source checkout. Workers cannot start it.
+
+- **Lab tier** (`--tier lab`): the regression suite. Each scenario replays an issue Orbit fixed, on `examples/demo-app` with the fake providers and the real controller, and states how the run ends now: the terminal state, the failure class, and where they show the fix, the implementation attempts, a phrase of the outcome reason or a recorded decision. A scenario passes when the run ends that way. Each reports pass or fail, the state and failure class the run ended with, its attempts and its simulated spend (the fake providers' reported cost). No model is called, and two runs give the same scorecard. A scenario that fails makes the command exit 1 and name it with its issue; CI runs the whole lab on every change. Every issue fixed from #172 on adds a scenario (`src/bench/scenarios.ts`). A scenario whose expectation cannot be judged (a state that is not terminal, an unknown failure class, no provider steps) is invalid: it is listed and left out of every count.
+- **Live tier** (`--tier live`): the capability suite. Goals come from a catalog file (`data/bench/live-goals.json`, checked as a whole before anything runs) and pin a commit of one of the owner's repositories (QuintinBotes/orbit, claude-stack, proofmesh, review-voice) where a real failure happened; no third-party code. Each goal carries a held-out acceptance check the worker never sees: test files of the accepted fix (`reference`), laid over the tree the run delivered, and a command that must pass. A goal whose check does not fail on its commit and pass on the fix is invalid and excluded. Each goal runs three times and every result is kept. The report gives the pass rate over the runs, the cost per accepted task and the time. With `--baseline` each goal is also attempted three times by one plain `claude -p` session, and the report gives the difference. The live tier spends money: it refuses to start without `--budget <usd>`, which has no default, and without the owner's approval, `--approved-by <name>`, both recorded in the scorecard. Every session is capped at an equal share of the budget, and no session starts once less than one share is left.
+- **Stages** (`--without <stage>`, lab tier): the suite runs again with one stage off, and the report shows the pass rate and spend with and without it and names each scenario that changed. Stages that can be turned off: `diagnosis` (no verifier session; the repair brief is the failure records as they are) and `fail-before` (new tests are not run on the base revision). The gates scope, secrets and verification cannot be turned off.
+- **False dones**: the headline of every scorecard starts with the false-done rate of its Orbit version: the share of its runs reported done (SUCCEEDED) that were later found defective. A person records each false done in `docs/scorecards/false-dones.json` with the Orbit version, what was reported done, what found it (`hidden-check`, `review-finding`, `reopened-issue` or `revert`) and a link to it; the scorecard lists each with its link. Nothing is collected automatically, and a malformed record is an error, never skipped.
 
 ## 18. Implementation milestones
 
