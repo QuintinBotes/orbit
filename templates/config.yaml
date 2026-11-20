@@ -438,6 +438,20 @@ knowledge:
   # Adopt an overlay automatically when replay evals improve with no regression.
   auto_adopt_overlays: true
 
+# Repository map (orbit map build|query): files, generated files, tests,
+# imports and check paths of a tree, built from git without a model. The
+# scope gate leaves generated files (linguist-generated in .gitattributes, or
+# an @generated or DO NOT EDIT header) out of changed_lines, and a review
+# finding filed as missing-test is refuted when the map links a test to its
+# file. Those uses are always on.
+repo_map:
+  # Give the planner and the reviewer the map's slice for the files a goal
+  # names. Off until a full benchmark shows it helps.
+  prompt_slice: false
+  prompt_slice_tokens: 1500
+  # Repositories with fewer tracked files get no slice.
+  prompt_slice_min_files: 500
+
 # Publication guard: private terms that must never leave this repository
 # through Orbit (global knowledge, overlays, reports written elsewhere).
 guard:

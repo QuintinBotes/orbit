@@ -12,17 +12,19 @@ import { fileURLToPath } from 'node:url';
 export interface OrbitCommands {
   shim: string[];
   hook: string[];
+  /** The `orbit` CLI itself, for a command a worker may run (`map query`). */
+  cli: string[];
 }
 
 /** Commands for an explicit Orbit entry script (dist/orbit.mjs). */
 export function orbitCommands(entry: string, node: string = process.execPath): OrbitCommands {
-  return { shim: [node, entry, 'shim'], hook: [node, entry, 'hook', 'pre-tool-use'] };
+  return { shim: [node, entry, 'shim'], hook: [node, entry, 'hook', 'pre-tool-use'], cli: [node, entry] };
 }
 
 /** Commands that run the TypeScript sources directly (Node >= 22.18 strips types by default). */
 export function sourceCommands(node: string = process.execPath): OrbitCommands {
   const here = dirname(fileURLToPath(import.meta.url));
-  return { shim: [node, '--no-warnings', join(here, 'shim-main.ts')], hook: [node, '--no-warnings', join(here, 'hook-main.ts')] };
+  return { shim: [node, '--no-warnings', join(here, 'shim-main.ts')], hook: [node, '--no-warnings', join(here, 'hook-main.ts')], cli: [node, '--no-warnings', join(here, '..', 'cli', 'main.ts')] };
 }
 
 /**

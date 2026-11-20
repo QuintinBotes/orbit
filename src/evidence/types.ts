@@ -55,7 +55,11 @@ export interface ScopeReport {
   forbidden_paths_changed: string[];
   out_of_scope_paths_changed: string[];
   changed_files: number;
+  /** Added plus deleted lines, without those of generated files (generated_lines). */
   changed_lines: number;
+  /** Only when the change touches files the repository maps of both trees flag as generated: their lines, not in changed_lines (#157). */
+  generated_lines?: number;
+  generated_paths?: string[];
   within_size_limits: boolean;
   /** Only when over a size limit: the five files with the most added plus deleted lines, heaviest first. */
   largest_changes?: { path: string; lines: number }[];

@@ -23,8 +23,9 @@ import { cleanupCandidateCheckout, materializeCandidate } from '../../evidence/c
 import { currentEvidenceReport, listCandidates, type CandidateRecord, type CheckRunRecord } from '../../evidence/store.ts';
 import { isFresh } from '../../evidence/freshness.ts';
 import { buildReviewPacket } from '../../review/packet.ts';
-import { ingestFindings, resolveFindings, type ClaimEvidence, type Disposition, type Resolution } from '../../review/resolve.ts';
-import { findingFingerprint, severityRank, UNRESOLVED_FINDING_STATUSES, type FindingSeverity } from '../../review/types.ts';
+import { ingestFindings, missingTestRefutations, resolveFindings, type ClaimEvidence, type Disposition, type ResolvableFinding, type Resolution } from '../../review/resolve.ts';
+import { findingFingerprint, isMissingTest, severityRank, UNRESOLVED_FINDING_STATUSES, type FindingSeverity } from '../../review/types.ts';
+import { buildRepoMap, goalSlice, testsCovering } from '../../repomap/map.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { listCheckRuns } from '../../evidence/store.ts';
 import { git } from '../../evidence/git.ts';
@@ -430,6 +431,20 @@ async function stopEach(ctx: RunContext, list: readonly { worker: WorkerRecord; 
   return stopped;
 }
 
+/**
+ * The repository map's refutations of missing-test findings on this tree; built only when there is such a finding. A
+ * map that cannot be built refutes nothing: the finding takes its ordinary path.
+ */
+async function mapEvidence(ctx: RunContext, cand: CandidateRecord, findings: readonly ResolvableFinding[]): Promise<ClaimEvidence[]> {
+  if (!findings.some((f) => isMissingTest(f.category))) return [];
+  try {
+    const map = await buildRepoMap(ctx.run.repoRoot, cand.commitSha);
+    return missingTestRefutations(findings, (p) => testsCovering(map, p), cand.treeHash);
+  } catch {
+    return [];
+  }
+}
+
 async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise<StepResult> {
   const state = loadResolverState(ctx.db, ctx.run.id, cand.treeHash);
   const repairs = reviewRepairs(ctx);
@@ -449,6 +464,7 @@ async function resolveAndDecide(ctx: RunContext, cand: CandidateRecord): Promise
     const stop = await safePoint(ctx);
     if (stop) return stop;
   }
+  evidence.push(...(await mapEvidence(ctx, cand, [...state.findings, ...state.previousFindings])));
   const resolution = resolveFindings({ findings: state.findings, previousFindings: state.previousFindings, reviews: state.reviews, snapshot: ctx.snapshot, evidence, treeHash: cand.treeHash, now: ctx.clock.now() });
   markRepaired(resolution, repaired, repairedBy);
   const undecided = settleInquiredClaims(ctx, cand, resolution);
@@ -1723,6 +1739,7 @@ async function preparePacket(ctx: RunContext, cand: CandidateRecord, reviewDir: 
     provider,
     // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
     ...(failBeforePolicy(ctx.snapshot.config).mode === 'required' ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}),
+    repoMapSlice: await goalSlice(ctx.run.repoRoot, cand.commitSha, contract.original_goal, ctx.snapshot.config),
   });
   atomicWrite(join(reviewDir, 'packet.md'), packet.text, 0o600);
   atomicWriteJson(join(reviewDir, 'packet.json'), { sha256: packet.sha256, bytes: packet.bytes, excluded: packet.excluded, included: packet.included, eligibility: packet.eligibility, candidate: packet.candidate, redacted: packet.redacted });

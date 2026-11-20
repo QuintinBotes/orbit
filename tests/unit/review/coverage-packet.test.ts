@@ -151,6 +151,14 @@ describe.skipIf(!gitAvailable)('buildReviewPacket: branches the main tests do no
     expect(p.included.find((f) => f.path === 'vendored-sub')).toMatchObject({ diff: true, file: false });
   });
 
+  it('carries the repository map slice in a fenced section of its own when there is one (#175)', async () => {
+    const c = candidate(() => write('src/a.ts', 'export const a = 3;\n'));
+    const slice = 'Repository map of tree abc: the files the goal names.\nsrc/a.ts (20 bytes)\n  tests: tests/a.test.ts\n';
+    const p = await buildReviewPacket(input(c, { repoMapSlice: slice }));
+    expect(p.text).toContain(`## Repository map\n\n\`\`\`text repository-map\n${slice}\`\`\``);
+    expect((await buildReviewPacket(input(c))).text).not.toContain('## Repository map');
+  });
+
   it('ends a fenced block with a newline of its own when the text has none', async () => {
     const c = candidate(() => write('src/a.ts', 'export const a = 8;'));
     const p = await buildReviewPacket(input(c));

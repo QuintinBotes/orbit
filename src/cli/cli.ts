@@ -32,6 +32,7 @@ import {
   learnShowCommand,
 } from './commands/learn.ts';
 import { LOGS_OPTIONS, logsCommand } from './commands/logs.ts';
+import { MAP_BUILD_USAGE, MAP_OPTIONS, MAP_QUERY_USAGE, mapBuildCommand, mapQueryCommand } from './commands/map.ts';
 import { MODELS_REFRESH_OPTIONS, modelsListCommand, modelsRefreshCommand } from './commands/models.ts';
 import { NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE, notifyTestCommand } from './commands/notify.ts';
 import { policyShowCommand } from './commands/policy.ts';
@@ -63,6 +64,8 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'spec check', summary: 'check that a Markdown file or an issue is a spec a run can start from (deterministic; no model call)', usage: SPEC_CHECK_USAGE, options: SPEC_CHECK_OPTIONS, run: specCheckCommand },
   { name: 'queue list', summary: 'the frontier of a backlog of GitHub issues (open, labelled ready-for-agent, unblocked) and what holds every other issue', usage: QUEUE_LIST_USAGE, options: QUEUE_LIST_OPTIONS, run: queueListCommand },
   { name: 'queue run', summary: 'work the frontier one issue at a time, each from the current base branch, until it is empty or a stop rule ends the queue', usage: QUEUE_RUN_USAGE, options: QUEUE_RUN_OPTIONS, run: queueRunCommand },
+  { name: 'map build', summary: 'build the repository map of a revision (files, generated files, tests, imports, check paths), cached by tree hash', usage: MAP_BUILD_USAGE, options: MAP_OPTIONS, run: mapBuildCommand },
+  { name: 'map query', summary: 'what the repository map says about a file or directory: its imports, what imports it, its tests and checks', usage: MAP_QUERY_USAGE, options: MAP_OPTIONS, run: mapQueryCommand },
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },
   { name: 'timeline', summary: 'what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost', usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
   { name: 'logs', summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },

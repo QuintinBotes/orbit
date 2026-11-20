@@ -535,6 +535,14 @@ Escalate using observed difficulty, not worker confidence. Increase reasoning ef
 - Preserve evidence references and hashes in handoffs.
 - Track input/output/cached tokens and cost per accepted run.
 
+### Repository map
+
+`orbit map build|query` builds a deterministic map of one tree from git objects, with no model call: every tracked file with its size; a generated flag (the `linguist-generated` attribute, or an `@generated` or `DO NOT EDIT` header); test-to-source links (a test imports the source, shares its name, or is in its Go package); import edges for TypeScript, JavaScript, Python, Rust and Go; and the paths each configured check's command names. A language without a parser gets the file list and the test links only. The map is cached by tree hash in the clone's git directory, never served for another tree, and rebuilt incrementally: a new tree reads only the blobs the newest cached map has not read. A 5,000-file repository maps in under ten seconds.
+
+The gates always use it. Scope inspection leaves the lines of files that the maps of both the base and the candidate tree flag as generated out of `changed_lines` and reports them as `generated_lines`. A review finding filed under the category `missing-test` is refuted when the map of the candidate links a test to the file at its location.
+
+With `repo_map.prompt_slice` on, the planner and reviewer prompts carry the map's slice for the files and directories the goal names, each file with its imports and tests, within `repo_map.prompt_slice_tokens` (default 1,500); a repository with fewer than `repo_map.prompt_slice_min_files` files (default 500) gets none. The implementer is then told that `orbit map query <path>` answers structural questions; plain search stays its default. The switch is off until a full benchmark shows that the slice keeps the pass rate and cuts median turns per attempt by at least 10%.
+
 ### Agent scheduling
 
 Start with one implementer. Use a planner when needed, a verifier after candidate changes, and an independent reviewer after mandatory checks pass.

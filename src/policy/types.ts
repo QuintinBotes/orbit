@@ -205,6 +205,15 @@ export interface ProviderConfig {
 }
 
 /** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */
+export interface RepoMapConfig {
+  /** Give the planner and the reviewer the map's slice for the files a goal names. Off until a full benchmark shows it helps. */
+  prompt_slice: boolean;
+  /** The slice's token limit. */
+  prompt_slice_tokens: number;
+  /** Repositories with fewer tracked files get no slice: there a map costs more than it saves. */
+  prompt_slice_min_files: number;
+}
+
 export interface NotificationsConfig {
   /** Linux notify-send only; skipped silently on macOS and where notify-send is missing. */
   desktop: boolean;
@@ -392,6 +401,11 @@ export interface OrbitConfig {
    * snapshots still read (they read as the defaults: desktop on, everything else off).
    */
   notifications?: NotificationsConfig;
+  /**
+   * The repository map's prompt slice (#175). Parsed configs always carry it; optional in the type so older snapshots
+   * still read (read it through policy/config.ts `repoMapPolicy`; absent reads as the defaults, the slice off).
+   */
+  repo_map?: RepoMapConfig;
   /** Publication guard (architecture "Publication guard"). */
   guard: {
     /** Private terms file; null means ~/.config/publish-guard/terms.txt. */
