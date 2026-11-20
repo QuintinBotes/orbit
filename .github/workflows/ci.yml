@@ -64,16 +64,16 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
           sudo sysctl -w kernel.unprivileged_userns_apparmor_policy=0 || true
 
-      # The runner images of 11 November 2026 added .NET SDK 11.0.100, which builds through the MSBuild server by default
-      # (on macOS from macos-26-arm64 20261112.0504). The check sandbox refuses the server's named pipe under /tmp, so
-      # every .NET check under srt fails there (#180). Until Orbit handles SDK 11, the tests run on the newest earlier SDK
-      # the image has, as they did before that image.
-      - name: Keep .NET on the newest SDK before 11
+      # The runner images of 11 November 2026 made .NET SDK 11.0.100 the default SDK (on macOS from macos-26-arm64
+      # 20261112.0504), which builds through the MSBuild server unless a check's env turns it off (#180). The .NET tests
+      # run on it, and on the newest earlier SDK the image has on Ubuntu with Node 22, so both stay covered.
+      - name: .NET SDK
+        env:
+          BEFORE_SDK_11: ${{ matrix.node == '22' }}
         run: |
           command -v dotnet >/dev/null || exit 0
-          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
           dotnet --list-sdks
-          sudo rm -rf "$root"/sdk/11.*
+          if [ "$BEFORE_SDK_11" = true ]; then sudo rm -rf "$(dirname "$(readlink -f "$(command -v dotnet)")")"/sdk/11.*; fi
           dotnet --version
 
       - name: Playwright's Chromium

@@ -381,6 +381,13 @@ A verified candidate is always offered, even when the run stops (issue #169; by 
 | I169.SC1 | The #144 and #156 lab scenarios end in the new state | as FR1 | A/verified-candidate.test.ts "edge case, several passing candidates" (the #156 replay) | partial: the #144 replay is in the acceptance suite of issue #166, not yet on this branch |
 | I169.SC2 | No lab scenario with a passing candidate reports "no delivery" | as FR1 and FR2 | A/verified-candidate.test.ts | done for the scenarios on this branch |
 
+.NET SDK 11's MSBuild server under the check sandbox (issue #180):
+
+| ID | Requirement | Implementation | Tests | Status |
+|---|---|---|---|---|
+| I180.1 | A .NET check passes under the check sandbox with SDK 11, which builds through the MSBuild server by default: every process Orbit sandboxes with the check's .NET settings runs with the server off | `evidence/runner.ts:DOTNET_CHECK_ENV` (`MSBUILDUSESERVER=0`; used by `checkEnv`, `privateHomeDotnetEnv`, `ui/app-toolchains.ts`) | U/evidence/runner-dotnet-env.test.ts "turns off the MSBuild server..."; I/evidence/runner-sandbox.int.test.ts "passes a .NET SDK 11 build..." (a stand-in that binds the server's socket under srt) | done |
+| I180.2 | The real .NET tests run on SDK 11, and on SDK 10 | `.github/workflows/ci.yml` (".NET SDK": SDK 10 on Ubuntu with Node 22, the image's SDK 11 elsewhere) | the .NET srt integration tests (I/evidence/dotnet-sandbox.int.test.ts, dotnet-http, dotnet-format, toolchains-sandbox, I/controller/approved-dotnet-srt.test.ts, I/delivery/release-*-srt.test.ts, I/ui/app-dotnet-srt.test.ts) in CI | done |
+
 ## 13. UI testing
 
 | ID | Requirement | Implementation | Tests | Status |
