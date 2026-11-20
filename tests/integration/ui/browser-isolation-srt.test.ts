@@ -34,7 +34,6 @@ import type { UiRunResult } from '../../../src/ui/types.ts';
 import { chromiumAvailable, copyExample } from '../../../scripts/demo/lib/example.ts';
 import { browserIsolationCheck } from '../../../src/cli/commands/doctor.ts';
 import { freePort } from './helpers.ts';
-import { QUARANTINED } from '../../support/quarantine.ts';
 import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -176,10 +175,10 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
     expect(result.checks[0]!.isolationAdjustments).toEqual([]);
   }, 300_000);
 
-  // Quarantined (issue #186): on the macOS CI runner one journey now and then reaches its 20 s limit.
-  it.skipIf(QUARANTINED)('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
+  it('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
     for (let round = 1; round <= 2; round++) {
       const result = await runUi(srt);
+      console.log(`ORBIT-186 (b) round ${round}: ${result.journeys.map((j) => `${j.project}/${j.title} ${j.status} ${j.durationMs}`).join('; ')}`);
       expect(result.verdict, `round ${round}: ${result.reasons.join('\n')}`).toBe('PASS');
       expect(result.stats).toMatchObject({ passed: 8, failed: 0, flaky: 0, skipped: 0 });
       expect(result.journeys.filter((j) => j.project === 'desktop' && j.status === 'PASSED')).toHaveLength(4);
@@ -342,6 +341,7 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
   it('(g) a download journey completes on desktop and mobile, twice: Chromium keeps its temp files in the check\'s private temp directory', async () => {
     for (let round = 1; round <= 2; round++) {
       const result = await runUi(srt, dl);
+      console.log(`ORBIT-186 (g) round ${round}: ${result.journeys.map((j) => `${j.project}/${j.title} ${j.status} ${j.durationMs}`).join('; ')}`);
       const failures = result.journeys.filter((j) => j.status !== 'PASSED').map((j) => `${j.id}: ${j.error?.message ?? j.status}`);
       expect(result.verdict, `round ${round}: ${[...result.reasons, ...failures].join('\n')}`).toBe('PASS');
       expect(result.stats).toMatchObject({ passed: 2, failed: 0, flaky: 0, skipped: 0 });
