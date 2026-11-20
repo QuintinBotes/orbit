@@ -1389,6 +1389,9 @@ knowledge:
   curator_budget_usd: 0.25
   eval_budget_usd: 0          # 0 disables replay evaluations and automatic overlay adoption
   auto_adopt_overlays: true
+  lessons_in_prompts: false   # lessons and overlays stay out of worker prompts until a full benchmark shows they help
+  max_prompt_lessons: 3       # with lessons_in_prompts: at most this many validated lessons per prompt
+  lesson_expiry_days: 28      # a lesson with no supporting run for this long is not eligible
 
 guard:
   terms_file: null            # null means ~/.config/publish-guard/terms.txt

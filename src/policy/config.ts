@@ -201,7 +201,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     static_security: defaultStaticSecurity(),
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
-    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
+    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true, lessons_in_prompts: false, max_prompt_lessons: 3, lesson_expiry_days: 28 },
     guard: { terms_file: null, allowed_emails: [] },
     notifications: defaultNotifications(),
   };

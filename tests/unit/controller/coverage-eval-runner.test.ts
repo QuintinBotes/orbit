@@ -141,6 +141,9 @@ describe('replayConfig', () => {
     expect(r.actions.push_task_branch).toBe(false);
     expect(r.actions.open_pull_request).toBe(false);
     expect(r.knowledge).toMatchObject({ enabled: true, share_globally: false, curator_budget_usd: 0, eval_budget_usd: 0, auto_adopt_overlays: false });
+    // Issue #173: the overlay under test reaches the replay's prompts even while live runs keep lessons out of theirs.
+    expect(c.knowledge.lessons_in_prompts).toBe(false);
+    expect(r.knowledge.lessons_in_prompts).toBe(true);
     expect(r.scheduler.hard_limits.model_cost_usd).toBe(0.5);
     expect(c.mode).toBe('autonomous-delivery');
     expect(c.actions.push_task_branch).toBe(true);
@@ -370,6 +373,23 @@ describe('evaluateAndDecide', () => {
     const out = await evaluateAndDecide({ store, overlay, suite, runner: { runCase: async (_s, _c, o) => (o ? good : bad) } });
     expect(out).toMatchObject({ adopted: true, cases: 1 });
     expect(out.overlay.status).toBe('active');
+    store.close();
+  });
+
+  it('issue #173 User Story 4: a candidate that improves on replay but lowers the held-out pass rate is not adopted, with the reason recorded', async () => {
+    const store = KnowledgeStore.open(':memory:', { clock: new ManualClock() });
+    const overlay = candidateOverlay(store);
+    const seen: unknown[] = [];
+    const benchmark = { run: async (baseline: PromptOverlay | null, candidate: PromptOverlay) => (seen.push([baseline, candidate.id]), { suite_id: 'bench-held-out', scenarios: 20, baseline_pass_rate: 0.8, candidate_pass_rate: 0.75 }) };
+    const out = await evaluateAndDecide({ store, overlay, suite, benchmark, runner: { runCase: async (_s, _c, o) => (o ? good : bad) } });
+    expect(seen).toEqual([[null, overlay.id]]);
+    expect(out).toMatchObject({ adopted: false, reason: "the benchmark's held-out scenarios regressed: pass rate 0.8 with the current prompt, 0.75 with the candidate, over 20 scenario(s) of bench-held-out" });
+    expect(out.overlay.status).toBe('rejected');
+    expect(store.evalRuns(overlay.id)[0]).toMatchObject({ decision: 'reject', detail: { reason: out.reason, held_out: { candidate_pass_rate: 0.75 } } });
+    // The same replay with a held-out result that does not fall is adopted.
+    const next = candidateOverlay(store);
+    const kept = await evaluateAndDecide({ store, overlay: next, suite, benchmark: { run: async () => ({ suite_id: 'bench-held-out', scenarios: 20, baseline_pass_rate: 0.8, candidate_pass_rate: 0.8 }) }, runner: { runCase: async (_s, _c, o) => (o ? good : bad) } });
+    expect(kept).toMatchObject({ adopted: true });
     store.close();
   });
 

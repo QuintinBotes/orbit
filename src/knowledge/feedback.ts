@@ -1,3 +1,4 @@
+import picomatch from 'picomatch';
 import type { KnowledgeStore } from './store.ts';
 import type { EvidenceRef, Lesson, LessonStats, LessonStatus } from './types.ts';
 
@@ -14,9 +15,11 @@ export const PROMOTION_RULES = {
   minSupportingRuns: 2,
   /** Contradictions a candidate may have and still be validated. */
   maxContradictionsToValidate: 0,
+  /** Contradictions (distinct runs) that deprecate a lesson whatever its support (issue #173). */
+  contradictionsToDeprecate: 2,
 } as const;
 
-export type StatusRule = 'deprecate.contradictions-exceed-support' | 'promote.supported-by-distinct-runs';
+export type StatusRule = 'deprecate.contradictions-exceed-support' | 'deprecate.contradicted-twice' | 'promote.supported-by-distinct-runs';
 
 export interface StatusDecision {
   status: LessonStatus;
@@ -30,10 +33,13 @@ export interface StatusDecision {
  *      that supersedes it.
  *   2. contradictions (distinct runs) > support (distinct runs): deprecated,
  *      from candidate or validated.
- *   3. candidate with support from >= 2 distinct runs and no contradiction:
+ *   3. contradictions from 2 distinct runs: deprecated, whatever the support
+ *      (issue #173: two proofs that a lesson did not help outweigh any count
+ *      of runs it merely sat in).
+ *   4. candidate with support from >= 2 distinct runs and no contradiction:
  *      validated.
- *   4. otherwise unchanged. A validated lesson with some contradictions that
- *      do not outnumber its support stays validated and is ranked down by
+ *   5. otherwise unchanged. A validated lesson with one contradiction that
+ *      does not outnumber its support stays validated and is ranked down by
  *      retrieval.
  *
  * Counts are per distinct run (see KnowledgeStore.stats), and only run
@@ -42,6 +48,7 @@ export interface StatusDecision {
 export function decideStatus(status: LessonStatus, stats: Pick<LessonStats, 'support' | 'contradict'>): StatusDecision | null {
   if (status === 'rejected' || status === 'deprecated') return null;
   if (stats.contradict > stats.support) return { status: 'deprecated', rule: 'deprecate.contradictions-exceed-support' };
+  if (stats.contradict >= PROMOTION_RULES.contradictionsToDeprecate) return { status: 'deprecated', rule: 'deprecate.contradicted-twice' };
   if (status === 'candidate' && stats.support >= PROMOTION_RULES.minSupportingRuns && stats.contradict <= PROMOTION_RULES.maxContradictionsToValidate) {
     return { status: 'validated', rule: 'promote.supported-by-distinct-runs' };
   }
@@ -83,6 +90,33 @@ export interface RunOutcome {
   contradictedLessonIds: readonly string[];
   /** The artifact the outcome evidence points at; defaults to the run's final report. */
   artifact?: { path: string; sha256: string | null };
+  /**
+   * What the run's attempts touched (issue #173 FR-005): the files they changed and the checks that failed on them.
+   * When given, support goes only to retrieved lessons whose cited area is among them; absent, to every retrieved
+   * lesson (callers that cannot tell; the controller always says).
+   */
+  touched?: TouchedArea;
+}
+
+export interface TouchedArea {
+  paths: readonly string[];
+  checkIds: readonly string[];
+}
+
+/** Whether `lesson`'s cited file or check, or one of its path globs or check ids, is in `touched`. */
+export function touchesLesson(lesson: Lesson, touched: TouchedArea): boolean {
+  const c = lesson.citation ?? null;
+  const checks = [...lesson.applicability.check_ids, ...(c?.check_id ? [c.check_id] : [])];
+  if (checks.some((id) => touched.checkIds.includes(id))) return true;
+  if (c?.path && touched.paths.includes(c.path)) return true;
+  return lesson.applicability.paths.some((glob) => {
+    try {
+      const isMatch = picomatch(glob, { dot: true });
+      return touched.paths.some((p) => isMatch(p));
+    } catch {
+      return false;
+    }
+  });
 }
 
 export interface SettleReport {
@@ -104,8 +138,9 @@ export interface SettleReport {
  *   - each lesson in contradictedLessonIds gains contradicting evidence from
  *     this run, whether or not it was retrieved;
  *   - when the run succeeded with at least one verified criterion, each
- *     retrieved lesson that was not contradicted gains supporting evidence
- *     from this run. A failed run adds no support and, by itself, no
+ *     retrieved lesson that was not contradicted, and whose cited area the
+ *     run touched (when `touched` is given), gains supporting evidence from
+ *     this run. A failed run adds no support and, by itself, no
  *     contradiction: failure is rarely the fault of advice;
  *   - the promotion rules then run on every lesson touched.
  *
@@ -132,6 +167,8 @@ export function settleRun(store: KnowledgeStore, runId: string, outcome: RunOutc
     if (outcome.succeeded && outcome.verifiedCriteria.length > 0) {
       for (const id of retrieved) {
         if (contradictedSet.has(id)) continue;
+        const lesson = outcome.touched ? store.getLesson(id) : null;
+        if (outcome.touched && (!lesson || !touchesLesson(lesson, outcome.touched))) continue;
         const ref: EvidenceRef = { run_id: runId, artifact: artifact.path, sha256: artifact.sha256, relation: 'supports' };
         if (store.addEvidence(id, ref)) report.supported.push(id);
       }
