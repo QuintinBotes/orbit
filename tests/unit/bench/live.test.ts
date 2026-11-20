@@ -245,6 +245,10 @@ db.close();
     try {
       const t = await localExecutor({ remote: () => p.url }).plain(goal(p), 1);
       expect([t.end_state, t.accepted, t.spend_usd, t.problems]).toEqual(['DONE', true, 0.42, []]);
+      // A session that reports no cost is charged its cap, never counted as free.
+      writeFileSync(join(bin, 'claude'), '#!/bin/sh\necho "not json"\n', { mode: 0o755 });
+      const silent = await localExecutor({ remote: () => p.url }).plain(goal(p), 1.5);
+      expect([silent.spend_usd, silent.problems[0]]).toEqual([1.5, 'the session reported no cost; it is charged its cap of $1.5000']);
     } finally {
       process.env.PATH = path;
     }

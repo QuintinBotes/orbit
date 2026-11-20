@@ -69918,7 +69918,7 @@ function heldOut(g, tree, from) {
     const r = sh(["git", "-C", from, "show", `${g.reference}:${p}`], from);
     if (r.status !== 0) return { passed: false, out: `held-out file ${p} is not in ${g.reference}: ${r.out}` };
     mkdirSync24(dirname34(join77(tree, p)), { recursive: true });
-    writeFileSync12(join77(tree, p), r.out);
+    writeFileSync12(join77(tree, p), r.stdout);
   }
   if (g.setup) {
     const s = sh(g.setup, tree);
@@ -69958,8 +69958,10 @@ function localExecutor(opts = {}) {
         const doc = parseDocument(readFileSync36(policy, "utf8"));
         doc.setIn(["scheduler", "hard_limits", "model_cost_usd"], Number(cap.toFixed(4)));
         writeFileSync12(policy, doc.toString());
+        const wallMinutes = Number(doc.getIn(["scheduler", "hard_limits", "wall_minutes"]));
+        const timeoutMs = ((Number.isFinite(wallMinutes) && wallMinutes > 0 ? wallMinutes : 120) + 30) * 6e4;
         const t0 = Date.now();
-        const r = sh([...orbitCommand, "run", "--foreground", "--mode", "autonomous", "--goal", g.goal], repo, env);
+        const r = sh([...orbitCommand, "run", "--foreground", "--mode", "autonomous", "--goal", g.goal], repo, env, timeoutMs);
         const wall = Date.now() - t0;
         const db = openDb(stateDbPath(repo));
         try {
@@ -69988,14 +69990,15 @@ function localExecutor(opts = {}) {
         const t0 = Date.now();
         const r = sh(["claude", "-p", g.goal, "--output-format", "json", "--max-budget-usd", cap.toFixed(4), "--permission-mode", "acceptEdits"], repo);
         const wall = Date.now() - t0;
-        let spend = 0;
+        let reported;
         try {
-          spend = Number(JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}").total_cost_usd ?? 0);
+          reported = JSON.parse(r.stdout.trim().split("\n").at(-1) ?? "{}").total_cost_usd;
         } catch {
         }
+        const spend = typeof reported === "number" && Number.isFinite(reported) ? reported : cap;
         fetchReference(g, repo);
         const check = heldOut(g, repo, repo);
-        return { end_state: r.status === 0 ? "DONE" : "FAILED", failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...spend === 0 ? ["the session reported no cost"] : [], ...check.passed ? [] : [`held-out check failed: ${check.out}`]] };
+        return { end_state: r.status === 0 ? "DONE" : "FAILED", failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...spend === reported ? [] : [`the session reported no cost; it is charged its cap of $${cap.toFixed(4)}`], ...check.passed ? [] : [`held-out check failed: ${check.out}`]] };
       } finally {
         cleanup(repo);
       }
