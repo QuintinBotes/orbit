@@ -557,7 +557,7 @@ orbit bench --tier live --budget 40 --approved-by <owner> [--baseline]   # spend
   mode, with the policy `orbit init` writes), and with `--baseline` three
   times more as one plain `claude -p` session; every result is kept. Each
   session works in a fresh repository that holds the pinned commit and its
-  history only, with no remote, so the accepted fix is not there to read; it
+  history only, with no remote, so the accepted fix is not in it; it
   is fetched only to grade. The report gives pass rate, cost per accepted task and time,
   and the difference to the plain session. It refuses to start without
   `--budget <usd>` (no default) and `--approved-by <name>`; each session is

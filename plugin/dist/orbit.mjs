@@ -69876,7 +69876,7 @@ async function runLiveTier(o) {
   const rows = [];
   const plain2 = [];
   const session = async (g, n2, run, into) => {
-    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n2}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n2, await run(g, cap).catch(crashed));
+    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n2}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n2, await run(g, cap).catch((err) => crashed(err, cap)));
     spent += row.spend_usd;
     into.push(row);
     o.onRow?.(row);
@@ -69932,6 +69932,15 @@ function localExecutor(opts = {}) {
   const remote = opts.remote ?? ((r) => `https://github.com/${r}.git`);
   const clone2 = (g, rev) => cloneAt2(remote(g.repository), g, rev);
   const fetchReference = (g, repo) => must(["git", "fetch", "--quiet", remote(g.repository), g.reference], repo);
+  const grade = (g, repo, commit) => {
+    try {
+      if (commit) must(["git", "checkout", "--quiet", "--force", commit], repo);
+      fetchReference(g, repo);
+      return heldOut(g, repo, repo);
+    } catch (err) {
+      return { passed: false, out: `could not grade: ${messageOf6(err)}` };
+    }
+  };
   return {
     async validate(g) {
       const repo = clone2(g, g.commit);
@@ -69970,11 +69979,7 @@ function localExecutor(opts = {}) {
           const used = (c) => db.get("SELECT used FROM budget_counters WHERE run_id = ? AND counter = ?", run.id, c)?.used ?? 0;
           const commit = run.state === "SUCCEEDED" ? JSON.parse(run.outcomeJson ?? "{}").commit : void 0;
           const delivered = typeof commit === "string";
-          if (delivered) {
-            must(["git", "checkout", "--quiet", "--force", commit], repo);
-            fetchReference(g, repo);
-          }
-          const check = delivered ? heldOut(g, repo, repo) : null;
+          const check = delivered ? grade(g, repo, commit) : null;
           const problems = check ? check.passed ? [] : [`held-out check failed: ${check.out}`] : [`${run.state}: ${run.state === "SUCCEEDED" ? "the outcome names no delivered commit" : run.outcomeReason ?? ""}`.slice(0, 500)];
           return { end_state: run.state, failure_class: run.failureClass, attempts: used("implementation_attempts"), spend_usd: used("cost_usd"), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems };
         } finally {
@@ -69996,8 +70001,7 @@ function localExecutor(opts = {}) {
         } catch {
         }
         const spend = typeof reported === "number" && Number.isFinite(reported) ? reported : cap;
-        fetchReference(g, repo);
-        const check = heldOut(g, repo, repo);
+        const check = grade(g, repo);
         return { end_state: r.status === 0 ? "DONE" : "FAILED", failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...spend === reported ? [] : [`the session reported no cost; it is charged its cap of $${cap.toFixed(4)}`], ...check.passed ? [] : [`held-out check failed: ${check.out}`]] };
       } finally {
         cleanup(repo);
@@ -70021,7 +70025,7 @@ var init_live = __esm({
     relPath = (p) => !p.startsWith("/") && !p.split("/").includes("..");
     title2 = (g) => (g.goal.split("\n")[0] ?? "").slice(0, 120);
     messageOf6 = (err) => err instanceof Error ? err.message : String(err);
-    crashed = (err) => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed, and its spend is unknown: ${messageOf6(err)}`.slice(0, 1e3)] });
+    crashed = (err, cap) => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: cap, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed; its spend is unknown, so it is charged its cap of $${cap.toFixed(4)}: ${messageOf6(err)}`.slice(0, 1e3)] });
     skipped = (g, id, why) => ({ id, issue: g.issue, title: title2(g), result: "invalid", failure_class: null, end_state: null, attempts: 0, spend_usd: 0, wall_ms: null, delivered: false, problems: [why] });
     cleanup = (repo) => {
       spawnSync5("chmod", ["-R", "u+w", dirname34(repo)]);

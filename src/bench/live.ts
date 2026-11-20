@@ -132,8 +132,11 @@ function rowOf(g: LiveGoal, n: number, t: LiveTrial): ScenarioRow {
 
 const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** A session that threw: kept as a failed row, so the tier goes on and the sessions already paid for still reach the scorecard. */
-const crashed = (err: unknown): LiveTrial => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: 0, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed, and its spend is unknown: ${messageOf(err)}`.slice(0, 1000)] });
+/**
+ * A session that threw: kept as a failed row, so the tier goes on and the sessions already paid for still reach the
+ * scorecard. Its spend is unknown, not free, so it is charged its cap.
+ */
+const crashed = (err: unknown, cap: number): LiveTrial => ({ end_state: null, failure_class: null, attempts: 0, spend_usd: cap, wall_ms: 0, delivered: false, accepted: false, problems: [`the session failed; its spend is unknown, so it is charged its cap of $${cap.toFixed(4)}: ${messageOf(err)}`.slice(0, 1000)] });
 
 const skipped = (g: LiveGoal, id: string, why: string): ScenarioRow => ({ id, issue: g.issue, title: title(g), result: 'invalid', failure_class: null, end_state: null, attempts: 0, spend_usd: 0, wall_ms: null, delivered: false, problems: [why] });
 
@@ -145,7 +148,7 @@ export async function runLiveTier(o: LiveTierOptions): Promise<{ rows: ScenarioR
   const plain: ScenarioRow[] = [];
   const session = async (g: LiveGoal, n: number, run: (g: LiveGoal, cap: number) => Promise<LiveTrial>, into: ScenarioRow[]): Promise<void> => {
     // Each session is held to its cap, so this only trips when sessions overran theirs.
-    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n, await run(g, cap).catch(crashed));
+    const row = spent + cap > o.budgetUsd + 1e-9 ? skipped(g, `${g.id}#${n}`, `not run: $${(o.budgetUsd - spent).toFixed(4)} of the budget is left, less than one session's cap of $${cap.toFixed(4)}`) : rowOf(g, n, await run(g, cap).catch((err: unknown) => crashed(err, cap)));
     spent += row.spend_usd;
     into.push(row);
     o.onRow?.(row);
@@ -226,6 +229,16 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
   const clone = (g: LiveGoal, rev: string): string => cloneAt(remote(g.repository), g, rev);
   /** The accepted fix, brought into the clone once the session in it has ended. */
   const fetchReference = (g: LiveGoal, repo: string): void => must(['git', 'fetch', '--quiet', remote(g.repository), g.reference], repo);
+  /** Grade `repo` (at `commit` when given) after its session: a grading error fails the check and keeps what the session spent. */
+  const grade = (g: LiveGoal, repo: string, commit?: string): { passed: boolean; out: string } => {
+    try {
+      if (commit) must(['git', 'checkout', '--quiet', '--force', commit], repo);
+      fetchReference(g, repo);
+      return heldOut(g, repo, repo);
+    } catch (err) {
+      return { passed: false, out: `could not grade: ${messageOf(err)}` };
+    }
+  };
   return {
     async validate(g) {
       const repo = clone(g, g.commit);
@@ -269,11 +282,7 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
           // names (autonomous mode delivers a local branch at it), checked out in the clone.
           const commit = run.state === 'SUCCEEDED' ? (JSON.parse(run.outcomeJson ?? '{}') as { commit?: unknown }).commit : undefined;
           const delivered = typeof commit === 'string';
-          if (delivered) {
-            must(['git', 'checkout', '--quiet', '--force', commit], repo);
-            fetchReference(g, repo);
-          }
-          const check = delivered ? heldOut(g, repo, repo) : null;
+          const check = delivered ? grade(g, repo, commit) : null;
           const problems = check ? (check.passed ? [] : [`held-out check failed: ${check.out}`]) : [`${run.state}: ${run.state === 'SUCCEEDED' ? 'the outcome names no delivered commit' : (run.outcomeReason ?? '')}`.slice(0, 500)];
           return { end_state: run.state, failure_class: run.failureClass, attempts: used('implementation_attempts'), spend_usd: used('cost_usd'), wall_ms: wall, delivered, accepted: check?.passed ?? false, problems };
         } finally {
@@ -297,8 +306,7 @@ export function localExecutor(opts: { orbitCommand?: readonly string[]; remote?:
         }
         // A spend the session did not report is unknown, not free: it is charged the session's cap, and the problem says so.
         const spend = typeof reported === 'number' && Number.isFinite(reported) ? reported : cap;
-        fetchReference(g, repo);
-        const check = heldOut(g, repo, repo);
+        const check = grade(g, repo);
         return { end_state: r.status === 0 ? 'DONE' : 'FAILED', failure_class: null, attempts: 1, spend_usd: spend, wall_ms: wall, delivered: true, accepted: check.passed, problems: [...(spend === reported ? [] : [`the session reported no cost; it is charged its cap of $${cap.toFixed(4)}`]), ...(check.passed ? [] : [`held-out check failed: ${check.out}`])] };
       } finally {
         cleanup(repo);

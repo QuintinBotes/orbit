@@ -139,7 +139,7 @@ describe('live tier (#172 User Story 2)', () => {
       ['goal-1#3', 'pass'],
       ['goal-2', 'invalid'],
     ]);
-    expect(out.rows[0]!.problems).toEqual(['the session failed, and its spend is unknown: git fetch failed']);
+    expect([out.rows[0]!.spend_usd, out.rows[0]!.problems]).toEqual([1, ['the session failed; its spend is unknown, so it is charged its cap of $1.0000: git fetch failed']]);
     expect(out.rows[3]!.problems).toEqual(['could not check the goal: no such commit']);
   });
 
@@ -245,6 +245,9 @@ db.close();
     try {
       const t = await localExecutor({ remote: () => p.url }).plain(goal(p), 1);
       expect([t.end_state, t.accepted, t.spend_usd, t.problems]).toEqual(['DONE', true, 0.42, []]);
+      // A grading error after the session fails the check and keeps what the session spent.
+      const ungraded = await localExecutor({ remote: () => p.url }).plain(goal({ commit: p.commit, reference: '0'.repeat(40) }), 1);
+      expect([ungraded.end_state, ungraded.accepted, ungraded.spend_usd, ungraded.problems[0]]).toEqual(['DONE', false, 0.42, expect.stringMatching(/^held-out check failed: could not grade: git fetch/)]);
       // A session that reports no cost is charged its cap, never counted as free.
       writeFileSync(join(bin, 'claude'), '#!/bin/sh\necho "not json"\n', { mode: 0o755 });
       const silent = await localExecutor({ remote: () => p.url }).plain(goal(p), 1.5);
