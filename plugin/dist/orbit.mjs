@@ -72621,9 +72621,9 @@ function documentedCommands(repo, files) {
       const candidates = fenced2 ? [lineText.replace(/\s+#.*$/, "")] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
       for (const raw of candidates) {
         const cmd = raw.trim().replace(/^\$\s+/, "");
-        if (cmd === "" || /[|&;<>$`'"(){}\\*?\x00-\x08\x0b-\x1f\x7f]/.test(cmd)) continue;
+        if (cmd === "" || /[|&;<>$`'"(){}\\*?\x00-\x08\x0b-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(cmd)) continue;
         const argv2 = cmd.split(/\s+/);
-        if (argv2.length < 2 || argv2.some((a) => SETUP_WORDS.has(a))) continue;
+        if (argv2.length < 2 && !ONE_WORD_CHECKS.has(argv2[0]) || argv2.some((a) => SETUP_WORDS.has(a))) continue;
         const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv2[0]) ? TOOL_ECOSYSTEM[argv2[0]] : void 0;
         if (ecosystem === void 0) continue;
         const words2 = new Set(argv2.flatMap((a) => a.toLowerCase().split(":")));
@@ -72836,7 +72836,7 @@ async function rustDrafts(input, out) {
   ];
   const clippy = await (input.clippyAvailable ?? realClippyProbe)(cargo);
   if (clippy) drafts.push({ name: "clippy", command: ["cargo", "clippy", ...ws, "--all-targets", "--", "-D", "warnings"], category: "lint", timeout_seconds: TIMEOUT.rustLint, reason: `${reason}; cargo clippy is installed` });
-  else out.skip("rust", "cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed");
+  else out.skip("rust", NO_CLIPPY);
   return drafts;
 }
 async function realClippyProbe(cargo) {
@@ -72867,12 +72867,13 @@ async function detectChecks(input) {
       continue;
     }
     const drafts = groups.find(([e]) => e === d.ecosystem)[1];
-    if (d.command.includes("clippy") && !drafts.some((x) => x.category === "lint")) continue;
+    if (d.command.includes("clippy") && out.notProposed.some((n2) => n2.ecosystem === "rust" && n2.reason === NO_CLIPPY)) continue;
     const command = d.ecosystem === "dotnet" ? withOneMsbuildNode(d.command) : d.command;
     const same2 = drafts.flatMap((x, j) => x.category === d.category ? [j] : []);
     const i = same2.length === 1 ? same2[0] : same2.find((j) => drafts[j].command.every((w) => w.startsWith("-") || command.includes(w))) ?? -1;
     const derived = i >= 0 ? drafts[i] : null;
-    if (derived && command.length < derived.command.length && command.every((w, k) => derived.command[k] === w)) continue;
+    const unpinned = derived?.command.filter((w) => w !== ONE_MSBUILD_NODE) ?? [];
+    if (derived && d.command.length < unpinned.length && d.command.every((w, k) => unpinned[k] === w)) continue;
     taken.add(key2);
     const draft = {
       name: derived?.name ?? DRAFT_NAME[d.category],
@@ -72907,7 +72908,7 @@ function renderChecksYaml(proposed) {
   }
   return text2;
 }
-var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, TOOL_ECOSYSTEM, CATEGORY_WORDS, SETUP_WORDS, DRAFT_NAME, CATEGORY_TIMEOUT, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON;
+var TIMEOUT, MAX_READ_BYTES, MAX_PROJECT_READS, MAX_TARGETS2, TOOL_ECOSYSTEM, CATEGORY_WORDS, ONE_WORD_CHECKS, SETUP_WORDS, DRAFT_NAME, CATEGORY_TIMEOUT, Collector, ONE_MSBUILD_NODE, ONE_NODE_REASON, NO_CLIPPY;
 var init_check_detect = __esm({
   "src/cli/check-detect.ts"() {
     "use strict";
@@ -72943,6 +72944,7 @@ var init_check_detect = __esm({
       ["test", /* @__PURE__ */ new Set(["test", "tests", "vitest", "jest", "mocha", "pytest"])],
       ["build", /* @__PURE__ */ new Set(["build"])]
     ];
+    ONE_WORD_CHECKS = /* @__PURE__ */ new Set(["pytest"]);
     SETUP_WORDS = /* @__PURE__ */ new Set(["install", "i", "add", "ci", "get", "sync", "remove", "uninstall", "update", "upgrade"]);
     DRAFT_NAME = { test: "unit-tests", lint: "lint", typecheck: "typecheck", build: "build" };
     CATEGORY_TIMEOUT = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
@@ -72958,6 +72960,7 @@ var init_check_detect = __esm({
     };
     ONE_MSBUILD_NODE = "-m:1";
     ONE_NODE_REASON = "-m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe";
+    NO_CLIPPY = "cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed";
   }
 });
 

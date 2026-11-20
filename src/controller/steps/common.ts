@@ -328,7 +328,8 @@ export const REPO_INSTRUCTIONS_EVENT = 'repo.instructions-read';
 /**
  * The repository's AGENTS.md, then CLAUDE.md, as the run's base revision has them, for every worker prompt. The first
  * call reads them from git and records which it read (with a hash of each) in the run directory and as one event; every
- * later prompt of the run uses that record, so a worker that edits either file in its worktree changes what no other
+ * later prompt of the run uses that record while the base revision is the one it was read at (a rebase onto a moved base
+ * reads and records them again), so a worker that edits either file in its worktree changes what no other
  * worker is given, and the working tree's uncommitted copy is never read.
  */
 export function repoInstructions(ctx: RunContext): RepoInstruction[] {

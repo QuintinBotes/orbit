@@ -317,7 +317,7 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
   });
 
   it('ignores prose, commands that need a shell, and commands that are no check', async () => {
-    const agents = 'Run pnpm test --maxWorkers=2 before pushing, never `pnpm exec evil\u001b[2K\u001b[100Dpnpm test`.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
+    const agents = 'Run pnpm test --maxWorkers=2 before pushing, never `pnpm exec evil\u001b[2K\u001b[100Dpnpm test`, `pnpm exec evil\u009b2K\u009b100Dpnpm test` or `pnpm exec evil\u202e tset mpnp`.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
     const r = await init(repoWith({ ...files, 'AGENTS.md': agents }), ['pnpm']);
     expect(r.json.checks.read_docs).toEqual(['AGENTS.md']);
     expect(r.json.checks.proposed).toEqual([expect.objectContaining({ id: 'unit-tests', command: ['pnpm', 'test'], reason: expect.stringContaining('package.json declares a test script') })]);
@@ -337,12 +337,21 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
     expect(r.checks.typecheck?.command).toEqual(['mypy', '.']);
     const go = await init(repoWith({ 'go.mod': 'module acme.test/app\n\ngo 1.22\n', 'AGENTS.md': 'Run `go test` before pushing.\n' }), ['go']);
     expect(go.checks['unit-tests']?.command).toEqual(['go', 'test', './...']);
+    // With nothing derived to keep, a bare `ruff` is still no check, while a bare `pytest` is a whole one.
+    const bare = await init(repoWith({ 'pyproject.toml': '[project]\nname = "acme"\n', 'AGENTS.md': 'We lint with `ruff`. Test with `pytest`.\n' }), ['ruff', 'pytest']);
+    expect(bare.json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['pytest']);
+    // .NET: `dotnet test` is the leading part of the derived command for the solution in src/, pin aside.
+    const dotnet = await init(repoWith({ 'src/App.sln': 'Microsoft Visual Studio Solution File, Format Version 12.00\n', 'src/App.Tests/App.Tests.csproj': '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" /></ItemGroup></Project>\n', 'AGENTS.md': 'Run `dotnet test`.\n' }), ['dotnet']);
+    expect(dotnet.checks['unit-tests']?.command).toEqual(['dotnet', 'test', 'src/App.sln', '-m:1']);
   });
 
   it('does not propose a documented clippy command where clippy is not installed', async () => {
     const r = await init(repoWith({ 'Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\n', 'AGENTS.md': 'Lint with `cargo clippy --all-targets -- -D warnings`.\n' }), ['cargo'], { clippy: false });
     expect(r.ids).not.toContain('lint');
     expect(r.json.checks.not_proposed.map((n) => n.reason)).toEqual([expect.stringContaining('cargo clippy is not installed')]);
+    // With no root Cargo.toml init never probed clippy, so the documented command is proposed.
+    const nested = await init(repoWith({ 'src-tauri/Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\n', 'AGENTS.md': 'Lint with `cargo clippy --manifest-path src-tauri/Cargo.toml`.\n' }), ['cargo'], { clippy: false });
+    expect(nested.checks.lint?.command).toEqual(['cargo', 'clippy', '--manifest-path', 'src-tauri/Cargo.toml']);
   });
 
   it('does not read AGENTS.override.md, and says so', async () => {

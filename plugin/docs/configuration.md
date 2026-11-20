@@ -749,11 +749,15 @@ redirection, quote, variable or leading `NAME=value`), and names a check
 (`test`, `vitest`, `pytest`, `lint`, `clippy`, `vet`, `typecheck`, `tsc`,
 `mypy`, `build`), and sets up nothing (`install`, `add`, `ci`, `sync` and the
 like mean it is no check). A tool name alone (`ruff`, `mypy`) is a mention, not
-a command. It takes the place of the command derived from the
-manifests for the same ecosystem and kind of check (for .NET projects without
-one solution, the one for the project it names), or is added when the manifests
-give none; the first one documented wins, so `AGENTS.md` comes before
-`CLAUDE.md`. A documented `dotnet` command gets `-m:1`, as the derived ones do.
+a command, except `pytest`, which is a whole check. It takes the
+place of the command derived from the manifests for the same ecosystem and kind
+of check (for .NET projects without one solution, the one for the project it
+names), or is added when the manifests give none; the first one documented
+wins, so `AGENTS.md` comes before `CLAUDE.md`. A documented `dotnet` command
+gets `-m:1`, as the derived ones do. Two are left out: one that is only the
+leading part of the derived command (`go test` of `go test ./...`), which keeps
+the derived one, and a `cargo clippy` command where init found clippy is not
+installed.
 Its reason says where it was read (`documented in AGENTS.md line 7, in place of
 pnpm test from the manifests`), and init lists the files it read in its output
 and in `checks.read_docs` in `--json`. A documented command whose tool is not

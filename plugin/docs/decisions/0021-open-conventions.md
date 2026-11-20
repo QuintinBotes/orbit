@@ -23,7 +23,8 @@ could be observed only through Orbit's own commands and database.
   inside the untrusted-data fences, capped like any untrusted block; the first
   prompt of a run records which it read, with their hashes, in
   `repo-instructions.json` and a `repo.instructions-read` event, and every
-  later prompt reuses that record. `CLAUDE.md` loading stays off: the files are
+  later prompt reuses that record while the base revision is unchanged (a
+  rebase onto a moved base reads and records them again). `CLAUDE.md` loading stays off: the files are
   data a worker follows where they fit, never instructions that outrank the
   policy. The curator gets neither; it works on run records in an empty
   directory, not on the repository. Codex's `AGENTS.override.md` is named by
