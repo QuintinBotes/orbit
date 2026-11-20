@@ -103,6 +103,30 @@ describe('spec check', () => {
     expect(scenariosOf(checkSpec(long).parsed)[0]!.statement.length).toBeLessThanOrEqual(603);
   });
 
+  it('#195: quotes no terminal control character of the body in a problem or a statement', () => {
+    const body = SPEC.replace('MUST export `mul`.', 'MUST export `mul` [NEEDS CLARIFICATION: \u001b[2J\u001b[31mfloats\u009b0m?].')
+      .replace('Addition is unchanged (Priority', 'Addition\u009b2J is unchanged (Priority')
+      .replace('**Independent Test**: Run the existing add test.\n', '');
+    const r = checkSpec(body);
+    expect(r.problems).toHaveLength(2);
+    for (const p of r.problems) expect(p).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(r.problems[0]).toMatch(/^line \d+ still has a clarification marker: "\[NEEDS CLARIFICATION: \[2J \[31mfloats 0m\?\]"$/);
+    expect(r.problems[1]).toBe('User Story 2 (Addition 2J is unchanged) has no Independent Test: "**Independent Test**:" is missing or empty');
+    const statement = scenariosOf(checkSpec(SPEC.replace('it returns 6.', 'it returns 6.\u009b2J')).parsed)[0]!.statement;
+    expect(statement).toBe('Given two integers, When `mul(2, 3)` is called, Then it returns 6. 2J');
+  });
+
+  it('#195: refuses more scenarios than a contract has criteria, and a story number no scenario key can carry', () => {
+    const many = SPEC.replace('2. **Given** a zero operand', `${Array.from({ length: 49 }, (_, i) => `${i + 2}. **Given** case ${i}, **When** mul runs, **Then** it works.`).join('\n')}\n51. **Given** a zero operand`);
+    expect(scenariosOf(checkSpec(many).parsed)).toHaveLength(52);
+    expect(checkSpec(many).problems).toEqual(['the spec has 52 acceptance scenarios; a run takes at most 50, one contract criterion each']);
+    const fifty = SPEC.replace('2. **Given** a zero operand', `${Array.from({ length: 47 }, (_, i) => `${i + 2}. **Given** case ${i}, **When** mul runs, **Then** it works.`).join('\n')}\n49. **Given** a zero operand`);
+    expect(checkSpec(fifty).problems).toEqual([]);
+    const huge = checkSpec(SPEC.replace('User Story 1 -', 'User Story 1000000000000000000000 -'));
+    expect(huge.problems).toEqual(['User Story 1000000000000000000000 (Multiply two numbers): the story number is too large']);
+    expect(scenariosOf(huge.parsed).map((s) => s.key)).toEqual(['S2-1']);
+  });
+
   it('finds a reproduction section, and none where the heading is absent or its section empty', () => {
     expect(reproductionOf('### Steps to reproduce\n\n1. Call `add(2, 3)`.\n2. It returns 6.\n\n### Expected\n\n5\n')).toBe('1. Call `add(2, 3)`.\n2. It returns 6.');
     expect(reproductionOf('## Reproduction\nrun it\n')).toBe('run it');

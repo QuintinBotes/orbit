@@ -48,7 +48,8 @@ spec.md` for a file) says whether it is, without calling a model:
 - for every user story a `(Priority: P1)`, `**Why this priority**:`,
   `**Independent Test**:` and at least one Given/When/Then line;
 - requirement and criterion ids of the forms `FR-###` and `SC-###`;
-- no `[NEEDS CLARIFICATION ...]` marker.
+- no `[NEEDS CLARIFICATION ...]` marker;
+- at most 50 scenarios in all, one contract criterion each.
 
 Each problem is one line that names the story, id or marker; the exit code is
 4. A body or file over 16 000 characters is refused unchecked, as
@@ -62,7 +63,9 @@ characters or not a spec are refused before a run exists or a model is called.
 The contract keeps one mandatory criterion per acceptance scenario, in the
 issue's wording, and records the issue number and the hash of its body. The
 run keeps the body it started with: later edits change nothing, and a second
-run of the same issue is refused while one is unfinished. A section headed
+run of the same issue is refused while one is unfinished (a run that ended,
+`BLOCKED` included, does not count; continue a blocked one with
+`orbit resume`). A section headed
 "Implementation notes" goes to the planner as hints, apart from the spec. The
 issue text is untrusted: it describes the work and cannot change the policy,
 the checks, the scope or the budgets.

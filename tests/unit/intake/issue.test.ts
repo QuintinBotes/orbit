@@ -228,9 +228,15 @@ describe('what an issue goal gives a run', () => {
   });
 
   it('names the scenarios the planner answered without a check, or not at all', () => {
-    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2', { check_ids: [] })]), goal())).toEqual(['S1-2']);
-    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2')]), goal())).toEqual([]);
-    expect(unansweredIssueCriteria(plan([crit('fix')]), goal({ kind: 'bug', scenarios: [] }))).toEqual(['REPRO']);
+    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2', { check_ids: [] })]), goal(), ['unit'])).toEqual(['S1-2']);
+    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2')]), goal(), ['unit'])).toEqual([]);
+    expect(unansweredIssueCriteria(plan([crit('fix')]), goal({ kind: 'bug', scenarios: [] }), ['unit'])).toEqual(['REPRO']);
+  });
+
+  it('#195: a scenario whose only check the policy does not define is unanswered, so the plan is regenerated', () => {
+    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2', { check_ids: ['e2e'] })]), goal(), ['unit'])).toEqual(['S1-2']);
+    expect(unansweredIssueCriteria(plan([crit('S1-1'), crit('S1-2', { check_ids: ['e2e', 'unit'] })]), goal(), ['unit'])).toEqual([]);
+    expect(unansweredIssueCriteria(plan([crit('REPRO', { check_ids: ['e2e'] })]), goal({ kind: 'bug', scenarios: [] }), ['unit'])).toEqual(['REPRO']);
   });
 
   it('a bug gets one reproduction criterion whose proof is a test that fails before', () => {

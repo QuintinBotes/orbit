@@ -53,9 +53,9 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
     }),
     accept: (r) => {
       const out = validateModelOutput('planner', r.structured);
-      // A plan that leaves a scenario of the issue without a criterion and a check is regenerated like any malformed one.
-      const unanswered = issue ? unansweredIssueCriteria(out, issue) : [];
-      if (unanswered.length > 0) throw new OrbitError('MALFORMED_OUTPUT', `the plan has no criterion with a trusted check for ${unanswered.join(', ')}: the issue's ${issue!.kind === 'bug' ? 'reproduction needs one under that key' : 'acceptance scenarios each need one under their key'}`);
+      // A plan that leaves a scenario of the issue without a criterion and a check the policy defines is regenerated like any malformed one.
+      const unanswered = issue ? unansweredIssueCriteria(out, issue, Object.keys(ctx.snapshot.config.checks)) : [];
+      if (unanswered.length > 0) throw new OrbitError('MALFORMED_OUTPUT', `the plan has no criterion with a trusted check the policy defines for ${unanswered.join(', ')}: the issue's ${issue!.kind === 'bug' ? 'reproduction needs one under that key' : 'acceptance scenarios each need one under their key'}`);
       return out;
     },
   });

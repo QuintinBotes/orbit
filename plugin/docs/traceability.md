@@ -381,6 +381,22 @@ A verified candidate is always offered, even when the run stops (issue #169; by 
 | I169.SC1 | The #144 and #156 lab scenarios end in the new state | as FR1 | A/verified-candidate.test.ts "edge case, several passing candidates" (the #156 replay) | partial: the #144 replay is in the acceptance suite of issue #166, not yet on this branch |
 | I169.SC2 | No lab scenario with a passing candidate reports "no delivery" | as FR1 and FR2 | A/verified-candidate.test.ts | done for the scenarios on this branch |
 
+Run from an issue: follow-ups of the review of #191 (issue #195, ADR 0019 addendum):
+
+| ID | Requirement | Implementation | Tests | Status |
+|---|---|---|---|---|
+| I195.1 | A plan that proves an issue's scenario only with checks the policy does not define is regenerated, not BLOCKED | `intake/issue.ts:unansweredIssueCriteria`, `controller/steps/contracting.ts` | U/intake/issue.test.ts "#195: a scenario whose only check the policy does not define is unanswered...", I/cli/issue-run.test.ts "#195: a plan that proves a scenario only with a check the policy does not define is regenerated, not BLOCKED (ADR 0019)" | done |
+| I195.2 | The issue comment names a criterion's scenario by its id, also after an approved `remove_criterion` | `intake/comment.ts:renderIssueComment` | U/intake/comment.test.ts | done |
+| I195.3 | No terminal control character of an issue body reaches a spec-check problem or a scenario statement | `intake/spec.ts:quote`, `plain` | U/intake/spec.test.ts "#195: quotes no terminal control character..." | done |
+| I195.4 | A spec with more than 50 scenarios, or a story number too large for its key, fails the spec check | `intake/spec.ts:checkSpec` (`SCENARIOS_MAX`) | U/intake/spec.test.ts "#195: refuses more scenarios than a contract has criteria..." | done |
+| I195.5 | Docs say a bug's reproduction enters the contract too | `docs/security.md`, ADR 0019 | none: a document | done |
+| I195.6 | Worker prompts say a contract's criterion statements quoted from an issue are untrusted data | `adapters/prompt.ts:renderWorkerPrompt` | U/adapters/prompt-agents.test.ts "#195: says that the criterion statements of a contract drafted from an issue..." | done |
+| I195.7 | Who wrote the issue is not checked: the person who names or labels it chooses it (a decision, documented) | `docs/security.md`, ADR 0019 addendum | none: a document | done |
+| I195.8 | The notice skipped because the run's own issue gets the outcome comment says so | `notify/notify.ts:dispatch`, `sendAll` | U/notify/notify.test.ts "#195: where the linked issue is the run's own issue..." | done |
+| I195.9 | One reading of a github.com remote URL, linear in its length | `delivery/git.ts:githubRepoFromUrl` (used by `intake/github.ts`, `notify/channels.ts`, `controller/steps/delivering.ts`) | U/delivery/coverage-git.test.ts "githubRepoFromUrl: the one reading of a github.com remote (#195)" | done |
+| I195.10 | A BLOCKED run of an issue does not stop a new run of it, as for a typed goal (an answer, documented) | `cli/commands/run.ts:refuseUnfinished` (unchanged) | none: a document | done |
+| I195.11 | `orbit spec check` refuses a file over 16 000 characters (noted) | `cli/commands/spec.ts` (unchanged) | I/cli/issue-run.test.ts "refuses an issue body or a file over the cap orbit run --issue applies" | done |
+
 ## 13. UI testing
 
 | ID | Requirement | Implementation | Tests | Status |
