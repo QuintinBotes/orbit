@@ -147,18 +147,23 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: a controller killed mid-trans
   it('a real controller process crashes right after committing a transition; the next controller finds RECOVERING with the stage to resume', async () => {
     const env = makeEnv();
     const dbPath = env.db.path;
-    // The dying controller: opens the same SQLite file, takes the lease, walks the run, and is killed (exit 137) by the fault point after the third commit.
+    // The dying controller: opens the same SQLite file, takes the lease, walks the run, and exits 137 at the fault point after its first commit.
+    // Its clock stands still, so its 150 ms lease cannot lapse before that commit however slow the host; on the system clock it could,
+    // and the walk died with LEASE_LOST (exit 1, issue #197). The next controller, on the real clock, still finds the lease expired.
     const script = join(env.f.base, 'dying-controller.ts');
     const root = fileURLToPath(new URL('../../../src/', import.meta.url));
     writeFileSync(
       script,
       `import { openDb } from ${JSON.stringify(join(root, 'storage/db.ts'))};
 import { acquireLease, createRun, transition } from ${JSON.stringify(join(root, 'controller/run-store.ts'))};
-import { systemClock } from ${JSON.stringify(join(root, 'core/clock.ts'))};
+import { ManualClock } from ${JSON.stringify(join(root, 'core/clock.ts'))};
+const clock = new ManualClock(Date.now());
 const db = openDb(${JSON.stringify(dbPath)});
-createRun(db, { id: 'orb-adp', repoRoot: '/r', goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: ${JSON.stringify(env.f.policyPath)} }, systemClock);
-acquireLease(db, 'orb-adp', 'ctl-doomed', 150, systemClock);
-for (const to of ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING']) transition(db, { runId: 'orb-adp', to, ownerId: 'ctl-doomed', reason: 'walk' }, systemClock);
+createRun(db, { id: 'orb-adp', repoRoot: '/r', goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: ${JSON.stringify(env.f.policyPath)} }, clock);
+acquireLease(db, 'orb-adp', 'ctl-doomed', 150, clock);
+// A host slower than the lease: a commit on a loaded Linux runner, where fsync really flushes, can take longer than 150 ms.
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+for (const to of ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING']) transition(db, { runId: 'orb-adp', to, ownerId: 'ctl-doomed', reason: 'walk' }, clock);
 `,
     );
     env.db.close();
