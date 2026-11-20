@@ -12,7 +12,7 @@ import { Controller } from '../../../src/controller/loop.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
 import { GENAI_SEMCONV_VERSION, OTEL_SCHEMA_URL } from '../../../src/observability/otel.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
-import { baseScenario, implementMul, labDeps, makeLab, ORBIT_ROOT, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { baseScenario, DIAGNOSIS, implementMul, labDeps, makeLab, ORBIT_ROOT, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -25,10 +25,10 @@ const AGENTS_MD = '# Agents\n\nRun the tests with `node tests/run.mjs`. ACME-AGE
 const CLAUDE_MD = '# Claude\n\nKeep functions pure. ACME-CLAUDE-RULE\n';
 const GOAL = 'Add a mul function to the calculator, ACME-GOAL-TEXT.';
 
-async function finishedRun(): Promise<{ l: Lab; runId: string }> {
+async function finishedRun(roles: Record<string, object[]> = { implementer: [implementMul('*')] }): Promise<{ l: Lab; runId: string }> {
   const l = makeLab({ files: { 'AGENTS.md': AGENTS_MD, 'CLAUDE.md': CLAUDE_MD } });
   labs.push(l);
-  writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+  writeScenario(l, baseScenario(roles));
   const run = startLabRun(l, GOAL);
   await new Controller({ mode: 'foreground', runId: run.id, deps: labDeps(l), tickIntervalMs: 20, leaseTtlMs: 30_000, graceMs: 300 }).start();
   const done = getRun(l.db(), run.id);
@@ -79,9 +79,10 @@ const attr = (s: { attributes: { key: string; value: AnyValue }[] }, key: string
 
 describe.skipIf(!canStripTypes)('controller: Orbit speaks the open conventions (issue #178)', () => {
   it('FR-001: every worker prompt carries AGENTS.md, then CLAUDE.md, as data, and the run records which it read', async () => {
-    const { l, runId } = await finishedRun();
+    // A first attempt that adds instead of multiplying fails its tests, so a verifier diagnoses it before the repair.
+    const { l, runId } = await finishedRun({ implementer: [implementMul('+'), implementMul('*')], verifier: [DIAGNOSIS] });
     const all = prompts(l);
-    expect(new Set(all.map((p) => p.role))).toEqual(new Set(['planner', 'implementer', 'reviewer']));
+    expect(new Set(all.map((p) => p.role))).toEqual(new Set(['planner', 'implementer', 'verifier', 'reviewer']));
     for (const p of all) {
       const at = p.text.indexOf('## Repository instructions');
       expect(at, p.role).toBeGreaterThan(-1);

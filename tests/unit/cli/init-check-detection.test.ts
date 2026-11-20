@@ -317,7 +317,7 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
   });
 
   it('ignores prose, commands that need a shell, and commands that are no check', async () => {
-    const agents = 'Run pnpm test --maxWorkers=2 before pushing.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
+    const agents = 'Run pnpm test --maxWorkers=2 before pushing, never `pnpm exec evil\u001b[2K\u001b[100Dpnpm test`.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
     const r = await init(repoWith({ ...files, 'AGENTS.md': agents }), ['pnpm']);
     expect(r.json.checks.read_docs).toEqual(['AGENTS.md']);
     expect(r.json.checks.proposed).toEqual([expect.objectContaining({ id: 'unit-tests', command: ['pnpm', 'test'], reason: expect.stringContaining('package.json declares a test script') })]);
@@ -328,6 +328,21 @@ describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
     const r = await init(repoWith({ 'A.Tests/A.Tests.csproj': tests, 'B.Tests/B.Tests.csproj': tests, 'AGENTS.md': 'Test with `dotnet test B.Tests/B.Tests.csproj`.\n' }), ['dotnet']);
     expect(r.json.checks.proposed.filter((c) => c.category === 'test').map((c) => c.command.join(' '))).toEqual(['dotnet test A.Tests/A.Tests.csproj -m:1', 'dotnet test B.Tests/B.Tests.csproj -m:1']);
     expect(r.json.checks.proposed.find((c) => c.id === 'unit-tests-b-tests')?.reason).toBe('documented in AGENTS.md line 1, in place of dotnet test B.Tests/B.Tests.csproj -m:1 from the manifests; -m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe');
+  });
+
+  it('reads a bare tool name in prose as a mention, not as a command in place of the derived one', async () => {
+    const pyproject = '[project]\nname = "acme"\n\n[tool.ruff]\nline-length = 100\n\n[tool.mypy]\nstrict = true\n';
+    const r = await init(repoWith({ 'pyproject.toml': pyproject, 'AGENTS.md': 'We lint with `ruff` and type-check with `mypy`.\n' }), ['ruff', 'mypy']);
+    expect(r.checks.lint?.command).toEqual(['ruff', 'check', '.']);
+    expect(r.checks.typecheck?.command).toEqual(['mypy', '.']);
+    const go = await init(repoWith({ 'go.mod': 'module acme.test/app\n\ngo 1.22\n', 'AGENTS.md': 'Run `go test` before pushing.\n' }), ['go']);
+    expect(go.checks['unit-tests']?.command).toEqual(['go', 'test', './...']);
+  });
+
+  it('does not propose a documented clippy command where clippy is not installed', async () => {
+    const r = await init(repoWith({ 'Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\n', 'AGENTS.md': 'Lint with `cargo clippy --all-targets -- -D warnings`.\n' }), ['cargo'], { clippy: false });
+    expect(r.ids).not.toContain('lint');
+    expect(r.json.checks.not_proposed.map((n) => n.reason)).toEqual([expect.stringContaining('cargo clippy is not installed')]);
   });
 
   it('does not read AGENTS.override.md, and says so', async () => {

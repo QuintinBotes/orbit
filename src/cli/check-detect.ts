@@ -123,9 +123,11 @@ export function documentedCommands(repo: string, files: readonly string[]): { re
       const candidates = fenced ? [lineText.replace(/\s+#.*$/, '')] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!);
       for (const raw of candidates) {
         const cmd = raw.trim().replace(/^\$\s+/, '');
-        if (cmd === '' || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
+        // No shell syntax, and no control character that could hide the real command in init's terminal output.
+        if (cmd === '' || /[|&;<>$`'"(){}\\*?\x00-\x08\x0b-\x1f\x7f]/.test(cmd)) continue;
         const argv = cmd.split(/\s+/);
-        if (argv.some((a) => SETUP_WORDS.has(a))) continue;
+        // A bare tool name (`ruff`, `mypy`) is a mention in prose, not a command: it has no subcommand or target.
+        if (argv.length < 2 || argv.some((a) => SETUP_WORDS.has(a))) continue;
         const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv[0]!) ? TOOL_ECOSYSTEM[argv[0]!] : undefined;
         if (ecosystem === undefined) continue;
         const words = new Set(argv.flatMap((a) => a.toLowerCase().split(':')));
@@ -413,14 +415,18 @@ export async function detectChecks(input: DetectInput): Promise<CheckProposal> {
       out.skip(d.ecosystem, `${d.source} documents ${d.command.join(' ')}, but ${tool} was not found on PATH`);
       continue;
     }
-    taken.add(key);
     const drafts = groups.find(([e]) => e === d.ecosystem)![1];
+    // rustDrafts proposes clippy only where the component is installed, and says so where it is not.
+    if (d.command.includes('clippy') && !drafts.some((x) => x.category === 'lint')) continue;
     // The check sandbox needs one MSBuild node, as for the derived .NET commands; unchanged for every other tool.
     const command = d.ecosystem === 'dotnet' ? withOneMsbuildNode(d.command) : d.command;
     const same = drafts.flatMap((x, j) => (x.category === d.category ? [j] : []));
     // Several drafts of one kind are per target (.NET without one solution): replace the one whose target it names.
     const i = same.length === 1 ? same[0]! : (same.find((j) => drafts[j]!.command.every((w) => w.startsWith('-') || command.includes(w))) ?? -1);
     const derived = i >= 0 ? drafts[i]! : null;
+    // The leading part of the derived command (`go test` of `go test ./...`) adds nothing and would drop its targets.
+    if (derived && command.length < derived.command.length && command.every((w, k) => derived.command[k] === w)) continue;
+    taken.add(key);
     const draft: Draft = {
       name: derived?.name ?? DRAFT_NAME[d.category],
       command,

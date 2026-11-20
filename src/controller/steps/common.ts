@@ -333,8 +333,9 @@ export const REPO_INSTRUCTIONS_EVENT = 'repo.instructions-read';
  */
 export function repoInstructions(ctx: RunContext): RepoInstruction[] {
   const file = join(ctx.runDir, REPO_INSTRUCTIONS_FILE);
-  const saved = readJsonIfExists<{ files: (RepoInstruction & { sha256: string })[] }>(file);
-  if (saved) return saved.files.map(({ path, content }) => ({ path, content }));
+  const saved = readJsonIfExists<{ revision: string | null; files: (RepoInstruction & { sha256: string })[] }>(file);
+  // A rebase onto a moved base branch changes the base revision: read the files again there.
+  if (saved && saved.revision === ctx.run.baseRevision) return saved.files.map(({ path, content }) => ({ path, content }));
   const base = ctx.run.baseRevision;
   const files = base === null ? [] : REPO_INSTRUCTION_FILES.flatMap((path) => {
     try {

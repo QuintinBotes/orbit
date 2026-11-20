@@ -748,7 +748,8 @@ a tool init knows (`npm`, `pnpm`, `yarn`, `npx`, `dotnet`, `pytest`, `python`,
 redirection, quote, variable or leading `NAME=value`), and names a check
 (`test`, `vitest`, `pytest`, `lint`, `clippy`, `vet`, `typecheck`, `tsc`,
 `mypy`, `build`), and sets up nothing (`install`, `add`, `ci`, `sync` and the
-like mean it is no check). It takes the place of the command derived from the
+like mean it is no check). A tool name alone (`ruff`, `mypy`) is a mention, not
+a command. It takes the place of the command derived from the
 manifests for the same ecosystem and kind of check (for .NET projects without
 one solution, the one for the project it names), or is added when the manifests
 give none; the first one documented wins, so `AGENTS.md` comes before

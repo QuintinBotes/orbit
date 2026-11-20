@@ -61142,7 +61142,7 @@ function assertContract(ctx) {
 function repoInstructions(ctx) {
   const file = join61(ctx.runDir, REPO_INSTRUCTIONS_FILE);
   const saved = readJsonIfExists(file);
-  if (saved) return saved.files.map(({ path, content }) => ({ path, content }));
+  if (saved && saved.revision === ctx.run.baseRevision) return saved.files.map(({ path, content }) => ({ path, content }));
   const base = ctx.run.baseRevision;
   const files = base === null ? [] : REPO_INSTRUCTION_FILES.flatMap((path) => {
     try {
@@ -72621,9 +72621,9 @@ function documentedCommands(repo, files) {
       const candidates = fenced2 ? [lineText.replace(/\s+#.*$/, "")] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
       for (const raw of candidates) {
         const cmd = raw.trim().replace(/^\$\s+/, "");
-        if (cmd === "" || /[|&;<>$`'"(){}\\*?]/.test(cmd)) continue;
+        if (cmd === "" || /[|&;<>$`'"(){}\\*?\x00-\x08\x0b-\x1f\x7f]/.test(cmd)) continue;
         const argv2 = cmd.split(/\s+/);
-        if (argv2.some((a) => SETUP_WORDS.has(a))) continue;
+        if (argv2.length < 2 || argv2.some((a) => SETUP_WORDS.has(a))) continue;
         const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv2[0]) ? TOOL_ECOSYSTEM[argv2[0]] : void 0;
         if (ecosystem === void 0) continue;
         const words2 = new Set(argv2.flatMap((a) => a.toLowerCase().split(":")));
@@ -72866,12 +72866,14 @@ async function detectChecks(input) {
       out.skip(d.ecosystem, `${d.source} documents ${d.command.join(" ")}, but ${tool} was not found on PATH`);
       continue;
     }
-    taken.add(key2);
     const drafts = groups.find(([e]) => e === d.ecosystem)[1];
+    if (d.command.includes("clippy") && !drafts.some((x) => x.category === "lint")) continue;
     const command = d.ecosystem === "dotnet" ? withOneMsbuildNode(d.command) : d.command;
     const same2 = drafts.flatMap((x, j) => x.category === d.category ? [j] : []);
     const i = same2.length === 1 ? same2[0] : same2.find((j) => drafts[j].command.every((w) => w.startsWith("-") || command.includes(w))) ?? -1;
     const derived = i >= 0 ? drafts[i] : null;
+    if (derived && command.length < derived.command.length && command.every((w, k) => derived.command[k] === w)) continue;
+    taken.add(key2);
     const draft = {
       name: derived?.name ?? DRAFT_NAME[d.category],
       command,

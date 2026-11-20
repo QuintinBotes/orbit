@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OrbitError } from '../../../src/core/errors.ts';
@@ -23,6 +24,8 @@ import {
   outcomeForError,
   policySummary,
   progress,
+  REPO_INSTRUCTIONS_EVENT,
+  repoInstructions,
   retryAfterHintMs,
   retryWait,
   safePoint,
@@ -35,6 +38,31 @@ let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 const events = (type: string): { data_json: string | null }[] => lab.db.all('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', lab.runId, type);
+
+describe('repoInstructions (issue #178, FR-001)', () => {
+  it('reads AGENTS.md, then CLAUDE.md, at the base revision once, and again once a rebase moves the base', () => {
+    lab = makeUnitLab();
+    const ctx = lab.ctx();
+    const git = (...args: string[]): string => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: lab.repo, encoding: 'utf8' }).trim();
+    git('init', '-q');
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'old rule\n');
+    writeFileSync(join(lab.repo, 'CLAUDE.md'), 'keep it pure\n');
+    git('add', 'AGENTS.md', 'CLAUDE.md');
+    git('commit', '-qm', 'one');
+    const first = git('rev-parse', 'HEAD');
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'new rule\n');
+    git('commit', '-qam', 'two');
+    const second = git('rev-parse', 'HEAD');
+
+    Object.assign(ctx.run, { baseRevision: first });
+    expect(repoInstructions(ctx)).toEqual([{ path: 'AGENTS.md', content: 'old rule\n' }, { path: 'CLAUDE.md', content: 'keep it pure\n' }]);
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'uncommitted\n');
+    expect(repoInstructions(ctx)[0]).toEqual({ path: 'AGENTS.md', content: 'old rule\n' });
+    Object.assign(ctx.run, { baseRevision: second });
+    expect(repoInstructions(ctx)[0]).toEqual({ path: 'AGENTS.md', content: 'new rule\n' });
+    expect(events(REPO_INSTRUCTIONS_EVENT).map((e) => JSON.parse(e.data_json!) as unknown)).toEqual([{ files: ['AGENTS.md', 'CLAUDE.md'], revision: first }, { files: ['AGENTS.md', 'CLAUDE.md'], revision: second }]);
+  });
+});
 
 describe('move, progress, note, decide', () => {
   it('moves the run, reports DONE for a terminal target and MOVED otherwise, and applies the patch and data', () => {
