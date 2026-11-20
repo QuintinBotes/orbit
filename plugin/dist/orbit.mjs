@@ -35703,13 +35703,13 @@ async function buildRepoMap(repoRoot, rev, opts = {}) {
   const listed3 = parseLsTree(await gitBuf(repoRoot, ["ls-tree", "-r", "-l", "-z", "--full-tree", tree]));
   const attrs = parseCheckAttr(await gitBuf(repoRoot, ["check-attr", "--source", tree, "-z", "--stdin", "linguist-generated"], listed3.map((e) => e.path).join("\0")));
   const previous = dir === null ? /* @__PURE__ */ new Map() : newestBlobs(dir);
-  const wanted = [...new Set(listed3.filter((e) => readable(e.path, e.size) && !previous.has(e.blob)).map((e) => e.blob))];
+  const wanted = [...new Set(listed3.filter((e) => readable(e.path, e.size) && !previous.has(blobKey(e))).map((e) => e.blob))];
   const texts = wanted.length === 0 ? /* @__PURE__ */ new Map() : parseBatch(await gitBuf(repoRoot, ["cat-file", "--batch"], `${wanted.join("\n")}
 `));
   let reused = 0;
   const files = listed3.map((e) => {
     const attr = attrs.has(e.path);
-    const known = previous.get(e.blob);
+    const known = previous.get(blobKey(e));
     if (known) {
       if (readable(e.path, e.size)) reused++;
       return { ...e, attr, marker: known.marker, facts: known.facts };
@@ -35883,6 +35883,10 @@ function normalizePath(p) {
 function readable(path, size) {
   return size <= MAX_PARSE_BYTES && (languageOf(path) !== null || /(^|\/)(go\.mod|Cargo\.toml)$|\.(cs|fs|vb)proj$/i.test(path));
 }
+function blobKey(e) {
+  const reader = readable(e.path, e.size) ? languageOf(e.path) ?? posix5.basename(e.path).replace(/^.*\.(cs|fs|vb)proj$/i, "proj") : "";
+  return `${e.blob} ${reader}`;
+}
 function factsOf(path, text2) {
   const lang = languageOf(path);
   if (lang !== null) return importSpecifiers(lang, text2);
@@ -35970,7 +35974,7 @@ function newestBlobs(dir) {
   try {
     const newest = cachedFiles(dir)[0];
     const s = newest ? readJsonIfExists(join25(dir, newest)) : null;
-    if (s?.schema === SCHEMA && Array.isArray(s.files)) for (const f of s.files) out.set(f.blob, { marker: f.marker, facts: f.facts });
+    if (s?.schema === SCHEMA && Array.isArray(s.files)) for (const f of s.files) out.set(blobKey(f), { marker: f.marker, facts: f.facts });
   } catch {
   }
   return out;
@@ -35999,7 +36003,7 @@ var init_map2 = __esm({
     SCHEMA = "orbit.repomap/1";
     MAX_PARSE_BYTES = 1024 * 1024;
     KEEP_CACHED = 32;
-    GENERATED_HEADER = /@generated\b|\bDO NOT EDIT\b/;
+    GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)\s*@generated\b|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
     LIST_MAX = 12;
   }
 });
@@ -73807,9 +73811,9 @@ knowledge:
 # Repository map (orbit map build|query): files, generated files, tests,
 # imports and check paths of a tree, built from git without a model. The
 # scope gate leaves generated files (linguist-generated in .gitattributes, or
-# an @generated or DO NOT EDIT header) out of changed_lines, and a review
-# finding filed as missing-test is refuted when the map links a test to its
-# file. Those uses are always on.
+# a generated header in a source file up to 1 MiB) out of changed_lines, and a
+# review finding filed as missing-test is refuted when the map links a test to
+# its file. Those uses are always on.
 repo_map:
   # Give the planner and the reviewer the map's slice for the files a goal
   # names. Off until a full benchmark shows it helps.

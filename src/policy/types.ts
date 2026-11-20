@@ -204,7 +204,7 @@ export interface ProviderConfig {
   review_reasoning_effort?: string;
 }
 
-/** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */
+/** The repository map's prompt slice (#175); the map's deterministic uses take no settings. */
 export interface RepoMapConfig {
   /** Give the planner and the reviewer the map's slice for the files a goal names. Off until a full benchmark shows it helps. */
   prompt_slice: boolean;
@@ -214,6 +214,7 @@ export interface RepoMapConfig {
   prompt_slice_min_files: number;
 }
 
+/** Where Orbit tells a person that a run ended or needs an answer, and whether comments may answer (ADR 0008). */
 export interface NotificationsConfig {
   /** Linux notify-send only; skipped silently on macOS and where notify-send is missing. */
   desktop: boolean;

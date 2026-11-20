@@ -50,7 +50,11 @@ const SCHEMA = 'orbit.repomap/1';
 /** Larger files are listed, not read: a source that size is generated or vendored, and its imports are not worth the time. */
 const MAX_PARSE_BYTES = 1024 * 1024;
 const KEEP_CACHED = 32;
-const GENERATED_HEADER = /@generated\b|\bDO NOT EDIT\b/;
+/**
+ * A generated header: a comment line that opens with `@generated`, or one line that names both the generator's work and
+ * DO NOT EDIT. A comment that only mentions a marker (as the top of this file does) is authored code.
+ */
+const GENERATED_HEADER = /^\s*(?:\/\/|#|\/?\*+)\s*@generated\b|(?:[Gg]enerated|GENERATED)\b[^\n]*\bDO NOT EDIT\b|\bDO NOT EDIT\b[^\n]*(?:[Gg]enerated|GENERATED)\b/m;
 
 /** One tracked file as stored: what the tree and the blob say, before anything is resolved against the tree. */
 interface Entry {
@@ -81,12 +85,12 @@ export async function buildRepoMap(repoRoot: string, rev: string, opts: { checks
   const listed = parseLsTree(await gitBuf(repoRoot, ['ls-tree', '-r', '-l', '-z', '--full-tree', tree]));
   const attrs = parseCheckAttr(await gitBuf(repoRoot, ['check-attr', '--source', tree, '-z', '--stdin', 'linguist-generated'], listed.map((e) => e.path).join('\0')));
   const previous = dir === null ? new Map<string, Pick<Entry, 'marker' | 'facts'>>() : newestBlobs(dir);
-  const wanted = [...new Set(listed.filter((e) => readable(e.path, e.size) && !previous.has(e.blob)).map((e) => e.blob))];
+  const wanted = [...new Set(listed.filter((e) => readable(e.path, e.size) && !previous.has(blobKey(e))).map((e) => e.blob))];
   const texts = wanted.length === 0 ? new Map<string, string>() : parseBatch(await gitBuf(repoRoot, ['cat-file', '--batch'], `${wanted.join('\n')}\n`));
   let reused = 0;
   const files: Entry[] = listed.map((e) => {
     const attr = attrs.has(e.path);
-    const known = previous.get(e.blob);
+    const known = previous.get(blobKey(e));
     if (known) {
       if (readable(e.path, e.size)) reused++;
       return { ...e, attr, marker: known.marker, facts: known.facts };
@@ -301,6 +305,12 @@ function readable(path: string, size: number): boolean {
   return size <= MAX_PARSE_BYTES && (languageOf(path) !== null || /(^|\/)(go\.mod|Cargo\.toml)$|\.(cs|fs|vb)proj$/i.test(path));
 }
 
+/** A blob and the reader its path gives it: what is read from a blob depends on both, so the cache reuses it by both. */
+function blobKey(e: Pick<Entry, 'path' | 'blob' | 'size'>): string {
+  const reader = readable(e.path, e.size) ? (languageOf(e.path) ?? posix.basename(e.path).replace(/^.*\.(cs|fs|vb)proj$/i, 'proj')) : '';
+  return `${e.blob} ${reader}`;
+}
+
 function factsOf(path: string, text: string): string[] {
   const lang = languageOf(path);
   if (lang !== null) return importSpecifiers(lang, text);
@@ -395,13 +405,13 @@ function readStored(path: string, tree: string): Stored | null {
   }
 }
 
-/** What the newest cached map read from each blob, for an incremental build. */
+/** What the newest cached map read from each blob, by blobKey, for an incremental build. */
 function newestBlobs(dir: string): Map<string, Pick<Entry, 'marker' | 'facts'>> {
   const out = new Map<string, Pick<Entry, 'marker' | 'facts'>>();
   try {
     const newest = cachedFiles(dir)[0];
     const s = newest ? readJsonIfExists<Stored>(join(dir, newest)) : null;
-    if (s?.schema === SCHEMA && Array.isArray(s.files)) for (const f of s.files) out.set(f.blob, { marker: f.marker, facts: f.facts });
+    if (s?.schema === SCHEMA && Array.isArray(s.files)) for (const f of s.files) out.set(blobKey(f), { marker: f.marker, facts: f.facts });
   } catch {
     /* a full build */
   }
