@@ -550,6 +550,16 @@ describe('SandboxRuntimeIsolation.available', () => {
     expect(status).toEqual({ ok: false, detail: 'srt 0.0.78 could not start a sandboxed command (exit 1: sandbox_apply: Operation not permitted)' });
   });
 
+  it("names Ubuntu's AppArmor profile for bubblewrap when it leaves srt's seccomp helper no capabilities (#181)", async () => {
+    const r = root();
+    // srt 0.0.78's message on GitHub's ubuntu-26.04 image (20261116.202), AppArmor as installed.
+    const message = 'apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted; caller must provide CAP_SYS_ADMIN): Permission denied';
+    const { bin, srt, settingsDir } = fakeHost(r, `if [ "$1" = "--version" ]; then echo 0.0.78; exit 0; fi\necho "${message}" >&2; exit 1`);
+    const status = await new SandboxRuntimeIsolation({ srtPath: srt, pathEnv: bin, platform: 'linux', settingsDir }).available();
+    expect(status.ok).toBe(false);
+    expect(status.detail).toBe(`srt 0.0.78 could not start a sandboxed command (exit 1: ${message}); AppArmor's bwrap-userns-restrict profile, the default on Ubuntu 26.04, leaves the processes bubblewrap starts no capabilities in their user namespace, and srt needs them to block Unix sockets`);
+  });
+
   it('fails within the probe deadline when srt hangs', async () => {
     const r = root();
     const { bin, srt, settingsDir } = fakeHost(r, 'sleep 30');
