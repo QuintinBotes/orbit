@@ -183,7 +183,7 @@ function unknownCommand(words: readonly string[]): UsageError {
  * could run `orbit decide`, `resume --force` or `learn eval` from its shell
  * would be authorizing its own decisions.
  */
-const WORKER_SAFE = new Set(['status', 'timeline', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats']);
+const WORKER_SAFE = new Set(['status', 'timeline', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats', 'map query']);
 
 function inWorker(env: Readonly<Record<string, string | undefined>>): boolean {
   return env.ORBIT_WORKER === '1' || Boolean(env.ORBIT_POLICY_HASH) || Boolean(env.ORBIT_POLICY_PATH);

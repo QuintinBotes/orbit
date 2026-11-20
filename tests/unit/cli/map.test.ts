@@ -49,6 +49,17 @@ describe('orbit map build and orbit map query (#175 FR-001, FR-005)', () => {
     expect(json.results[0].files.map((f: { path: string }) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
+  it('a worker may run map query as a tool, but not map build (#175 FR-005)', async () => {
+    labWith(FILES);
+    const env = { ...process.env, ...GIT_ENV, ORBIT_WORKER: '1' };
+    const q = await lab.cli(['map', 'query', 'src/b.ts'], { env });
+    expect(q.code, q.err).toBe(0);
+    expect(q.out).toContain('tests:       tests/b.test.ts');
+    const b = await lab.cli(['map', 'build'], { env });
+    expect(b.code).toBe(4);
+    expect(b.err).toMatch(/worker/i);
+  });
+
   it('exits NOT_FOUND for a path the tree does not have', async () => {
     labWith(FILES);
     const r = await lab.cli(['map', 'query', 'src/nope.ts']);

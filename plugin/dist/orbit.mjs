@@ -77643,7 +77643,7 @@ var init_cli = __esm({
       { name: "policy show", summary: "the frozen policy a run acts under, verified against its hash", usage: "orbit policy show <run-id> [--json]", run: policyShowCommand }
     ];
     HIDDEN = ["shim", "hook", "check-runner"];
-    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "timeline", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats"]);
+    WORKER_SAFE = /* @__PURE__ */ new Set(["status", "timeline", "logs", "report", "questions", "policy show", "models list", "learn list", "learn show", "stats", "map query"]);
   }
 });
 
