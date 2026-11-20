@@ -956,10 +956,13 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     for (const [work, model] of Object.entries(c.routing.overrides)) {
       if (!modelPermitted(model, c.routing.allowed_models)) problems.push(`routing.overrides.${work}: "${model}" is not permitted by routing.allowed_models`);
     }
-    (c.routing.implementers ?? []).forEach((id, i) => {
+    const implementers = c.routing.implementers ?? [];
+    implementers.forEach((id, i) => {
       const family = providerFamily(id);
       if (family === null || (family === 'claude' && id !== 'claude')) problems.push(`routing.implementers[${i}]: "${id}" is not claude or a codex or muse provider`);
       else if (!Object.hasOwn(c.providers, id)) problems.push(`routing.implementers[${i}]: "${id}" is not defined under providers`);
+      // A partner always goes before the Claude ladder, so one listed after claude would not mean what the order says.
+      else if (family !== 'claude' && implementers.slice(0, i).includes('claude')) problems.push(`routing.implementers[${i}]: "${id}" comes after claude; list partners first (Claude is always the fallback)`);
     });
   },
   function retentionPatterns(c, problems) {

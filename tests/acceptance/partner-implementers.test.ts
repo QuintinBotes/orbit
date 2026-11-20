@@ -152,7 +152,11 @@ describe.skipIf(!READY)('acceptance: partner implementers (issue #176)', () => {
   }, 300_000);
 
   it('edge case: a partner out of quota is skipped for the rest of the run, classed credentials, and the attempt goes on with Claude at no extra attempt', async () => {
-    const l = lab(implementers('codex'));
+    const l = lab((c) => {
+      implementers('codex')(c);
+      // Codex counts as having implemented (below), so no reviewer is independent; a same-provider review may stand.
+      c.review = { providers: ['codex'], when_unavailable: 'claude', block_unresolved_high_impact_findings: true, security: c.review.security } as OrbitConfig['review'];
+    });
     writeScenario(l, scenario({ implementer: [{ outcome: 'quota' }, GOOD_IMPLEMENTATION()] }));
     const run = startLabRun(l, GOAL);
     const done = await drive(l, run.id);
@@ -170,8 +174,12 @@ describe.skipIf(!READY)('acceptance: partner implementers (issue #176)', () => {
     expect(routeOf(l, run.id, 'implement:1~codex')?.provider).toBe('claude');
     // The attempt's outcome is Claude's; the partner's quota is charged to no candidate.
     expect(outcomes(l, run.id)).toEqual([{ provider: 'claude', outcome: 'verified', attempt_key: 'attempt:1' }]);
-    // Codex reviews Claude's work independently: the quota failure wrote nothing.
-    expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['codex']);
+    // FR-003, failing closed: a partner session that ended on its quota or login counts as implementing, since it may
+    // have edited the worktree before failing part way through a turn. So Codex does not review the tree as
+    // independent; Claude reviews in a separate session, not independent.
+    const sel = listDecisions(l.db(), run.id, { kind: 'review.select' }).at(-1)!.data as Extract<ReviewerSelection, { decision: 'SELECT' }>;
+    expect(sel).toMatchObject({ decision: 'SELECT', provider: 'claude', independent: false });
+    expect(listReviews(l.db(), run.id).map((r) => r.provider)).toEqual(['claude']);
     assertRunInvariants(l, run.id);
   }, 240_000);
 

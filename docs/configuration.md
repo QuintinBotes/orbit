@@ -506,7 +506,8 @@ skipped", and `when_unavailable` decides as for any review that is not
 independent.
 
 A reviewer that is selected but then fails at run time (a timeout, a non-zero
-exit, or a malformed answer once its regenerations are used) is recorded with
+exit, a malformed answer once its regenerations are used, or a used-up
+allowance, at once) is recorded with
 the reason as a `review.reviewer-failed` decision, and the selection runs again
 without it: the next listed reviewer reviews under its own name, and with none
 left `review.when_unavailable` applies. The final report's `Reviewer:` line
@@ -1345,7 +1346,8 @@ every other setting.
 [ADR 0022](decisions/0022-partner-implementers.md)). The default, `[claude]`,
 keeps partner implementers off: they stay off until a full benchmark shows they
 help. Each entry is `claude` or a Codex or Muse provider defined under
-`providers`; with `[codex, claude]` an attempt goes to Codex on
+`providers`, partners before `claude` (a partner listed after it is a config
+error); with `[codex, claude]` an attempt goes to Codex on
 `providers.codex.model` and `providers.codex.reasoning_effort`, in its own
 writable worktree, and Claude's verification decides whether its candidate is
 kept. Claude is always the fallback: once two of a partner's candidates in a

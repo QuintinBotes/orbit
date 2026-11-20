@@ -84,8 +84,8 @@ the same gates afterwards.
 
 Independence is computed per run from who implemented: a reviewer counts as
 independent only when its family differs from every provider whose
-implementer session ran in the run (one that failed its login at once wrote
-nothing), and Claude is an independent reviewer of a partner's work even
+implementer session ran in the run (one whose quota or login failed counts
+too, since it may have edited the worktree part way through a turn), and Claude is an independent reviewer of a partner's work even
 though `review.providers` lists only Codex and Muse.
 
 A change is risky when the planning assessment classes it `complex`. A risky

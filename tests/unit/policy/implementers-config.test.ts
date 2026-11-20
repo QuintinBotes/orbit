@@ -36,4 +36,10 @@ describe('routing.implementers (FR-001)', () => {
     expect(problems(`${BASE}routing:\n  implementers: [claude, muse]\n`)).toMatch(/routing\.implementers\[1\]: "muse" is not defined under providers/);
     expect(problems(`${BASE}routing:\n  implementers: []\n`)).toMatch(/routing\.implementers/);
   });
+
+  it('refuses a partner listed after claude: the list is a preference order and Claude, always the fallback, comes last', () => {
+    const codex = 'providers:\n  codex: {command: codex, data_policy_eligible: true, model: gpt-6-astra}\n';
+    expect(problems(`${BASE}${codex}routing:\n  implementers: [claude, codex]\n`)).toMatch(/routing\.implementers\[1\]: "codex" comes after claude/);
+    expect(problems(`${BASE}${codex}routing:\n  implementers: [codex]\n`)).toBe('');
+  });
 });

@@ -22618,10 +22618,12 @@ var init_config = __esm({
         for (const [work, model] of Object.entries(c.routing.overrides)) {
           if (!modelPermitted(model, c.routing.allowed_models)) problems.push(`routing.overrides.${work}: "${model}" is not permitted by routing.allowed_models`);
         }
-        (c.routing.implementers ?? []).forEach((id, i) => {
+        const implementers = c.routing.implementers ?? [];
+        implementers.forEach((id, i) => {
           const family = providerFamily(id);
           if (family === null || family === "claude" && id !== "claude") problems.push(`routing.implementers[${i}]: "${id}" is not claude or a codex or muse provider`);
           else if (!Object.hasOwn(c.providers, id)) problems.push(`routing.implementers[${i}]: "${id}" is not defined under providers`);
+          else if (family !== "claude" && implementers.slice(0, i).includes("claude")) problems.push(`routing.implementers[${i}]: "${id}" comes after claude; list partners first (Claude is always the fallback)`);
         });
       },
       function retentionPatterns(c, problems) {
@@ -61456,6 +61458,7 @@ async function scheduleTransientRetry(ctx, failed) {
   return null;
 }
 async function handleWorkerFailure(ctx, failed, opts) {
+  if (failed.status === "auth_failed" && failed.reason === "quota" && opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   if (failed.status === "auth_failed") return { retry: false, result: await blockOnAuth(ctx, failed.provider, "auth_failed", failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === "cancelled") {
@@ -67579,7 +67582,7 @@ function fallbackSelection(ctx, env, failed) {
   return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === "complex", registry: ctx.deps.registry, failed });
 }
 function runImplementers(ctx) {
-  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).filter((w) => w.resultStatus !== "auth_failed").map((w) => w.provider))];
+  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).map((w) => w.provider))];
 }
 function lastImplementerModel(ctx) {
   return listWorkers(ctx.db, { runId: ctx.run.id, role: "implementer" }).at(-1)?.model ?? null;

@@ -1738,9 +1738,12 @@ function fallbackSelection(ctx: RunContext, env: Awaited<ReturnType<typeof check
   return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex', registry: ctx.deps.registry, failed });
 }
 
-/** Every provider whose implementer session ran in this run (FR-003); one whose login or quota failed at once wrote nothing. */
+/**
+ * Every provider whose implementer session ran in this run (FR-003). One whose quota or login failed counts too: it may
+ * have edited the worktree before failing part way through a turn, and the next session carried on from those edits.
+ */
 function runImplementers(ctx: RunContext): string[] {
-  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).filter((w) => w.resultStatus !== 'auth_failed').map((w) => w.provider))];
+  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).map((w) => w.provider))];
 }
 
 function lastImplementerModel(ctx: RunContext): string | null {
