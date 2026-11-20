@@ -109,6 +109,16 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | Difficult task with evidence-backed escalation | `demo-shapes.test.ts` | demo 2 |
 | UI task: fails browser checks, repairs, independent review, draft PR | `ui.test.ts` | scenario 17 (and demo run 3) |
 
+### The benchmark's lab tier (issue #172)
+
+`orbit bench --tier lab` runs the lab scenarios of `src/bench/scenarios.ts`, one per fixed issue; CI runs all of them in the "Lab bench" step. These tests run a few through the command.
+
+| Scenario | File | Test |
+|---|---|---|
+| User Story 1.1: each scenario reports pass or fail, failure class, attempts and simulated spend; two runs give the same scorecard | `bench-lab.test.ts` | User Story 1, scenario 1 and its independent test: ... |
+| User Story 1.2: a scenario whose fixed outcome no longer holds fails the command, named with its issue | `bench-lab.test.ts` | User Story 1, scenario 2: ... |
+| User Story 3.1: `--without diagnosis` shows pass rate and spend with and without the stage | `bench-lab.test.ts` | User Story 3, scenario 1: ... |
+
 ## Helpers
 
 - `helpers/lab.ts`: the lab (template copy of the demo app, bare remote,
