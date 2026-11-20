@@ -34,6 +34,11 @@ scenario's `auth.loggedIn` is false.
 A fake finds its role from the title of the output schema it is given
 (`--json-schema` for Claude, the `--output-schema` file for Codex and Muse):
 planner, implementer, verifier (diagnosis), reviewer, inquisitor, curator.
+A reviewer session that runs one of the proof checks before delivery (issue
+#200; its prompt has the line `Orbit proof check: criterion audit`,
+`... conformance` or `... artifacts`) takes its steps from the scenario's
+`auditor`, `conformance` or `artifacts` list when there is one, and from
+`reviewer` otherwise.
 
 ### Environment
 

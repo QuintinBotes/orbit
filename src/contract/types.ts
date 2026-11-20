@@ -19,7 +19,21 @@ export interface AcceptanceCriterion {
   ui?: boolean;
   /** Check ids whose passing result counts as evidence for this criterion. */
   check_ids?: string[];
+  /** How the criterion is proven (absent: change). See CriterionKind. */
+  kind?: CriterionKind;
+  /**
+   * The criterion's mapped tests (FR-004 of issue #200): repository paths of test files, each run alone by its check's
+   * `tests_command`. Absent on a contract written before the mapping existed, whose fail-before stays per check (ADR 0014).
+   */
+  tests?: string[];
 }
+
+/**
+ * change: proven by mapped tests that fail on the base revision and pass on the candidate. keep: behaviour that must
+ * still hold, proven by mapped tests that pass on both. person: a person's decision, approval or merge, never proven by
+ * a test and reported as waiting on that person (ADR 0014, addendum of issue #200).
+ */
+export type CriterionKind = 'change' | 'keep' | 'person';
 
 export interface ContractAssumption {
   id: string;

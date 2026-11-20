@@ -1584,13 +1584,18 @@ function reviewBrief(ctx: RunContext, d: Disposition, validation: string | null,
  * medium: at the CLI's own default a review answered in tens of reasoning tokens with no tool call); a snapshot written
  * before the key existed keeps the selection's effort.
  */
-function reviewEffort(ctx: RunContext, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>): string | null {
+export function reviewEffort(ctx: RunContext, sel: Extract<ReviewerSelection, { decision: 'SELECT' }>): string | null {
   return ctx.snapshot.config.providers[sel.provider]?.review_reasoning_effort ?? sel.effort;
 }
 
 /** The reviewer selection recorded for this run, the latest that selected a reviewer. */
 function recordedSelection(ctx: RunContext): Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined {
   return listDecisions(ctx.db, ctx.run.id, { kind: 'review.select' }).map((d) => d.data as ReviewerSelection | null).filter((d): d is Extract<ReviewerSelection, { decision: 'SELECT' }> => d?.decision === 'SELECT').at(-1);
+}
+
+/** The reviewer the run's review selected, whose fresh sessions run the proof checks before delivery (controller/proof.ts). */
+export function recordedReviewer(ctx: RunContext): Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined {
+  return recordedSelection(ctx);
 }
 
 /** Whether the recorded reviewer selection was independent; true when none was recorded. */

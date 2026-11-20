@@ -60,7 +60,7 @@ const plannerExample: PlannerOutput = {
   objective: 'Add CSV export for filtered reports.',
   current_behavior: [{ statement: 'Reports paginate server side.', evidence: ['apps/api/reports.ts:40'] }],
   criteria: [
-    { key: 'all', statement: 'Export every matching record.', mandatory: true, ui: false, proof: ['multi-page fixture'], check_ids: ['reports-tests'], changes: [{ path: 'apps/api/export.ts', summary: 'stream pages' }] },
+    { key: 'all', statement: 'Export every matching record.', mandatory: true, ui: false, proof: ['multi-page fixture'], check_ids: ['reports-tests'], changes: [{ path: 'apps/api/export.ts', summary: 'stream pages' }], kind: 'change', tests: ['apps/api/export.test.ts'] },
   ],
   expected_changed_files: [{ path: 'apps/api/export.ts', change: 'add', reason: 'endpoint' }],
   allowed_paths: ['apps/api/**'],

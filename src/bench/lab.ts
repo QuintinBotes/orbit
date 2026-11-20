@@ -105,6 +105,8 @@ export class LabHost {
     c.knowledge = { ...c.knowledge, enabled: false };
     // No scenario starts the app; the address only has to be well formed, and nothing is bound for it.
     if (c.ui) c.ui.environment.base_url = `http://127.0.0.1:${41000 + index}`;
+    // The scenarios judge fail-before per check and script no proof sessions (issue #200); a scenario sets `required` itself.
+    c.verification = { ...c.verification, fail_before: 'advisory' };
     tweak?.(c);
     return c;
   }

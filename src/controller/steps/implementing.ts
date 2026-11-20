@@ -48,7 +48,7 @@ export const WORKER_ENDED_EVENT = 'implementation.worker-ended';
 /** A repair brief waiting for an attempt, as DIAGNOSING, REVIEWING or AWAITING_CI wrote it. */
 export interface StoredBrief {
   attempt: number;
-  source: 'diagnosis' | 'review' | 'ci' | 'scope' | 'failures';
+  source: 'diagnosis' | 'review' | 'ci' | 'scope' | 'proof' | 'failures';
   fingerprint: string | null;
   brief: object;
   /** Paths of evidence the brief cites, relative to the run directory. */
