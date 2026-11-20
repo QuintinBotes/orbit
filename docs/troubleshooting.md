@@ -328,10 +328,15 @@ of these settings is the fix, `orbit doctor` prints the same note.
   information: Access to the path '.../.gitmodules' is denied". A worker's build met
   the same protection in its worktree, in both worker tiers, so the .NET toolchain
   profile sets `EnableSourceControlManagerQueries=false` for every process that uses
-  .NET, workers included. A check's own `env`
+  .NET, workers included. `MSBUILDUSESERVER=0` keeps the MSBuild server off
+  (#180): from .NET SDK 11 every build goes through it by default, a process that
+  outlives the build and binds a named pipe under `/tmp`, which the sandbox
+  refuses as it refuses a worker node's (below). The server died recording that,
+  `dotnet` printed "MSBuild server unavailable ... Falling back to an in-process
+  build", and the runner failed the check on the record. A check's own `env`
   overrides any of them. With that, `dotnet build` of a console project runs
-  under `srt` (verified with the .NET 9 SDK on macOS, and the .NET 9 and 10 SDKs on
-  Linux). Three cases remain yours to decide:
+  under `srt` (verified with the .NET 9 SDK on macOS, the .NET 9 and 10 SDKs on
+  Linux, and the .NET 10 and 11 SDKs in CI). Three cases remain yours to decide:
   code under test that creates a named `Mutex` or `Semaphore` needs
   `/tmp/.dotnet` and cannot run under `sandbox-runtime` (change the code to use
   an unnamed one or a file lock in `TMPDIR`; `isolation.provider: container`

@@ -62,6 +62,10 @@ describe('checkEnv: the .NET SDK variables', () => {
     expect(checkEnv(checkDef('build', { env: { EnableSourceControlManagerQueries: 'true' } }), paths, '/host').EnableSourceControlManagerQueries).toBe('true');
   });
 
+  it('turns off the MSBuild server, on by default from SDK 11, whose named pipe under /tmp the sandbox refuses (#180)', () => {
+    expect(checkEnv(checkDef('build'), paths, '/host').MSBUILDUSESERVER).toBe('0');
+  });
+
   // Orbit never changes a check's processor count (ADR 0009, addendum): DOTNET_PROCESSOR_COUNT reaches the test host,
   // where xunit before 2.8 deadlocks a test that blocks on async code, and it changes how a repository's tests run. A
   // dotnet check pins one MSBuild node in its own command (-m:1) instead.
