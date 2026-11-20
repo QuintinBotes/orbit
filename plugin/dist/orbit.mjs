@@ -16889,49 +16889,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize3(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative13, options, skipNormalization) {
+    function resolveComponent(base, relative14, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse6(serialize3(base, options), options);
-        relative13 = parse6(serialize3(relative13, options), options);
+        relative14 = parse6(serialize3(relative14, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative13.scheme) {
-        target.scheme = relative13.scheme;
-        target.userinfo = relative13.userinfo;
-        target.host = relative13.host;
-        target.port = relative13.port;
-        target.path = removeDotSegments(relative13.path || "");
-        target.query = relative13.query;
+      if (!options.tolerant && relative14.scheme) {
+        target.scheme = relative14.scheme;
+        target.userinfo = relative14.userinfo;
+        target.host = relative14.host;
+        target.port = relative14.port;
+        target.path = removeDotSegments(relative14.path || "");
+        target.query = relative14.query;
       } else {
-        if (relative13.userinfo !== void 0 || relative13.host !== void 0 || relative13.port !== void 0) {
-          target.userinfo = relative13.userinfo;
-          target.host = relative13.host;
-          target.port = relative13.port;
-          target.path = removeDotSegments(relative13.path || "");
-          target.query = relative13.query;
+        if (relative14.userinfo !== void 0 || relative14.host !== void 0 || relative14.port !== void 0) {
+          target.userinfo = relative14.userinfo;
+          target.host = relative14.host;
+          target.port = relative14.port;
+          target.path = removeDotSegments(relative14.path || "");
+          target.query = relative14.query;
         } else {
-          if (!relative13.path) {
+          if (!relative14.path) {
             target.path = base.path;
-            if (relative13.query !== void 0) {
-              target.query = relative13.query;
+            if (relative14.query !== void 0) {
+              target.query = relative14.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative13.path[0] === "/") {
-              target.path = removeDotSegments(relative13.path);
+            if (relative14.path[0] === "/") {
+              target.path = removeDotSegments(relative14.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative13.path;
+                target.path = "/" + relative14.path;
               } else if (!base.path) {
-                target.path = relative13.path;
+                target.path = relative14.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative13.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative14.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative13.query;
+            target.query = relative14.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -16939,7 +16939,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative13.fragment;
+      target.fragment = relative14.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -22202,8 +22202,8 @@ function normalizeReview(raw, merged, problems) {
   }
 }
 function normalizeContainer(merged) {
-  const iso2 = merged.isolation;
-  if (isPlainObject(iso2) && isPlainObject(iso2.container)) iso2.container = { ...CONTAINER_DEFAULTS, ...iso2.container };
+  const iso3 = merged.isolation;
+  if (isPlainObject(iso3) && isPlainObject(iso3.container)) iso3.container = { ...CONTAINER_DEFAULTS, ...iso3.container };
 }
 function fillNullDefaults(obj3, path, keys) {
   let list3 = obj3;
@@ -24581,6 +24581,24 @@ var init_schema4 = __esm({
   ALTER TABLE route_outcomes ADD COLUMN evidence_ref TEXT;
   CREATE UNIQUE INDEX route_outcomes_attempt ON route_outcomes(run_id, attempt_key) WHERE attempt_key IS NOT NULL;
   CREATE INDEX route_outcomes_class ON route_outcomes(work_kind, difficulty, ts);
+  `,
+      /* 9: what orbit retro proposed and what the person decided, so a proposal is not made twice (issue #174) */
+      `
+  -- One row per proposal, keyed by its kind, failure class and signature (never by wording). A row is written when a
+  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'declined'). Any row, whatever
+  -- its decision, keeps the same proposal from being made again. run_ids_json lists the runs that motivated it.
+  CREATE TABLE retro_decisions (
+    key            TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL,
+    failure_class  TEXT NOT NULL,
+    signature      TEXT NOT NULL,
+    decision       TEXT NOT NULL,
+    run_ids_json   TEXT NOT NULL,
+    draft_path     TEXT,
+    decided_by     TEXT,
+    created_at     INTEGER NOT NULL,
+    decided_at     INTEGER
+  ) STRICT;
   `
     ];
   }
@@ -24855,6 +24873,11 @@ function isFailureClass(value) {
 function failureClassOrNull(value) {
   return isFailureClass(value) ? value : null;
 }
+function classMarkers(cls, outcome) {
+  const found = (MARKER_KEYS[cls] ?? []).filter((k) => has(outcome, k));
+  if (cls === "gate-deadlock" && Array.isArray(outcome.gate)) found.push("gate");
+  return found;
+}
 function markedCauses(outcome, data) {
   const causes = [];
   const add = (c, when) => {
@@ -24864,18 +24887,13 @@ function markedCauses(outcome, data) {
   const counter = typeof data.counter === "string" ? data.counter : typeof outcome.limit === "string" ? outcome.limit : null;
   const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === "string" ? outcome.frozen_policy.setting : "";
   const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === "string" ? outcome.gate.gate : null;
-  add("credentials", isRecord(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || has(outcome, "git_credentials") || code2 === "credentials");
-  add("check-misconfigured", has(outcome, "misconfigured_checks") || /^checks\./.test(frozen));
-  add(
-    "environment",
-    has(outcome, "environment_failures") || has(outcome, "incomplete_checks") || has(outcome, "worker_refusal") || has(outcome, "dirty") || has(outcome, "reviewer") || has(outcome, "release_error") || has(outcome, "release_pending") || has(outcome, "base_conflict") || gate === "environment" || gate === "baseline" || code2 === "environment" || counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)
-  );
-  add("scope", has(outcome, "scope") || has(outcome, "ungranted") || has(outcome, "largest_changes") || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code2 === "scope");
-  add("review-dispute", has(outcome, "open_findings") || has(outcome, "held_findings") || counter === "review_rounds");
-  add(
-    "gate-deadlock",
-    has(outcome, "questions") || has(outcome, "blocked_criteria") || has(outcome, "authorization") || has(outcome, "ledger_entries") || has(outcome, "ledger_declined") || has(outcome, "fail_before") || has(outcome, "review_gate") || has(outcome, "shallow_reviews") || Array.isArray(outcome.gate)
-  );
+  const marked = (c) => classMarkers(c, outcome).length > 0;
+  add("credentials", isRecord(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || marked("credentials") || code2 === "credentials");
+  add("check-misconfigured", marked("check-misconfigured") || /^checks\./.test(frozen));
+  add("environment", marked("environment") || gate === "environment" || gate === "baseline" || code2 === "environment" || counter !== null && INFRASTRUCTURE_COUNTERS.has(counter));
+  add("scope", marked("scope") || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code2 === "scope");
+  add("review-dispute", marked("review-dispute") || counter === "review_rounds");
+  add("gate-deadlock", marked("gate-deadlock"));
   return causes;
 }
 function classifyRunEnd(e) {
@@ -24912,7 +24930,7 @@ function parseOutcome(json3) {
     return null;
   }
 }
-var FAILURE_CLASSES, TURN_CAP_EVENT, CODE_CLASS, INFRASTRUCTURE_COUNTERS, isRecord, has;
+var FAILURE_CLASSES, TURN_CAP_EVENT, CODE_CLASS, INFRASTRUCTURE_COUNTERS, isRecord, has, MARKER_KEYS;
 var init_failure_class = __esm({
   "src/controller/failure-class.ts"() {
     "use strict";
@@ -24937,6 +24955,14 @@ var init_failure_class = __esm({
       const v = o[key2];
       if (v === void 0 || v === null || v === false || v === "") return false;
       return Array.isArray(v) ? v.length > 0 : true;
+    };
+    MARKER_KEYS = {
+      credentials: ["git_credentials"],
+      "check-misconfigured": ["misconfigured_checks"],
+      environment: ["environment_failures", "incomplete_checks", "worker_refusal", "dirty", "reviewer", "release_error", "release_pending", "base_conflict"],
+      scope: ["scope", "ungranted", "largest_changes"],
+      "review-dispute": ["open_findings", "held_findings"],
+      "gate-deadlock": ["questions", "blocked_criteria", "authorization", "ledger_entries", "ledger_declined", "fail_before", "review_gate", "shallow_reviews"]
     };
   }
 });
@@ -39976,11 +40002,11 @@ function classifyDeniedFolderProgram(input, folders) {
   if (showsCodeFailure(text2)) return null;
   const notFoundExit = exit === 127 || MAKE_RELAYED_127.test(text2);
   const located = (named2) => {
-    const relative13 = !isAbsolute15(named2) && named2.includes("/");
-    const at = isAbsolute15(named2) ? named2 : relative13 ? folders.relative?.(named2) ?? null : folders.onPath(named2);
+    const relative14 = !isAbsolute15(named2) && named2.includes("/");
+    const at = isAbsolute15(named2) ? named2 : relative14 ? folders.relative?.(named2) ?? null : folders.onPath(named2);
     const where2 = at === null ? null : folders.holding(at);
     if (where2 === null) return null;
-    return relative13 ? `links to "${at}" in ${where2}` : `lies in ${where2}`;
+    return relative14 ? `links to "${at}" in ${where2}` : `lies in ${where2}`;
   };
   const failure = (signal, cause, line3, program) => ({
     checkId: input.checkId,
@@ -43275,28 +43301,28 @@ function failureExcerpt(text2, max = PROBE_EXCERPT_CHARS) {
   if (text2.length <= max) return text2;
   const lines = text2.replace(/\n$/, "").split("\n").map((l) => l.length > EXCERPT_LINE_CHARS ? `${l.slice(0, EXCERPT_LINE_CHARS)}...` : l);
   const hits = lines.flatMap((l, i) => reportsFailure(l) ? [i] : []);
-  const render2 = (keep2) => renderKept(lines, [...keep2].sort((a, b) => a - b));
+  const render3 = (keep2) => renderKept(lines, [...keep2].sort((a, b) => a - b));
   const room = max - 60;
   if (hits.length === 0) {
     const keep2 = /* @__PURE__ */ new Set();
-    for (let i = 0; i < lines.length && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room / 2; i++) keep2.add(i);
-    for (let i = lines.length - 1; i >= 0 && !keep2.has(i) && render2(/* @__PURE__ */ new Set([...keep2, i])).length <= room; i--) keep2.add(i);
-    return render2(keep2);
+    for (let i = 0; i < lines.length && render3(/* @__PURE__ */ new Set([...keep2, i])).length <= room / 2; i++) keep2.add(i);
+    for (let i = lines.length - 1; i >= 0 && !keep2.has(i) && render3(/* @__PURE__ */ new Set([...keep2, i])).length <= room; i--) keep2.add(i);
+    return render3(keep2);
   }
   const keep = /* @__PURE__ */ new Set();
   let shown3 = 0;
-  while (shown3 < hits.length && render2(/* @__PURE__ */ new Set([...keep, hits[shown3]])).length <= room / 2) keep.add(hits[shown3++]);
+  while (shown3 < hits.length && render3(/* @__PURE__ */ new Set([...keep, hits[shown3]])).length <= room / 2) keep.add(hits[shown3++]);
   for (const h of hits.slice(0, shown3)) {
     for (const [before, after] of EXCERPT_CONTEXT) {
       const wider = new Set(keep);
       for (let i = Math.max(0, h - before); i <= Math.min(lines.length - 1, h + after); i++) wider.add(i);
-      if (render2(wider).length > room) continue;
+      if (render3(wider).length > room) continue;
       for (const i of wider) keep.add(i);
       break;
     }
   }
   const left = hits.length - shown3;
-  return left === 0 ? render2(keep) : `${render2(keep)}[orbit: ${left} more failing ${left === 1 ? "line" : "lines"} not shown]
+  return left === 0 ? render3(keep) : `${render3(keep)}[orbit: ${left} more failing ${left === 1 ? "line" : "lines"} not shown]
 `;
 }
 function probeLogExcerpt(path, max = PROBE_EXCERPT_CHARS) {
@@ -53289,7 +53315,7 @@ function evaluateEvidence(input) {
     return r === "" || r.startsWith("..") || isAbsolute20(r) ? p : r.split(sep12).join("/");
   };
   const logName = (p) => artifactPath(p, basename16(p));
-  const evidenceFor = (checkId) => {
+  const evidenceFor2 = (checkId) => {
     const r = valid.get(checkId);
     const journeys = ui.get(checkId);
     if (!r && !journeys) return { outcome: "missing", artifacts: [] };
@@ -53315,7 +53341,7 @@ function evaluateEvidence(input) {
     if (def.mandatory && (def.kind === "command" || input.uiRequired === true)) mandatory.add(id);
   }
   for (const id of [...mandatory].sort()) {
-    const e = evidenceFor(id);
+    const e = evidenceFor2(id);
     switch (e.outcome) {
       case "passed":
       case "excepted":
@@ -53418,7 +53444,7 @@ function evaluateEvidence(input) {
       status2 = "unverified";
       why = c.ui === true ? "no browser check is mapped to this UI criterion" : "no executed check is mapped to this criterion; prose proof alone is not evidence";
     } else {
-      const ev = ids.map((id) => ({ id, e: evidenceFor(id) }));
+      const ev = ids.map((id) => ({ id, e: evidenceFor2(id) }));
       artifacts = [...new Set(ev.flatMap((x) => x.e.artifacts))];
       const bad = ev.filter((x) => x.e.outcome === "failed");
       const err = ev.filter((x) => x.e.outcome === "error");
@@ -54093,7 +54119,7 @@ function raiseBaselineExceptionQuestions(ctx, input) {
     const excerpt3 = f.excerpt === null ? null : redact(f.excerpt);
     const proposal = baselineExceptionProposal({ checkId: f.checkId, fingerprint, excerpt: excerpt3 });
     const qid = baselineQuestionId(ctx.runId, f.checkId, fingerprint);
-    const question = findQuestion(ctx.db, qid) ?? insertQuestion(
+    const question2 = findQuestion(ctx.db, qid) ?? insertQuestion(
       ctx.db,
       {
         id: qid,
@@ -54137,7 +54163,7 @@ function raiseBaselineExceptionQuestions(ctx, input) {
       ctx.clock,
       { actor: "controller" }
     );
-    out.raised.push({ question, request: request2 });
+    out.raised.push({ question: question2, request: request2 });
   }
   return out;
 }
@@ -54464,7 +54490,7 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
     const settled = all.find((o) => o.status === "answered" && settles(o, q));
     if (settled) return { question: settled, created: false, classification };
     const r = (text2) => redact(text2.trim());
-    const question = insertQuestion(
+    const question2 = insertQuestion(
       db,
       {
         runId,
@@ -54482,7 +54508,7 @@ function persistQuestion(db, runId, mode, q, clock, opts = {}) {
       clock,
       opts.actor ?? "controller"
     );
-    return { question, created: true, classification };
+    return { question: question2, created: true, classification };
   });
 }
 function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
@@ -54492,27 +54518,27 @@ function answerQuestion(db, runDir2, id, answer, by, clock, opts = {}) {
   const existing = getQuestion(db, id);
   const matched = existing.options.find((o) => norm(o.label) === norm(text2)) ?? existing.options.find((o) => norm(o.description) === norm(text2)) ?? null;
   const stored = matched ? matched.label : text2;
-  const question = setQuestionAnswer(db, id, stored, by.trim(), clock);
+  const question2 = setQuestionAnswer(db, id, stored, by.trim(), clock);
   const decision = recordDecision(
     db,
     runDir2,
     {
       id: answerDecisionId(id),
-      runId: question.runId,
+      runId: question2.runId,
       kind: ANSWER_DECISION_KIND,
-      summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question.question}`,
-      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question.material, affected: question.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
+      summary: `${matched ? `chose "${matched.label}"` : "answered"}: ${question2.question}`,
+      data: { question_id: id, answer: stored, chosen_option: matched?.label ?? null, free_text: matched === null, answered_by: by.trim(), material: question2.material, affected: question2.affected, ...opts.provenance ? { provenance: opts.provenance } : {} }
     },
     clock,
     { actor: by.trim() }
   );
   let baselineException = null;
   try {
-    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question.runId, runDir: runDir2 }, { questionId: id }).outcomes[0] ?? null;
+    baselineException = applyBaselineExceptionAnswers({ db, clock, runId: question2.runId, runDir: runDir2 }, { questionId: id }).outcomes[0] ?? null;
   } catch (err) {
-    db.tx(() => appendEvent(db, question.runId, "baseline-exception.apply-failed", by.trim(), { question_id: id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
+    db.tx(() => appendEvent(db, question2.runId, "baseline-exception.apply-failed", by.trim(), { question_id: id, error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, clock.now()));
   }
-  return { question, decision, chosenOption: matched, unblocks: question.affected, baselineException };
+  return { question: question2, decision, chosenOption: matched, unblocks: question2.affected, baselineException };
 }
 function openQuestions(db, runId) {
   return listQuestions(db, runId, { status: "open" });
@@ -55708,9 +55734,9 @@ function questionForUncovered(ctx, trigger, blocked, continuing, contract) {
   ];
   const evidence = [`${trigger.kind} inquiry: ${trigger.summary}`, ...trigger.evidence.filter((e) => e.trim().length >= 10)].map((e) => e.slice(0, 500)).slice(0, 6);
   const rest = continuing.filter((c) => !ids.includes(c));
-  for (const question of texts) {
+  for (const question2 of texts) {
     const draft = {
-      question,
+      question: question2,
       changes: ["implementation", "proof"],
       evidence,
       options: [
@@ -55850,7 +55876,7 @@ async function runInquisition(input) {
     decisions: committed.decisions,
     impactRegister,
     questions: committed.questions,
-    rejectedQuestions: [...(absorbed?.rejectedQuestions ?? []).map(({ question, problems }) => ({ question, problems })), ...committed.rejectedQuestions],
+    rejectedQuestions: [...(absorbed?.rejectedQuestions ?? []).map(({ question: question2, problems }) => ({ question: question2, problems })), ...committed.rejectedQuestions],
     ledger: committed.ledger,
     experiments: allExperiments,
     amendments: committed.amendments,
@@ -58319,22 +58345,22 @@ function environmentGate(input) {
     reasons.push(`isolation is unavailable: ${input.isolation.error}`);
     code2 = "ISOLATION_UNAVAILABLE";
   } else {
-    const iso2 = input.isolation;
-    evidence.push(`isolation ${iso2.kind}: ${iso2.detail}`);
-    if (iso2.kind === "none") {
+    const iso3 = input.isolation;
+    evidence.push(`isolation ${iso3.kind}: ${iso3.detail}`);
+    if (iso3.kind === "none") {
       if (unattended && input.snapshot.config.isolation.allow_unisolated !== true) {
         reasons.push(`unattended ${input.mode} execution needs isolation; the policy selects none`);
         code2 = "ISOLATION_UNAVAILABLE";
       } else {
         notes.push("no isolation: workers and checks run without an OS sandbox and without network egress controls (isolation.allow_unisolated)");
       }
-    } else if (!iso2.available) {
-      reasons.push(`${iso2.kind} isolation is unavailable: ${iso2.detail}`);
+    } else if (!iso3.available) {
+      reasons.push(`${iso3.kind} isolation is unavailable: ${iso3.detail}`);
       code2 = "ISOLATION_UNAVAILABLE";
-    } else if (iso2.kind === "sandbox-runtime") {
+    } else if (iso3.kind === "sandbox-runtime") {
       notes.push("sandbox-runtime limits filesystem writes and network egress but not CPU, memory or process count");
     }
-    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso2.kind);
+    const unenforced = resourceLimitRefusals(input.snapshot.config.isolation, iso3.kind);
     if (unenforced.length > 0) {
       reasons.push(...unenforced.map((u) => `${u}; ${RESOURCE_LIMIT_FIX}`));
       code2 ??= "ISOLATION_UNAVAILABLE";
@@ -61809,9 +61835,9 @@ async function checkEnvironment(ctx) {
   }
   let isolation;
   try {
-    const iso2 = ctx.isolation();
-    const status2 = await iso2.available();
-    isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+    const iso3 = ctx.isolation();
+    const status2 = await iso3.available();
+    isolation = { kind: iso3.kind, available: status2.ok, detail: status2.detail };
   } catch (err) {
     isolation = { error: messageOf3(err) };
   }
@@ -64720,13 +64746,13 @@ function ask3(ctx, op, text2, request2) {
     affected_work: [text2.affected],
     unblocked_work: []
   };
-  const question = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
+  const question2 = persistQuestion(ctx.db, ctx.run.id, "risk-review", q, ctx.clock, { actor: ctx.ownerId }).question;
   const subject = request2.data.subject ?? request2.data.tree_hash;
-  const existing = requests2(ctx).some((r) => r.question_id === question.id && (r.subject ?? r.tree_hash) === subject);
+  const existing = requests2(ctx).some((r) => r.question_id === question2.id && (r.subject ?? r.tree_hash) === subject);
   if (!existing) {
-    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
+    decide2(ctx, { id: request2.id, kind: AUTHORIZATION_REQUEST_KIND, summary: request2.summary, data: { question_id: question2.id, op_key: op.key, operation: op.op, policy_denial: op.denial, ...request2.data } });
   }
-  return question;
+  return question2;
 }
 function scopeWithGrants(scope, granted) {
   const lockfile = granted.some((g) => g.op.kind === "dependency" && g.op.change === "change_lockfile");
@@ -71624,8 +71650,8 @@ async function checkScope(p) {
     )
   ];
 }
-function claudeWorkerTier(iso2, env) {
-  return iso2.available && iso2.provider?.kind === "sandbox-runtime" && claudeEnvCredential(env) ? "os-sandbox" : "claude-sandbox";
+function claudeWorkerTier(iso3, env) {
+  return iso3.available && iso3.provider?.kind === "sandbox-runtime" && claudeEnvCredential(env) ? "os-sandbox" : "claude-sandbox";
 }
 async function checkIsolation(p) {
   const { config, ctx } = p;
@@ -71668,13 +71694,13 @@ async function checkIsolation(p) {
   if (provider.kind === "none") return { check: warn2("isolation", "isolation", `no isolation: workers and checks run with the Orbit user's full permissions (isolation.allow_unisolated)`, "an isolation provider", "use sandbox-runtime or container", details), facts: { provider, available: true } };
   return { check: pass("isolation", "isolation", `${provider.kind}: ${flat(st.detail)}`, details), facts: { provider, available: true } };
 }
-async function checkProviders(p, iso2, registry) {
+async function checkProviders(p, iso3, registry) {
   const { config, ctx } = p;
   const checks = [];
   const facts = { capabilities: {}, credentials: {}, adapters: {} };
   let adapters;
   try {
-    adapters = createAdapters(config, { isolation: iso2.provider, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
+    adapters = createAdapters(config, { isolation: iso3.provider, baseEnv: toolEnv(ctx.env), clock: ctx.clock });
   } catch (err) {
     return { checks: [fail2("providers", "providers", errText(err, 240), "valid provider settings", "fix providers in .orbit/config.yaml")], facts };
   }
@@ -71724,7 +71750,7 @@ async function checkProviders(p, iso2, registry) {
     }
     if (kind === "claude") {
       const envCred = claudeEnvCredential(ctx.env);
-      if (claudeWorkerTier(iso2, ctx.env) === "os-sandbox") checks.push(pass(`${id}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
+      if (claudeWorkerTier(iso3, ctx.env) === "os-sandbox") checks.push(pass(`${id}.worker-tier`, "providers", `workers run in the os-sandbox tier (${envCred} is set, so the whole claude process is confined)`));
       else {
         const why = !envCred ? "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the environment (a keychain login is invisible inside srt)" : "sandbox-runtime isolation is not in use";
         checks.push(warn2(`${id}.worker-tier`, "providers", `workers run in the claude-sandbox tier: ${why}`, "an exported Claude credential plus sandbox-runtime for the strongest tier", "export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)", CLAUDE_SANDBOX_LIMITATIONS.map((l) => `limitation: ${l}`)));
@@ -71732,8 +71758,8 @@ async function checkProviders(p, iso2, registry) {
       const plugins = await workerPluginsCheck(id, adapters[id], config);
       if (plugins) checks.push(plugins);
     } else if (kind === "muse") {
-      checks.push(museTierCheck(id, config.providers[id], museEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
-    } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso2.available && iso2.provider?.kind === "sandbox-runtime", level));
+      checks.push(museTierCheck(id, config.providers[id], museEnvCredential(ctx.env), iso3.available && iso3.provider?.kind === "sandbox-runtime", level));
+    } else checks.push(codexTierCheck(id, config.providers[id].tier ?? "auto", codexEnvCredential(ctx.env), iso3.available && iso3.provider?.kind === "sandbox-runtime", level));
   }
   checks.push(reviewCheck(config, facts, registry));
   return { checks, facts };
@@ -74514,9 +74540,9 @@ async function environmentProblems(ctx, input) {
     const snapshot2 = { schema: "orbit.policy/1", run_id: "admission", created_at: new Date(ctx.clock.now()).toISOString(), repo_root: repo, config, effective_protected_paths: [], check_config_hashes: {} };
     let isolation;
     try {
-      const iso2 = deps.isolationFor ? deps.isolationFor(snapshot2, { id: "admission", mode: config.mode }) : getIsolation(config.isolation, { orbitInstallDir: deps.orbitInstallDir ?? orbitInstallDir(), mode: config.mode });
-      const status2 = await iso2.available();
-      isolation = { kind: iso2.kind, available: status2.ok, detail: status2.detail };
+      const iso3 = deps.isolationFor ? deps.isolationFor(snapshot2, { id: "admission", mode: config.mode }) : getIsolation(config.isolation, { orbitInstallDir: deps.orbitInstallDir ?? orbitInstallDir(), mode: config.mode });
+      const status2 = await iso3.available();
+      isolation = { kind: iso3.kind, available: status2.ok, detail: status2.detail };
     } catch (err) {
       isolation = { error: err instanceof Error ? err.message : String(err) };
     }
@@ -75468,6 +75494,200 @@ var init_queue = __esm({
   }
 });
 
+// src/observability/retro.ts
+import { createHash as createHash4 } from "node:crypto";
+function evidenceFor(db, row, cls) {
+  const outcome = parseOutcome(row.outcome_json) ?? {};
+  const markers = classMarkers(cls, outcome).map((m) => {
+    const v = m === "gate" ? outcome.gate : outcome[m];
+    return Array.isArray(v) ? `${m} (${v.length})` : m;
+  });
+  const steps = [];
+  for (const e of db.all("SELECT to_state FROM events WHERE run_id = ? AND to_state IS NOT NULL ORDER BY id LIMIT 500", row.id)) {
+    if (e.to_state && isRunState(e.to_state) && steps[steps.length - 1] !== e.to_state) steps.push(e.to_state);
+  }
+  const denials2 = db.all("SELECT DISTINCT json_extract(data_json, '$.rule') AS rule FROM decisions WHERE run_id = ? AND kind = 'policy.deny'", row.id).map((d) => d.rule).filter((r) => typeof r === "string" && RULE2.test(r)).sort();
+  return {
+    runId: row.id,
+    state: isRunState(row.state) ? row.state : WITHHELD,
+    failureClass: cls,
+    secondary: failureClassOrNull(row.failure_secondary),
+    orbitVersion: row.orbit_version && isOrbitVersion(row.orbit_version) ? row.orbit_version : "unknown",
+    endedAt: row.ended_at,
+    markers,
+    steps: steps.slice(-MAX_STEPS2),
+    denials: denials2
+  };
+}
+function signatureOf(ev) {
+  const names = [...new Set(ev.markers.map((m) => m.replace(/ \(\d+\)$/, "")))].sort();
+  const parts = [...names, ...ev.denials.map((r) => `denied:${r}`)];
+  return parts.length > 0 ? parts.join("+") : "unmarked";
+}
+function kindFor(cls, missingCheck2) {
+  if (ORBIT_FAULT_CLASSES.includes(cls)) return "issue-draft";
+  if (cls === "cancelled") return null;
+  if (cls === "review-dispute") return missingCheck2 ? "check" : "standard";
+  return "policy";
+}
+function proposalKey(kind, failureClass2, signature) {
+  return `${kind}:${failureClass2}:${signature}`;
+}
+function draftFileName(key2) {
+  const slug2 = key2.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  return `${slug2}-${createHash4("sha256").update(key2).digest("hex").slice(0, 8)}.md`;
+}
+function redactPaths(text2, roots = []) {
+  let out = text2;
+  const bare = [...new Set(roots.map((r) => r.replace(/[\\/]+$/, "")))].filter((x) => x.length > 1).sort((a, b) => b.length - a.length);
+  for (const r of bare) {
+    out = out.replace(new RegExp(`${escapeRegExp5(r)}(?![\\w@+-]|\\.\\w)((?:[\\\\/][^\\s)\`'"|]*)?)`, "g"), (_m, tail2) => tail2.length > 1 ? "<repo>/<path>" : "<repo>");
+  }
+  out = out.replace(/(?<![\w./-])~\/[^\s)`'"|]+/g, "<path>");
+  out = out.replace(/(?<![\w.:/-])\/(?:[\w.@+-]+\/)+[\w.@+-]*/g, "<path>");
+  out = out.replace(/\b[A-Za-z]:\\[^\s)`'"|]+/g, "<path>");
+  return out;
+}
+function proposedChange(kind, cls, signature, runs, check) {
+  if (kind === "issue-draft") return [`Which gate held the run is named by the markers above (\`${signature}\`). Expected: a run at a gate either opens it, or ends naming the one decision a person must make.`];
+  if (kind === "check" && check) {
+    return [
+      `Add the check \`${check.id}\` to the repository's Orbit configuration (.orbit/config.yaml), on a branch for review: command \`${check.command.join(" ")}\`, category ${check.category}, timeout ${check.timeout_seconds}s.`,
+      "The repository declares this check and its Orbit configuration does not run it, so what the reviewer kept finding reached review without a check to catch it first."
+    ];
+  }
+  if (kind === "standard") {
+    return [
+      `Read the open findings of these runs (\`orbit report ${safeId(runs[0].runId)}\`) and add the judgement they share as one line to the reviewer standards.`,
+      "The repository declares no check that its Orbit configuration does not already run, so this is a judgement call for the reviewer, not a check."
+    ];
+  }
+  const denied = runs[0].denials;
+  return [
+    `Change ${POLICY_HINT[cls] ?? "the policy setting behind this class"}.`,
+    ...denied.length > 0 ? ["", `The rule(s) ${denied.map((r) => `\`${r}\``).join(", ")} denied calls in every one of these runs: allow what was denied in .orbit/config.yaml if it is safe, or file an issue against Orbit if the denial is wrong.`] : []
+  ];
+}
+function render2(kind, failureClass2, signature, runs, check) {
+  const title2 = `${TITLE[kind]}${check ? ` ${check.id}` : ""}: runs ended in ${failureClass2} (${signature})`;
+  const listed3 = runs.slice(0, MAX_RUNS_LISTED);
+  const lines = [
+    `# ${title2}`,
+    "",
+    "## What happened",
+    "",
+    `${runs.length} run${runs.length === 1 ? "" : "s"} of one repository ended in failure class \`${failureClass2}\` with the same signature \`${signature}\`${kind === "issue-draft" ? ": the run was held at a gate that nothing could open, which is a fault in Orbit's gates or their messages, not in the task" : ""}.`,
+    "",
+    "## Runs",
+    "",
+    "| run | final state | class | secondary class | orbit version | ended | markers |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...listed3.map((r) => `| ${safeId(r.runId)} | ${r.state} | ${r.failureClass} | ${r.secondary ?? "-"} | ${r.orbitVersion} | ${iso2(r.endedAt)} | ${r.markers.length > 0 ? r.markers.join(", ") : "-"} |`),
+    ...runs.length > listed3.length ? ["", `(${runs.length - listed3.length} more run(s) not listed)`] : [],
+    "",
+    "## Step markers",
+    "",
+    ...listed3.map((r) => `- ${safeId(r.runId)}: ${r.steps.length > 0 ? r.steps.join(" > ") : "(no recorded transitions)"}`),
+    "",
+    "## Proposed change",
+    "",
+    ...proposedChange(kind, failureClass2, signature, runs, check),
+    "",
+    "## Privacy",
+    "",
+    "Drafted by `orbit retro` from run records only: ids, states, the failure class and the names of markers and policy rules. Paths, source code, goals, reasons and credentials are not included. Review this before sending.",
+    ""
+  ];
+  return { title: title2, body: lines.join("\n") };
+}
+function retroProposals(db, opts) {
+  const marks = TERMINAL2.map(() => "?").join(",");
+  const rows = db.all(
+    `SELECT id, state, failure_class, failure_secondary, orbit_version, ended_at, outcome_json FROM runs
+      WHERE state IN (${marks}) AND failure_class IS NOT NULL AND created_at >= ? ORDER BY created_at, id`,
+    ...TERMINAL2,
+    opts.since ?? 0
+  );
+  const missingCheck2 = opts.missingCheck ?? null;
+  const groups = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const cls = failureClassOrNull(row.failure_class);
+    const kind = cls === null ? null : kindFor(cls, missingCheck2);
+    if (cls === null || kind === null) continue;
+    const ev = evidenceFor(db, row, cls);
+    const signature = signatureOf(ev);
+    const key2 = proposalKey(kind, cls, signature);
+    const g = groups.get(key2) ?? { kind, cls, signature, runs: [] };
+    g.runs.push(ev);
+    groups.set(key2, g);
+  }
+  return [...groups].filter(([, g]) => g.runs.length >= (g.kind === "issue-draft" ? 1 : REPEATED)).map(([key2, g]) => {
+    const check = g.kind === "check" ? missingCheck2 : null;
+    const { title: title2, body } = render2(g.kind, g.cls, g.signature, g.runs, check);
+    return { kind: g.kind, failureClass: g.cls, signature: g.signature, key: key2, runs: g.runs, title: redact(redactPaths(title2, opts.roots)), body: redact(redactPaths(body, opts.roots)), check };
+  });
+}
+function toDecision(r) {
+  let ids = [];
+  try {
+    const v = JSON.parse(r.run_ids_json);
+    if (Array.isArray(v)) ids = v.filter((x) => typeof x === "string");
+  } catch {
+  }
+  return { key: r.key, kind: r.kind, failureClass: r.failure_class, signature: r.signature, decision: r.decision, runIds: ids, draftPath: r.draft_path, decidedBy: r.decided_by, createdAt: r.created_at, decidedAt: r.decided_at };
+}
+function findDecision(db, key2) {
+  const r = db.get("SELECT * FROM retro_decisions WHERE key = ?", key2);
+  return r ? toDecision(r) : null;
+}
+function recordProposal(db, p, draftPath, now) {
+  db.run(
+    `INSERT INTO retro_decisions (key, kind, failure_class, signature, decision, run_ids_json, draft_path, created_at) VALUES (?, ?, ?, ?, 'drafted', ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET run_ids_json = excluded.run_ids_json, draft_path = excluded.draft_path WHERE retro_decisions.decision = 'drafted'`,
+    p.key,
+    p.kind,
+    p.failureClass,
+    p.signature,
+    JSON.stringify(p.runs.map((r) => r.runId)),
+    draftPath,
+    now
+  );
+}
+function recordAnswer(db, key2, decision, by, now) {
+  db.run("UPDATE retro_decisions SET decision = ?, decided_by = ?, decided_at = ? WHERE key = ?", decision, by, now, key2);
+}
+var ORBIT_FAULT_CLASSES, REPEATED, TERMINAL2, RUN_ID4, RULE2, MAX_STEPS2, MAX_RUNS_LISTED, WITHHELD, safeId, POLICY_HINT, escapeRegExp5, iso2, TITLE;
+var init_retro = __esm({
+  "src/observability/retro.ts"() {
+    "use strict";
+    init_failure_class();
+    init_run_store();
+    init_run_states();
+    init_redact();
+    ORBIT_FAULT_CLASSES = ["gate-deadlock"];
+    REPEATED = 2;
+    TERMINAL2 = [...TERMINAL_STATES];
+    RUN_ID4 = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+    RULE2 = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
+    MAX_STEPS2 = 40;
+    MAX_RUNS_LISTED = 50;
+    WITHHELD = "[withheld]";
+    safeId = (id) => RUN_ID4.test(id) ? id : WITHHELD;
+    POLICY_HINT = {
+      "turn-cap": "scheduler.hard_limits.worker_turns_per_session: each of these sessions used every turn it had",
+      budget: "the budgets in scheduler.hard_limits: these runs ran out",
+      scope: "scope.allowed_paths or the change-size limits in scheduler.hard_limits",
+      environment: "the checks' environment (their env and network_hosts, the isolation provider) or the machine the checks run on",
+      "check-misconfigured": "the definition of the misconfigured check under checks",
+      credentials: "the credentials these runs need, which expired or were missing",
+      model: "routing: a stronger model or more effort for this kind of task"
+    };
+    escapeRegExp5 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    iso2 = (ms) => ms === null ? "-" : new Date(ms).toISOString();
+    TITLE = { "issue-draft": "Orbit fault", check: "Add a check", standard: "Reviewer standard", policy: "Policy change" };
+  }
+});
+
 // src/observability/metrics.ts
 function metricsFor(db, window = {}) {
   const from = window.from ?? null;
@@ -75684,7 +75904,7 @@ function escalationQuality(db, inWindow, params) {
       continue;
     }
     const run = db.get("SELECT state FROM runs WHERE id = ?", d.run_id);
-    const settled = run !== void 0 && TERMINAL2.includes(run.state);
+    const settled = run !== void 0 && TERMINAL3.includes(run.state);
     const before = db.get("SELECT id FROM candidates WHERE run_id = ? AND attempt < ? ORDER BY attempt DESC, seq DESC LIMIT 1", d.run_id, attempt);
     const prior = before ? fingerprintsOf(db, before.id) : /* @__PURE__ */ new Set();
     if (prior.size === 0) {
@@ -75722,11 +75942,11 @@ function duplicateFailures(db, inWindow, params) {
   return { ...rate(dups, total), distinct_fingerprints: rows.length, duplicates: dups };
 }
 function spendPerAccepted(db, where2, params, accepted, missing) {
-  const marks = TERMINAL2.map(() => "?").join(", ");
+  const marks = TERMINAL3.map(() => "?").join(", ");
   const rows = db.all(
     `SELECT cost_usd, cost_source FROM usage WHERE run_id IN (SELECT id FROM runs WHERE ${where2} AND state IN (${marks}))`,
     ...params,
-    ...TERMINAL2
+    ...TERMINAL3
   );
   let spend = 0;
   let unmeasured = 0;
@@ -75822,7 +76042,7 @@ function concurrencyOverhead(db, inWindow, params, missing) {
     overhead_ratio: w.n === 0 && waits.length === 0 ? null : ratioOf(waited, waited + active)
   };
 }
-var FINISHED_STATES, TERMINAL2, VERIFIED_UNDELIVERED, CANDIDATE_FAILURE_SOURCES, isEnded;
+var FINISHED_STATES, TERMINAL3, VERIFIED_UNDELIVERED, CANDIDATE_FAILURE_SOURCES, isEnded;
 var init_metrics = __esm({
   "src/observability/metrics.ts"() {
     "use strict";
@@ -75832,10 +76052,10 @@ var init_metrics = __esm({
     init_usage();
     init_run_store();
     FINISHED_STATES = ["SUCCEEDED", "EXHAUSTED", "IMPOSSIBLE", "BLOCKED"];
-    TERMINAL2 = ["SUCCEEDED", "BLOCKED", "EXHAUSTED", "IMPOSSIBLE", "CANCELLED"];
+    TERMINAL3 = ["SUCCEEDED", "BLOCKED", "EXHAUSTED", "IMPOSSIBLE", "CANCELLED"];
     VERIFIED_UNDELIVERED = "CASE WHEN state = 'BLOCKED' AND outcome_json IS NOT NULL AND json_valid(outcome_json) THEN COALESCE(json_type(outcome_json, '$.verified_candidate') = 'object', 0) ELSE 0 END";
     CANDIDATE_FAILURE_SOURCES = ["check", "worker", "ci"];
-    isEnded = (r) => TERMINAL2.includes(r.state);
+    isEnded = (r) => TERMINAL3.includes(r.state);
   }
 });
 
@@ -75948,6 +76168,220 @@ var init_stats = __esm({
       return m < 90 ? `${m.toFixed(1)}m` : `${(m / 60).toFixed(1)}h`;
     };
     n = (v) => v.toLocaleString("en-US");
+  }
+});
+
+// src/cli/commands/retro.ts
+import { mkdirSync as mkdirSync28, mkdtempSync as mkdtempSync11, readFileSync as readFileSync45, rmSync as rmSync22, writeFileSync as writeFileSync13 } from "node:fs";
+import { tmpdir as tmpdir16 } from "node:os";
+import { join as join92, relative as relative12 } from "node:path";
+import { createInterface } from "node:readline/promises";
+function terminalAsk(ctx, input = process.stdin, output = process.stderr) {
+  return async (question2) => {
+    if (!ctx.io.stdoutIsTty || input.isTTY !== true) return null;
+    const rl = createInterface({ input, output });
+    try {
+      const answer = await rl.question(`${question2} [y/N] `);
+      return /^\s*y(es)?\s*$/i.test(answer);
+    } finally {
+      rl.close();
+    }
+  };
+}
+function ghSend(ctx) {
+  return async ({ repo, title: title2, body, cwd }) => {
+    const env = {};
+    for (const k of ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "XDG_CONFIG_HOME"]) if (ctx.env[k] !== void 0) env[k] = ctx.env[k];
+    let res;
+    try {
+      res = await execCapture(["gh", "issue", "create", "--repo", repo, "--title", title2, "--body", body], { cwd, env, timeoutMs: 6e4 });
+    } catch (err) {
+      throw new OrbitError("PROVIDER_UNAVAILABLE", `could not run gh: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (res.exitCode !== 0) throw new OrbitError("PROVIDER_UNAVAILABLE", `gh issue create failed: ${flat(res.stderr).slice(0, 300)}`);
+    return res.stdout.trim().split("\n").pop() ?? "";
+  };
+}
+function withCheck(text2, check) {
+  const doc = parseDocument(text2);
+  const def = doc.createNode({ command: check.command, category: check.category, timeout_seconds: check.timeout_seconds });
+  const command = def.get("command", true);
+  if (command && typeof command === "object" && "flow" in command) command.flow = true;
+  const checks = doc.get("checks");
+  if (isMap(checks)) {
+    if (checks.has(check.id)) throw new OrbitError("CONFIG_INVALID", `the configuration already has a check named ${check.id}`);
+    checks.set(check.id, def);
+  } else if (checks === null || checks === void 0) {
+    doc.set("checks", doc.createNode({ [check.id]: def }));
+  } else {
+    throw new OrbitError("CONFIG_INVALID", "checks in the configuration is not a map");
+  }
+  const out = doc.toString();
+  parseConfig(out, { source: CONFIG_RELATIVE_PATH });
+  return out;
+}
+async function applyCheckOnBranch(ctx, repo, baseBranch, check) {
+  const branch = checkBranch(check);
+  const scratch = mkdtempSync11(join92(tmpdir16(), "orbit-retro-"));
+  const git6 = async (args, input) => {
+    const res = await execCapture(["git", ...args], { cwd: repo, env: gitEnv({ ...ctx.env, GIT_INDEX_FILE: join92(scratch, "index") }), timeoutMs: 3e4, ...input === void 0 ? {} : { input } });
+    if (res.exitCode !== 0) throw new OrbitError("GIT_FAILED", `git ${args[0]} failed: ${flat(res.stderr).slice(0, 300)}`);
+    return res.stdout.trim();
+  };
+  try {
+    const base = await git6(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]);
+    const text2 = await git6(["show", `${base}:${CONFIG_RELATIVE_PATH}`]).catch(() => readFileSync45(join92(repo, CONFIG_RELATIVE_PATH), "utf8"));
+    const blob2 = await git6(["hash-object", "-w", "--stdin"], withCheck(text2, check));
+    await git6(["read-tree", base]);
+    await git6(["update-index", "--add", "--cacheinfo", `100644,${blob2},${CONFIG_RELATIVE_PATH}`]);
+    const tree = await git6(["write-tree"]);
+    const commit = await git6(["commit-tree", tree, "-p", base, "-m", `Add the check ${check.id}, proposed by orbit retro`]);
+    await git6(["update-ref", `refs/heads/${branch}`, commit, ""]);
+    return { branch, commit };
+  } finally {
+    rmSync22(scratch, { recursive: true, force: true });
+  }
+}
+async function missingCheck(ctx, repo) {
+  let config;
+  try {
+    config = loadConfig(repo);
+  } catch {
+    return null;
+  }
+  const configured = new Set(Object.values(config.checks).map((c2) => c2.category ?? "test"));
+  const { proposed } = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
+  const c = proposed.find((p) => !configured.has(p.category) && !(p.id in config.checks));
+  return c ? { check: { id: c.id, command: c.command, category: c.category, timeout_seconds: c.timeout_seconds }, baseBranch: config.repository.base_branch } : null;
+}
+function question(p, draft, issueRepo) {
+  if (p.kind === "issue-draft") return `File the draft ${draft} as an issue in ${issueRepo} with gh? Nothing is sent without your yes.`;
+  if (p.kind === "check" && p.check) return `Add the check ${p.check.id} to ${CONFIG_RELATIVE_PATH} in a commit on the new branch ${checkBranch(p.check)}? The base branch and your checkout are not touched.`;
+  return `Accept the ${p.kind === "standard" ? "reviewer standard" : "policy change"} in ${draft}? Orbit changes nothing; you make the change.`;
+}
+async function retroCommand(args, ctx) {
+  return runRetro(args, ctx, { ask: terminalAsk(ctx), send: ghSend(ctx) });
+}
+async function runRetro(args, ctx, deps) {
+  args.expect(0);
+  const sinceText = args.str("since");
+  let since = null;
+  if (sinceText !== void 0) {
+    try {
+      since = parseWhen(sinceText, ctx.clock.now(), "since");
+    } catch (err) {
+      if (err instanceof UsageError) throw new UsageError(err.message, RETRO_USAGE);
+      throw err;
+    }
+  }
+  const issueRepo = args.str("issue-repo")?.trim() ?? DEFAULT_ISSUE_REPO;
+  if (!ISSUE_REPO_SHAPE.test(issueRepo)) throw new UsageError(`--issue-repo must look like owner/repo, got ${JSON.stringify(issueRepo)}`, RETRO_USAGE);
+  const wantJson = args.bool("json");
+  const repo = await resolveRepo(ctx, args.str("repo"));
+  const roots = [repo, ctx.homeDir];
+  const draftDir = join92(orbitDir(repo), ...DRAFT_DIR);
+  const declared = await missingCheck(ctx, repo);
+  const report2 = await withState(repo, async (db) => {
+    const out = { window: { since: since === null ? null : new Date(since).toISOString() }, proposals: [], already_decided: 0 };
+    for (const p of retroProposals(db, { since, roots, missingCheck: declared?.check ?? null })) {
+      const before = findDecision(db, p.key);
+      if (before && before.decision !== "drafted") {
+        out.already_decided++;
+        continue;
+      }
+      const draft = relative12(repo, join92(draftDir, draftFileName(p.key)));
+      try {
+        mkdirSync28(draftDir, { recursive: true });
+        writeFileSync13(join92(repo, draft), p.body, { encoding: "utf8", mode: 384 });
+      } catch (err) {
+        throw new OrbitError("INTERNAL", `cannot write the draft ${draft}: ${redactPaths(err instanceof Error ? err.message : String(err), roots)}`);
+      }
+      recordProposal(db, p, draft, ctx.clock.now());
+      const item = { kind: p.kind, failure_class: p.failureClass, signature: p.signature, title: p.title, runs: p.runs.map((r) => r.runId), draft, outcome: "drafted" };
+      out.proposals.push(item);
+      const yes = wantJson ? null : await deps.ask(question(p, draft, issueRepo));
+      if (yes === null) continue;
+      try {
+        let decision = "declined";
+        if (yes && p.kind === "issue-draft") {
+          item.issue_url = await deps.send({ repo: issueRepo, title: p.title, body: bodyWithoutTitle(p), cwd: repo });
+          decision = "sent";
+        } else if (yes && p.kind === "check" && p.check && declared) {
+          item.branch = (await applyCheckOnBranch(ctx, repo, declared.baseBranch, p.check)).branch;
+          decision = "applied";
+        } else if (yes) {
+          decision = "accepted";
+        }
+        recordAnswer(db, p.key, decision, ctx.user, ctx.clock.now());
+        item.outcome = decision;
+      } catch (err) {
+        item.outcome = "failed";
+        item.error = redactPaths(err instanceof Error ? err.message : String(err), roots);
+      }
+    }
+    return out;
+  });
+  if (wantJson) json(ctx.io, report2);
+  else renderRetro(ctx, report2, issueRepo);
+  return report2.proposals.some((p) => p.outcome === "failed") ? EXIT.FAILURE : EXIT.OK;
+}
+function bodyWithoutTitle(p) {
+  return p.body.replace(/^# [^\n]*\n+/, "");
+}
+function renderRetro(ctx, report2, issueRepo) {
+  const window = report2.window.since === null ? "all runs" : `runs created since ${report2.window.since}`;
+  if (report2.proposals.length === 0) {
+    line(ctx.io, `No proposals from ${window}: no repeated or Orbit-fault failure that is not already decided.${report2.already_decided > 0 ? ` (${report2.already_decided} proposal(s) were answered before and are not repeated.)` : ""}`);
+    return;
+  }
+  line(ctx.io, `${report2.proposals.length} proposal(s) from ${window}:`);
+  for (const p of report2.proposals) {
+    line(ctx.io);
+    line(ctx.io, `${KIND_LABEL[p.kind]}: ${p.title}`);
+    line(ctx.io, `  cites ${p.runs.length} run(s): ${p.runs.join(", ")}`);
+    line(ctx.io, `  draft file: ${p.draft} (paths redacted; review it before it goes anywhere)`);
+    if (p.outcome === "sent") line(ctx.io, `  sent to ${issueRepo}: ${p.issue_url ?? "(no url returned)"}`);
+    else if (p.outcome === "applied") line(ctx.io, `  added on branch ${p.branch}: review it and merge it as any change; the base branch is unchanged`);
+    else if (p.outcome === "accepted") line(ctx.io, "  accepted: Orbit changed nothing; make the change the draft names");
+    else if (p.outcome === "declined") line(ctx.io, `  declined: nothing was ${p.kind === "issue-draft" ? "sent" : "applied"}, and it will not be proposed again`);
+    else if (p.outcome === "failed") line(ctx.io, `  not ${p.kind === "issue-draft" ? "sent" : "applied"}: ${p.error ?? "failed"}; the draft is kept`);
+    else {
+      const how = p.kind === "issue-draft" ? `To file it yourself: gh issue create --repo ${issueRepo} --title "<title above>" --body-file ${p.draft}. ` : "";
+      line(ctx.io, `  nothing was ${p.kind === "issue-draft" ? "sent" : "applied"} (no one was asked: this is not an interactive terminal). ${how}Run orbit retro at a terminal to answer it.`);
+    }
+  }
+  if (report2.already_decided > 0) {
+    line(ctx.io);
+    line(ctx.io, `${report2.already_decided} proposal(s) were answered before and are not repeated.`);
+  }
+}
+var RETRO_USAGE, DEFAULT_ISSUE_REPO, RETRO_OPTIONS, DRAFT_DIR, checkBranch, ISSUE_REPO_SHAPE, KIND_LABEL;
+var init_retro2 = __esm({
+  "src/cli/commands/retro.ts"() {
+    "use strict";
+    init_browser();
+    init_exec();
+    init_errors();
+    init_git();
+    init_config();
+    init_retro();
+    init_start();
+    init_check_detect();
+    init_layout();
+    init_context();
+    init_exit();
+    init_io();
+    init_stats();
+    RETRO_USAGE = "orbit retro [--since <when>] [--issue-repo <owner/repo>] [--json]";
+    DEFAULT_ISSUE_REPO = "QuintinBotes/orbit";
+    RETRO_OPTIONS = {
+      since: { type: "string", valueName: "when", description: "only runs created at or after this time: an ISO date or time, or a span back from now such as 90m, 24h, 7d, 2w" },
+      "issue-repo": { type: "string", valueName: "owner/repo", description: `where an approved issue draft is filed with gh (default ${DEFAULT_ISSUE_REPO}); nothing is sent without your yes` }
+    };
+    DRAFT_DIR = ["runs", "retro-drafts"];
+    checkBranch = (check) => `orbit/retro/check-${check.id}`;
+    ISSUE_REPO_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
+    KIND_LABEL = { "issue-draft": "issue draft", check: "check", standard: "reviewer standard", policy: "policy change" };
   }
 });
 
@@ -76675,7 +77109,7 @@ var init_timeline2 = __esm({
 });
 
 // src/cli/commands/verify.ts
-import { dirname as dirname43, isAbsolute as isAbsolute31, join as join92, relative as relative12 } from "node:path";
+import { dirname as dirname43, isAbsolute as isAbsolute31, join as join93, relative as relative13 } from "node:path";
 function exitCodeForVerdict(verdict) {
   return verdict === "PASS" ? EXIT.OK : verdict === "FAIL" ? EXIT.VERIFY_FAILED : EXIT.VERIFY_INCOMPLETE;
 }
@@ -76726,7 +77160,7 @@ async function verifyCandidate(rc) {
   if (!rc.run.baseRevision) throw new OrbitError("TRANSITION_INVALID", `run ${rc.run.id} has no base revision; preflight did not finish`);
   const snapshot2 = rc.snapshot;
   const scope = cand.scope ?? await inspectScope({ repoRoot: rc.run.repoRoot, baseRev: rc.run.baseRevision, candidateRev: cand.commitSha, snapshot: snapshot2, contractAllowedPaths: contract.allowed_paths });
-  const checkoutDir = join92(runWorktreeRoot(rc), `verify-${cand.seq}`);
+  const checkoutDir = join93(runWorktreeRoot(rc), `verify-${cand.seq}`);
   await cleanupCandidateCheckout(rc.run.repoRoot, checkoutDir).catch(() => {
   });
   await materializeCandidate(rc.run.repoRoot, cand.commitSha, checkoutDir, { readOnly: false });
@@ -76751,8 +77185,8 @@ function print(ctx, repo, asJson, o, contractJson) {
   const statements = new Map(contract.acceptance_criteria.map((c) => [c.id, c]));
   const runDir2 = dirname43(o.run.policyPath);
   const rel = (given) => {
-    const p = isAbsolute31(given) ? given : join92(runDir2, given);
-    const r = relative12(repo, p);
+    const p = isAbsolute31(given) ? given : join93(runDir2, given);
+    const r = relative13(repo, p);
     return r.startsWith("..") || r === "" ? p : r;
   };
   const code2 = exitCodeForVerdict(o.report.verdict);
@@ -77007,6 +77441,7 @@ var init_cli = __esm({
     init_repair2();
     init_spec2();
     init_queue();
+    init_retro2();
     init_stats();
     init_status();
     init_timeline2();
@@ -77042,6 +77477,7 @@ var init_cli = __esm({
       { name: "verify", summary: "independent verification of a run's latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)", usage: "orbit verify [run-id] [--json]", run: verifyCommand },
       { name: "repair", summary: "repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure", usage: "orbit repair <run-id | failure description | -> [--foreground | --detach] [--mode <mode>] [--policy <path>]", options: REPAIR_OPTIONS, run: repairCommand },
       { name: "stats", summary: "the spec section 16 metrics for this repository's runs (success, cost, repair loops, time to green), optionally in a time window", usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+      { name: "retro", summary: "group finished runs by failure class and signature and propose a check, a reviewer standard, a policy change or an Orbit issue draft for each repeated failure; nothing is applied or sent without your yes", usage: RETRO_USAGE, options: RETRO_OPTIONS, run: retroCommand },
       { name: "release resolve", summary: "settle a deploy whose outcome is unknown: run the environment's verify_command, or record --deployed / --not-deployed", usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
       { name: "gc", summary: "apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days", usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
       { name: "notify test", summary: "send a test notification through the configured channels (desktop on Linux only, webhook, GitHub comment) and print each outcome", usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },

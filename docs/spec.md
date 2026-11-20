@@ -830,6 +830,25 @@ Track verified pass rate, false-pass rate from subsequent review, escalation qua
 
 Do not expose sensitive content in logs. Make missing usage measurements explicit.
 
+### Retro
+
+`orbit retro [--since <when>] [--issue-repo <owner/repo>] [--json]` looks back over the runs that ended and proposes what would have prevented the failures that repeat. It calls no model, and it applies or sends nothing without a person's yes.
+
+- Terminal runs are grouped by failure class and signature. The signature is the names of the outcome markers that set the class and of the policy rules that denied the run's calls, never the wording of a reason or a value.
+- A group of two runs or more is one proposal that cites every run in it. A single run makes none, except a run of an Orbit-fault class (`gate-deadlock`), which is one proposal on its own. Runs that succeeded or were `cancelled` make none.
+- A proposal is one of four kinds:
+  - an Orbit-fault class is a draft Orbit issue;
+  - a `review-dispute` is a check when the repository declares one, as `orbit init` detects them, of a category its Orbit configuration does not run, and a reviewer standard otherwise;
+  - every other class is a policy change.
+- Each proposal is written to a draft file in `.orbit/runs/retro-drafts/`. The draft is built from run records only: run ids, states, classes, the names of markers and rules, and the states each run went through. Paths are redacted, and no goal, reason, finding text, source code or secret reaches it.
+- Each proposal is one question at a terminal, and only an explicit yes acts:
+  - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`;
+  - a yes to a check commits `.orbit/config.yaml` with the check added, on a new branch `orbit/retro/check-<id>` from the tip of `repository.base_branch`. The base branch, the checkout and its index are not touched, and an existing branch is never replaced;
+  - a yes to a reviewer standard or a policy change records it as accepted, and the person makes the change.
+- Without a terminal, or with `--json`, nobody is asked and nothing is sent or applied. The proposal stays a draft, and the next retro makes it again with the runs it then cites.
+- Every proposal and answer is recorded in the state database, keyed by kind, class and signature. A proposal that was declined, sent, applied or accepted is not made again.
+- `orbit retro` is refused inside a worker.
+
 ## 17. Acceptance and fault testing
 
 ### Unit tests

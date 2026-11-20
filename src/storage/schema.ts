@@ -429,4 +429,21 @@ export const MIGRATIONS: readonly string[] = [
   CREATE UNIQUE INDEX route_outcomes_attempt ON route_outcomes(run_id, attempt_key) WHERE attempt_key IS NOT NULL;
   CREATE INDEX route_outcomes_class ON route_outcomes(work_kind, difficulty, ts);
   `,
+  /* 9: what orbit retro proposed and what the person decided, so a proposal is not made twice (issue #174) */ `
+  -- One row per proposal, keyed by its kind, failure class and signature (never by wording). A row is written when a
+  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'declined'). Any row, whatever
+  -- its decision, keeps the same proposal from being made again. run_ids_json lists the runs that motivated it.
+  CREATE TABLE retro_decisions (
+    key            TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL,
+    failure_class  TEXT NOT NULL,
+    signature      TEXT NOT NULL,
+    decision       TEXT NOT NULL,
+    run_ids_json   TEXT NOT NULL,
+    draft_path     TEXT,
+    decided_by     TEXT,
+    created_at     INTEGER NOT NULL,
+    decided_at     INTEGER
+  ) STRICT;
+  `,
 ];
