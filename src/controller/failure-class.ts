@@ -11,7 +11,7 @@ import type { OrbitDb } from '../storage/db.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import { OrbitError } from '../core/errors.ts';
 
-export const FAILURE_CLASSES = ['environment', 'check-misconfigured', 'gate-deadlock', 'scope', 'budget', 'turn-cap', 'model', 'review-dispute', 'credentials', 'cancelled'] as const;
+export const FAILURE_CLASSES = ['environment', 'check-misconfigured', 'gate-deadlock', 'awaiting-decision', 'scope', 'budget', 'turn-cap', 'model', 'review-dispute', 'credentials', 'cancelled'] as const;
 
 export type FailureClass = (typeof FAILURE_CLASSES)[number];
 
@@ -70,40 +70,43 @@ const has = (o: Record<string, unknown>, key: string): boolean => {
 };
 
 /**
- * The causes the records show, in the order they stop a run: what made the work impossible to judge comes before
- * what then held it at a gate. Each rule reads one structured marker; the first that holds is the run's class.
+ * The causes the records show, in the order they stop a run: a harness that cannot do the work (credentials, a check's
+ * definition, the environment), then sessions cut off at their turn cap (`turnCapped`, in a run that ran out), then
+ * what the work ran into, then a gate, then a decision it waits for. Each rule reads one structured marker, never a
+ * value found in a reason's wording (so not `frozen_policy.setting`, issue #190); the first that holds is the class.
  */
-function markedCauses(outcome: Record<string, unknown>, data: Record<string, unknown>): FailureClass[] {
+function markedCauses(outcome: Record<string, unknown>, data: Record<string, unknown>, turnCapped: boolean): FailureClass[] {
   const causes: FailureClass[] = [];
   const add = (c: FailureClass, when: boolean): void => {
     if (when && !causes.includes(c)) causes.push(c);
   };
   const code = typeof data.code === 'string' ? CODE_CLASS[data.code] : undefined;
   const counter = typeof data.counter === 'string' ? data.counter : typeof outcome.limit === 'string' ? outcome.limit : null;
-  const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === 'string' ? outcome.frozen_policy.setting : '';
   const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === 'string' ? outcome.gate.gate : null;
+  const gateDetails = isRecord(outcome.gate) && isRecord(outcome.gate.details) ? outcome.gate.details : {};
+  const declined = has(outcome, 'ledger_declined');
 
   add('credentials', (isRecord(outcome.blocker) && outcome.blocker.kind === 'authentication') || data.kind === 'authentication' || has(outcome, 'git_credentials') || code === 'credentials');
-  add('check-misconfigured', has(outcome, 'misconfigured_checks') || /^checks\./.test(frozen));
+  add('check-misconfigured', has(outcome, 'misconfigured_checks'));
   add(
     'environment',
     has(outcome, 'environment_failures') || has(outcome, 'incomplete_checks') || has(outcome, 'worker_refusal') || has(outcome, 'dirty') || has(outcome, 'reviewer') || has(outcome, 'release_error') || has(outcome, 'release_pending') || has(outcome, 'base_conflict') ||
       gate === 'environment' || gate === 'baseline' || code === 'environment' || (counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)),
   );
-  add('scope', has(outcome, 'scope') || has(outcome, 'ungranted') || has(outcome, 'largest_changes') || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code === 'scope');
+  add('turn-cap', turnCapped);
+  add('scope', has(outcome, 'scope') || has(gateDetails, 'scope') || has(outcome, 'ungranted') || has(outcome, 'largest_changes') || code === 'scope');
   add('review-dispute', has(outcome, 'open_findings') || has(outcome, 'held_findings') || counter === 'review_rounds');
-  add(
-    'gate-deadlock',
-    has(outcome, 'questions') || has(outcome, 'blocked_criteria') || has(outcome, 'authorization') || has(outcome, 'ledger_entries') || has(outcome, 'ledger_declined') || has(outcome, 'fail_before') || has(outcome, 'review_gate') || has(outcome, 'shallow_reviews') ||
-      Array.isArray(outcome.gate),
-  );
+  // A declined ledger entry needs a new run (resume.ts newRunNeeded): nothing a person answers opens it.
+  add('gate-deadlock', declined || has(outcome, 'review_gate') || has(outcome, 'shallow_reviews') || Array.isArray(outcome.gate));
+  // A decision a person gives with `orbit decide`, after which the run resumes: it waits, it did not fail (issue #190).
+  add('awaiting-decision', !declined && (has(outcome, 'questions') || has(outcome, 'blocked_criteria') || has(outcome, 'authorization') || has(outcome, 'ledger_entries') || has(outcome, 'fail_before')));
   return causes;
 }
 
 /**
  * The class of a run that ends in `state`, and its second cause when it had two. Success has none; a cancelled run is
- * `cancelled` whatever the step had decided. For the rest the first cause that stopped progress is the class: sessions
- * that ended at their turn cap (they came first, in a run that then ran out), what the records mark, the fallback the
+ * `cancelled` whatever the step had decided. For the rest the first cause that stopped progress is the class: what the
+ * records mark (markedCauses, with sessions that ended at their turn cap in a run that then ran out), the fallback the
  * step names, and `model` only when nothing else explains the end. An EXHAUSTED run always ran out of a budget last, and
  * so did a BLOCKED one whose step had decided EXHAUSTED (`outcome.decided`): it holds a verified candidate (issue #169).
  */
@@ -118,10 +121,8 @@ export function classifyRunEnd(e: RunEndEvidence): RunEndClass {
   // Issue #169: a run that ran out while it held a verified candidate ends BLOCKED so a person can deliver it. It stopped
   // for what would have ended it EXHAUSTED, so it is classified as that end (verified-candidate.ts).
   const state = e.state === 'BLOCKED' && outcome.decided === 'EXHAUSTED' ? 'EXHAUSTED' : e.state;
-  const causes: FailureClass[] = [];
   const ranOut = state === 'EXHAUSTED' || state === 'IMPOSSIBLE';
-  if (ranOut && e.turnCapSessions > 0) causes.push('turn-cap');
-  for (const c of markedCauses(outcome, data)) if (!causes.includes(c)) causes.push(c);
+  const causes = markedCauses(outcome, data, ranOut && e.turnCapSessions > 0);
   if (causes.length === 0) {
     if (e.cause !== null) causes.push(e.cause);
     else if (state !== 'EXHAUSTED' || workDidNotConverge(outcome, data)) causes.push('model');

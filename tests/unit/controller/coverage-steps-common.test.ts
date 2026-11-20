@@ -402,6 +402,15 @@ describe('scheduleTransientRetry', () => {
     expect(JSON.parse(events(WORKER_RETRY_EVENT)[0]!.data_json!).retry_after_ms).toBeNull();
   });
 
+  it('blocks the run as environment when the provider asks for a wait longer than Orbit waits for one request', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    expect(await scheduleTransientRetry(lab.ctx(), failed('p1', 'overloaded; retry after 3600 s'))).toEqual({ progressed: true, done: true });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.state).toBe('BLOCKED');
+    expect(run.outcomeReason).toMatch(/^implementation 1: the provider kept failing transiently \(/);
+    expect(run.failureClass).toBe('environment');
+  });
+
   it('ends the run EXHAUSTED when no infrastructure retry is left', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     initLedger(lab);

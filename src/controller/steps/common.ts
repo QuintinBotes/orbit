@@ -469,7 +469,16 @@ export async function handleWorkerFailure(
     return { retry: true };
   }
   if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
-  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
+  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`, { cause: workerLimitCause(failed.status) }) };
+}
+
+/**
+ * The class of a worker that ended at one of its session limits, for a step that names the cause of its end (issue
+ * #190): the turn cap, or the session's time limit, which recovery/backoff.ts reads as the host's or the provider's
+ * performance. Undefined for any other end: output that failed or was malformed is the model's.
+ */
+export function workerLimitCause(status: string): FailureClass | undefined {
+  return status === 'max_turns' ? 'turn-cap' : status === 'timeout' ? 'environment' : undefined;
 }
 
 /** The regeneration bound for malformed model output (spec section 14). */

@@ -142,6 +142,28 @@ describe('contractingStep', () => {
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('the planner: no usable result after 2 attempt(s)');
   });
 
+  // Issue #190: a planner whose sessions all ended at a limit is not a model failure.
+  it.each([
+    ['max_turns', 'turn-cap'],
+    ['timeout', 'environment'],
+    ['failed', 'model'],
+  ] as const)('a planner whose every attempt ended %s blocks the run as %s', async (status, cls) => {
+    prepare(PLANNER_OUTPUT, undefined, status);
+    await runToEnd();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toContain(`the planner: no usable result after 2 attempt(s) (last: ${status}`);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe(cls);
+  });
+
+  it('issue #190: a plan whose every path lies outside the policy scope is scope, by a marker the draft records', async () => {
+    prepare(PLANNER_OUTPUT, (c) => void (c.scope.allowed_paths = ['docs/**']));
+    await runToEnd();
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason).toMatch(/^intake gate rejected the planner's contract: no proposed path lies inside the policy scope/);
+    expect(JSON.parse(run.outcomeJson!).scope).toEqual({ allowed_paths: ['docs/**'] });
+    expect(run.failureClass).toBe('scope');
+  });
+
   it('with a contract already settled (back from inquiry or a block) only the intake gate remains', async () => {
     prepare(PLANNER_OUTPUT);
     setContract(lab);

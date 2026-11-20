@@ -24657,14 +24657,21 @@ function openDb(path, options = {}) {
   };
   return api;
 }
+function refuseNewer(version, migrations) {
+  if (version > migrations.length) throw new Error(`database is at schema version ${version}, newer than this Orbit (${migrations.length}). Upgrade Orbit.`);
+}
 function migrate(db, migrations) {
-  const current = Number(db.prepare("PRAGMA user_version").get().user_version);
-  if (current > migrations.length) {
-    throw new Error(`database is at schema version ${current}, newer than this Orbit (${migrations.length}). Upgrade Orbit.`);
-  }
+  const current = userVersion(db);
+  refuseNewer(current, migrations);
   for (let v = current; v < migrations.length; v++) {
     db.exec("BEGIN IMMEDIATE");
     try {
+      const at = userVersion(db);
+      refuseNewer(at, migrations);
+      if (at > v) {
+        db.exec("COMMIT");
+        continue;
+      }
       if (current >= 1) {
         const leases = db.prepare("SELECT run_id, owner_id FROM leases WHERE expires_at > ? ORDER BY run_id").all(Date.now());
         if (leases.length > 0) {
@@ -24680,7 +24687,7 @@ function migrate(db, migrations) {
     }
   }
 }
-var require2;
+var require2, userVersion;
 var init_db = __esm({
   "src/storage/db.ts"() {
     "use strict";
@@ -24688,6 +24695,7 @@ var init_db = __esm({
     init_warnings();
     init_schema4();
     require2 = createRequire(import.meta.url);
+    userVersion = (db) => Number(db.prepare("PRAGMA user_version").get().user_version);
   }
 });
 
@@ -24855,27 +24863,27 @@ function isFailureClass(value) {
 function failureClassOrNull(value) {
   return isFailureClass(value) ? value : null;
 }
-function markedCauses(outcome, data) {
+function markedCauses(outcome, data, turnCapped) {
   const causes = [];
   const add = (c, when) => {
     if (when && !causes.includes(c)) causes.push(c);
   };
   const code2 = typeof data.code === "string" ? CODE_CLASS[data.code] : void 0;
   const counter = typeof data.counter === "string" ? data.counter : typeof outcome.limit === "string" ? outcome.limit : null;
-  const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === "string" ? outcome.frozen_policy.setting : "";
   const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === "string" ? outcome.gate.gate : null;
+  const gateDetails = isRecord(outcome.gate) && isRecord(outcome.gate.details) ? outcome.gate.details : {};
+  const declined = has(outcome, "ledger_declined");
   add("credentials", isRecord(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || has(outcome, "git_credentials") || code2 === "credentials");
-  add("check-misconfigured", has(outcome, "misconfigured_checks") || /^checks\./.test(frozen));
+  add("check-misconfigured", has(outcome, "misconfigured_checks"));
   add(
     "environment",
     has(outcome, "environment_failures") || has(outcome, "incomplete_checks") || has(outcome, "worker_refusal") || has(outcome, "dirty") || has(outcome, "reviewer") || has(outcome, "release_error") || has(outcome, "release_pending") || has(outcome, "base_conflict") || gate === "environment" || gate === "baseline" || code2 === "environment" || counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)
   );
-  add("scope", has(outcome, "scope") || has(outcome, "ungranted") || has(outcome, "largest_changes") || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code2 === "scope");
+  add("turn-cap", turnCapped);
+  add("scope", has(outcome, "scope") || has(gateDetails, "scope") || has(outcome, "ungranted") || has(outcome, "largest_changes") || code2 === "scope");
   add("review-dispute", has(outcome, "open_findings") || has(outcome, "held_findings") || counter === "review_rounds");
-  add(
-    "gate-deadlock",
-    has(outcome, "questions") || has(outcome, "blocked_criteria") || has(outcome, "authorization") || has(outcome, "ledger_entries") || has(outcome, "ledger_declined") || has(outcome, "fail_before") || has(outcome, "review_gate") || has(outcome, "shallow_reviews") || Array.isArray(outcome.gate)
-  );
+  add("gate-deadlock", declined || has(outcome, "review_gate") || has(outcome, "shallow_reviews") || Array.isArray(outcome.gate));
+  add("awaiting-decision", !declined && (has(outcome, "questions") || has(outcome, "blocked_criteria") || has(outcome, "authorization") || has(outcome, "ledger_entries") || has(outcome, "fail_before")));
   return causes;
 }
 function classifyRunEnd(e) {
@@ -24886,10 +24894,8 @@ function classifyRunEnd(e) {
   const outcome = e.outcome ?? {};
   const data = e.data ?? {};
   const state = e.state === "BLOCKED" && outcome.decided === "EXHAUSTED" ? "EXHAUSTED" : e.state;
-  const causes = [];
   const ranOut = state === "EXHAUSTED" || state === "IMPOSSIBLE";
-  if (ranOut && e.turnCapSessions > 0) causes.push("turn-cap");
-  for (const c of markedCauses(outcome, data)) if (!causes.includes(c)) causes.push(c);
+  const causes = markedCauses(outcome, data, ranOut && e.turnCapSessions > 0);
   if (causes.length === 0) {
     if (e.cause !== null) causes.push(e.cause);
     else if (state !== "EXHAUSTED" || workDidNotConverge(outcome, data)) causes.push("model");
@@ -24918,7 +24924,7 @@ var init_failure_class = __esm({
     "use strict";
     init_run_states();
     init_errors();
-    FAILURE_CLASSES = ["environment", "check-misconfigured", "gate-deadlock", "scope", "budget", "turn-cap", "model", "review-dispute", "credentials", "cancelled"];
+    FAILURE_CLASSES = ["environment", "check-misconfigured", "gate-deadlock", "awaiting-decision", "scope", "budget", "turn-cap", "model", "review-dispute", "credentials", "cancelled"];
     TURN_CAP_EVENT = "implementation.worker-ended";
     CODE_CLASS = {
       AUTH_EXPIRED: "credentials",
@@ -58281,7 +58287,8 @@ function intakeGate(input) {
   if (snapshotHash(snapshot2) !== run.policyHash) reasons.push("the policy snapshot does not match the hash recorded for the run");
   const limits = snapshot2.config.scheduler.hard_limits;
   for (const [k, v] of Object.entries(limits)) if (!(typeof v === "number" && v > 0)) reasons.push(`hard limit ${k} must be positive`);
-  if (snapshot2.config.scope.allowed_paths.length === 0) reasons.push("the policy allows no paths, so no implementation is authorized");
+  const noPaths = snapshot2.config.scope.allowed_paths.length === 0;
+  if (noPaths) reasons.push("the policy allows no paths, so no implementation is authorized");
   const environment = input.run.environment ?? null;
   if (environment !== null) {
     const why = releaseEnvironmentProblem(snapshot2.config, environment);
@@ -58306,7 +58313,7 @@ function intakeGate(input) {
       reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? "none"}) is not the release environment the run names (${environment ?? "none"})`);
     }
   }
-  return result("intake", reasons, evidence, [], { problems });
+  return result("intake", reasons, evidence, [], { problems, ...noPaths ? { scope: { allowed_paths: [] } } : {} });
 }
 function environmentGate(input) {
   const reasons = [];
@@ -61156,7 +61163,10 @@ async function handleWorkerFailure(ctx, failed, opts) {
     return { retry: true };
   }
   if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
-  return { retry: false, result: await finishRun(ctx, "BLOCKED", `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ""})`) };
+  return { retry: false, result: await finishRun(ctx, "BLOCKED", `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ""})`, { cause: workerLimitCause(failed.status) }) };
+}
+function workerLimitCause(status2) {
+  return status2 === "max_turns" ? "turn-cap" : status2 === "timeout" ? "environment" : void 0;
 }
 var WAIT, MOVED, DONE, CLOSING_STATES, OUTCOME_REASON_MAX, DOTNET_WORKER_BUILDS, DOTNET_WORKER_NOTE, DOTNET_WORKER_NOTE_NO_FORMAT, WORKER_RETRY_EVENT, MAX_REGENERATIONS;
 var init_common = __esm({
@@ -64123,7 +64133,7 @@ function draftContract(input) {
   if (allowed.length === 0) {
     const dropped = adjustments.filter((a) => a.kind === "path-dropped").map((a) => `${a.subject} (${a.reason})`);
     const proposed = dropped.length > 0 ? dropped.join(", ") : "the planner proposed none";
-    throw new OrbitError("CONTRACT_INVALID", `no proposed path lies inside the policy scope (${scope.join(", ") || "the policy allows no paths"}): ${proposed}. The goal needs paths the policy does not allow (widen scope.allowed_paths, or revise the goal).`, { adjustments });
+    throw new OrbitError("CONTRACT_INVALID", `no proposed path lies inside the policy scope (${scope.join(", ") || "the policy allows no paths"}): ${proposed}. The goal needs paths the policy does not allow (widen scope.allowed_paths, or revise the goal).`, { adjustments, scope: { allowed_paths: [...scope] } });
   }
   const assumptions = plan.assumptions.map((a, i) => ({
     id: `AS-${i + 1}`,
@@ -64259,7 +64269,8 @@ async function contractingStep(ctx) {
     drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? "", taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment, source: issue ? contractSource(issue) : null });
   } catch (err) {
     if (!(err instanceof OrbitError) || err.code !== "CONTRACT_INVALID") throw err;
-    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
+    const scope = err.details?.scope;
+    return finishRun(ctx, "BLOCKED", `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null, ...scope ? { scope } : {} } });
   }
   for (const a of drafted.adjustments) {
     decide2(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });
@@ -65553,7 +65564,13 @@ async function act(ctx, cand, ev) {
   if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move2(ctx, "INQUISITION", `verification incomplete: ${trigger.summary}`, { data: { trigger } });
-  return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id }, cause: "environment" });
+  return finishRun(ctx, "BLOCKED", `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join("; ") || "the evidence is incomplete"}`, { outcome: { report_id: ev.id }, cause: unavailableCause(ctx, ev) });
+}
+function unavailableCause(ctx, ev) {
+  const ran = new Set(ev.report.checks.filter((c) => c.status !== "ERROR" && c.status !== "CANCELLED").map((c) => c.id));
+  const unrun = [...mandatoryCommandChecks(ctx)].some((id) => !ran.has(id)) || (ev.report.ui ?? []).some((u) => u.status === "ERROR" || u.status === "CANCELLED");
+  if (unrun) return "environment";
+  return turnCapSessions(ctx.db, ctx.run.id) > 0 ? "turn-cap" : "model";
 }
 async function blockOnEnvironment(ctx, cand, ev, failures) {
   const reason = environmentBlockReason({ runId: ctx.run.id, candidateSeq: cand.seq, failures });
@@ -65672,6 +65689,7 @@ var init_verifying = __esm({
     init_triggers();
     init_model_outputs();
     init_environment_block();
+    init_failure_class();
     init_workers();
     init_context2();
     init_gates();
@@ -65769,7 +65787,7 @@ async function diagnosingStep(ctx) {
         if (timeouts && raisesTimeout(brief2.scoped_fix)) throw new OrbitError("MALFORMED_OUTPUT", `the scoped fix raises a timeout ("${brief2.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
         return { out: out2, brief: timeouts ? withTimeoutHypothesis(brief2, timeouts) : brief2 };
       },
-      exhausted: () => finishRun(ctx, "EXHAUSTED", `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: "model" })
+      exhausted: (failed) => finishRun(ctx, "EXHAUSTED", `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: workerLimitCause(failed.status) ?? "model" })
     });
     if (!got.ok) return got.step;
     const { out, brief } = got.value;
@@ -75484,7 +75502,7 @@ function metricsFor(db, window = {}) {
   const accepted = runRows.filter((r) => r.state === "SUCCEEDED");
   if (runRows.length === 0) missing.push("no runs were created in this window");
   const classes = failureClasses(runRows, missing);
-  const versions = byVersion(db, runRows);
+  const versions = byVersion(runRows, db.all(`SELECT run_id, cost_usd, cost_source FROM usage WHERE ${inWindow}`, ...params));
   const evidence = db.get(`SELECT COUNT(*) AS total, COALESCE(SUM(verdict = 'PASS'), 0) AS pass FROM evidence_reports WHERE ${inWindow}`, ...params);
   const passCandidates = db.get(
     `SELECT COUNT(*) AS reviewed, COALESCE(SUM(refused), 0) AS refused FROM (
@@ -75559,14 +75577,30 @@ function compareVersions2(a, b) {
   if (a === b) return 0;
   if (a === UNKNOWN_ORBIT_VERSION) return 1;
   if (b === UNKNOWN_ORBIT_VERSION) return -1;
-  return a.localeCompare(b, "en", { numeric: true });
+  const [coreA, preA] = splitPreRelease(a);
+  const [coreB, preB] = splitPreRelease(b);
+  const core = coreA.localeCompare(coreB, "en", { numeric: true });
+  if (core !== 0 || preA === preB) return core;
+  if (preA === null) return 1;
+  if (preB === null) return -1;
+  return preA.localeCompare(preB, "en", { numeric: true });
 }
-function byVersion(db, runs) {
+function splitPreRelease(version) {
+  const dash = version.indexOf("-");
+  return dash < 0 ? [version, null] : [version.slice(0, dash), version.slice(dash + 1)];
+}
+function byVersion(runs, usage) {
   const groups = /* @__PURE__ */ new Map();
   for (const r of runs) {
     const g = groups.get(r.orbit_version);
     if (g) g.push(r);
     else groups.set(r.orbit_version, [r]);
+  }
+  const usageOf = /* @__PURE__ */ new Map();
+  for (const u of usage) {
+    const list3 = usageOf.get(u.run_id);
+    if (list3) list3.push(u);
+    else usageOf.set(u.run_id, [u]);
   }
   return [...groups.entries()].sort(([a], [b]) => compareVersions2(a, b)).map(([version, rows]) => {
     const finished2 = rows.filter((r) => FINISHED_STATES.includes(r.state)).length;
@@ -75574,7 +75608,7 @@ function byVersion(db, runs) {
     let spend = 0;
     let unmeasured = 0;
     for (const r of rows.filter(isEnded)) {
-      for (const u of db.all("SELECT cost_usd, cost_source FROM usage WHERE run_id = ?", r.id)) {
+      for (const u of usageOf.get(r.id) ?? []) {
         if (u.cost_usd === null || u.cost_source === "unavailable") unmeasured += 1;
         else spend += u.cost_usd;
       }

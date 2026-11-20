@@ -141,7 +141,7 @@ export function draftContract(input: DraftContractInput): DraftResult {
   if (allowed.length === 0) {
     const dropped = adjustments.filter((a) => a.kind === 'path-dropped').map((a) => `${a.subject} (${a.reason})`);
     const proposed = dropped.length > 0 ? dropped.join(', ') : 'the planner proposed none';
-    throw new OrbitError('CONTRACT_INVALID', `no proposed path lies inside the policy scope (${scope.join(', ') || 'the policy allows no paths'}): ${proposed}. The goal needs paths the policy does not allow (widen scope.allowed_paths, or revise the goal).`, { adjustments });
+    throw new OrbitError('CONTRACT_INVALID', `no proposed path lies inside the policy scope (${scope.join(', ') || 'the policy allows no paths'}): ${proposed}. The goal needs paths the policy does not allow (widen scope.allowed_paths, or revise the goal).`, { adjustments, scope: { allowed_paths: [...scope] } });
   }
 
   const assumptions: ContractAssumption[] = plan.assumptions.map((a, i) => ({

@@ -172,7 +172,7 @@ describe.skipIf(!canStripTypes)('a run started from an issue', () => {
     const posted = w.threads.comments(ISSUE);
     expect(posted).toHaveLength(1);
     expect(posted[0]!.body).toContain('- Outcome: BLOCKED');
-    expect(posted[0]!.body).toContain('- Failure class: gate-deadlock');
+    expect(posted[0]!.body).toContain('- Failure class: awaiting-decision');
     expect(posted[0]!.body).toContain('- Pull request: none');
     expect(posted[0]!.body).not.toContain('round fractional');
     expect(new FakeGitHub({ statePath: join(l.repo, '.orbit', 'fake-github.json') }).state.prs).toHaveLength(0);
