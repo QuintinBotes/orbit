@@ -23,14 +23,16 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      # Ubuntu covers both supported Node lines; macOS runners cost more, so
-      # macOS runs on the current line only.
+      # Ubuntu covers every supported Node line; macOS runners cost more, so
+      # macOS runs on one line only.
       matrix:
         include:
           - os: ubuntu-latest
             node: '22'
           - os: ubuntu-latest
             node: '24'
+          - os: ubuntu-latest
+            node: '26'
           - os: macos-latest
             node: '24'
     steps:

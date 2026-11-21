@@ -332,7 +332,7 @@ export interface ChildOptions {
 /** The real controller loop in its own process (Node strips and transforms the TypeScript sources). */
 export function spawnController(lab: Lab, opts: ChildOptions): ChildProcess & { output: () => string } {
   const args = { repo: lab.repo, orbitHome: lab.orbitHome, configPath: lab.configPath, templatePath: lab.templatePath, scenarioPath: lab.scenarioPath, argvLog: lab.argvLog, ...opts };
-  const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CHILD, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CHILD, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
   let out = '';
   child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
   child.stderr?.on('data', (d: Buffer) => (out += d.toString()));
