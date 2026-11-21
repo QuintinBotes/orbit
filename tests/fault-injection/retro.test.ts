@@ -23,7 +23,7 @@ const sandbox = (): Sandbox => {
 };
 afterEach(() => boxes.splice(0).forEach((s) => s.close()));
 
-const KEY = 'issue-draft:gate-deadlock:blocked_criteria+questions';
+const KEY = 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews';
 const SECRET = 'sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ';
 const draftDir = (s: Sandbox): string => join(s.repo, '.orbit', 'runs', 'retro-drafts');
 const gh = (s: Sandbox): string => join(s.base, 'gh.log');

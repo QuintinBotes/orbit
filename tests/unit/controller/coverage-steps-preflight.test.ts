@@ -92,6 +92,7 @@ describe('preflightStep', () => {
     await preflightStep(lab.ctx());
     expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^intake gate: /);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('blocks on credentials the environment gate found unusable, naming the provider, and for any other environment problem blocks with the reasons', async () => {

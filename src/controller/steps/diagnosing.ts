@@ -27,7 +27,7 @@ import type { RunContext } from '../context.ts';
 import { recordedTurnCap, routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, workerLimitCause, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
@@ -129,7 +129,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
         if (timeouts && raisesTimeout(brief.scoped_fix)) throw new OrbitError('MALFORMED_OUTPUT', `the scoped fix raises a timeout ("${brief.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
         return { out, brief: timeouts ? withTimeoutHypothesis(brief, timeouts) : brief };
       },
-      exhausted: () => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: 'model' }),
+      exhausted: (failed) => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: workerLimitCause(failed.status) ?? 'model' }),
     });
     if (!got.ok) return got.step;
     const { out, brief } = got.value;

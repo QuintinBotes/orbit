@@ -394,6 +394,15 @@ describe('the repair brief', () => {
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('EXHAUSTED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain(`diagnosis produced no valid repair brief within 2 attempts for ${FP}`);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('model');
+  });
+
+  it('issue #190: a diagnosis whose sessions both ended at their turn cap is turn-cap, not model', async () => {
+    await setup({ script: () => okResult(null, { status: 'max_turns', error: 'Reached maximum number of turns (30)' }) });
+    await settle();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toContain('diagnosis produced no valid repair brief');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('turn-cap');
   });
 
   it('every hypothesis ruled out by evidence leaves nothing authorized to try: IMPOSSIBLE', async () => {

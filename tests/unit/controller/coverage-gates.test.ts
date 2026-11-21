@@ -84,6 +84,10 @@ describe('intakeGate: every way to be refused', () => {
     });
     const g = intakeGate({ run: runOf(s), snapshot: s });
     expect(g.reasons).toEqual(expect.arrayContaining(['hard limit recovery_attempts must be positive', 'the policy allows no paths, so no implementation is authorized']));
+    // Issue #190: the run's failure class reads this marker, not the reason's wording.
+    expect(g.details.scope).toEqual({ allowed_paths: [] });
+    const some = snap();
+    expect(intakeGate({ run: runOf(some), snapshot: some }).details).not.toHaveProperty('scope');
   });
 
   it('refuses a contract with no mandatory criterion or no proof through the contract validation, and one that cites no check as not measurable', () => {

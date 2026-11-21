@@ -55,7 +55,7 @@ function endRun(l: Lab, id: string, state: RunState, outcome: Record<string, unk
   }
 }
 
-const DEADLOCK = { questions: [{ id: 'q1' }], blocked_criteria: ['AC-1'] };
+const DEADLOCK = { ledger_declined: [{ id: 'L1' }], shallow_reviews: ['AC-1'] };
 /** A fake Anthropic key, built at run time as in core/redact.test.ts. */
 const SECRET = `sk-ant-api03-${'Z'.repeat(32)}`;
 
@@ -106,8 +106,8 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(text).toContain('orb-dead-1');
     expect(text).toContain('gate-deadlock');
     expect(text).toContain('BLOCKED');
-    expect(text).toContain('blocked_criteria (1)');
-    expect(text).toContain('questions (1)');
+    expect(text).toContain('ledger_declined (1)');
+    expect(text).toContain('shallow_reviews (1)');
     expect(text).toContain('PREFLIGHT > CONTRACTING > PLANNING > BLOCKED');
     // The person was asked once, and no one answering means nothing left the machine.
     expect(deps.asked).toHaveLength(1);
@@ -152,7 +152,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
       expect(r.out, forbidden).not.toContain(forbidden);
     }
     // The markers are named, so the draft still says which gate held the run.
-    expect(text).toContain('authorization');
+    expect(text).toContain('ledger_declined (1)');
     expect(text).toContain('gate (1)');
   });
 
@@ -163,7 +163,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     const first = await retro(l, [], no);
     expect(first.out).toContain('declined: nothing was sent');
     expect(no.sent).toEqual([]);
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')).toMatchObject({ decision: 'declined', decidedBy: 'alice', runIds: ['orb-dead-1'] });
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')).toMatchObject({ decision: 'declined', decidedBy: 'alice', runIds: ['orb-dead-1'] });
 
     const again = fake(true);
     const second = await retro(l, [], again);
@@ -186,7 +186,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(yes.sent[0]!.body).toContain('orb-dead-1');
     expect(yes.sent[0]!.body).not.toMatch(/^# /);
     expect(r.out).toContain('sent to acme/orbit-fork: https://github.com/QuintinBotes/orbit/issues/999');
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('sent');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')?.decision).toBe('sent');
   });
 
   it('keeps a draft nobody was asked about pending: the next retro makes it again, citing the runs since, until a person answers', async () => {
@@ -220,7 +220,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
       expect(where).not.toContain(forged);
       expect(where).not.toContain('bash.unparseable');
     }
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('sent');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')?.decision).toBe('sent');
   });
 
   it('sends nothing the publication guard holds back: the draft stays pending and the exit is non-zero', async () => {
@@ -233,7 +233,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(r.code).toBe(1);
     expect(yes.sent).toEqual([]);
     expect(r.out).toContain('not sent: the publication guard holds the draft back');
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')?.decision).toBe('drafted');
   });
 
   it('sends nothing when the Orbit configuration cannot be read: it may name the terms file the guard needs', async () => {
@@ -245,7 +245,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     const r = await retro(l, [], yes);
     expect(r.code).toBe(1);
     expect(yes.sent).toEqual([]);
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')?.decision).toBe('drafted');
   });
 
   it('keeps the draft and reports the error when sending fails, and exits non-zero', async () => {
@@ -257,7 +257,7 @@ describe('orbit retro: a gate-deadlock run becomes an issue draft', () => {
     expect(r.out).not.toContain(l.repo);
     expect(r.out).not.toContain('sk-ant-api03-ZZZZ');
     expect(draftFiles(l)).toHaveLength(1);
-    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:blocked_criteria+questions')?.decision).toBe('drafted');
+    expect(findDecision(l.db(), 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews')?.decision).toBe('drafted');
   });
 });
 
@@ -271,8 +271,8 @@ describe('orbit retro: which runs it proposes from', () => {
     expect(r.code, r.err).toBe(0);
     const j = JSON.parse(r.out) as { proposals: { signature: string; runs: string[]; outcome: string }[] };
     expect(j.proposals.map((p) => [p.signature, p.runs, p.outcome])).toEqual([
-      ['blocked_criteria+questions', ['orb-dead-1', 'orb-dead-2'], 'drafted'],
-      ['blocked_criteria+questions+review_gate', ['orb-dead-3'], 'drafted'],
+      ['ledger_declined+shallow_reviews', ['orb-dead-1', 'orb-dead-2'], 'drafted'],
+      ['ledger_declined+review_gate+shallow_reviews', ['orb-dead-3'], 'drafted'],
     ]);
   });
 

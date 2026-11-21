@@ -178,6 +178,7 @@ describe('what CI says', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toBe(`CI was cancelled on ${cand.commitSha.slice(0, 12)}; re-run it and resume the run`);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('pending checks wait, naming them, and time out after the configured minutes', async () => {
@@ -189,6 +190,7 @@ describe('what CI says', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toBe('CI did not finish within 60 minutes (pending: unit, lint)');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('checks of another commit are not attributed to this one', async () => {
@@ -246,6 +248,7 @@ describe('no checks reported', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('delivery.require_ci is true');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('in release mode releases with the unverified-CI note', async () => {
@@ -324,6 +327,7 @@ describe('a failing CI', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('CI failed and repair is not authorized');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('gate-deadlock');
   });
 
   it('a failure with no log still yields a brief, and the excerpt is simply empty', async () => {
