@@ -361,6 +361,11 @@ export interface OrbitConfig {
     output_budgets?: Record<BudgetRole, number>;
     /** When measured route outcomes may displace the table's choice. Parsed configs always carry it; older snapshots read the defaults. */
     learning?: Partial<RoutingLearning>;
+    /**
+     * Providers that may implement a bounded unit, in preference order (issue #176). Claude always remains the fallback.
+     * Parsed configs always carry it (default `[claude]`: partners off); older snapshots read Claude only.
+     */
+    implementers?: string[];
   };
   /** Severity and exception rules for the static security gate. Parsed configs always carry it. */
   static_security?: StaticSecurityConfig;

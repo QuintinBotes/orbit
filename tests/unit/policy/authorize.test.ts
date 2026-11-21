@@ -81,6 +81,13 @@ describe('edit', () => {
     expect(edit('src/index.ts', open).allowed).toBe(true);
   });
 
+  it('protects the project config a partner CLI loads from the worktree, so a partner cannot plant it for a later session (#176)', () => {
+    const open = snapshotOf('scope: {allowed_paths: ["**"], protected_paths: []}\n');
+    for (const p of ['.codex/config.toml', '.codex/hooks.json', '.codex/skills/x/SKILL.md', '.muse/hooks.json', '.agents/skills/x/SKILL.md', '.agents/plugins/marketplace.json']) {
+      expect(edit(p, open), p).toMatchObject({ allowed: false, rule: 'scope.protected' });
+    }
+  });
+
   it('matches protected paths case-insensitively', () => {
     const open = snapshotOf('scope: {allowed_paths: ["**"], protected_paths: [".github/**"]}\n');
     for (const p of ['.GIT/config', '.Git/hooks/x', '.ENV', 'apps/.Env.production', '.GitHub/workflows/ci.yml', 'KEYS/ID_RSA']) {

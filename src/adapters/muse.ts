@@ -1,6 +1,7 @@
 /**
- * Muse adapter, for independent review only (spec section 12; docs/interfaces/muse.md; ADR 0017). Muse never edits:
- * the adapter refuses a task that is not read-only, and runs
+ * Muse adapter (spec section 12; docs/interfaces/muse.md; ADR 0022, which replaced ADR 0017): an independent reviewer,
+ * read-only, and since issue #176 a partner implementer of a bounded unit in its own writable worktree. Any other task
+ * that is not read-only is refused. A review runs
  *
  *   muse exec --model <m> --reasoning-effort <e> --workspace <checkout> --permission-profile :read-only
  *     --disable-request-user-input --disable-write --no-foreign-personal-context --disable-web-tools
@@ -19,6 +20,12 @@
  * `--approval-mode never` is not passed: Muse 1.4.11 refuses it together with --permission-profile (exit 2). A run
  * can still never wait on a person: --disable-request-user-input withholds the question tool, and the reviewer's
  * wall-clock cap kills the whole process group (shim.ts).
+ *
+ * An implementer (issue #176) runs only in the os-sandbox tier, since nothing else confines its writes to the worktree:
+ * srt grants the worktree and the worker directory, `--worktree off` keeps the edits in Orbit's worktree,
+ * `--contributor-mode off` keeps what it is sent out of Meta's training, the shell stays disabled, and
+ * `--disable-approval` (refused in any other argv) lets its file tools write inside srt. Without srt and
+ * META_API_KEY it reports its writable tier unusable and refuses to start.
  */
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,7 +77,9 @@ export const MUSE_REQUIRED_FLAGS: readonly string[] = [
   '--max-model-steps',
   '--prompt-file',
 ];
-/** Arguments that would undo the read-only review; refused in any argv the adapter launches. */
+/** Flags the writable tier needs beyond the review's (issue #176); a Muse that lacks them cannot implement. */
+export const MUSE_WRITE_FLAGS: readonly string[] = ['--worktree', '--contributor-mode', '--disable-approval'];
+/** Arguments that would undo the read-only review; refused in any argv the adapter launches, but --disable-approval in the writable tier inside srt. */
 export const MUSE_FORBIDDEN_ARGS: readonly string[] = ['--yolo', '--disable-sandbox', '--disable-approval', '--trust-workspace'];
 export const MUSE_EXTRA_ARGS_ALLOWED: readonly string[] = [];
 
@@ -113,6 +122,11 @@ export const MUSE_LIMITATIONS: readonly string[] = [
 /** What the os-sandbox tier adds to srt's own limitations. */
 export const MUSE_OS_SANDBOX_LIMITATIONS: readonly string[] = [
   "srt confines the whole muse process: writes to the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. Muse's own shell sandbox may not start inside srt (unverified); its file tools still read the checkout. Files outside the checkout that srt does not deny stay readable, but only api.meta.ai can receive them. This tier has not been run live.",
+];
+
+/** The writable tier of an implementer (issue #176), always inside srt. */
+export const MUSE_WRITABLE_LIMITATIONS: readonly string[] = [
+  "srt confines the whole muse process: writes to the worktree and the worker directory only, egress to api.meta.ai only, and Muse's login directory denied. The shell is disabled, so it edits with its file tools only and runs no checks; Orbit verifies. Files outside the worktree that srt does not deny stay readable, but only api.meta.ai can receive them. The writable invocation (--worktree off, --contributor-mode off, --disable-approval) was not probed by Orbit; this tier has not been run live.",
 ];
 
 export interface MuseSrtStatus {
@@ -192,9 +206,12 @@ export class MuseAdapter implements ProviderAdapter {
     const old = v !== null && compareVersions(v, MUSE_MIN_VERSION) < 0;
     const cliOk = version.ok && help.ok && missing.length === 0 && !old;
     const tierProblem = cliOk ? await this.explicitTierProblem() : null;
+    const lacking = MUSE_WRITE_FLAGS.filter((f) => !flags.has(f));
+    const writable = !cliOk || tierProblem !== null ? { ok: false, why: 'the muse CLI is not usable here' } : lacking.length > 0 ? { ok: false, why: `muse exec lacks ${lacking.join(', ')}, which the writable tier needs` } : await this.writableTier();
     return {
       provider: this.id,
       available: cliOk && tierProblem === null,
+      writable,
       ...(tierProblem === null ? {} : { tierUnavailable: true }),
       version: v,
       // Muse has no model catalog command; the configured model is passed through unchanged.
@@ -239,13 +256,15 @@ export class MuseAdapter implements ProviderAdapter {
   }
 
   async startTask(spec: TaskSpec): Promise<MuseTaskHandle> {
-    if (!spec.readOnly) throw new OrbitError('POLICY_DENIED', 'the Muse adapter runs read-only review tasks only', { workerId: spec.workerId, role: spec.role });
+    // Writable only for an implementer, in its own worktree and inside srt (issue #176); every other role is read-only.
+    const writable = !spec.readOnly;
+    if (writable && spec.role !== 'implementer') throw new OrbitError('POLICY_DENIED', 'the Muse adapter runs read-only tasks, and writes only as an implementer in its own worktree', { workerId: spec.workerId, role: spec.role });
     if (!spec.model) throw new OrbitError('CONFIG_INVALID', 'Muse needs an explicit model (--model)');
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(spec.model)) throw new OrbitError('CONFIG_INVALID', `invalid Muse model ${JSON.stringify(spec.model)}`);
     const effort = spec.effort ?? MUSE_DEFAULT_REASONING_EFFORT;
     if (!MUSE_REASONING_EFFORTS.includes(effort)) throw new OrbitError('CONFIG_INVALID', `unsupported Muse reasoning effort ${JSON.stringify(effort)}`);
     for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute(p)) throw new OrbitError('CONFIG_INVALID', `paths must be absolute: ${p}`);
-    if (!existsSync(spec.cwd) || !statSync(spec.cwd).isDirectory()) throw new OrbitError('NOT_FOUND', `review checkout does not exist: ${spec.cwd}`);
+    if (!existsSync(spec.cwd) || !statSync(spec.cwd).isDirectory()) throw new OrbitError('NOT_FOUND', `${writable ? 'worktree' : 'review checkout'} does not exist: ${spec.cwd}`);
 
     const prior = readJsonIfExists<LaunchRecord>(join(spec.workerDir, LAUNCH_FILE));
     if (prior) {
@@ -261,6 +280,7 @@ export class MuseAdapter implements ProviderAdapter {
     const workerDir = spec.workerDir;
     const choice = await this.chooseTier(museEnvCredential({ ...this.baseEnv(), ...spec.env }));
     const tier = choice.decision.tier;
+    if (writable && tier !== 'os-sandbox') throw new OrbitError('ISOLATION_UNAVAILABLE', `${WRITABLE_NEEDS_SRT}: ${choice.decision.reason}`, { workerId: spec.workerId, tier });
     // muse-sandbox has no OS boundary of its own, so the write-protected checkout is that boundary: refuse without it.
     if (tier === 'muse-sandbox') assertWriteProtected(checkout);
     const tmpDir = prepareWorkerTmpDir(workerDir);
@@ -272,18 +292,23 @@ export class MuseAdapter implements ProviderAdapter {
       extra.XDG_CONFIG_HOME = own;
     }
     const env = buildWorkerEnv({ provider: 'muse', base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra });
-    const srt = choice.srt ? { provider: choice.srt, profile: museReviewerProfile(spec.sandbox, { checkout, workerDir }) } : null;
+    const srt = choice.srt ? { provider: choice.srt, profile: museReviewerProfile(spec.sandbox, { checkout, workerDir, writable }) } : null;
     writeFileSync(join(workerDir, MUSE_PROMPT_FILE), `${spec.systemPrompt.trim()}\n\n${spec.prompt}${outputTokens === null ? '' : `\n${outputBudgetInstruction(outputTokens)}\n`}`, { mode: 0o600 });
     atomicWriteJson(join(workerDir, MUSE_SCHEMA_FILE), spec.outputSchema, 0o600);
 
-    const argv = buildMuseArgv({ command: this.command, model: spec.model, effort, workspace: checkout, schemaPath: join(workerDir, MUSE_SCHEMA_FILE), promptPath: join(workerDir, MUSE_PROMPT_FILE), maxSteps: MUSE_REVIEW_MAX_STEPS });
+    const argv = buildMuseArgv({ command: this.command, model: spec.model, effort, workspace: checkout, schemaPath: join(workerDir, MUSE_SCHEMA_FILE), promptPath: join(workerDir, MUSE_PROMPT_FILE), maxSteps: MUSE_REVIEW_MAX_STEPS, writable, wrapper: srt?.provider.kind ?? null });
     let launchArgv = argv;
     let launchEnv = env;
-    const limitations = [...(srt ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS)];
+    const limitations = [...(writable ? MUSE_WRITABLE_LIMITATIONS : srt ? MUSE_OS_SANDBOX_LIMITATIONS : MUSE_LIMITATIONS)];
     if (outputTokens !== null) limitations.push(`Output budget of ${outputTokens} tokens is an instruction only: Muse has no verified output cap, so overruns are measured and recorded.`);
     const cleanupPaths: string[] = [];
     if (srt) {
       const wrapped = srt.provider.wrap(argv, srt.profile, { cwd: checkout, env });
+      // The writable tier's --disable-approval is safe only inside srt: the launched argv must end with the bare one.
+      if (writable && !(wrapped.argv.length > argv.length && argv.every((a, k) => wrapped.argv[wrapped.argv.length - argv.length + k] === a))) {
+        wrapped.cleanup();
+        throw new OrbitError('POLICY_DENIED', 'refusing to launch a writable Muse: the sandbox-runtime wrapper did not wrap the command');
+      }
       launchArgv = wrapped.argv;
       launchEnv = wrapped.env;
       limitations.push(...wrapped.limitations);
@@ -304,7 +329,7 @@ export class MuseAdapter implements ProviderAdapter {
       graceMs: this.opts.graceMs,
       stdinPath: null,
       cleanupPaths: [...new Set(cleanupPaths)],
-      meta: { tier, tierReason: choice.decision.reason, tierAutomatic: choice.decision.automatic, limitations, model: spec.model, outputBudgetTokens: outputTokens },
+      meta: { tier, tierReason: choice.decision.reason, tierAutomatic: choice.decision.automatic, limitations, model: spec.model, outputBudgetTokens: outputTokens, writable },
       clock: this.clock,
     });
     return { ...handle, tier, limitations };
@@ -358,6 +383,17 @@ export class MuseAdapter implements ProviderAdapter {
     return this.opts.baseEnv ?? process.env;
   }
 
+  /** Whether an implementer could run here: only in the os-sandbox tier (issue #176). */
+  private async writableTier(): Promise<{ ok: boolean; why: string }> {
+    try {
+      const { decision } = await this.chooseTier(museEnvCredential(this.baseEnv()));
+      return decision.tier === 'os-sandbox' ? { ok: true, why: '' } : { ok: false, why: `${WRITABLE_NEEDS_SRT}: ${decision.reason}` };
+    } catch (err) {
+      if (isOrbitError(err, 'ISOLATION_UNAVAILABLE')) return { ok: false, why: err.message };
+      throw err;
+    }
+  }
+
   /** Why an explicit os-sandbox cannot run here, so selection moves on instead of startTask blocking the run. `auto` never fails this way. */
   private async explicitTierProblem(): Promise<string | null> {
     if (this.opts.tier !== 'os-sandbox') return null;
@@ -404,6 +440,8 @@ export class MuseAdapter implements ProviderAdapter {
   }
 }
 
+const WRITABLE_NEEDS_SRT = 'Muse implements only in the os-sandbox tier (META_API_KEY plus srt), since nothing else confines its writes to the worktree';
+
 export interface MuseArgvInput {
   command: string[];
   model: string;
@@ -412,9 +450,19 @@ export interface MuseArgvInput {
   schemaPath: string;
   promptPath: string;
   maxSteps: number;
+  /** An implementer in its own worktree (issue #176); needs `wrapper: 'sandbox-runtime'`. Default false. */
+  writable?: boolean;
+  /** The kind of isolation provider that will wrap this argv, or null when it runs bare. */
+  wrapper?: IsolationProvider['kind'] | null;
 }
 
 export function buildMuseArgv(i: MuseArgvInput): string[] {
+  if (i.writable && i.wrapper !== 'sandbox-runtime') {
+    throw new OrbitError('POLICY_DENIED', `refusing a writable Muse unless the command runs inside the sandbox-runtime wrapper (wrapper: ${i.wrapper ?? 'none'})`, { wrapper: i.wrapper ?? null });
+  }
+  // The review: Muse's :read-only profile and --disable-write. The implementer: its edits stay in this worktree
+  // (--worktree off), nothing it is sent trains Meta's models (--contributor-mode off), and srt is the boundary.
+  const access = i.writable ? ['--worktree', 'off', '--contributor-mode', 'off', '--disable-approval'] : ['--permission-profile', ':read-only'];
   const argv = [
     ...i.command,
     'exec',
@@ -424,10 +472,9 @@ export function buildMuseArgv(i: MuseArgvInput): string[] {
     i.effort,
     '--workspace',
     i.workspace,
-    '--permission-profile',
-    ':read-only',
+    ...access,
     '--disable-request-user-input',
-    '--disable-write',
+    ...(i.writable ? [] : ['--disable-write']),
     // No shell: a shell running as the checkout's owner could chmod it writable again. Search and file reading remain.
     '--disable-shell',
     '--no-foreign-personal-context',
@@ -441,15 +488,15 @@ export function buildMuseArgv(i: MuseArgvInput): string[] {
     '--prompt-file',
     i.promptPath,
   ];
-  assertSafeMuseArgv(argv);
+  assertSafeMuseArgv(argv, i.writable ? ['--disable-approval'] : []);
   return argv;
 }
 
-/** The last guard before launch: nothing in the argv may widen what the review can do. */
-export function assertSafeMuseArgv(argv: readonly string[]): void {
+/** The last guard before launch: nothing in the argv may widen what the session can do beyond `allowed` (the writable tier's, inside srt). */
+export function assertSafeMuseArgv(argv: readonly string[], allowed: readonly string[] = []): void {
   for (const a of argv) {
     const flag = a.split('=')[0]!;
-    if (MUSE_FORBIDDEN_ARGS.includes(flag) || a.includes(':unrestricted')) {
+    if ((MUSE_FORBIDDEN_ARGS.includes(flag) && !allowed.includes(flag)) || a.includes(':unrestricted')) {
       throw new OrbitError('POLICY_DENIED', `refusing to launch Muse with ${a}: the review invocation is read-only`, { arg: a });
     }
   }

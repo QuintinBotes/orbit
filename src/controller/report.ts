@@ -194,6 +194,10 @@ export interface ReportReviewer {
   tier_reason?: string;
   /** What that tier does not enforce. */
   limitations?: string[];
+  /** A risky change (issue #176): the fresh same-family pass beside the cross-model review, as `provider/model`. Absent otherwise. */
+  same_family_reviewer?: string;
+  /** A risky change whose cross-model pass was skipped, with why. Absent otherwise. */
+  cross_model_skipped?: string;
 }
 
 export interface FailedReviewer {
@@ -458,18 +462,21 @@ function strOrNull(v: unknown): string | null {
  * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
  */
 function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, standing: readonly { provider: string; model: string | null; workerId: string | null }[], failed: FailedReviewer[]): ReportReviewer | null {
-  const last = standing.at(-1);
-  if (!last) return null;
+  if (standing.length === 0) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
   // A reviewer selected after another failed at run time is recorded under the same id with a ~<n> suffix (#116).
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
+  // The selected reviewer's own review, not the fresh same-family pass that may have come after it (issue #176).
+  const last = standing.findLast((r) => r.provider === sel?.provider) ?? standing.at(-1)!;
+  const family = sel?.sameFamily ? standing.findLast((r) => r.provider === sel.sameFamily!.provider && r !== last) : undefined;
+  const pair = { ...(family ? { same_family_reviewer: `${family.provider}/${family.model ?? 'default'}` } : {}), ...(sel?.crossModelSkipped ? { cross_model_skipped: sel.crossModelSkipped } : {}) };
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
   const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried, ...pair };
   }
   // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
   const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
@@ -505,8 +512,9 @@ export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
   const tier = r.tier === undefined ? '' : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ''}${r.limitations?.length ? `. Limitations: ${r.limitations.join(' ')}` : ''}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}`;
+  const pair = `${r.same_family_reviewer ? `\n- Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : ''}${r.cross_model_skipped ? `\n- Cross-model review skipped: ${r.cross_model_skipped}` : ''}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}${pair}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}${pair}`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {

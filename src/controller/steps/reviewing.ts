@@ -84,6 +84,8 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
   // Every review unit of this tree already recorded (a restart after recording): resolve and decide, once a finding's
   // re-review that is running has come back (so the repair probe does not run again on every pass while it runs).
   if (uncoveredUnits(ctx, cand).length === 0) {
+    const second = await familyPass(ctx, cand);
+    if (second) return second;
     const asked = askedReReview(ctx, cand, reReviewRecords(ctx));
     return asked ? reReview(ctx, cand, asked) : resolveAndDecide(ctx, cand);
   }
@@ -93,7 +95,35 @@ export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
   const sel = usable.sel;
   if (focuses.length > 1) return parallelReview(ctx, cand, sel, focuses, fresh);
   const pending = await singleReview(ctx, cand, sel, { base: `review:${cand.id}`, what: `the ${sel.provider} reviewer`, fresh: null });
-  return pending ?? resolveAndDecide(ctx, cand);
+  return pending ?? (await familyPass(ctx, cand)) ?? resolveAndDecide(ctx, cand);
+}
+
+/** A risky change's fresh same-family pass that could give no review (issue #176): recorded, and the tree is decided without it. */
+export const FAMILY_PASS_FAILED_KIND = 'review.family-pass-failed';
+const FAMILY_BASE = 'review-family';
+
+/**
+ * The fresh same-family pass of a risky change (issue #176): once the cross-model units of the tree are in, one review
+ * from the implementer's family in a session of its own, recorded beside them. Null when the selection has none, or
+ * once it is recorded or has failed for this tree; otherwise the step to take while it runs.
+ */
+async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepResult | null> {
+  const sel = getDecision(ctx.db, selectionId(ctx, cand))?.data as ReviewerSelection | undefined;
+  const same = sel?.decision === 'SELECT' ? sel.sameFamily : null;
+  if (!sel || sel.decision !== 'SELECT' || !same) return null;
+  const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).map((w) => [w.id, w.purpose]));
+  if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).some((r) => r.workerId !== null && purposes.get(r.workerId)?.startsWith(`${FAMILY_BASE}:`))) return null;
+  if (listDecisions(ctx.db, ctx.run.id, { kind: FAMILY_PASS_FAILED_KIND }).some((d) => (d.data as { tree_hash?: unknown }).tree_hash === cand.treeHash)) return null;
+  const pass: SelectedReviewer = { ...sel, provider: same.provider, model: same.model, effort: same.effort, basis: same.basis, independent: false, sameFamily: null, reason: same.reason, alternatives: [] };
+  return singleReview(ctx, cand, pass, {
+    base: `${FAMILY_BASE}:${cand.id}`,
+    what: `the ${same.provider} reviewer (fresh same-family pass)`,
+    fresh: null,
+    exhausted: async (failed) => {
+      decide(ctx, { kind: FAMILY_PASS_FAILED_KIND, summary: `the fresh same-family pass by ${same.provider}/${same.model ?? 'default'} gave no review of tree ${cand.treeHash} (${failed.status}${failed.error ? `: ${clipAtWord(failed.error, 200)}` : ''}); the tree is decided on the cross-model review`, data: { tree_hash: cand.treeHash, provider: same.provider, model: same.model, status: failed.status } });
+      return MOVED;
+    },
+  });
 }
 
 type SelectedReviewer = Extract<ReviewerSelection, { decision: 'SELECT' }>;
@@ -140,7 +170,12 @@ async function usableReviewer(ctx: RunContext, cand: CandidateRecord): Promise<{
  * One general reviewer session of the candidate under the purpose `base`, recorded as a review of its tree. Returns the
  * step to take while it runs or when no usable review came back, and null once the review is recorded.
  */
-async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: SelectedReviewer, opts: { base: string; what: string; fresh: FreshReviewRecord | null }): Promise<StepResult | null> {
+async function singleReview(
+  ctx: RunContext,
+  cand: CandidateRecord,
+  sel: SelectedReviewer,
+  opts: { base: string; what: string; fresh: FreshReviewRecord | null; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
+): Promise<StepResult | null> {
   const round = listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1;
   const { reviewDir, checkout } = await prepareReview(ctx, cand, sel.provider);
   let switched = false;
@@ -150,7 +185,7 @@ async function singleReview(ctx: RunContext, cand: CandidateRecord, sel: Selecte
     what: opts.what,
     exhausted: (failed) => {
       switched = true;
-      return reviewerFailed(ctx, cand, sel, failed);
+      return opts.exhausted ? opts.exhausted(failed) : reviewerFailed(ctx, cand, sel, failed);
     },
     // One review round per reviewer session started, regenerations included: every session costs a round.
     beforeStart: () => ctx.ledger!.consume('review_rounds', 1),
@@ -381,7 +416,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
   }
   if (finished < focuses.length) return WAIT(waiting.join('; ') || 'review units running');
   await cleanupCandidateCheckout(ctx.run.repoRoot, checkout).catch(() => {});
-  return resolveAndDecide(ctx, cand);
+  return (await familyPass(ctx, cand)) ?? resolveAndDecide(ctx, cand);
 }
 
 /**
@@ -1705,7 +1740,15 @@ async function reviewerSelection(ctx: RunContext, cand: CandidateRecord): Promis
 /** Without a mandatory independent provider, the policy's same-provider rules still decide who reviews. */
 function fallbackSelection(ctx: RunContext, env: Awaited<ReturnType<typeof checkEnvironment>>, failed: Record<string, string>): ReviewerSelection {
   const credentials: Record<string, CredentialStatus | undefined> = Object.fromEntries(env.credentials.map((c) => [c.provider, c.status ?? undefined]));
-  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, registry: ctx.deps.registry, failed });
+  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex', registry: ctx.deps.registry, failed });
+}
+
+/**
+ * Every provider whose implementer session ran in this run (FR-003). One whose quota or login failed counts too: it may
+ * have edited the worktree before failing part way through a turn, and the next session carried on from those edits.
+ */
+function runImplementers(ctx: RunContext): string[] {
+  return [...new Set(listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).map((w) => w.provider))];
 }
 
 function lastImplementerModel(ctx: RunContext): string | null {
