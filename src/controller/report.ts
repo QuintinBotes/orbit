@@ -61,6 +61,7 @@ import { currentCandidate, type ControllerDeps, type RunContext } from './contex
 import { assertLeaseHeld } from './run-store.ts';
 import { accountWorkerTurns, finishAndSettle, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
+import { PROOF_RESULT_KIND, type ProofResult } from '../review/proof.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
@@ -88,6 +89,12 @@ export interface FinalReport {
    */
   criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[]; check_wide?: string; fail_before?: ReportFailBefore }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
+  /**
+   * Whether the candidate is done (issue #200, FR-012): per criterion its audit verdict and reason and its own fail-before
+   * outcome, per MUST its quotes or why it is unmet, and each caller and artifact finding. The latest proof result of the
+   * candidate's tree (or of any tree when it has none); absent when the proof gate never ran.
+   */
+  proof?: ProofResult;
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
   /**
@@ -189,6 +196,10 @@ export interface ReportReviewer {
   tier_reason?: string;
   /** What that tier does not enforce. */
   limitations?: string[];
+  /** A risky change (issue #176): the fresh same-family pass beside the cross-model review, as `provider/model`. Absent otherwise. */
+  same_family_reviewer?: string;
+  /** A risky change whose cross-model pass was skipped, with why. Absent otherwise. */
+  cross_model_skipped?: string;
 }
 
 export interface FailedReviewer {
@@ -318,6 +329,8 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
   const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
   const offered = heldVerifiedCandidate(run);
+  const proofs = listDecisions(db, run.id, { kind: PROOF_RESULT_KIND }).map((d) => d.data as ProofResult);
+  const proof = proofs.filter((p) => cand !== null && p.tree_hash === cand.treeHash).at(-1) ?? proofs.at(-1) ?? null;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
@@ -331,6 +344,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     objective: contract?.objective ?? null,
     criteria,
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
+    ...(proof ? { proof } : {}),
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
@@ -450,18 +464,21 @@ function strOrNull(v: unknown): string | null {
  * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
  */
 function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, standing: readonly { provider: string; model: string | null; workerId: string | null }[], failed: FailedReviewer[]): ReportReviewer | null {
-  const last = standing.at(-1);
-  if (!last) return null;
+  if (standing.length === 0) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
   // A reviewer selected after another failed at run time is recorded under the same id with a ~<n> suffix (#116).
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
+  // The selected reviewer's own review, not the fresh same-family pass that may have come after it (issue #176).
+  const last = standing.findLast((r) => r.provider === sel?.provider) ?? standing.at(-1)!;
+  const family = sel?.sameFamily ? standing.findLast((r) => r.provider === sel.sameFamily!.provider && r !== last) : undefined;
+  const pair = { ...(family ? { same_family_reviewer: `${family.provider}/${family.model ?? 'default'}` } : {}), ...(sel?.crossModelSkipped ? { cross_model_skipped: sel.crossModelSkipped } : {}) };
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
   const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried, ...pair };
   }
   // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
   const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
@@ -497,8 +514,9 @@ export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
   const tier = r.tier === undefined ? '' : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ''}${r.limitations?.length ? `. Limitations: ${r.limitations.join(' ')}` : ''}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}`;
+  const pair = `${r.same_family_reviewer ? `\n- Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : ''}${r.cross_model_skipped ? `\n- Cross-model review skipped: ${r.cross_model_skipped}` : ''}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}${pair}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}${pair}`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
@@ -605,6 +623,7 @@ export function renderMarkdown(r: FinalReport): string {
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
   out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');
+  if (r.proof) out.push('## Proof', '', ...proofSection(r.proof), '');
   out.push('## Checks', '', list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ''}${c.flaky ? ', flaky' : ''}, log ${c.log}`)), '');
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
@@ -654,6 +673,24 @@ function criterionLine(c: FinalReport['criteria'][number]): string {
     ...(fb ? [`fail-before (${fb.mode}): ${fb.outcome}${fb.cause ? ` (cause ${fb.cause})` : ''}: ${fb.reason}`] : []),
     ...(wide ? [wide] : []),
   ].join('; ');
+}
+
+/** The proof result (issue #200, FR-012): each criterion, each MUST and each finding, one line each. */
+export function proofSection(p: ProofResult): string[] {
+  const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`) : ['- none']);
+  const criteria = p.criteria.map((c) => {
+    if (c.status === 'waiting-on-person') return `${c.criterion_id} [waiting on a person]: person-checked, never proven by a test`;
+    const audit = c.audit ? `audit: ${c.audit.answer ?? 'no answer'} (${c.audit.reason})` : 'audit: none';
+    const fb = c.fail_before ? `fail-before: ${c.fail_before.outcome}${c.fail_before.accepted_by ? `, accepted by ${c.fail_before.accepted_by}` : ''} (${c.fail_before.reason})` : 'fail-before: none of its own';
+    return `${c.criterion_id} [${c.status}] (${c.kind}; tests: ${c.tests.join(', ') || 'none'}): ${audit}; ${fb}`;
+  });
+  const requirements = p.requirements.map((r) => {
+    const quotes = r.quotes.map((q) => `${q.path}:${q.start}-${q.end}`).join(', ');
+    const callers = r.callers.map((c) => `${c.function} called from ${c.callers.join(', ') || 'nowhere found'}`).join('; ');
+    return `${r.id} [${r.status}]: "${r.wording}"${quotes ? `; quoted: ${quotes}` : ''}${r.status === 'unmet' ? `; ${r.reason}` : ''}${callers ? `; callers: ${callers}` : ''}`;
+  });
+  const findings = [...p.caller_findings, ...p.artifact_findings].map((f) => `${f.id}${f.location ? ` at ${f.location}` : ''}: "${f.sentence}": ${f.claim}`);
+  return [`Tree ${p.tree_hash}: ${p.open.length === 0 ? 'done' : `${p.open.length} open result(s)`}.`, '', 'Criteria:', ...list(criteria), '', 'Requirements (MUST):', ...list(requirements), '', 'Findings:', ...list(findings)];
 }
 
 /** The depth fields of a report review line; empty for a review with no record (an older run). */

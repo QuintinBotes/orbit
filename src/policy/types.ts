@@ -41,6 +41,12 @@ export interface CheckDefinition {
    * controller's static security gate lists the 'sast' checks (sastCheckIds).
    */
   category?: CheckCategory;
+  /**
+   * argv that runs only some of this check's tests: a criterion's mapped test paths (relative to `cwd`) are appended, one
+   * argument each, so each criterion's fail-before is read from that command's exit status alone (issue #200, FR-004).
+   * Absent: no criterion citing this check can be probed on its own.
+   */
+  tests_command?: string[];
 }
 
 export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build' | 'sast' | 'ui' | 'other';
@@ -355,6 +361,11 @@ export interface OrbitConfig {
     output_budgets?: Record<BudgetRole, number>;
     /** When measured route outcomes may displace the table's choice. Parsed configs always carry it; older snapshots read the defaults. */
     learning?: Partial<RoutingLearning>;
+    /**
+     * Providers that may implement a bounded unit, in preference order (issue #176). Claude always remains the fallback.
+     * Parsed configs always carry it (default `[claude]`: partners off); older snapshots read Claude only.
+     */
+    implementers?: string[];
   };
   /** Severity and exception rules for the static security gate. Parsed configs always carry it. */
   static_security?: StaticSecurityConfig;

@@ -3,8 +3,10 @@
 Verified 2026-10-20 against **Muse Code 1.4.11** (`muse --version` prints
 `Muse Code 1.4.11 (1.4.11-R6667.1)`), by running the binary, and measured again
 2026-11-07 against **Muse Code 1.4.14** (`1.4.14-R7309.1`, section 1a). A fact
-without a version below was probed on 1.4.11. Orbit uses Muse as a reviewer only
-(ADR 0017). Where a fact was not probed, this file says so.
+without a version below was probed on 1.4.11. Orbit uses Muse as a reviewer
+(ADR 0017) and, when `routing.implementers` lists it, as an implementer in a
+writable tier (ADR 0022, section 8 below, not probed). Where a fact was not
+probed, this file says so.
 
 ## 0. The invocation Orbit uses
 
@@ -156,3 +158,29 @@ the host `api.meta.ai`.
   unit that ends the step cleans it up (`src/controller/steps/reviewing.ts`):
   that makes it writable and removes it, even if a sibling session is still
   running.
+
+## 8. The writable tier (issue #176, not probed)
+
+An implementer runs only in the `os-sandbox` tier, inside `srt` with the
+worktree and the worker directory writable, as:
+
+```bash
+muse exec \
+  --model <model> --reasoning-effort <effort> \
+  --workspace <the run's worktree> \
+  --worktree off --contributor-mode off --disable-approval \
+  --disable-request-user-input --disable-shell \
+  --no-foreign-personal-context --disable-web-tools --no-session-log \
+  --json --output-schema <worker dir>/schema.json \
+  --max-model-steps 200 --prompt-file <worker dir>/prompt.md
+```
+
+`--worktree off` keeps the edits in Orbit's worktree, `--contributor-mode off`
+keeps what it is sent out of Meta's training, and `--disable-approval` lets its
+file tools write; Orbit refuses that flag in any argv not wrapped by srt. The
+three flags come from claude-stack's `stack-partner`, which checks them against
+`muse exec --help` before every run; Orbit has not probed them, and a Muse whose
+help lacks them reports its writable tier unusable. Muse's wording for a used-up
+allowance was not probed either: "usage limit", "out of quota", "quota
+exceeded" or "exceeded your quota" in a failed run's reason or on stderr ends
+the session `auth_failed` with reason `quota`.

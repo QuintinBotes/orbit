@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "goals": [
+    {
+      "id": "orbit-208-wall-time-while-waiting",
+      "repository": "QuintinBotes/orbit",
+      "commit": "48c8dd0b2a6e0a65ce293ad0906e94e0ec51d4e5",
+      "reference": "71f064f78ff1cccb597c521507638069dfc73763",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/208",
+      "goal": "A paused or blocked run is charged wall time for the wait and is exhausted on resume. Time a run spends paused (from orbit pause to orbit resume) or BLOCKED waiting for a person must not count against scheduler.hard_limits.wall_minutes; a run that is never paused or blocked is charged as before.",
+      "acceptance": { "paths": ["tests/unit/scheduling/budget.test.ts"], "command": ["npx", "vitest", "run", "tests/unit/scheduling/budget.test.ts"] },
+      "setup": ["npm", "ci"]
+    },
+    {
+      "id": "orbit-139-duplicate-goal",
+      "repository": "QuintinBotes/orbit",
+      "commit": "1432809bb26a35f9ba646964c5d5878ea37b96f0",
+      "reference": "1d62ef636822b2f2a749e1751186d72a7a2b0c8a",
+      "issue": "https://github.com/QuintinBotes/orbit/issues/139",
+      "goal": "Re-submitting a goal that is already running creates a duplicate run without a warning. orbit run must refuse a goal that an unfinished run of the same repository already has, naming that run and how to continue it.",
+      "acceptance": { "paths": ["tests/unit/cli/admission-gaps.test.ts"], "command": ["npx", "vitest", "run", "tests/unit/cli/admission-gaps.test.ts"] },
+      "setup": ["npm", "ci"]
+    },
+    {
+      "id": "claude-stack-38-secret-in-transcript",
+      "repository": "QuintinBotes/claude-stack",
+      "commit": "8867308a277f8843b0f47b258504765a1a4a058c",
+      "reference": "e9295a2fa097da15b99f8d2dea0101487eb36558",
+      "issue": "https://github.com/QuintinBotes/claude-stack/issues/38",
+      "goal": "The secret scan prints trufflehog's raw finding, so a found secret lands in the transcript. The git hook must still name what was found and where, without printing the secret itself.",
+      "acceptance": { "paths": ["plugins/stack/test/githooks.test.mjs"], "command": ["node", "--test", "plugins/stack/test/githooks.test.mjs"] },
+      "setup": null
+    }
+  ]
+}

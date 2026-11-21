@@ -191,12 +191,13 @@ dependency is the sandbox runtime. The root is the development workspace.
 | `knowledge/` | lesson graph (repo + opt-in global), extraction, curation, retrieval, feedback, overlays + replay evals, JSON-LD export, ingest | `KnowledgeStore`, `retrieve`, `learnFromRun`, `evaluateOverlay` |
 | `guard/` | publication guard: private-term and identity checks before anything leaves its repository | `checkPublication` |
 | `controller/` | states, run store, gates, step functions per state, controller loop, service install | `Controller`, `step`, `installService` |
+| `bench/` | `orbit bench`: the lab tier (demo-app labs driving the real controller with the fake providers, one scenario per fixed issue), the live tier (pinned goal catalog, held-out checks, the plain-session baseline), the stages a comparison may turn off, and scorecards | `LAB_SCENARIOS`, `runLabTier`, `parseLiveCatalog`, `runLiveTier`, `BENCH_STAGES`, `buildScorecard` |
 | `cli/` | `orbit` commands | `main` |
 
 Dependency direction: `core` ← `storage` ← everything; `policy`, `isolation`,
 `evidence`, `routing`, `scheduling`, `inquisition`, `ui`, `delivery`,
 `knowledge`, `guard` do not import `controller`; `controller` composes them;
-`cli` composes `controller`.
+`bench` drives `controller` as a client would; `cli` composes `controller` and `bench`.
 
 ## Trust boundaries
 

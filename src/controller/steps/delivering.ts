@@ -33,6 +33,7 @@ import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoin
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
 import { readIssueGoal } from '../../intake/issue.ts';
+import { proofApplies, proveDone } from '../proof.ts';
 
 export const DELIVERY_FILE = 'delivery.json';
 
@@ -53,6 +54,10 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
   if (waiting) return waiting;
   const undecided = await blockOnUndecidedLedger(ctx, 'delivery');
   if (undecided) return undecided;
+  // Done means proven (issue #200): each criterion audited and probed on its own, each MUST quoted, the documents and the
+  // pull request body checked against the candidate. An open result goes to repair; nothing is delivered before.
+  const proof = await proveDone(ctx, cand, DELIVERY_MODES.has(ctx.run.mode) ? deliverySummary(ctx) : null);
+  if (proof) return proof;
 
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -145,7 +150,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       // deployed ref; without one, every environment the release profile defines that the ref is allowed for, in profile order.
       environments: contract.delivery.environment ? [contract.delivery.environment] : 'all',
       readiness: () => {
-        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
+        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, contract) });
         return { ok: gate.passed, reasons: gate.reasons };
       },
       isolation: ctx.isolation(),
@@ -242,7 +247,7 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
   // DELIVERING asked already; a needs-decision entry recorded since (a CI repair's inquiry) is asked about here.
   const undecided = await blockOnUndecidedLedger(ctx, 'success');
   if (undecided) return undecided;
-  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now() });
+  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, assertContract(ctx)) });
   recordGate(ctx, gate);
   if (!gate.passed) return finishRun(ctx, 'BLOCKED', `completion gate: ${gate.reasons.join('; ')}`, { outcome: { ...outcome, gate: gate.reasons } });
   return finishRun(ctx, 'SUCCEEDED', `all mandatory requirements hold for tree ${deliveredTree}${notes.length ? ` (${notes.join('; ')})` : ''}`, { outcome: { ...outcome, tree: deliveredTree, evidence_id: gate.details.evidenceId, review_id: gate.details.reviewId, notes } });
