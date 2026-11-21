@@ -57,7 +57,7 @@ export interface ScopeReport {
   changed_files: number;
   /** Added plus deleted lines, without those of generated files (generated_lines). */
   changed_lines: number;
-  /** Only when the change touches files the repository maps of both trees flag as generated: their lines, not in changed_lines (#157). */
+  /** Only when generated files changed: files the policy names in scope.generated_paths, or files the repository maps of both trees flag as generated (#157). Their added plus deleted lines, left out of changed_lines and largest_changes, and their paths. */
   generated_lines?: number;
   generated_paths?: string[];
   within_size_limits: boolean;

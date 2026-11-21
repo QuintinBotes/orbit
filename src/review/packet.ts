@@ -472,7 +472,7 @@ ${security.exceptions.length > 0 ? `- security exceptions listed in policy (stil
   sec.push(`## Verification results
 
 - verdict: ${ev.verdict}
-- scope: allowed_paths_pass=${scope.allowed_paths_pass}; files=${scope.changed_files}; lines=${scope.changed_lines}; within_size_limits=${scope.within_size_limits}; lockfile_changed=${scope.lockfile_changed}
+- scope: allowed_paths_pass=${scope.allowed_paths_pass}; files=${scope.changed_files}; lines=${scope.changed_lines}${scope.generated_lines ? `; generated_lines=${scope.generated_lines} (not counted)` : ''}; within_size_limits=${scope.within_size_limits}; lockfile_changed=${scope.lockfile_changed}
 - forbidden paths changed: ${red(scope.forbidden_paths_changed.join(', ') || 'none')}
 - out of scope paths changed: ${red(scope.out_of_scope_paths_changed.join(', ') || 'none')}
 - dependency manifests changed: ${red(scope.dependency_manifest_changed.join(', ') || 'none')}

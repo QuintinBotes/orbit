@@ -108,11 +108,14 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ''));
   // A committed generated file a check rebuilds (a bundle) is not authored change (#157): its lines are reported apart.
+  // It is generated when the frozen policy names it, or when it is marked generated in both trees, so the candidate
+  // alone (a .gitattributes or header the worker can edit) can never mark a file generated.
+  const isGenerated = compileGlobs(config.scope.generated_paths ?? [], { nocase: false });
+  const detected = new Set(await generatedOnBoth(repoRoot, base, cand));
   let generatedLines = 0;
   const generatedPaths: string[] = [];
-  for (const p of await generatedOnBoth(repoRoot, base, cand)) {
-    const n = linesByPath.get(p);
-    if (n === undefined) continue;
+  for (const [p, n] of [...linesByPath]) {
+    if (!isGenerated(p) && !detected.has(p)) continue;
     generatedLines += n;
     generatedPaths.push(p);
     linesByPath.delete(p);

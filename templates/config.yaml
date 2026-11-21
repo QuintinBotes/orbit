@@ -51,6 +51,9 @@ scope:
   # Files workers may never read, in addition to the built-in credential
   # patterns (.env files, keys, cloud and git credentials).
   credential_paths: []
+  # Committed generated files (a bundle a check rebuilds): their lines do not
+  # count against scheduler.hard_limits.changed_lines.
+  generated_paths: []
 
 actions:
   edit: true

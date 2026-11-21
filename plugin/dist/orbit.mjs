@@ -21163,7 +21163,7 @@ var init_config_schema = __esm({
           type: "object",
           additionalProperties: false,
           required: ["allowed_paths", "protected_paths"],
-          properties: { allowed_paths: { $ref: "#/$defs/globList" }, protected_paths: { $ref: "#/$defs/globList" }, credential_paths: { $ref: "#/$defs/globList" } }
+          properties: { allowed_paths: { $ref: "#/$defs/globList" }, protected_paths: { $ref: "#/$defs/globList" }, credential_paths: { $ref: "#/$defs/globList" }, generated_paths: { $ref: "#/$defs/globList" } }
         },
         actions: {
           type: "object",
@@ -21911,7 +21911,8 @@ function defaultConfig(mode = DEFAULT_MODE) {
     scope: {
       allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"],
       protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"],
-      credential_paths: []
+      credential_paths: [],
+      generated_paths: []
     },
     actions: {
       edit: true,
@@ -22625,6 +22626,7 @@ var init_config = __esm({
         globList(c.scope.allowed_paths, "scope.allowed_paths", problems);
         globList(c.scope.protected_paths, "scope.protected_paths", problems);
         globList(c.scope.credential_paths ?? [], "scope.credential_paths", problems);
+        globList(c.scope.generated_paths ?? [], "scope.generated_paths", problems);
         if (c.actions.edit && c.scope.allowed_paths.length === 0) problems.push("scope.allowed_paths: is empty, so actions.edit would allow nothing; list paths or set actions.edit to false");
       },
       function networkHosts(c, problems) {
@@ -58787,7 +58789,7 @@ function implementationScopeGate(scope, snapshot2) {
   if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)${scope.largest_changes?.length ? `; the largest changes: ${describeLargestChanges(scope)}` : ""}`);
   if (scope.lockfile_changed && !deps.change_lockfile) add("a lockfile changed, which the policy does not allow");
   if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(", ")}`);
-  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
+  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed${scope.generated_lines ? `, and ${scope.generated_lines} generated line(s) not counted (scope.generated_paths)` : ""}`];
   const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
   return result("implementation", reasons, evidence, notes, { policyViolation, repairable });
 }
@@ -61022,11 +61024,12 @@ async function inspectScope(input) {
   const textChanges = changes.filter((c) => !binary2.has(c.path));
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ""));
+  const isGenerated = compileGlobs(config.scope.generated_paths ?? [], { nocase: false });
+  const detected = new Set(await generatedOnBoth(repoRoot, base, cand));
   let generatedLines = 0;
   const generatedPaths = [];
-  for (const p of await generatedOnBoth(repoRoot, base, cand)) {
-    const n2 = linesByPath.get(p);
-    if (n2 === void 0) continue;
+  for (const [p, n2] of [...linesByPath]) {
+    if (!isGenerated(p) && !detected.has(p)) continue;
     generatedLines += n2;
     generatedPaths.push(p);
     linesByPath.delete(p);
@@ -64965,7 +64968,7 @@ ${security.exceptions.length > 0 ? `- security exceptions listed in policy (stil
   sec.push(`## Verification results
 
 - verdict: ${ev.verdict}
-- scope: allowed_paths_pass=${scope.allowed_paths_pass}; files=${scope.changed_files}; lines=${scope.changed_lines}; within_size_limits=${scope.within_size_limits}; lockfile_changed=${scope.lockfile_changed}
+- scope: allowed_paths_pass=${scope.allowed_paths_pass}; files=${scope.changed_files}; lines=${scope.changed_lines}${scope.generated_lines ? `; generated_lines=${scope.generated_lines} (not counted)` : ""}; within_size_limits=${scope.within_size_limits}; lockfile_changed=${scope.lockfile_changed}
 - forbidden paths changed: ${red(scope.forbidden_paths_changed.join(", ") || "none")}
 - out of scope paths changed: ${red(scope.out_of_scope_paths_changed.join(", ") || "none")}
 - dependency manifests changed: ${red(scope.dependency_manifest_changed.join(", ") || "none")}
@@ -67547,7 +67550,7 @@ function blockOnSize(ctx, cand, scope, stalled) {
   ];
   const setting = over.map((o) => o.setting).join(", ") || "scheduler.hard_limits.changed_lines";
   const heavy = describeLargestChanges(scope);
-  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join("; ")}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ""}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; ${attemptsLeft(ctx) ? `to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.` : "no implementation attempt is left for a smaller change in this run."}`;
+  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join("; ")}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ""}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it (or name a committed generated file in scope.generated_paths) in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; ${attemptsLeft(ctx) ? `to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.` : "no implementation attempt is left for a smaller change in this run."}`;
   decide2(ctx, { id: `dec-${ctx.run.id}-size-block-${stalled.attempt}`, kind: "repair.non-progress", summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, settings: over.map((o) => o.setting), largest_changes: scope.largest_changes ?? [] } });
   return finishRun(ctx, "BLOCKED", reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
 }
@@ -76322,6 +76325,9 @@ scope:
   # Files workers may never read, in addition to the built-in credential
   # patterns (.env files, keys, cloud and git credentials).
   credential_paths: []
+  # Committed generated files (a bundle a check rebuilds): their lines do not
+  # count against scheduler.hard_limits.changed_lines.
+  generated_paths: []
 
 actions:
   edit: true
