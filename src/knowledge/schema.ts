@@ -114,4 +114,27 @@ export const KNOWLEDGE_MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX eval_runs_overlay ON eval_runs(overlay_id, created_at);
   `,
+  /* 2: cited, re-checked and expiring lessons; observations of every run end (issue #173) */ `
+  -- The last re-check of a lesson: when its citation last held, and why it is
+  -- not eligible for a prompt (a cited file gone, a check no longer configured,
+  -- no support for the expiry period), or NULL when it is.
+  ALTER TABLE nodes ADD COLUMN verified_at INTEGER;
+  ALTER TABLE nodes ADD COLUMN stale_reason TEXT;
+
+  -- The failure fingerprints a worker was repairing when it was shown the
+  -- lessons, so a repeat of one in its own candidate contradicts them.
+  ALTER TABLE retrievals ADD COLUMN fingerprints_json TEXT;
+
+  -- One row per ended run that did not succeed, keyed by its failure class,
+  -- written without a model call. data_json names the checks and signatures.
+  CREATE TABLE observations (
+    id             TEXT PRIMARY KEY,
+    run_id         TEXT NOT NULL,
+    state          TEXT NOT NULL,
+    failure_class  TEXT,
+    data_json      TEXT NOT NULL,
+    created_at     INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX observations_class ON observations(failure_class, created_at);
+  `,
 ];

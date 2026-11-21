@@ -15,13 +15,14 @@ import { OrbitError } from '../../core/errors.ts';
 import { draftContract } from '../../contract/draft.ts';
 import { validateModelOutput, type PlannerOutput } from '../../contract/model-outputs.ts';
 import type { GoalContract } from '../../contract/types.ts';
-import { renderWorkerPrompt } from '../../adapters/prompt.ts';
+import { DEFAULT_BLOCK_CHARS, renderWorkerPrompt } from '../../adapters/prompt.ts';
+import { goalSlice } from '../../repomap/map.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import type { RunContext } from '../context.ts';
 import { intakeGate } from '../gates.ts';
 import { routeFor } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
 import { blockOnMissingTargets, missingTargetsNotExpectedToFlip, settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
@@ -37,6 +38,8 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
   const issue = readIssueGoal(ctx.runDir);
 
   const route = routeFor(ctx, 'plan', 'routine-code', { difficulty: 'medium', attempt: 1, repeatedFingerprints: 0 });
+  const named = [ctx.run.goal, issue?.spec, issue?.hints].filter((t): t is string => typeof t === 'string').join('\n');
+  const slice = ctx.run.baseRevision ? await goalSlice(ctx.run.repoRoot, ctx.run.baseRevision, named, ctx.snapshot.config) : null;
   const got = await obtain<PlannerOutput>(ctx, {
     base: 'plan',
     maxAttempts: MAX_REGENERATIONS,
@@ -49,7 +52,7 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
       effort: route.effort,
       cwd: worktreeOf(ctx),
       readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId),
+      prompt: (workerId) => plannerPrompt(ctx, workerId, slice),
     }),
     accept: (r) => {
       const out = validateModelOutput('planner', r.structured);
@@ -120,7 +123,7 @@ function worktreeOf(ctx: RunContext): string {
   return ctx.run.worktreePath;
 }
 
-function plannerPrompt(ctx: RunContext, workerId: string): string {
+function plannerPrompt(ctx: RunContext, workerId: string, slice: string | null): string {
   const issue = readIssueGoal(ctx.runDir);
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? ' (mandatory)' : ''}`);
   // P18 for a missing target rests on the contract naming the check (steps/baseline-questions.ts): the planner is told
@@ -148,14 +151,17 @@ function plannerPrompt(ctx: RunContext, workerId: string): string {
     // An issue's text is never written into the task: it follows as marked, untrusted blocks.
     ...(issue ? issuePlannerTask(issue) : [`Goal (from the user): ${ctx.run.goal}`]),
   ].join('\n');
+  const blocks = [...(issue ? issuePromptBlocks(issue) : []), ...(slice ? [{ label: 'repository map', content: slice }] : [])];
   return renderWorkerPrompt({
     role: 'planner',
     task,
     contract: null,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
-    // The whole spec in one block: intake refused a body longer than the block may be, so it is never cut here.
-    ...(issue ? { untrusted: issuePromptBlocks(issue), maxBlockChars: ISSUE_BODY_MAX_CHARS + 400 } : {}),
+    // The whole spec in one block: intake refused a body longer than the block may be, so it is never cut here. The map's
+    // slice is already within its token limit.
+    ...(blocks.length > 0 ? { untrusted: blocks, maxBlockChars: Math.max(issue ? ISSUE_BODY_MAX_CHARS + 400 : DEFAULT_BLOCK_CHARS, (slice?.length ?? 0) + 100) } : {}),
     advisoryBlock: advisoryBlockFor(ctx, { role: 'planner', workerId, paths: ctx.snapshot.config.scope.allowed_paths, checkIds: Object.keys(ctx.snapshot.config.checks), fingerprints: [] }),
   });
 }

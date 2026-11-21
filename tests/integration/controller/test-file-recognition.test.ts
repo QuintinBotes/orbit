@@ -207,6 +207,8 @@ function planner(lang: Language, expectedTest: string): object {
         proof: ['a unit test asserts mul(2, 3) == 6'],
         check_ids: ['unit-tests'],
         changes: [{ path: lang.source, summary: 'add mul' }],
+        kind: 'change',
+        tests: [],
       },
     ],
     expected_changed_files: [

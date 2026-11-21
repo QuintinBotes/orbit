@@ -55,7 +55,11 @@ export interface ScopeReport {
   forbidden_paths_changed: string[];
   out_of_scope_paths_changed: string[];
   changed_files: number;
+  /** Added plus deleted lines, without those of generated files (generated_lines). */
   changed_lines: number;
+  /** Only when the change touches files the repository maps of both trees flag as generated: their lines, not in changed_lines (#157). */
+  generated_lines?: number;
+  generated_paths?: string[];
   within_size_limits: boolean;
   /** Only when over a size limit: the five files with the most added plus deleted lines, heaviest first. */
   largest_changes?: { path: string; lines: number }[];
@@ -91,7 +95,7 @@ export interface CriterionFailBefore {
    * failed-before, passed-before or not-established from the probe; not-run when the policy turned the probe off;
    * not-applicable when the criterion's support does not rest on new tests.
    */
-  outcome: 'failed-before' | 'passed-before' | 'not-established' | 'not-run' | 'not-applicable';
+  outcome: 'failed-before' | 'passed-before' | 'not-established' | 'not-run' | 'not-applicable' | 'kept';
   /** Each probed check the criterion cites, with every attempt on the probe tree. */
   checks: { id: string; outcome: 'failed-before' | 'passed-before' | 'not-established'; cause?: string; attempts: { status: CheckStatus; exit_code: number | null; log: string | null }[] }[];
   /** The probe tree (the base tree with the candidate's test-owned paths); null when no probe tree was built. */
@@ -105,6 +109,11 @@ export interface CriterionFailBefore {
   accepted?: { question_id: string; by: string };
   /** Present when a probed check is cited by other criteria too: the outcome is that check's, shared by each of them. */
   check_wide?: string;
+  /**
+   * Per criterion (issue #200): each mapped test run alone, on the base tree with the new tests and on the candidate. Its
+   * presence means the outcome is the criterion's own: failed-before (change) or kept (keep) only when every test agrees.
+   */
+  tests?: { path: string; check_id: string | null; base: 'failed' | 'passed' | 'not-established'; candidate: 'failed' | 'passed' | 'not-established'; reason: string }[];
 }
 
 /**

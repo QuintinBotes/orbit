@@ -4,7 +4,7 @@ import { OrbitError } from '../core/errors.ts';
 import { schemaErrors } from '../core/schema.ts';
 import type { CuratedLesson } from '../contract/model-outputs.ts';
 import type { Observation } from './extract.ts';
-import type { Applicability, Confidence, EvidenceRef, Lesson, Provenance } from './types.ts';
+import type { Applicability, Citation, Confidence, EvidenceRef, Lesson, Provenance } from './types.ts';
 import { LESSON_KINDS } from './types.ts';
 import { authorityViolations, lessonText, verificationLooksExecutable } from './authority.ts';
 import { codeFreeViolations, shareableText } from './codefree.ts';
@@ -174,6 +174,29 @@ export interface DraftNormalization {
   maxConfidence: Confidence;
   status: Lesson['status'];
   scope: Lesson['scope'];
+  /** Where the lesson came from, derived by the controller (never by the curator). */
+  citation?: Citation | null;
+}
+
+const fit = (value: string | null | undefined, max: number): string | null => (value && value.length <= max ? value : null);
+
+/**
+ * The citation of a lesson (issue #173 FR-001): its run and the file and line, check or review finding of the first
+ * observation it rests on that names a file or a check, else of the first one. Built from what the controller
+ * extracted, so a curator cannot point a lesson at another file.
+ */
+export function citationFor(observations: readonly Observation[]): Citation | null {
+  let first: Citation | null = null;
+  for (const o of observations) {
+    const finding = o.source === 'review-finding' ? (o.evidence.find((e) => e.artifact.startsWith('finding:'))?.artifact.slice('finding:'.length) ?? null) : null;
+    const at = o.source === 'review-finding' && typeof o.detail.location === 'string' ? /:(\d+)(?::\d+)?$/.exec(o.detail.location) : null;
+    const path = fit(o.paths[0], 300);
+    const line = path && at && Number(at[1]) >= 1 ? Number(at[1]) : null;
+    const c: Citation = { run_id: o.run_id.slice(0, 64), path, line, check_id: fit(o.check_ids[0], 80), finding_id: fit(finding, 80) };
+    if (c.path !== null || c.check_id !== null) return c;
+    first ??= c;
+  }
+  return first;
 }
 
 /**
@@ -221,6 +244,7 @@ export function normalizeDraft(draft: CuratorLessonDraft, n: DraftNormalization)
     scope: n.scope,
     code_free: codeFree,
     supersedes: supersedes === lessonIdFor(draft.kind, statement) ? null : supersedes,
+    ...(n.citation ? { citation: n.citation } : {}),
   };
   const errors = lessonSchemaErrors(lesson);
   if (errors.length > 0) return { reason: `schema: ${errors.slice(0, 3).join('; ')}` };
@@ -312,12 +336,14 @@ export function acceptCuratorOutputDetailed(
     }
     const derivedFrom = [...cited, ...draft.provenance.derived_from.filter((d) => observationIds.has(d))];
     const runs = new Set(evidence.map((e) => e.run_id));
+    const sources = new Set(derivedFrom);
     const result = normalizeDraft(draft, {
       evidence,
       provenance: { source: 'run', uri: null, derived_from: [...new Set(derivedFrom)].slice(0, 50), generated_by: generatedBy, generated_at: generatedAt },
       maxConfidence: runs.size >= 2 ? 'high' : 'medium',
       status: 'candidate',
       scope: 'repo',
+      citation: citationFor(observations.filter((o) => sources.has(o.id))),
     });
     if ('reason' in result) {
       rejected.push({ index, statement: statementOf(raw), reason: result.reason });

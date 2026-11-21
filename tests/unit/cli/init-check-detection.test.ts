@@ -47,7 +47,7 @@ function pathWith(tools: string[], opts: { clippy?: boolean } = {}): string {
 
 interface InitJson {
   config: { status: string };
-  checks: { proposed: { id: string; ecosystem: string; command: string[]; category: string; timeout_seconds: number; reason: string }[]; not_proposed: { ecosystem: string; reason: string }[]; unread_docs?: string[] };
+  checks: { proposed: { id: string; ecosystem: string; command: string[]; category: string; timeout_seconds: number; reason: string }[]; not_proposed: { ecosystem: string; reason: string }[]; read_docs?: string[]; unread_docs?: string[] };
   config_problems: string[];
   warnings: string[];
 }
@@ -273,62 +273,121 @@ describe('init proposes checks: Rust', () => {
   });
 });
 
-describe('init proposes checks: unread agent docs', () => {
+describe('init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)', () => {
   const files = {
     'package.json': pkg({ scripts: { test: 'vitest run' } }),
     'pnpm-lock.yaml': 'lockfileVersion: 9\n',
     'src/index.ts': 'export {};\n',
   };
+  // The test command sits on line 7, after a command that is no check.
+  const AGENTS = '# Agents\n\n## Commands\n\n```bash\npnpm install\npnpm exec vitest run --maxWorkers=4   # an uncapped run starves a loaded machine\n```\n';
 
-  it.each([
-    { docs: ['CLAUDE.md'] },
-    { docs: ['AGENTS.md'] },
-    { docs: ['AGENTS.override.md'] },
-    { docs: ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md'] },
-  ])('reports tracked root docs in JSON: $docs', async ({ docs }) => {
-    const l = repoWith({ ...files, ...Object.fromEntries(docs.map((name) => [name, 'Run pnpm test --maxWorkers=2.\n'])) });
-    const r = await init(l, ['pnpm']);
-    expect(r.json.checks.unread_docs).toEqual(docs);
-    const warning = r.json.warnings.find((w) => w.includes('init did not read'));
-    expect(warning).toContain(docs.join(', '));
-    expect(warning).toContain('manifests only');
-    expect(warning).toContain('.orbit/config.yaml');
-    expect(r.checks['unit-tests']?.command).toEqual(['pnpm', 'test']);
+  it('user story 1, scenario 1: proposes the test command AGENTS.md documents and says where it read it (SC-001)', async () => {
+    const r = await init(repoWith({ ...files, 'AGENTS.md': AGENTS }), ['pnpm']);
+    expect(r.checks['unit-tests']).toMatchObject({ command: ['pnpm', 'exec', 'vitest', 'run', '--maxWorkers=4'], category: 'test', timeout_seconds: 900 });
+    expect(r.json.checks.proposed.find((c) => c.id === 'unit-tests')?.reason).toBe('documented in AGENTS.md line 7, in place of pnpm test from the manifests');
+    expect(r.json.checks.read_docs).toEqual(['AGENTS.md']);
+    expect(r.json.checks).not.toHaveProperty('unread_docs');
+    expect(r.text).toContain('# Proposed by "orbit init" (documented in AGENTS.md line 7, in place of pnpm test from the manifests). Review it before the first run.');
+
+    const l = repoWith({ ...files, 'AGENTS.md': AGENTS });
+    const t = await l.cli(['init'], { env: envFor(l, pathWith(['pnpm'])) });
+    expect(t.code, t.err).toBe(0);
+    expect(t.out).toContain('read AGENTS.md for the commands the repository documents');
+    expect(t.out).toContain('  unit-tests: pnpm exec vitest run --maxWorkers=4 (test, 900s): documented in AGENTS.md line 7');
   });
 
-  it('prints the unread docs warning with the proposed checks', async () => {
-    const l = repoWith({ ...files, 'CLAUDE.md': '', 'AGENTS.md': '', 'AGENTS.override.md': '' });
-    const r = await l.cli(['init'], { env: envFor(l, pathWith(['pnpm'])) });
-    expect(r.code, r.err).toBe(0);
-    expect(r.out).toContain('unit-tests: pnpm test');
-    expect(r.out).toContain('WARN: the proposed checks come from manifests only');
-    expect(r.out).toContain('init did not read CLAUDE.md, AGENTS.md, AGENTS.override.md');
-    expect(r.out).toContain('compare the commands documented there and edit .orbit/config.yaml');
+  it('reads AGENTS.md before CLAUDE.md, takes the first command each documents for a check, and records both (#138)', async () => {
+    const claude = '## Commands\n\n- Tests: `pnpm test`\n- Rust: `cargo test --workspace --no-fail-fast` (without it the first failing binary hides the rest)\n';
+    const r = await init(repoWith({ ...files, 'Cargo.toml': '[workspace]\nmembers = []\n', 'CLAUDE.md': claude, 'AGENTS.md': AGENTS }), ['pnpm', 'cargo'], { clippy: false });
+    expect(r.json.checks.read_docs).toEqual(['AGENTS.md', 'CLAUDE.md']);
+    expect(r.checks['node-unit-tests']?.command).toEqual(['pnpm', 'exec', 'vitest', 'run', '--maxWorkers=4']);
+    expect(r.checks['rust-unit-tests']).toMatchObject({ command: ['cargo', 'test', '--workspace', '--no-fail-fast'], timeout_seconds: 1200 });
+    expect(r.json.checks.proposed.find((c) => c.id === 'rust-unit-tests')?.reason).toBe('documented in CLAUDE.md line 4, in place of cargo test --workspace from the manifests');
+    expect(r.checks['rust-build']?.command).toEqual(['cargo', 'build', '--workspace']);
+  });
+
+  it('adds a documented check the manifests do not declare, and names one whose tool is not on PATH', async () => {
+    const r = await init(repoWith({ ...files, 'AGENTS.md': 'Lint with `pnpm exec eslint .`, type-check with `npx tsc --noEmit`.\n' }), ['pnpm']);
+    expect(r.ids).toEqual(['unit-tests', 'lint']);
+    expect(r.checks.lint).toMatchObject({ command: ['pnpm', 'exec', 'eslint', '.'], category: 'lint', timeout_seconds: 300 });
+    expect(r.json.checks.proposed.find((c) => c.id === 'lint')?.reason).toBe('documented in AGENTS.md line 1');
+    expect(r.json.checks.not_proposed).toEqual([{ ecosystem: 'node', reason: 'AGENTS.md line 1 documents npx tsc --noEmit, but npx was not found on PATH' }]);
+    expect(r.json.config_problems).toEqual([]);
+  });
+
+  it('ignores prose, commands that need a shell, and commands that are no check', async () => {
+    const agents = 'Run pnpm test --maxWorkers=2 before pushing, never `pnpm exec evil\u001b[2K\u001b[100Dpnpm test`, `pnpm exec evil\u009b2K\u009b100Dpnpm test` or `pnpm exec evil\u202e tset mpnp`.\n\n```sh\n$ pnpm install\npnpm add -D vitest\nCI=1 pnpm test\npnpm test | tee out.log\npnpm run dev\n```\n';
+    const r = await init(repoWith({ ...files, 'AGENTS.md': agents }), ['pnpm']);
+    expect(r.json.checks.read_docs).toEqual(['AGENTS.md']);
+    expect(r.json.checks.proposed).toEqual([expect.objectContaining({ id: 'unit-tests', command: ['pnpm', 'test'], reason: expect.stringContaining('package.json declares a test script') })]);
+  });
+
+  it('pins a documented dotnet command to one MSBuild node, in place of the derived check of the project it names', async () => {
+    const tests = '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" /></ItemGroup></Project>\n';
+    const r = await init(repoWith({ 'A.Tests/A.Tests.csproj': tests, 'B.Tests/B.Tests.csproj': tests, 'AGENTS.md': 'Test with `dotnet test B.Tests/B.Tests.csproj`.\n' }), ['dotnet']);
+    expect(r.json.checks.proposed.filter((c) => c.category === 'test').map((c) => c.command.join(' '))).toEqual(['dotnet test A.Tests/A.Tests.csproj -m:1', 'dotnet test B.Tests/B.Tests.csproj -m:1']);
+    expect(r.json.checks.proposed.find((c) => c.id === 'unit-tests-b-tests')?.reason).toBe('documented in AGENTS.md line 1, in place of dotnet test B.Tests/B.Tests.csproj -m:1 from the manifests; -m:1 keeps MSBuild on one node, since the check sandbox refuses worker nodes their named pipe');
+  });
+
+  it('reads a bare tool name in prose as a mention, not as a command in place of the derived one', async () => {
+    const pyproject = '[project]\nname = "acme"\n\n[tool.ruff]\nline-length = 100\n\n[tool.mypy]\nstrict = true\n';
+    const r = await init(repoWith({ 'pyproject.toml': pyproject, 'AGENTS.md': 'We lint with `ruff` and type-check with `mypy`.\n' }), ['ruff', 'mypy']);
+    expect(r.checks.lint?.command).toEqual(['ruff', 'check', '.']);
+    expect(r.checks.typecheck?.command).toEqual(['mypy', '.']);
+    const go = await init(repoWith({ 'go.mod': 'module acme.test/app\n\ngo 1.22\n', 'AGENTS.md': 'Run `go test` before pushing.\n' }), ['go']);
+    expect(go.checks['unit-tests']?.command).toEqual(['go', 'test', './...']);
+    // With nothing derived to keep, a bare `ruff` is still no check, while a bare `pytest` is a whole one.
+    const bare = await init(repoWith({ 'pyproject.toml': '[project]\nname = "acme"\n', 'AGENTS.md': 'We lint with `ruff`. Test with `pytest`.\n' }), ['ruff', 'pytest']);
+    expect(bare.json.checks.proposed.map((c) => c.command.join(' '))).toEqual(['pytest']);
+    // .NET: `dotnet test` is the leading part of the derived command for the solution in src/, pin aside.
+    const dotnet = await init(repoWith({ 'src/App.sln': 'Microsoft Visual Studio Solution File, Format Version 12.00\n', 'src/App.Tests/App.Tests.csproj': '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.0.0" /></ItemGroup></Project>\n', 'AGENTS.md': 'Run `dotnet test`.\n' }), ['dotnet']);
+    expect(dotnet.checks['unit-tests']?.command).toEqual(['dotnet', 'test', 'src/App.sln', '-m:1']);
+  });
+
+  it('does not propose a documented clippy command where clippy is not installed', async () => {
+    const r = await init(repoWith({ 'Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\n', 'AGENTS.md': 'Lint with `cargo clippy --all-targets -- -D warnings`.\n' }), ['cargo'], { clippy: false });
+    expect(r.ids).not.toContain('lint');
+    expect(r.json.checks.not_proposed.map((n) => n.reason)).toEqual([expect.stringContaining('cargo clippy is not installed')]);
+    // With no root Cargo.toml init never probed clippy, so the documented command is proposed.
+    const nested = await init(repoWith({ 'src-tauri/Cargo.toml': '[package]\nname = "acme"\nversion = "0.1.0"\n', 'AGENTS.md': 'Lint with `cargo clippy --manifest-path src-tauri/Cargo.toml`.\n' }), ['cargo'], { clippy: false });
+    expect(nested.checks.lint?.command).toEqual(['cargo', 'clippy', '--manifest-path', 'src-tauri/Cargo.toml']);
+  });
+
+  it('does not read AGENTS.override.md, and says so', async () => {
+    const r = await init(repoWith({ ...files, 'AGENTS.override.md': 'Use `pnpm exec vitest run --maxWorkers=1`.\n', 'CLAUDE.md': '' }), ['pnpm']);
+    expect(r.json.checks.read_docs).toEqual(['CLAUDE.md']);
+    expect(r.json.checks.unread_docs).toEqual(['AGENTS.override.md']);
+    expect(r.json.warnings).toContain('init does not read AGENTS.override.md: compare the commands documented there with the proposed checks and edit .orbit/config.yaml');
+    expect(r.checks['unit-tests']?.command).toEqual(['pnpm', 'test']);
   });
 
   it.each<{ name: string; docs: Record<string, string> }>([
     { name: 'absent', docs: {} },
-    { name: 'nested', docs: { 'src/CLAUDE.md': '', 'src/AGENTS.md': '', 'src/AGENTS.override.md': '' } },
-    { name: 'other', docs: { 'README.md': '', 'claude.md': '' } },
-  ])('omits the note when root agent docs are $name', async ({ docs }) => {
+    { name: 'nested', docs: { 'src/CLAUDE.md': '`pnpm run lint`', 'src/AGENTS.md': '`pnpm run lint`', 'src/AGENTS.override.md': '' } },
+    { name: 'other', docs: { 'README.md': '`pnpm run lint`', 'claude.md': '`pnpm run lint`' } },
+  ])('reads nothing when root agent docs are $name', async ({ docs }) => {
     const r = await init(repoWith({ ...files, ...docs }), ['pnpm']);
+    expect(r.ids).toEqual(['unit-tests']);
+    expect(r.json.checks).not.toHaveProperty('read_docs');
     expect(r.json.checks).not.toHaveProperty('unread_docs');
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+    expect(r.json.warnings.some((w) => w.includes('AGENTS.override.md'))).toBe(false);
   });
 
   it('ignores untracked root agent docs', async () => {
     const l = repoWith(files);
-    for (const name of ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md']) writeFileSync(join(l.repo, name), 'Run a different check.\n');
+    for (const name of ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md']) writeFileSync(join(l.repo, name), 'Run `pnpm run lint`.\n');
     const r = await init(l, ['pnpm']);
+    expect(r.ids).toEqual(['unit-tests']);
+    expect(r.json.checks).not.toHaveProperty('read_docs');
     expect(r.json.checks).not.toHaveProperty('unread_docs');
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
   });
 
   it('omits the note when no checks are proposed', async () => {
-    const r = await init(repoWith({ ...files, 'CLAUDE.md': '' }), []);
+    const r = await init(repoWith({ ...files, 'AGENTS.override.md': '' }), []);
     expect(r.ids).toEqual([]);
     expect(r.json.checks).not.toHaveProperty('unread_docs');
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+    expect(r.json.warnings.some((w) => w.includes('init does not read'))).toBe(false);
   });
 });
 
@@ -390,7 +449,7 @@ describe('init proposes checks: several ecosystems, existing configs, output', (
     const r = await init(l, ['npm']);
     expect(r.json.config.status).toBe('exists');
     expect(r.json.checks).toEqual({ proposed: [], not_proposed: [] });
-    expect(r.json.warnings.some((w) => w.includes('init did not read'))).toBe(false);
+    expect(r.json.warnings.some((w) => w.includes('init does not read'))).toBe(false);
     expect(r.text).toBe(mine);
   });
 

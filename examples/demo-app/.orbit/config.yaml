@@ -104,6 +104,8 @@ checks:
     category: test
     timeout_seconds: 300
     flaky_reruns: 1
+    # Each criterion's mapped test files alone, for its fail-before.
+    tests_command: [node, --test]
   # Browser journeys run through Orbit's UI runner, and only when a criterion or a changed
   # UI path needs browser evidence (the ui section below), so this check is not mandatory
   # for every run. When UI evidence is required, the UI gate makes it mandatory.
