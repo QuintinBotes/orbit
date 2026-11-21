@@ -390,12 +390,17 @@ describe('orbit timeline --follow', () => {
     const fx = startFixture(l);
     fx.at(1, () => fx.to('PREFLIGHT', 'starting'));
     const handlers = new Map<string, () => void>();
-    const signals = { on: (s: string, f: () => void) => void handlers.set(s, f), off: (s: string) => void handlers.delete(s) };
+    let following!: () => void;
+    const installed = new Promise<void>((r) => (following = r));
+    const signals = { on: (s: string, f: () => void) => void (handlers.set(s, f), following()), off: (s: string) => void handlers.delete(s) };
     const done = l.cli(['timeline', RUN_ID, '--follow', '--json'], { seams: { pollMs: 10, signals: signals as never } });
-    await new Promise((r) => setTimeout(r, 60));
-    handlers.get('SIGINT')?.();
+    // Interrupt only once the follower listens (#201): a fixed 60 ms sleep fired before a slow start installed the handler, and the follow never ended.
+    await Promise.race([installed, done]);
+    const interrupt = handlers.get('SIGINT');
+    expect(interrupt, 'the follower installed a SIGINT handler').toBeDefined();
+    interrupt!();
     const r = await done;
-    expect(r.code).toBe(0);
+    expect(r.code, r.err).toBe(0);
     const lines = r.out.trim().split('\n').map((x) => JSON.parse(x) as { event: string; kind: string });
     expect(lines.map((x) => x.kind)).toEqual(expect.arrayContaining(['run.created', 'state.transition']));
     expect(lines.map((x) => x.event)).toEqual(expect.arrayContaining(['run.created', 'state.transition']));
