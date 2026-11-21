@@ -23,14 +23,16 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      # Ubuntu covers both supported Node lines; macOS runners cost more, so
-      # macOS runs on the current line only.
+      # Ubuntu covers every supported Node line; macOS runners cost more, so
+      # macOS runs on one line only.
       matrix:
         include:
           - os: ubuntu-latest
             node: '22'
           - os: ubuntu-latest
             node: '24'
+          - os: ubuntu-latest
+            node: '26'
           - os: macos-latest
             node: '24'
     steps:
@@ -101,6 +103,12 @@ jobs:
 
       - name: Acceptance tests (mock providers)
         run: npm run test:acceptance
+
+      # Orbit's regression suite (#172): one scenario per fixed issue, fake providers, no model. A scenario whose fixed
+      # outcome no longer holds fails the job, named with its issue. The scorecard is not committed from CI.
+      - name: Lab bench
+        timeout-minutes: 10
+        run: node plugin/dist/orbit.mjs bench --tier lab --out "$RUNNER_TEMP/scorecards"
 
       - name: Plugin validation
         run: node scripts/check-plugin.mjs

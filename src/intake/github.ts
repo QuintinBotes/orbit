@@ -17,7 +17,7 @@ import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { redact } from '../core/redact.ts';
 import { classifyGhFailure, type GhRunner } from '../delivery/github.ts';
-import { resolveRemoteUrl } from '../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../delivery/git.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 
 export interface BlockingIssue {
@@ -465,7 +465,7 @@ async function githubRepoOf(repoRoot: string, config: Pick<OrbitConfig, 'reposit
   } catch {
     throw new OrbitError('CONFIG_INVALID', `this checkout has no remote "${remote}", so there is no repository to read an issue from`, { definitive: true });
   }
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-  if (!m) throw new OrbitError('CONFIG_INVALID', `remote "${remote}" is not a github.com repository, so there is no issue tracker Orbit can read`, { definitive: true });
-  return `${m[1]}/${m[2]}`;
+  const repo = githubRepoFromUrl(url);
+  if (!repo) throw new OrbitError('CONFIG_INVALID', `remote "${remote}" is not a github.com repository, so there is no issue tracker Orbit can read`, { definitive: true });
+  return repo;
 }

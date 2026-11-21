@@ -259,6 +259,16 @@ describe('inquisitor worker', () => {
     expect(prompt).toContain('<\\/orbit-data>');
   });
 
+  it("carries the repository's AGENTS.md, then CLAUDE.md, as blocks redacted before the cap cuts them (issue #178, FR-001)", () => {
+    env = setup();
+    // A token the 4,000-character cap would split, leaving a prefix no redaction pattern recognises.
+    const agents = `${'.'.repeat(3990)} ghp_${'A'.repeat(36)}`;
+    const prompt = renderInquisitorPrompt(trig(), { ...env.ctx(), repoInstructions: [{ path: 'AGENTS.md', content: agents }, { path: 'CLAUDE.md', content: 'Keep functions pure.' }] });
+    expect(prompt.indexOf('<orbit-data label="repository instructions AGENTS.md">')).toBeLessThan(prompt.indexOf('<orbit-data label="repository instructions CLAUDE.md">'));
+    expect(prompt).toContain('Keep functions pure.');
+    expect(prompt).not.toContain('ghp_A');
+  });
+
   it('validates a worker question and persists it; a weak material one is rejected and blocks what it names', async () => {
     env = setup();
     const out = inquisitorOutput({

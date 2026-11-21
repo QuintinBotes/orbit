@@ -87,6 +87,8 @@ export function draftContract(input: DraftContractInput): DraftResult {
       mandatory: c.mandatory,
       ui: c.ui,
       check_ids: checkIds,
+      kind: c.kind,
+      tests: [...new Set(c.tests.map((t) => t.trim().replace(/^\.\//, '')).filter((t) => t !== ''))],
     };
   });
 

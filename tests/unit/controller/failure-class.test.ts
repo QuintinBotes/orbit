@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FAILURE_CLASSES, TURN_CAP_EVENT, classifyRunEnd, isFailureClass, type FailureClass, type RunEndEvidence } from '../../../src/controller/failure-class.ts';
+import { FAILURE_CLASSES, TURN_CAP_EVENT, classMarkers, classifyRunEnd, isFailureClass, type FailureClass, type RunEndEvidence } from '../../../src/controller/failure-class.ts';
 import { WORKER_ENDED_EVENT } from '../../../src/controller/steps/implementing.ts';
 import { TERMINAL_STATES } from '../../../src/core/run-states.ts';
 
@@ -196,5 +196,17 @@ describe('two causes (edge case 1)', () => {
   it('is deterministic: the same evidence gives the same answer', () => {
     const evidence = { state: 'EXHAUSTED' as const, outcome: { non_progress: { terminate: true }, open_findings: [{ id: 'f' }] }, data: { counter: 'implementation_attempts' }, cause: null, turnCapSessions: 0 };
     expect(classifyRunEnd(evidence)).toEqual(classifyRunEnd(structuredClone(evidence)));
+  });
+});
+
+describe('the markers retro groups on (#174)', () => {
+  it('are the markers the class was set from', () => {
+    expect(classMarkers('awaiting-decision', { questions: ['q-1'], fail_before: { pending: true } })).toEqual(['questions', 'fail_before']);
+    expect(classMarkers('gate-deadlock', { questions: ['q-1'] })).toEqual([]);
+    // A declined ledger entry is a deadlock, so nothing is awaited.
+    expect(classMarkers('awaiting-decision', { ledger_entries: ['l-1'], ledger_declined: [{ entries: ['l-1'] }] })).toEqual([]);
+    expect(classMarkers('gate-deadlock', { ledger_entries: ['l-1'], ledger_declined: [{ entries: ['l-1'] }] })).toEqual(['ledger_declined']);
+    expect(classMarkers('scope', { gate: { gate: 'intake', details: { scope: ['outside'] } } })).toEqual(['gate.details.scope']);
+    expect(end({ state: 'BLOCKED', outcome: { gate: { gate: 'intake', details: { scope: ['outside'] } } } })).toEqual(['scope', null]);
   });
 });

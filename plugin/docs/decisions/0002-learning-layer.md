@@ -47,6 +47,18 @@ docs/learning.md). Initial allowances and difficulty classes are not adjusted
 from outcomes. Orbit does not try a cheaper model on its own, so a model
 collects outcomes only from runs that route to it.
 
+Amendment (2026-11-20, issue #173). Lessons and overlays stay out of worker
+prompts unless `knowledge.lessons_in_prompts` is on, and it is off by default
+until a full benchmark shows that they help. Recording, citing, re-checking
+and expiring lessons run either way. A lesson curated from a run cites the run
+and the file and line, check or review finding it came from; before it may
+enter a prompt the citation is re-checked against the repository, and a lesson
+with no supporting run for `knowledge.lesson_expiry_days` expires.
+Contradictions are read from the run's records, and contradictions from two
+distinct runs deprecate a lesson whatever its support. When an overlay
+evaluation has a result from the benchmark's held-out scenarios, a candidate
+with a lower pass rate there is not adopted.
+
 ## Guardrails
 
 - Lessons and overlays are advisory text inside a fenced block. Policy, hard

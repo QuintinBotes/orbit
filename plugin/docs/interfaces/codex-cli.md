@@ -437,6 +437,29 @@ How these reach the exec JSONL (presumably a `turn.failed` message) is **UNVERIF
 
 ---
 
+## 10a. The implementer invocation (issue #176, not probed)
+
+With `routing.implementers` listing Codex, an implementer runs the review
+invocation of section 0 with `--sandbox workspace-write` (section 1: writes of
+the commands it runs confined to `-C` and `$TMPDIR`, the worker's private temp
+directory), `-c sandbox_workspace_write.exclude_slash_tmp=true` (the shared
+`/tmp` is writable by default) and `-c sandbox_workspace_write.network_access=false`
+(so a project `.codex/config.toml` cannot open the network; a CLI override
+outranks it), and `-C <the run's worktree>`.
+Reads stay unrestricted in this tier, so a credential file the commands read is
+kept out of the candidate only by the secret scan. Whether a project
+`.codex/config.toml` the implementer writes (its `writable_roots`, MCP servers
+or hooks) would be loaded by a later Codex session in the same worktree was not
+probed; it cannot be, because `.codex/**` is a built-in protected path, as are
+Muse's `.muse/**` and `.agents/**`: a candidate that writes one is rejected
+outright and no later session runs on it. Or it runs inside srt with `danger-full-access` and the
+worktree added to the profile's writes (ADR 0022). The final message is shaped
+by the implementer schema and validated against Orbit's copy of it. A turn that
+fails with a used-up allowance ("usage limit", `insufficient_quota`, "exceeded
+your current quota") ends `auth_failed` with reason `quota`; a plain 429 stays
+transient. Nothing of this was run against the real CLI: the acceptance lab
+drives `tests/fakes/fake-codex.mjs`.
+
 ## 11. UNVERIFIED / open items
 
 - **Success-path live capture against OpenAI.** The protocol shape is now verified against a local mock provider (§3 D′, gaps V6), but no real OpenAI success was captured. Re-run once with `-m gpt-6-astra` (or after `codex update`) to confirm real-model behaviour.

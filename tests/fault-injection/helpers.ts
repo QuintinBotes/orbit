@@ -76,7 +76,7 @@ export function spawnFaultyController(lab: Lab, opts: ChildOptions & { faults?: 
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ORBIT_FAULTS;
   if (faults) env.ORBIT_FAULTS = faults;
-  const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CHILD, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CHILD, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env });
   let out = '';
   child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
   child.stderr?.on('data', (d: Buffer) => (out += d.toString()));

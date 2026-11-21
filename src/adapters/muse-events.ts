@@ -15,6 +15,7 @@ import type { ProviderEvent, TaskResult, TaskStatus, UsageReport } from './types
 export const MUSE_END_REASONS = [
   'success',
   'auth',
+  'quota',
   'run_failed',
   'step_cap',
   'invalid_json',
@@ -35,6 +36,8 @@ export interface MuseTaskResult extends TaskResult {
 /** How Muse 1.4.11 says it has no usable login (probed with an empty config directory) or a rejected key. */
 export const MUSE_AUTH_PATTERNS: readonly RegExp[] = [/missing meta credentials/i, /\b401\b/, /unauthori[sz]ed/i, /run `muse login`/i];
 const STEP_CAP = /did not reach a terminal state within \d+ step/i;
+/** The allowance is used up (issue #176). Muse's own wording was not probed, so only phrases that cannot mean a rate limit count. */
+export const MUSE_QUOTA_PATTERNS: readonly RegExp[] = [/usage limit/i, /out of quota/i, /quota (?:exceeded|exhausted)/i, /exceeded your (?:current )?quota/i];
 
 export interface MuseClassifyInput {
   events: Record<string, unknown>[];
@@ -67,6 +70,8 @@ export function classifyMuseTranscript(input: MuseClassifyInput): MuseTaskResult
   if (exit.timedOut) return end('timeout', 'timeout', `timed out; the shim sent ${exit.escalation.join(', ') || 'no signal'}`);
   if (exit.cancelled) return end('cancelled', 'interrupted', 'cancelled by a signal to the worker');
   const authFailed = (text: string): MuseTaskResult => end('auth_failed', 'auth', `authentication failed: ${clip(firstMatchingLine(text), 300)}; not retried`);
+  const quotaFailed = (text: string): MuseTaskResult => end('auth_failed', 'quota', `out of quota: ${clip(text.split('\n').find((l) => MUSE_QUOTA_PATTERNS.some((p) => p.test(l))) ?? text, 300)}; not retried`);
+  const isQuota = (text: string | undefined): boolean => typeof text === 'string' && MUSE_QUOTA_PATTERNS.some((p) => p.test(text));
 
   if (!terminal) {
     if (exit.escalation.length > 0) return end('cancelled', 'interrupted', `ended after ${exit.escalation.join(', ')} with no terminal event`);
@@ -74,6 +79,7 @@ export function classifyMuseTranscript(input: MuseClassifyInput): MuseTaskResult
     if (input.malformedTail) return end('malformed_output', 'malformed_transcript', `output ends in a line that is not JSON (exit ${exit.code})`);
     // Muse exits 1 and names a missing login on stderr, before any event (docs/interfaces/muse.md section 2).
     if (exit.code === 1 && isAuthText(input.stderr)) return authFailed(input.stderr!);
+    if (exit.code === 1 && isQuota(input.stderr)) return quotaFailed(input.stderr!);
     const said = lastStderrLine(input.stderr);
     return end('failed', 'crashed', `exited ${exit.code} without run.terminal.completed or run.terminal.failed${said ? `: ${clip(said, 300)}` : ''}`);
   }
@@ -81,6 +87,7 @@ export function classifyMuseTranscript(input: MuseClassifyInput): MuseTaskResult
     const failure = str(terminal.reason) ?? 'run failed';
     if (STEP_CAP.test(failure)) return end('failed', 'step_cap', clip(failure, 500));
     if (isAuthText(failure)) return authFailed(failure);
+    if (isQuota(failure)) return quotaFailed(failure);
     return end('failed', 'run_failed', clip(failure, 500));
   }
   if (exit.code !== 0) return end('failed', 'crashed', `run.terminal.completed but exit ${exit.code}`);

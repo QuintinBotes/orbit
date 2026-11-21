@@ -192,10 +192,31 @@ export function startEvaluation(store: KnowledgeStore, id: string): PromptOverla
   return store.tx(() => move(store, id, 'evaluating'));
 }
 
+/**
+ * What the benchmark's held-out scenarios showed for a candidate overlay (issue #173 FR-007): the outside check an
+ * overlay must not regress before it is adopted. The pass rates are shares of `scenarios`, from 0 to 1.
+ */
+export interface HeldOutResult {
+  suite_id: string;
+  scenarios: number;
+  baseline_pass_rate: number;
+  candidate_pass_rate: number;
+}
+
+/**
+ * Runs the benchmark's held-out scenarios with the role's current overlay (null: the base prompt) and with the
+ * candidate. The benchmark is issue #172; until it supplies one, evaluations have no held-out result.
+ */
+export interface HeldOutBenchmark {
+  run(baseline: PromptOverlay | null, candidate: PromptOverlay): Promise<HeldOutResult>;
+}
+
 export interface AdoptionInput {
   cases: number;
   baseline: EvalMetrics;
   candidate: EvalMetrics;
+  /** When given, a lower pass rate on the held-out scenarios than the baseline's refuses adoption. */
+  held_out?: HeldOutResult;
   /**
    * The overlay the baseline metrics were measured with (null for the base
    * prompt alone). When given, completeEvaluation refuses to adopt if the
@@ -241,6 +262,16 @@ export function decideAdoption(input: AdoptionInput): AdoptionDecision {
   const invalid = [...metricProblems('baseline', input.baseline), ...metricProblems('candidate', input.candidate)];
   if (invalid.length > 0) return { adopt: false, improvements: [], regressions: [], reason: `invalid metrics: ${invalid.join(', ')}` };
   const cmp = compareMetrics(input.baseline, input.candidate);
+  const h = input.held_out;
+  if (h) {
+    const rate = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+    if (!(Number.isInteger(h.scenarios) && h.scenarios > 0) || !rate(h.baseline_pass_rate) || !rate(h.candidate_pass_rate)) {
+      return { adopt: false, improvements: cmp.improvements, regressions: cmp.regressions, reason: 'the held-out benchmark result is invalid' };
+    }
+    if (h.candidate_pass_rate < h.baseline_pass_rate) {
+      return { adopt: false, improvements: cmp.improvements, regressions: cmp.regressions, reason: `the benchmark's held-out scenarios regressed: pass rate ${h.baseline_pass_rate} with the current prompt, ${h.candidate_pass_rate} with the candidate, over ${h.scenarios} scenario(s) of ${oneLine(h.suite_id).slice(0, 80)}` };
+    }
+  }
   if (!(input.cases > 0)) return { adopt: false, improvements: cmp.improvements, regressions: cmp.regressions, reason: 'no replay cases were evaluated' };
   if (cmp.regressions.length > 0) {
     return { adopt: false, improvements: cmp.improvements, regressions: cmp.regressions, reason: `regression in ${cmp.regressions.join(', ')}` };
@@ -288,7 +319,7 @@ export function completeEvaluation(store: KnowledgeStore, id: string, input: Ado
       baseline: input.baseline,
       metrics: input.candidate,
       decision: decision.adopt ? 'adopt' : 'reject',
-      detail: { reason: decision.reason, improvements: decision.improvements, regressions: decision.regressions },
+      detail: { reason: decision.reason, improvements: decision.improvements, regressions: decision.regressions, ...(input.held_out ? { held_out: input.held_out } : {}) },
     });
     if (!decision.adopt) return { overlay: move(store, id, 'rejected', { eval: evaluation }), decision };
     const current = store.activeOverlay(overlay.role, overlay.scope);

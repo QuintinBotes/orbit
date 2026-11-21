@@ -127,6 +127,9 @@ export function labConfig(repo: string, tweak?: (c: OrbitConfig) => void): Orbit
   c.dependencies = { ...c.dependencies, install_command: ['ln', '-sfn', join(repo, 'node_modules'), 'node_modules'] };
   c.knowledge = { ...c.knowledge, enabled: false };
   if (c.ui) c.ui.environment.base_url = `http://127.0.0.1:${freePort()}`;
+  // The scenarios written before issue #200 judge fail-before per check and script no proof sessions; proof.test.ts sets
+  // `required`, the demo's own default, to run the per-criterion probes and the proof gate before delivery.
+  c.verification = { ...c.verification, fail_before: 'advisory' };
   tweak?.(c);
   return c;
 }
@@ -259,7 +262,7 @@ export function cliEnv(lab: Lab, extra: Record<string, string> = {}): NodeJS.Pro
 
 /** `orbit <args>` run from the lab repository by Node over the TypeScript sources. */
 export function orbit(lab: Lab, args: string[], extra: Record<string, string> = {}): CliChild {
-  const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: lab.repo, env: cliEnv(lab, extra), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: lab.repo, env: cliEnv(lab, extra), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
   child.stderr?.on('data', (d: Buffer) => (out += d.toString()));
@@ -302,7 +305,7 @@ export interface ControllerChild extends ChildProcess {
 
 export function spawnController(lab: Lab, opts: { mode: 'service' | 'foreground'; runId?: string; leaseTtlMs?: number; env?: Record<string, string> }): ControllerChild {
   const args = { repo: lab.repo, orbitHome: lab.orbitHome, configPath: lab.configPath, scenarioPath: lab.scenarioPath, argvLog: lab.argvLog, mode: opts.mode, runId: opts.runId, leaseTtlMs: opts.leaseTtlMs };
-  const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CONTROLLER_MAIN, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(opts.env ?? {}) } });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CONTROLLER_MAIN, JSON.stringify(args)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(opts.env ?? {}) } });
   let out = '';
   child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
   child.stderr?.on('data', (d: Buffer) => (out += d.toString()));

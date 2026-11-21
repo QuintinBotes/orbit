@@ -69,6 +69,31 @@ const has = (o: Record<string, unknown>, key: string): boolean => {
   return Array.isArray(v) ? v.length > 0 : true;
 };
 
+/** The outcome keys that mark each class, by name; `orbit retro` groups on the names a run's class was set from, never their contents. */
+const MARKER_KEYS: Partial<Record<FailureClass, readonly string[]>> = {
+  credentials: ['git_credentials'],
+  'check-misconfigured': ['misconfigured_checks'],
+  environment: ['environment_failures', 'incomplete_checks', 'worker_refusal', 'dirty', 'reviewer', 'release_error', 'release_pending', 'base_conflict'],
+  scope: ['scope', 'ungranted', 'largest_changes'],
+  'review-dispute': ['open_findings', 'held_findings'],
+  // A declined ledger entry needs a new run (resume.ts newRunNeeded): nothing a person answers opens it.
+  'gate-deadlock': ['ledger_declined', 'review_gate', 'shallow_reviews'],
+  // A decision a person gives with `orbit decide`, after which the run resumes: it waits, it did not fail (issue #190).
+  'awaiting-decision': ['questions', 'blocked_criteria', 'authorization', 'ledger_entries', 'fail_before'],
+};
+
+/** The outcome markers of `cls` that `outcome` carries, by key name: the same test classifyRunEnd applies. */
+export function classMarkers(cls: FailureClass, outcome: Record<string, unknown>): string[] {
+  // A declined ledger entry makes the run a deadlock, so it waits for nothing.
+  if (cls === 'awaiting-decision' && has(outcome, 'ledger_declined')) return [];
+  const found = (MARKER_KEYS[cls] ?? []).filter((k) => has(outcome, k));
+  // A gate list (not a gate record, which names the environment) marks a deadlock.
+  if (cls === 'gate-deadlock' && Array.isArray(outcome.gate)) found.push('gate');
+  // A gate whose details name the scope (a goal outside the policy scope, a policy that allows no paths).
+  if (cls === 'scope' && isRecord(outcome.gate) && isRecord(outcome.gate.details) && has(outcome.gate.details, 'scope')) found.push('gate.details.scope');
+  return found;
+}
+
 /**
  * The causes the records show, in the order they stop a run: a harness that cannot do the work (credentials, a check's
  * definition, the environment), then sessions cut off at their turn cap (`turnCapped`, in a run that ran out), then
@@ -83,23 +108,16 @@ function markedCauses(outcome: Record<string, unknown>, data: Record<string, unk
   const code = typeof data.code === 'string' ? CODE_CLASS[data.code] : undefined;
   const counter = typeof data.counter === 'string' ? data.counter : typeof outcome.limit === 'string' ? outcome.limit : null;
   const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === 'string' ? outcome.gate.gate : null;
-  const gateDetails = isRecord(outcome.gate) && isRecord(outcome.gate.details) ? outcome.gate.details : {};
-  const declined = has(outcome, 'ledger_declined');
 
-  add('credentials', (isRecord(outcome.blocker) && outcome.blocker.kind === 'authentication') || data.kind === 'authentication' || has(outcome, 'git_credentials') || code === 'credentials');
-  add('check-misconfigured', has(outcome, 'misconfigured_checks'));
-  add(
-    'environment',
-    has(outcome, 'environment_failures') || has(outcome, 'incomplete_checks') || has(outcome, 'worker_refusal') || has(outcome, 'dirty') || has(outcome, 'reviewer') || has(outcome, 'release_error') || has(outcome, 'release_pending') || has(outcome, 'base_conflict') ||
-      gate === 'environment' || gate === 'baseline' || code === 'environment' || (counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)),
-  );
+  const marked = (c: FailureClass): boolean => classMarkers(c, outcome).length > 0;
+  add('credentials', (isRecord(outcome.blocker) && outcome.blocker.kind === 'authentication') || data.kind === 'authentication' || marked('credentials') || code === 'credentials');
+  add('check-misconfigured', marked('check-misconfigured'));
+  add('environment', marked('environment') || gate === 'environment' || gate === 'baseline' || code === 'environment' || (counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)));
   add('turn-cap', turnCapped);
-  add('scope', has(outcome, 'scope') || has(gateDetails, 'scope') || has(outcome, 'ungranted') || has(outcome, 'largest_changes') || code === 'scope');
-  add('review-dispute', has(outcome, 'open_findings') || has(outcome, 'held_findings') || counter === 'review_rounds');
-  // A declined ledger entry needs a new run (resume.ts newRunNeeded): nothing a person answers opens it.
-  add('gate-deadlock', declined || has(outcome, 'review_gate') || has(outcome, 'shallow_reviews') || Array.isArray(outcome.gate));
-  // A decision a person gives with `orbit decide`, after which the run resumes: it waits, it did not fail (issue #190).
-  add('awaiting-decision', !declined && (has(outcome, 'questions') || has(outcome, 'blocked_criteria') || has(outcome, 'authorization') || has(outcome, 'ledger_entries') || has(outcome, 'fail_before')));
+  add('scope', marked('scope') || code === 'scope');
+  add('review-dispute', marked('review-dispute') || counter === 'review_rounds');
+  add('gate-deadlock', marked('gate-deadlock'));
+  add('awaiting-decision', marked('awaiting-decision'));
   return causes;
 }
 

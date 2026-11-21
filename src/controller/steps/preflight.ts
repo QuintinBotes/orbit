@@ -28,8 +28,10 @@ import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
 import { messageOf } from '../workers.ts';
+import { skipPartner } from '../route-outcome.ts';
+import { partnerImplementers } from '../../policy/config.ts';
 
-/** The provider that implements. Routing only offers claude-cli models for implementation (spec section 8). */
+/** The provider that implements unless `routing.implementers` lets a partner take a bounded unit (issue #176); always the fallback. */
 export const IMPLEMENTER_PROVIDER = 'claude';
 
 export async function preflightStep(ctx: RunContext): Promise<StepResult> {
@@ -47,6 +49,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state as BlockedCredentialState, auth.status.detail);
     return finishRun(ctx, 'BLOCKED', `environment gate: ${env.gate.reasons.join('; ')}`, { outcome: { gate: env.gate } });
   }
+  skipUnusablePartners(ctx, env);
   // Issue #22: workers that would load a plugin the policy does not allow are all refused after they start, so the run is
   // refused here, before a base-revision check, a question or a worker costs anything.
   const plugins = await workerPluginsStep(ctx);
@@ -127,6 +130,27 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes },
   });
+}
+
+/**
+ * A partner `routing.implementers` names that cannot implement now (its CLI, its writable tier or its login) is skipped
+ * for the run, never a block: Claude implements instead (issue #176).
+ */
+function skipUnusablePartners(ctx: RunContext, env: EnvironmentCheck): void {
+  for (const p of partnerImplementers(ctx.snapshot.config)) {
+    const cap = env.capabilities[p];
+    const cred = env.credentials.find((c) => c.provider === p)?.status ?? null;
+    const why = !cap
+      ? `no adapter is configured for "${p}"`
+      : !cap.available
+        ? `it is not available: ${cap.detail || 'adapter reported unavailable'}`
+        : cap.writable?.ok !== true
+          ? `it has no writable tier here: ${cap.writable?.why ?? 'its adapter offers none'}`
+          : cred?.state !== 'valid'
+            ? `its credentials are ${cred?.state ?? 'not validated'}${cred?.detail ? ` (${cred.detail})` : ''}`
+            : null;
+    if (why) skipPartner(ctx, p, null, why);
+  }
 }
 
 /** What the base revision's failures are (ADR 0010), as PREFLIGHT or a baseline amendment (ADR 0012) classified them. */

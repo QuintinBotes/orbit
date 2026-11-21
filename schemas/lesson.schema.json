@@ -58,6 +58,19 @@
     "status": { "enum": ["candidate", "validated", "deprecated", "rejected"] },
     "scope": { "enum": ["repo", "global"] },
     "code_free": { "type": "boolean" },
-    "supersedes": { "type": ["string", "null"], "pattern": "^les-[0-9a-f]{12}$" }
+    "supersedes": { "type": ["string", "null"], "pattern": "^les-[0-9a-f]{12}$" },
+    "citation": {
+      "description": "The run, and the file and line, check or review finding the lesson came from. Re-checked against the repository before the lesson may enter a prompt.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["run_id", "path", "line", "check_id", "finding_id"],
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "path": { "type": ["string", "null"], "minLength": 1, "maxLength": 300 },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "check_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 80 },
+        "finding_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 80 }
+      }
+    }
   }
 }

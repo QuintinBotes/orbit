@@ -177,6 +177,26 @@ describe.skipIf(!gitAvailable)('inspectScope on a real repository (skipped when 
     expect((await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: roomy })).largest_changes).toBeUndefined();
   });
 
+  it('counts the lines of the files scope.generated_paths names apart, not against changed_lines (#157)', async () => {
+    const before = git('rev-parse', 'HEAD');
+    write('apps/dist/c.mjs', `${Array.from({ length: 3000 }, (_, i) => `export const c${i} = ${i};`).join('\n')}\n`);
+    write('apps/c.ts', `${Array.from({ length: 10 }, (_, i) => `export const c${i} = ${i};`).join('\n')}\n`);
+    git('add', 'apps/dist/c.mjs', 'apps/c.ts');
+    git('commit', '-q', '-m', 'bundle');
+    const after = git('rev-parse', 'HEAD');
+    const policy = (limit: number) => snapshotOf(`scope: {allowed_paths: ["**"], generated_paths: ["apps/dist/**"]}\nscheduler: {hard_limits: {changed_lines: ${limit}}}\n`);
+    const r = await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: policy(100) });
+    expect(r).toMatchObject({ changed_files: 2, changed_lines: 10, generated_lines: 3000, within_size_limits: true });
+    // Over the limit on authored lines alone: the generated file is not named as weight to shrink.
+    const over = await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: policy(5) });
+    expect(over.within_size_limits).toBe(false);
+    expect(over.largest_changes).toEqual([{ path: 'apps/c.ts', lines: 10 }]);
+    // Without the rule nothing changes: the bundle counts.
+    const plain = await inspectScope({ repoRoot: repo, baseRev: before, candidateRev: after, snapshot: snapshotOf('scope: {allowed_paths: ["**"]}\nscheduler: {hard_limits: {changed_lines: 100}}\n') });
+    expect(plain).toMatchObject({ changed_lines: 3010, within_size_limits: false });
+    expect(plain.generated_lines).toBeUndefined();
+  });
+
   it('sees through attributes that mark text as binary', async () => {
     // A .gitattributes in the checkout makes git call .ts files binary; lines and test diffs must still be inspected.
     write('.gitattributes', '*.ts -diff\n');
