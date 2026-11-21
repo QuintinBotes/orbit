@@ -74,13 +74,17 @@ function where(t: CommentTarget): string {
   return `${t.kind} #${t.number}`;
 }
 
-/** Send through every channel the settings turn on; channels that are off are reported as skipped. */
-async function sendAll(p: NotificationPayload, n: NotificationsConfig, config: OrbitConfig | null, target: CommentTarget | null, repoRoot: string, deps: NotifyDeps): Promise<ChannelOutcome[]> {
-  const off = (channel: ChannelOutcome['channel']): ChannelOutcome => ({ channel, status: 'skipped', detail: `notifications.${channel} is off` });
+/**
+ * Send through every channel the settings turn on; channels that are off are reported as skipped. `instead`, when set,
+ * is why the comment is not posted although the channel is on.
+ */
+async function sendAll(p: NotificationPayload, n: NotificationsConfig, config: OrbitConfig | null, target: CommentTarget | null, repoRoot: string, deps: NotifyDeps, instead: string | null = null): Promise<ChannelOutcome[]> {
+  const skipped = (channel: ChannelOutcome['channel'], detail: string): ChannelOutcome => ({ channel, status: 'skipped', detail });
+  const off = (channel: ChannelOutcome['channel']): ChannelOutcome => skipped(channel, `notifications.${channel} is off`);
   return Promise.all([
     n.desktop ? sendDesktop(p, deps) : off('desktop'),
     n.webhook && config ? sendWebhook(p, config, deps) : off('webhook'),
-    n.github_comment && config ? sendGithubComment(p, target, () => deps.threads(repoRoot, config)) : off('github_comment'),
+    n.github_comment && config ? (instead !== null ? skipped('github_comment', instead) : sendGithubComment(p, target, () => deps.threads(repoRoot, config))) : off('github_comment'),
   ]);
 }
 
@@ -134,8 +138,8 @@ async function dispatch(input: RunNotifyInput, kind: Exclude<NotificationKind, '
   // the short notice is not posted there a second time.
   const issue = kind === 'run.ended' ? readIssueGoal(runDir) : null;
   const first = targets[0] ?? null;
-  const target = issue && first?.kind === 'issue' && first.number === issue.number ? null : first;
-  const outcomes = await sendAll(payload, n, config, target, run.repoRoot, deps);
+  const same = issue !== null && first?.kind === 'issue' && first.number === issue.number;
+  const outcomes = await sendAll(payload, n, config, first, run.repoRoot, deps, same ? `${where(first)}: the run outcome comment posted there replaces this notice` : null);
   if (issue) outcomes.push(await sendIssueOutcome(input, payload, issue, n.github_comment));
   db.tx(() => {
     for (const o of outcomes) appendEvent(db, run.id, `notification.${o.status}`, actor, { key, channel: o.channel, detail: o.detail }, clock.now());

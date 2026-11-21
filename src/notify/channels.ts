@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
 import { redact } from '../core/redact.ts';
-import { resolveRemoteUrl } from '../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../delivery/git.ts';
 import { notificationsPolicy } from '../policy/config.ts';
 import { hostAllowed } from '../policy/hosts.ts';
 import type { OrbitConfig } from '../policy/types.ts';
@@ -80,9 +80,9 @@ export function defaultThreads(env: Readonly<Record<string, string | undefined>>
   return async (repoRoot, config) => {
     if (config.delivery.provider === 'fake') return new FakeThreadClient({ statePath: join(repoRoot, '.orbit', FAKE_THREADS_FILE) });
     const url = await resolveRemoteUrl(repoRoot, config.repository.remote);
-    const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-    if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${config.repository.remote} is not a GitHub repository`);
-    return new GhThreadClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+    const repo = githubRepoFromUrl(url);
+    if (!repo) throw new OrbitError('CONFIG_INVALID', `remote ${config.repository.remote} is not a GitHub repository`);
+    return new GhThreadClient({ repo, env, cwd: repoRoot });
   };
 }
 

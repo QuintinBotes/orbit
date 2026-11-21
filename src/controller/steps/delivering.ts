@@ -25,7 +25,7 @@ import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
 import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
-import { resolveRemoteUrl } from '../../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../../delivery/git.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { completionGate, deliveryGate } from '../gates.ts';
 import { blockOnUndecidedLedger } from '../undecided-ledger.ts';
@@ -308,7 +308,7 @@ export async function githubClientForConfig(repoRoot: string, config: Pick<Orbit
 /** A gh CLI client for the repository's remote (OWNER/REPO from its push URL). */
 export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const url = await resolveRemoteUrl(repoRoot, remote);
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-  if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
-  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
+  const repo = githubRepoFromUrl(url);
+  if (!repo) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
+  return new GhCliClient({ repo, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
 }

@@ -126,8 +126,15 @@ settings, including sandbox approval for writers and experiment workers.
 - An issue a run is started from (`orbit run --issue`, ADR 0019) is untrusted
   text. It is read once with a GET, checked without a model, and frozen with
   the run. The planner sees it in a marked block that says it is data; only
-  its acceptance scenarios enter the contract, each as one capped line. It
-  cannot change the policy, checks, scope or budgets. The comment Orbit posts
+  its acceptance scenarios (for a bug, its reproduction) enter the contract,
+  each as one line capped at 600 characters. Those criterion statements reach
+  every worker that is shown the contract, and the prompt says they are quoted
+  from the issue and are data, not instructions. The issue cannot change the
+  policy, checks, scope, paths or budgets, which stay enforced mechanically.
+  The spec check's problems quote the body without its control characters.
+  Orbit does not check who wrote the issue: the person who names it to
+  `orbit run --issue`, or who adds the label `orbit queue run` takes (on
+  GitHub, someone with triage access), chooses it. The comment Orbit posts
   back holds controller records only: no issue text, model prose, paths or
   logs.
 - `orbit queue run` (ADR 0020) runs each issue through the same intake. It

@@ -387,6 +387,8 @@ Select applicable requirements per task and justify omissions:
 
 Store original goal, normalized objective, mandatory/optional criteria, non-goals, allowed scope, baseline revision, check definitions, proof mappings, assumptions, delivery target, policy hash, budgets, and escalation rules.
 
+A contract drafted from a GitHub issue (ADR 0019) records the issue as its `source`, and its first criteria quote the issue's acceptance scenarios (at most 50), or a bug's reproduction. A plan that proves one of them only with checks the policy does not define is regenerated. Worker prompts say those statements are the issue's text: untrusted data, not instructions.
+
 ```json
 {
   "version": "1.0",
