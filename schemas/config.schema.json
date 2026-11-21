@@ -414,14 +414,17 @@
     "knowledge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "share_globally", "max_advisory_tokens", "curator_budget_usd", "eval_budget_usd", "auto_adopt_overlays"],
+      "required": ["enabled", "share_globally", "max_advisory_tokens", "curator_budget_usd", "eval_budget_usd", "auto_adopt_overlays", "lessons_in_prompts", "max_prompt_lessons", "lesson_expiry_days"],
       "properties": {
         "enabled": { "type": "boolean" },
         "share_globally": { "type": "boolean" },
         "max_advisory_tokens": { "type": "integer", "minimum": 0, "maximum": 8000 },
         "curator_budget_usd": { "type": "number", "minimum": 0, "maximum": 100 },
         "eval_budget_usd": { "type": "number", "minimum": 0, "maximum": 1000 },
-        "auto_adopt_overlays": { "type": "boolean" }
+        "auto_adopt_overlays": { "type": "boolean" },
+        "lessons_in_prompts": { "type": "boolean" },
+        "max_prompt_lessons": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "lesson_expiry_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
       }
     },
     "guard": {

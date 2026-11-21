@@ -44,6 +44,8 @@ import { WORKTREE_PRESERVED_EVENT, WORKTREES_RELEASED_EVENT, WORKTREES_RETAINED_
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { learnFromRun, type LearnReport } from '../knowledge/learn.ts';
 import { settleRun } from '../knowledge/feedback.ts';
+import { contradictedLessons, runEndObservation, touchedArea } from '../knowledge/extract.ts';
+import { DEFAULT_LESSON_EXPIRY_DAYS, recheckLessons } from '../knowledge/recheck.ts';
 import { promoteToGlobal } from '../knowledge/global.ts';
 import { checkPublication, loadPublicationGuard } from '../guard/publication.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
@@ -740,7 +742,7 @@ export async function finalizeRun(ctx: RunContext): Promise<void> {
   try {
     await learnAtTerminal(ctx);
   } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500), in_prompts: ctx.snapshot.config.knowledge?.lessons_in_prompts === true }, ctx.clock.now()));
   }
   // The curator is charged after the report above was written, and `orbit report` prints that file, so its cost was
   // missing there while status and the timeline (read from the usage rows) had it (issue #33): write the report again.
@@ -775,8 +777,31 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   if (!k?.enabled) return;
   const run = ctx.refresh();
   const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary: { learn: LearnReport | null; skipped: string | null; settled: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
+  const summary: { learn: LearnReport | null; skipped: string | null; observed: string | null; settled: unknown; rechecked: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, observed: null, settled: null, rechecked: null, promoted: null, overlays: null };
   try {
+    // Issue #173 FR-006: every run that did not succeed leaves an observation keyed by its failure class, before
+    // anything that can be skipped (curation, the budget reserve) and without a model call.
+    const observation = runEndObservation(ctx.db, run.id);
+    if (observation) {
+      store.recordObservation(observation);
+      summary.observed = observation.id;
+    }
+    // Settling and re-checking read run records and the file system only, so a curator that fails cannot skip them.
+    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
+    summary.settled = settleRun(store, run.id, {
+      succeeded: run.state === 'SUCCEEDED',
+      attempts: listWorkers(ctx.db, { runId: run.id, role: 'implementer' }).length,
+      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? [],
+      contradictedLessonIds: contradictedLessons(ctx.db, run.id, store.retrievalsForRun(run.id)),
+      touched: touchedArea(ctx.db, run.id),
+      artifact: existsSync(join(ctx.runDir, 'final.md')) ? { path: 'final.md', sha256: sha256(readFileSync(join(ctx.runDir, 'final.md'))) } : { path: 'final.md', sha256: null },
+    });
+
+    // Re-check and expire every live lesson against the repository, whether or not lessons enter prompts.
+    const lessons = store.listLessons({ statuses: ['candidate', 'validated'] });
+    const eligible = recheckLessons(store, lessons, { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: k.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS });
+    summary.rechecked = { lessons: lessons.length, stale: lessons.length - eligible.length };
+
     const admitted = curationAdmitted(ctx);
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
     else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
@@ -787,15 +812,6 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
       summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
     }
     if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
-
-    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
-    summary.settled = settleRun(store, run.id, {
-      succeeded: run.state === 'SUCCEEDED',
-      attempts: listWorkers(ctx.db, { runId: run.id, role: 'implementer' }).length,
-      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? [],
-      contradictedLessonIds: [],
-      artifact: existsSync(join(ctx.runDir, 'final.md')) ? { path: 'final.md', sha256: sha256(readFileSync(join(ctx.runDir, 'final.md'))) } : { path: 'final.md', sha256: null },
-    });
 
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
@@ -809,7 +825,8 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
 
     // Overlays (ADR 0002): a settled run is live evidence about the active overlay, and the moment to try a waiting candidate.
     if (run.state !== 'CANCELLED') {
-      const live = checkLiveOverlays(ctx, store);
+      // An overlay that no prompt carries (issue #173: lessons_in_prompts off) has no live runs to be judged by.
+      const live = k.lessons_in_prompts === true ? checkLiveOverlays(ctx, store) : [];
       const evaluated = await autoEvaluateOverlays(ctx, store);
       summary.overlays = { live, evaluated };
     }
@@ -817,7 +834,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     store.close();
   }
   atomicWriteJson(join(ctx.runDir, 'learning.json'), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0, in_prompts: k.lessons_in_prompts === true }, ctx.clock.now()));
 }
 
 /**

@@ -5,7 +5,7 @@ import { newId } from '../core/ids.ts';
 import { openKnowledgeDb } from './db.ts';
 import { assertLesson } from './validate.ts';
 import { authorityViolations, lessonText, verificationLooksExecutable } from './authority.ts';
-import { lessonIdFor, lessonKey, searchTerms, unionCapped } from './text.ts';
+import { lessonIdFor, lessonKey, redactText, searchTerms, unionCapped } from './text.ts';
 import { fromJsonLd, toJsonLd, type JsonLdDocument } from './jsonld.ts';
 import {
   EDGE_TYPES,
@@ -85,6 +85,27 @@ export interface RetrievalRow {
   score: number | null;
   outcome: 'success' | 'failure' | null;
   attempts: number | null;
+  /** The failure fingerprints the worker was repairing when it was shown the lesson. */
+  fingerprints: string[];
+}
+
+/** When a lesson was made, last supported and last re-checked, and why it is not eligible for a prompt (null: it is). */
+export interface LessonFreshness {
+  created_at: number;
+  last_support_at: number;
+  verified_at: number | null;
+  stale_reason: string | null;
+}
+
+/** What a run that did not succeed left behind, keyed by its failure class (issue #173 FR-006). */
+export interface RunEndObservation {
+  id: string;
+  run_id: string;
+  state: string;
+  failure_class: string | null;
+  failure_secondary: string | null;
+  /** Each check that failed or could not run, with its fingerprint or environment signals. */
+  checks: { check_id: string; signature: string }[];
 }
 
 export interface EvalRunRecord {
@@ -152,6 +173,7 @@ export function mergeEvidence(a: readonly EvidenceRef[], b: readonly EvidenceRef
  * code_free holds only if both sides claim it.
  */
 export function mergeLessons(existing: Lesson, incoming: Lesson): Lesson {
+  const citation = [incoming.citation, existing.citation].find((c) => c && (c.path !== null || c.check_id !== null)) ?? incoming.citation ?? existing.citation;
   const a = existing.applicability;
   const b = incoming.applicability;
   return {
@@ -176,6 +198,8 @@ export function mergeLessons(existing: Lesson, incoming: Lesson): Lesson {
     confidence: CONFIDENCE_ORDER[incoming.confidence] > CONFIDENCE_ORDER[existing.confidence] ? incoming.confidence : existing.confidence,
     code_free: existing.code_free && incoming.code_free,
     supersedes: existing.supersedes ?? (incoming.supersedes === existing.id ? null : incoming.supersedes),
+    // The newer run's citation names the code as it is now, unless it names no file or check and the older one does.
+    ...(citation ? { citation } : {}),
   };
 }
 
@@ -185,7 +209,13 @@ export function mergeLessons(existing: Lesson, incoming: Lesson): Lesson {
  * (curator, ingest, import, seeds, global promotion) passes through here.
  */
 function assertAdvisory(lesson: Lesson): void {
-  const violations = authorityViolations(lessonText(lesson));
+  // Issue #173: a lesson that names a secret or a person is refused, also when curation already masked it.
+  // shortcut: a person is recognised by an email address or a home path only, not by a bare name.
+  const text = lessonText(lesson);
+  if (redactText(text) !== text || text.includes('[REDACTED:')) {
+    throw new OrbitError('POLICY_DENIED', `lesson ${lesson.id} names a secret or a person`);
+  }
+  const violations = authorityViolations(text);
   if (violations.length > 0) {
     throw new OrbitError('POLICY_DENIED', `lesson ${lesson.id} contains authority language (${violations.join(', ')})`, { violations });
   }
@@ -558,13 +588,14 @@ export class KnowledgeStore {
   // -------------------------------------------------------------------------
   // Retrievals
 
-  recordRetrievals(runId: string, workerId: string | null, items: readonly { lessonId: string; score: number | null }[]): number {
+  recordRetrievals(runId: string, workerId: string | null, items: readonly { lessonId: string; score: number | null }[], fingerprints: readonly string[] = []): number {
     const now = this.clock.now();
+    const fps = fingerprints.length > 0 ? JSON.stringify([...new Set(fingerprints)].sort()) : null;
     return this.db.tx(() => {
       let n = 0;
       for (const item of items) {
         this.requireLesson(item.lessonId);
-        this.db.run('INSERT INTO retrievals (run_id, worker_id, lesson_id, ts, score) VALUES (?, ?, ?, ?, ?)', runId, workerId, item.lessonId, now, item.score);
+        this.db.run('INSERT INTO retrievals (run_id, worker_id, lesson_id, ts, score, fingerprints_json) VALUES (?, ?, ?, ?, ?, ?)', runId, workerId, item.lessonId, now, item.score, fps);
         n++;
       }
       return n;
@@ -573,8 +604,54 @@ export class KnowledgeStore {
 
   retrievalsForRun(runId: string): RetrievalRow[] {
     return this.db
-      .all<RetrievalRow>('SELECT run_id, worker_id, lesson_id, ts, score, outcome, attempts FROM retrievals WHERE run_id = ? ORDER BY id', runId)
-      .map((r) => ({ ...r, outcome: (r.outcome as RetrievalRow['outcome']) ?? null }));
+      .all<Omit<RetrievalRow, 'fingerprints'> & { fingerprints_json: string | null }>('SELECT run_id, worker_id, lesson_id, ts, score, outcome, attempts, fingerprints_json FROM retrievals WHERE run_id = ? ORDER BY id', runId)
+      .map(({ fingerprints_json, ...r }) => ({ ...r, outcome: (r.outcome as RetrievalRow['outcome']) ?? null, fingerprints: fingerprints_json ? (JSON.parse(fingerprints_json) as string[]) : [] }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Re-checks and run-end observations (issue #173)
+
+  /** Last support is the newest supporting evidence edge, or the lesson's creation when it has none. */
+  freshness(lessonIds: readonly string[]): Map<string, LessonFreshness> {
+    const out = new Map<string, LessonFreshness>();
+    for (const id of lessonIds) {
+      const row = this.db.get<{ created_at: number; verified_at: number | null; stale_reason: string | null; last: number | null }>(
+        "SELECT n.created_at, n.verified_at, n.stale_reason, (SELECT MAX(e.created_at) FROM edges e WHERE e.src = n.id AND e.type = 'SUPPORTED_BY') AS last FROM nodes n WHERE n.id = ?",
+        id,
+      );
+      if (row) out.set(id, { created_at: row.created_at, last_support_at: Math.max(row.created_at, row.last ?? 0), verified_at: row.verified_at, stale_reason: row.stale_reason });
+    }
+    return out;
+  }
+
+  /**
+   * Record one re-check of a lesson: null when it holds (its citation was verified now), else why it is not eligible.
+   * A change of verdict is an itemised event on the lesson; the document itself is not rewritten.
+   */
+  markChecked(id: string, staleReason: string | null): void {
+    const now = this.clock.now();
+    this.db.tx(() => {
+      const before = this.db.get<{ stale_reason: string | null }>('SELECT stale_reason FROM nodes WHERE id = ?', id);
+      if (!before) throw new OrbitError('NOT_FOUND', `no lesson ${id}`);
+      if (staleReason === null) this.db.run('UPDATE nodes SET verified_at = ?, stale_reason = NULL WHERE id = ?', now, id);
+      else this.db.run('UPDATE nodes SET stale_reason = ? WHERE id = ?', staleReason, id);
+      if (before.stale_reason !== staleReason) this.appendEvent(id, staleReason === null ? 'fresh' : 'stale', staleReason === null ? null : { reason: staleReason }, now);
+    });
+  }
+
+  /** Store the observation of one end of a run once; false when that end is already stored. */
+  recordObservation(o: RunEndObservation): boolean {
+    const { id, run_id, state, failure_class, ...data } = o;
+    return this.db.run('INSERT OR IGNORE INTO observations (id, run_id, state, failure_class, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?)', id, run_id, state, failure_class, JSON.stringify(data), this.clock.now()).changes === 1;
+  }
+
+  observations(filter: { failureClass?: string } = {}): RunEndObservation[] {
+    const byClass = filter.failureClass !== undefined;
+    const rows = this.db.all<{ id: string; run_id: string; state: string; failure_class: string | null; data_json: string }>(
+      `SELECT id, run_id, state, failure_class, data_json FROM observations ${byClass ? 'WHERE failure_class = ?' : ''} ORDER BY created_at, id`,
+      ...(byClass ? [filter.failureClass!] : []),
+    );
+    return rows.map((r) => ({ id: r.id, run_id: r.run_id, state: r.state, failure_class: r.failure_class, ...(JSON.parse(r.data_json) as Pick<RunEndObservation, 'failure_secondary' | 'checks'>) }));
   }
 
   /** Mark every retrieval of a run with how the run ended; returns rows updated. */

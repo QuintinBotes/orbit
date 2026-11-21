@@ -546,6 +546,7 @@ Escalate using observed difficulty, not worker confidence. Increase reasoning ef
 - Set role-specific output budgets.
 - Preserve evidence references and hashes in handoffs.
 - Track input/output/cached tokens and cost per accepted run.
+- Keep learned lessons and overlays out of worker prompts unless `knowledge.lessons_in_prompts` is on (off by default until a full benchmark shows they help). Whether or not they enter prompts, every lesson cites its run and the file and line, check or finding it came from; it is re-checked against the repository, and marked stale and not retrieved when its cited file or check is gone or it had no support for `knowledge.lesson_expiry_days` (default 28). A lesson shown to a worker whose own candidate then repeats the failure it was repairing is contradicted, and contradictions from two distinct runs deprecate it. Support goes only to lessons whose cited area the run touched. Every run that ends without succeeding stores an observation keyed by its failure class without a model call. At most `knowledge.max_prompt_lessons` (default 3) validated lessons enter a prompt, a lesson that names a secret or a person is refused when it is written, and an overlay whose evaluation shows a lower pass rate on the benchmark's held-out scenarios is not adopted.
 
 ### Agent scheduling
 

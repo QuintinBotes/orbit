@@ -264,9 +264,9 @@ See `src/knowledge/types.ts` and `docs/decisions/0002-learning-layer.md`.
 Lessons are extracted after each run from verified evidence only, curated into
 the standard lesson format, deduplicated, and stored as `candidate`. A lesson
 becomes `validated` after support from two distinct runs with no
-contradiction. Retrieval puts at most a fixed token budget of validated
-lessons (and clearly labelled candidates) into a worker's prompt as advisory
-data. Overlays are distilled per role, evaluated on a replay suite, adopted
+contradiction. With `knowledge.lessons_in_prompts` on (off by default),
+retrieval puts at most a fixed token budget of validated lessons into a
+worker's prompt as advisory data. Overlays are distilled per role, evaluated on a replay suite, adopted
 automatically only when the candidate improves verified pass rate or cost
 without any regression, and rolled back automatically when live metrics
 regress. Overlays live in `.orbit/knowledge/` or `~/.orbit/knowledge/`, never

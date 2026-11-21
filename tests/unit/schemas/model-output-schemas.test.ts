@@ -467,7 +467,8 @@ describe('role-specific shape', () => {
   it('proposes lessons that become valid orbit.lesson/1 records once the controller fills its fields', () => {
     const lessonProps = (lessonSchema as unknown as Node).properties as Node;
     const curated = (((loadFile('curator').properties as Node).lessons as Node).items as Node).properties as Node;
-    expect(Object.keys(curated).sort()).toEqual(Object.keys(lessonProps).filter((k) => !['id', 'status', 'scope'].includes(k)).sort());
+    // The controller fills these; the citation (issue #173) comes from its own observations, never from the curator.
+    expect(Object.keys(curated).sort()).toEqual(Object.keys(lessonProps).filter((k) => !['id', 'status', 'scope', 'citation'].includes(k)).sort());
     const lessonEvidence = Object.keys((((lessonProps.evidence as Node).items as Node).properties as Node));
     const curatedEvidence = Object.keys((((curated.evidence as Node).items as Node).properties as Node));
     expect(curatedEvidence.sort()).toEqual(lessonEvidence.filter((k) => k !== 'sha256').sort());

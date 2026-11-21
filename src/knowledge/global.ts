@@ -64,8 +64,10 @@ export interface GlobalPromotionReport {
 
 /** The form a lesson takes in the global graph. */
 export function toGlobalLesson(lesson: Lesson): Lesson {
+  // The citation names this repository's run, file and check: none of it leaves the repository.
+  const { citation: _citation, ...rest } = lesson;
   return {
-    ...lesson,
+    ...rest,
     scope: 'global',
     applicability: { ...lesson.applicability, paths: [] },
     evidence: [],

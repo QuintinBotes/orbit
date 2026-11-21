@@ -440,6 +440,13 @@ knowledge:
   eval_budget_usd: 0
   # Adopt an overlay automatically when replay evals improve with no regression.
   auto_adopt_overlays: true
+  # Put lessons and overlays into worker prompts. Off until a full benchmark
+  # shows they help; lessons are still recorded, cited, re-checked and expired.
+  lessons_in_prompts: false
+  # With lessons_in_prompts: most lessons in one prompt (validated ones only).
+  max_prompt_lessons: 3
+  # A lesson with no supporting run for this many days is not put in a prompt.
+  lesson_expiry_days: 28
 
 # Publication guard: private terms that must never leave this repository
 # through Orbit (global knowledge, overlays, reports written elsewhere).

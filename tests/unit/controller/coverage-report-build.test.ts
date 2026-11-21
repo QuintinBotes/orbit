@@ -295,7 +295,7 @@ describe('finalizeRun', () => {
     mkdirSync(join(lab.repo, '.orbit', 'knowledge.sqlite'), { recursive: true });
     await expect(finalizeRun(ctx)).resolves.toBeUndefined();
     const ev = lab.db.get<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = 'learning.failed'", lab.runId);
-    expect(JSON.parse(ev!.data_json).error).toEqual(expect.any(String));
+    expect(JSON.parse(ev!.data_json)).toMatchObject({ error: expect.any(String), in_prompts: false });
   });
 });
 

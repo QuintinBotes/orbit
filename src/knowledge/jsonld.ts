@@ -32,6 +32,7 @@ export const ORBIT_JSONLD_CONTEXT = {
   scope: 'orbit:scope',
   confidence: 'orbit:confidence',
   codeFree: { '@id': 'orbit:codeFree', '@type': 'xsd:boolean' },
+  citation: { '@id': 'orbit:citation', '@type': '@json' },
   applicability: 'orbit:applicability',
   programmingLanguage: { '@id': 'schema:programmingLanguage', '@container': '@set' },
   frameworks: { '@id': 'orbit:framework', '@container': '@set' },
@@ -118,6 +119,7 @@ function lessonNode(l: Lesson): Record<string, unknown> {
   };
   if (l.provenance.uri !== null) node.hadPrimarySource = l.provenance.uri;
   if (l.supersedes !== null) node.wasRevisionOf = `${LESSON_IRI_PREFIX}${l.supersedes}`;
+  if (l.citation) node.citation = l.citation;
   return node;
 }
 
@@ -215,6 +217,8 @@ function lessonFromNode(node: Record<string, unknown>): Lesson {
     scope: str(node.scope) as Lesson['scope'],
     code_free: node.codeFree === true,
     supersedes,
+    // The schema validator downstream checks the citation's shape.
+    ...(node.citation && typeof node.citation === 'object' ? { citation: node.citation as Lesson['citation'] } : {}),
   };
 }
 
