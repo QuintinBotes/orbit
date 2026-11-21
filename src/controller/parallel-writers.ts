@@ -42,6 +42,7 @@ import { isSessionRefusal } from '../adapters/types.ts';
 import { ensureWorker, recordSpendCap, sessionSpendCap, workersFor, type RouteChoice } from './workers.ts';
 import { storedPlan } from './steps/contracting.ts';
 import { blockOnAuth, blockOnRefusedSession, decide, note, safePoint, WAIT, type StepResult } from './steps/common.ts';
+import { skipPartner } from './route-outcome.ts';
 
 export const UNITS_EVENT = 'implementation.units';
 export const UNIT_INTEGRATING_EVENT = 'implementation.unit-integrating';
@@ -122,7 +123,12 @@ export async function runParallelUnits(ctx: RunContext, n: number, units: readon
     const st = await ensureWorker(ctx, request(ctx, n, u, units, opts));
     if (st.status === 'running') continue;
     const r = st.result;
-    if (r.status === 'auth_failed') return { kind: 'step', result: await blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error) };
+    if (r.status === 'auth_failed') {
+      // A partner out of quota or logged out is skipped for the run, and its unit goes to the serial writer on the next route (issue #176).
+      if (!skipPartner(ctx, st.worker.provider, n, r.error ?? 'authentication failed')) return { kind: 'step', result: await blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error) };
+      await serialize(ctx, n, u, `partner ${st.worker.provider} was skipped for the run: ${(r.error ?? 'authentication failed').slice(0, 200)}`);
+      continue;
+    }
     // Refused after it started: the next session would be refused the same way, so the unit is not serialized or retried.
     if (isSessionRefusal(r)) return { kind: 'step', result: await blockOnRefusedSession(ctx, `implementer work unit ${u.id} (attempt ${n})`, r.error) };
     if (r.status === 'cancelled') {

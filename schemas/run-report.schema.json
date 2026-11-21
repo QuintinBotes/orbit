@@ -128,6 +128,18 @@
         }
       }
     },
+    "proof": {
+      "type": "object",
+      "required": ["tree_hash", "criteria", "requirements", "caller_findings", "artifact_findings", "open"],
+      "properties": {
+        "tree_hash": { "type": "string" },
+        "criteria": { "type": "array", "items": { "type": "object" } },
+        "requirements": { "type": "array", "items": { "type": "object" } },
+        "caller_findings": { "type": "array", "items": { "type": "object" } },
+        "artifact_findings": { "type": "array", "items": { "type": "object" } },
+        "open": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "practices": {
       "type": "array",
       "items": {

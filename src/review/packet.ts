@@ -72,6 +72,8 @@ export interface ReviewPacketInput {
    * probe's outcome is not a finding.
    */
   failBeforeLogs?: ReadonlyMap<string, string>;
+  /** The repository map's slice for the files the goal names (#175), when repo_map.prompt_slice is on. */
+  repoMapSlice?: string | null;
 }
 
 export type ExclusionReason = 'credential-path' | 'binary' | 'generated' | 'size-budget' | 'truncated' | 'deleted' | 'file-count';
@@ -497,6 +499,8 @@ ${bullet(
     30,
     500,
   )}`);
+
+  if (input.repoMapSlice) sec.push(`## Repository map\n\n${fenced('text repository-map', red(input.repoMapSlice))}`);
 
   const practices = engineeringPracticesSection(contract, red);
   if (practices !== '') sec.push(practices);

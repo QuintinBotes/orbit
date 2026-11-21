@@ -486,6 +486,9 @@ export async function handleWorkerFailure(
   failed: { provider: string; status: string; error: string | null; reason?: string | null },
   opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
 ): Promise<FailureHandling> {
+  // A used-up allowance (issue #176) is not fixed by logging in: a caller that can do without this session (a reviewer
+  // fails over to the next one) takes it as given up; anything else blocks on credentials, as a rejected login does.
+  if (failed.status === 'auth_failed' && failed.reason === 'quota' && opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === 'cancelled') {

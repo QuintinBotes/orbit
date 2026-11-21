@@ -34,6 +34,11 @@ scenario's `auth.loggedIn` is false.
 A fake finds its role from the title of the output schema it is given
 (`--json-schema` for Claude, the `--output-schema` file for Codex and Muse):
 planner, implementer, verifier (diagnosis), reviewer, inquisitor, curator.
+A reviewer session that runs one of the proof checks before delivery (issue
+#200; its prompt has the line `Orbit proof check: criterion audit`,
+`... conformance` or `... artifacts`) takes its steps from the scenario's
+`auditor`, `conformance` or `artifacts` list when there is one, and from
+`reviewer` otherwise.
 
 ### Environment
 
@@ -78,7 +83,7 @@ A step:
 
 | Key | Effect |
 |---|---|
-| `edits` | `[{ "op": "write", "path", "content" }, { "op": "replace", "path", "find", "replace" }, { "op": "delete", "path" }]` applied in the cwd (relative paths) before the result |
+| `edits` | `[{ "op": "write", "path", "content" }, { "op": "replace", "path", "find", "replace" }, { "op": "delete", "path" }]` applied in the cwd (relative paths, the `--workspace` for Muse) before the result |
 | `forbiddenWrite` | `{ "path", "content"? }`: tries a write the worker must not be able to make and reports the outcome in the transcript (`denied: EPERM` under the os-sandbox tier) instead of failing |
 | `crash` | `{ "path", "content" }`: writes the first half of the content, then exits 137 (a crash mid-edit) |
 | `sleepMs` | waits before finishing (cancellation and timeout tests) |
@@ -121,6 +126,7 @@ Outcomes:
 | `transient` | `api_retry` `overloaded`, 529 result, exit 1 | `turn.failed` with status 503, exit 1 |
 | `malformed` | a torn `result` line, exit 1 | `not json at all` as the final message, exit 0 |
 | `model_rejected` | | `turn.failed` with status 400, exit 1 |
+| `quota` | | `turn.failed` with a usage-limit message right after `turn.started`, before any item, exit 1 (Muse: `run.terminal.failed` with a usage-limit reason before any tool result, exit 1) |
 | `no_result` | exit without a result line (default 0, like SIGINT) | exit without a terminal event (default 1) |
 
 Signals follow the verified behaviour: fake-claude exits 0 on SIGINT after

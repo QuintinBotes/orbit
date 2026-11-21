@@ -35,7 +35,7 @@ describe('published, versioned schemas (issue #178, FR-002)', () => {
     // tsc fails this object when FinalReport gains or loses a field, so the schema cannot drift unnoticed.
     const fields: Record<keyof FinalReport, true> = {
       schema: true, run_id: true, outcome: true, outcome_reason: true, failure_class: true, failure_secondary: true, orbit_version: true, mode: true, original_goal: true, objective: true,
-      criteria: true, checks: true, evidence: true, reviews: true, review_findings: true, reviewer: true, no_standing_review: true, decisions: true, assumptions: true, practices: true,
+      criteria: true, checks: true, evidence: true, reviews: true, review_findings: true, reviewer: true, no_standing_review: true, decisions: true, assumptions: true, practices: true, proof: true,
       repairs: true, worker_plugins: true, revision: true, budget: true, unverified: true, residual_risks: true, worktrees: true, verified_candidate: true, next_action: true, generated_at: true,
     };
     expect(Object.keys(load('run-report.schema.json').properties).sort()).toEqual([...Object.keys(fields), 'interim'].sort());

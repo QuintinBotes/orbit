@@ -62,8 +62,20 @@ export function severityRank(s: FindingSeverity): number {
  */
 export const EVIDENCE_CLASSIFICATION_CATEGORY = 'evidence-classification';
 
-/** A reviewer's category: free text, of which only EVIDENCE_CLASSIFICATION_CATEGORY means something to Orbit. */
-export type FindingCategory = typeof EVIDENCE_CLASSIFICATION_CATEGORY | (string & {});
+/**
+ * The category of a finding whose only claim is that no test covers the source file at its location (#144, #175). The
+ * resolver checks it against the repository map of the candidate: a test linked to that file refutes it. A finding that
+ * the tests miss a behaviour or assert too little is test-adequacy, which no map can settle.
+ */
+export const MISSING_TEST_CATEGORY = 'missing-test';
+
+/** Whether a finding's category is MISSING_TEST_CATEGORY, compared as findingFingerprint compares categories. */
+export function isMissingTest(category: string | null): boolean {
+  return (category ?? '').trim().toLowerCase() === MISSING_TEST_CATEGORY;
+}
+
+/** A reviewer's category: free text, of which only EVIDENCE_CLASSIFICATION_CATEGORY and MISSING_TEST_CATEGORY mean something to Orbit. */
+export type FindingCategory = typeof EVIDENCE_CLASSIFICATION_CATEGORY | typeof MISSING_TEST_CATEGORY | (string & {});
 
 /** Whether a finding's category is EVIDENCE_CLASSIFICATION_CATEGORY, compared as findingFingerprint compares categories. */
 export function isEvidenceClassification(category: string | null): boolean {
