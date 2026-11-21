@@ -221,6 +221,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit resume <run-id>` | `--foreground`, or `--detach` (leave it to the service); with neither it needs a live controller (the service, or the foreground controller that owns the run) and otherwise refuses without changing anything, or drives the run itself on a terminal. `--force`, `--policy <path>` |
 | `orbit cancel <run-id>` | `--wait <seconds>` |
 | `orbit report <run-id>` | `--interim`; `orbit report --learning` takes no run id |
+| `orbit export <run-id> --otel` | `--out <file>` (default: standard output); see [Exports and published schemas](#exports-and-published-schemas) |
 | `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
 | `orbit questions --pending` | the open questions of every unfinished run; `--quiet` prints nothing when there are none (what the plugin's SessionStart hook runs) |
 | `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
@@ -602,6 +603,47 @@ candidate tree, and the evidence line above only reads that state. If `/goal`
 says the goal is met while `orbit status` says otherwise, or a session believes
 the work is done, trust `orbit status` and `orbit verify`. Do not use `/goal`
 to bypass a `BLOCKED` run: answer the question with `orbit decide` and resume.
+
+## Exports and published schemas
+
+Other tools can read a run without reading Orbit's database (issue #178).
+
+`orbit export <run-id> --otel` writes the run as OpenTelemetry traces: one
+OTLP/JSON request on one line, the form a collector's `otlpjsonfile` receiver
+reads and its OTLP/HTTP receiver accepts at `/v1/traces`, so no custom mapping
+is needed. The trace has a root span for the run (`orbit.run.id`,
+`orbit.run.state`, `orbit.run.mode`, `orbit.version`, `orbit.failure_class`)
+and one `invoke_agent <role>` span under it per worker, with:
+
+| Attribute | Value |
+|---|---|
+| `gen_ai.operation.name` | `invoke_agent` |
+| `gen_ai.provider.name` | `anthropic` (Claude), `openai` (Codex), `meta` (Muse) |
+| `gen_ai.agent.name`, `gen_ai.agent.id` | the worker's role and id |
+| `gen_ai.request.model` | the model the worker ran |
+| `gen_ai.usage.input_tokens` | every prompt token, cached ones included |
+| `gen_ai.usage.output_tokens` | output tokens |
+| `orbit.cost_usd`, `orbit.cost_source` | the cost and whether a provider reported it or Orbit estimated it; a cost no one measured is absent and `orbit.cost_source` is `unavailable`, never 0 |
+| `orbit.attempt`, `orbit.worker.state` | the attempt it served and how it ended; a failed or lost worker is an error span with `error.type` |
+
+The GenAI conventions are still in development, so the export pins one
+release, the OpenTelemetry semantic conventions **1.37.0**, and names it in
+every `schemaUrl` (`https://opentelemetry.io/schemas/1.37.0`). Moving to a
+later release is a deliberate change. The export never includes prompt or
+source text: no goal, no message, no worker error (which can quote provider
+output), only ids, roles, models, counts, states and times. There is no option
+to include them.
+
+Orbit's own documents have published, versioned JSON Schemas in `schemas/`.
+Each document names its version in its `schema` field; removing or retyping a
+field makes a new version and a new schema, while a nested object may gain a
+field within one.
+
+| Document | Schema | Version |
+|---|---|---|
+| The run report: `final.json`, `orbit report --json` | `schemas/run-report.schema.json` | `orbit.final/1` |
+| The spec check result: `orbit spec check --json` | `schemas/spec-check.schema.json` | `orbit.spec-check/1` |
+| The benchmark scorecard (issue #172) | `schemas/scorecard.schema.json` | `orbit.scorecard/1` |
 
 ## Release mode safeguards
 

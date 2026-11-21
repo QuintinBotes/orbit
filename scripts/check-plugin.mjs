@@ -4,6 +4,7 @@
 //   2. frontmatter keys, which the validator does not flag when ignored, against the verified lists in
 //      docs/interfaces/claude-code-plugin.md, and the skill invocation policy (ADR 0006 addendum): only the skills in
 //      MODEL_INVOCABLE_SKILLS may be invoked by the model, and every other skill sets disable-model-invocation: true;
+//      and every skill against the Agent Skills format (issue #178, ADR 0021): agentSkillsProblems;
 //   3. the payload holds exactly the allowed files, and its package.json and lockfile carry one registry dependency,
 //      @anthropic-ai/sandbox-runtime at the version the srt preload is verified against, and nothing a development
 //      install would add (Claude Code runs `npm ci` on a marketplace install of the plugin).
@@ -85,8 +86,40 @@ function walk(dir, keep, skip = () => false) {
   return out;
 }
 
-export function lint(pluginDir = PLUGIN_DIR) {
+/**
+ * Every way a skill breaks the Agent Skills format (https://agentskills.io/specification): `name` 1 to 64 lowercase
+ * letters, digits and single hyphens, not starting or ending with one, equal to its folder; `description` 1 to 1024
+ * characters; `license` a string; `compatibility` 1 to 500 characters; `metadata` a map of strings to strings;
+ * `allowed-tools` a string (Claude Code also takes a list of strings). Keys outside the format are Claude Code's own
+ * extensions, held to SKILL_KEYS by lint(). In path order.
+ */
+export function agentSkillsProblems(pluginDir = PLUGIN_DIR) {
   const problems = [];
+  const skills = walk(join(pluginDir, 'skills'), (f) => f === 'SKILL.md').map((p) => relative(pluginDir, p).split(sep).join('/')).sort();
+  for (const rel of skills) {
+    let fm;
+    try { fm = frontmatter(readFileSync(join(pluginDir, rel), 'utf8')); } catch { continue; } // lint() reports it
+    if (!fm || typeof fm !== 'object') continue;
+    const say = (what) => problems.push(`${rel}: ${what} (Agent Skills format)`);
+    const folder = rel.split('/')[1];
+    const text = (v, max) => typeof v === 'string' && v.length >= 1 && v.length <= max;
+    if (typeof fm.name !== 'string' || fm.name.length > 64 || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(fm.name)) say(`name ${JSON.stringify(fm.name ?? null)} must be 1 to 64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen`);
+    else if (fm.name !== folder) say(`name "${fm.name}" must match its folder ${folder}`);
+    if (!text(fm.description, 1024)) say('description must be 1 to 1024 characters');
+    if ('license' in fm && typeof fm.license !== 'string') say('license must be a string');
+    if ('compatibility' in fm && !text(fm.compatibility, 500)) say('compatibility must be 1 to 500 characters');
+    const meta = fm.metadata;
+    if ('metadata' in fm && (meta === null || typeof meta !== 'object' || Array.isArray(meta) || Object.values(meta).some((v) => typeof v !== 'string'))) say('metadata must map strings to strings');
+    const tools = fm['allowed-tools'];
+    if ('allowed-tools' in fm && typeof tools !== 'string' && !(Array.isArray(tools) && tools.every((t) => typeof t === 'string'))) {
+      problems.push(`${rel}: allowed-tools must be a string or a list of strings (Agent Skills format; Claude Code also takes a list)`);
+    }
+  }
+  return problems;
+}
+
+export function lint(pluginDir = PLUGIN_DIR) {
+  const problems = [...agentSkillsProblems(pluginDir)];
   const files = [
     ...walk(join(pluginDir, 'skills'), (f) => f === 'SKILL.md').map((p) => [p, SKILL_KEYS, 'skill']),
     ...walk(join(pluginDir, 'agents'), (f) => f.endsWith('.md')).map((p) => [p, AGENT_KEYS, 'agent']),

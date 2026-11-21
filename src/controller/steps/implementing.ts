@@ -42,7 +42,7 @@ import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAtt
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
 import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, move, note, policySummary, progress, repoInstructions, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { attemptStart, latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
@@ -528,6 +528,7 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: false }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
     briefs,
     evidenceRefs: refs,

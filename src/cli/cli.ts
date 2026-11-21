@@ -38,6 +38,7 @@ import { MODELS_REFRESH_OPTIONS, modelsListCommand, modelsRefreshCommand } from 
 import { NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE, notifyTestCommand } from './commands/notify.ts';
 import { policyShowCommand } from './commands/policy.ts';
 import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
+import { EXPORT_OPTIONS, EXPORT_USAGE, exportCommand } from './commands/export.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
 import { RUN_OPTIONS, RUN_USAGE, runCommand } from './commands/run.ts';
 import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
@@ -75,6 +76,7 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'resume', summary: 'unpause a run, or resume a BLOCKED one after a decision or an environment repair', usage: 'orbit resume <run-id> [--foreground | --detach] [--force]', options: RESUME_OPTIONS, run: resumeCommand },
   { name: 'cancel', summary: 'cancel a run durably (works for blocked or ownerless runs too)', usage: 'orbit cancel <run-id> [--wait seconds]', options: CANCEL_OPTIONS, run: cancelCommand },
   { name: 'report', summary: 'the final report of a run, or a live interim report while it runs (--learning: improvement over time)', usage: 'orbit report <run-id> [--interim] [--json]   |   orbit report --learning', options: REPORT_OPTIONS, run: reportCommand },
+  { name: 'export', summary: 'a run as OpenTelemetry traces (--otel): a span per worker with model, tokens and cost, never prompt or source text', usage: EXPORT_USAGE, options: EXPORT_OPTIONS, run: exportCommand },
   { name: 'decide', summary: 'record your answer to a question the run persisted', usage: 'orbit decide <run-id> <question-id> <answer...> [--by name]', options: DECIDE_OPTIONS, run: decideCommand },
   { name: 'questions', summary: 'the questions a run is waiting on (--pending: those of every unfinished run)', usage: QUESTIONS_USAGE, options: QUESTIONS_OPTIONS, run: questionsCommand },
   { name: 'models list', summary: 'the model registry with availability and eligibility under the policy', usage: 'orbit models list [--json]', run: modelsListCommand },

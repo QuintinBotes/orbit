@@ -521,6 +521,22 @@ Partner implementers, and one fresh pass plus one cross-model pass (issue #176, 
 | S16.20 | Retro: reviewer standards in one file only the reviewer reads (#174 FR-004) | none: an accepted standard is recorded, and the person writes it | none | missing (G59) |
 | S16.21 | Retro: every false done is retro input and gets the check that would have caught it (#174 FR-006, SC-003); replaying the runs behind #132, #133 and #156 yields the hand-filed proposals (SC-001) | none: false dones are not recorded yet (#172) | none | missing (G59) |
 
+Orbit speaks the open conventions (issue #178, ADR 0021; the requirements, scenarios, edge cases and success criteria of the spec, numbered as there):
+
+| ID | Requirement | Implementation | Tests | Status |
+|---|---|---|---|---|
+| I178.FR1 | Init and prompts read AGENTS.md, then CLAUDE.md, and record which were read | `cli/check-detect.ts:documentedCommands`, `detectChecks`, `cli/commands/init.ts` (`checks.read_docs`), `adapters/prompt.ts:REPO_INSTRUCTION_FILES`, `renderWorkerPrompt`, `controller/steps/common.ts:repoInstructions` (`repo-instructions.json`, event `repo.instructions-read`), `inquisition/engine.ts:renderInquisitorPrompt` | U/cli/init-check-detection.test.ts "init reads AGENTS.md, then CLAUDE.md (issue #178, FR-001)"; U/adapters/prompt-agents.test.ts "carries the repository's AGENTS.md, then CLAUDE.md, fenced and redacted"; I/controller/open-conventions.test.ts "FR-001: every worker prompt carries AGENTS.md, then CLAUDE.md, as data" | done |
+| I178.FR2 | The run report, scorecard and spec check result have published, versioned JSON schemas | `schemas/run-report.schema.json` (`orbit.final/1`), `schemas/spec-check.schema.json` (`orbit.spec-check/1`, named by `cli/commands/spec.ts`), `schemas/scorecard.schema.json` (`orbit.scorecard/1`) | U/schemas/published-schemas.test.ts; I/controller/open-conventions.test.ts "FR-002: the run report of a lab run is valid" | done; the scorecard's producer, `orbit bench`, is issue #172 |
+| I178.FR3 | `orbit export --otel` writes traces under a pinned convention version | `observability/otel.ts:exportRunOtel`, `GENAI_SEMCONV_VERSION`, `cli/commands/export.ts` | U/observability/otel.test.ts; I/controller/open-conventions.test.ts "user story 2, scenario 1" | done |
+| I178.FR4 | The plugin's skills validate against the Agent Skills format | `scripts/check-plugin.mjs:agentSkillsProblems`, run by `lint` | I/plugin/plugin.test.ts "every skill validates against the Agent Skills format" | done; Claude Code's documented extension keys are allowed (ADR 0021) |
+| I178.FR5 | The README says what Orbit does that `/goal`, `/loop` and scheduled tasks do not, and when to use those instead | `README.md` "Orbit, /goal, /loop and scheduled tasks" | I/plugin/plugin.test.ts "say what Orbit does that Claude Code's /goal, /loop and scheduled tasks do not" | done |
+| I178.US1.1 | Given an AGENTS.md that documents the test command, init proposes it and says where it read it | as FR1 | U/cli/init-check-detection.test.ts "user story 1, scenario 1" | done |
+| I178.US2.1 | Given a finished run, the export has a span per worker with model, tokens and cost under a pinned GenAI conventions version | as FR3 | I/controller/open-conventions.test.ts "user story 2, scenario 1" | done |
+| I178.EC1 | The GenAI conventions version is pinned and stated | `observability/otel.ts:OTEL_SCHEMA_URL` (every `schemaUrl`), `docs/operations.md` "Exports and published schemas" | as US2.1 | done |
+| I178.EC2 | The export never includes prompt or source text unless asked | `observability/otel.ts` (ids, roles, models, counts, states and times only; no worker error text) | I/controller/open-conventions.test.ts "user story 2, scenario 1" (no goal, instruction or code text); U/observability/otel.test.ts | done; there is no option to ask for it |
+| I178.SC1 | A fixture with an AGENTS.md test command gets that command proposed | as US1.1 | as US1.1 | done |
+| I178.SC2 | Exported traces load in a standard collector without custom mapping | OTLP/JSON, one request per line (the `otlpjsonfile` receiver's form) | I/controller/open-conventions.test.ts (hex ids, int64 as strings, enum kinds, `schemaUrl`); loaded by hand on 2026-11-20 into the OpenTelemetry Collector 0.104.0 (OTLP/HTTP receiver, debug exporter): HTTP 200, every span parsed with its kind, parent, times, typed attributes and the 1.37.0 `schemaUrl` | done; the collector load is not part of the suite |
+
 ## 17. Acceptance and fault testing
 
 | ID | Requirement | Implementation | Tests | Status |

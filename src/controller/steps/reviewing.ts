@@ -50,7 +50,7 @@ import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions, independentReviewGate } from '../gates.ts';
 import { settleRouteOutcome } from '../route-outcome.ts';
-import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, MOVED, move, note, policySummary, progress, safePoint, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, MOVED, move, note, policySummary, progress, repoInstructions, safePoint, WAIT, type StepResult } from './common.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
 import type { WorkUnit } from '../../scheduling/types.ts';
@@ -1858,6 +1858,7 @@ function reviewerPrompt(ctx: RunContext, cand: CandidateRecord, reviewDir: strin
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     untrusted: [{ label: 'review packet', content: text, ref: `reviews/${cand.seq}/packet.md` }, ...noted],
     maxBlockChars: text.length + 100,

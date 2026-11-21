@@ -22,7 +22,7 @@ import type { RunContext } from '../context.ts';
 import { intakeGate } from '../gates.ts';
 import { routeFor } from '../workers.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
 import { blockOnMissingTargets, missingTargetsNotExpectedToFlip, settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
@@ -157,6 +157,7 @@ function plannerPrompt(ctx: RunContext, workerId: string, slice: string | null):
     task,
     contract: null,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: ctx.run.baseRevision, treeHash: ctx.run.baseTree, base: ctx.run.baseRevision },
     // The whole spec in one block: intake refused a body longer than the block may be, so it is never cut here. The map's
     // slice is already within its token limit.
