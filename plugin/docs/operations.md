@@ -213,6 +213,7 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit spec check <file \| issue>` | `--policy <path>` (read only to find the repository of an issue), `--json` |
 | `orbit queue list` | `--parent <issue>`, `--label <name>`, `--human-label <name>`, `--base <branch>`, `--policy <path>`, `--json` (see [Working a backlog](#working-a-backlog)) |
 | `orbit queue run` | the options of `queue list`, and `--mode <mode>`, `--max-issues <n>`, `--budget-usd <usd>`, `--attempts <n>` (default 2), `--wait-minutes <n>` (default 60) |
+| `orbit map build` / `orbit map query <path...>` | `--rev <rev>` (default `HEAD`); `map query` exits 3 when a path is not in the tree. See [repo_map](configuration.md#repo_map) |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |

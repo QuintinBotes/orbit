@@ -26,6 +26,7 @@ import type {
   FailBeforeMode,
   IsolationLimits,
   NotificationsConfig,
+  RepoMapConfig,
   OrbitConfig,
   ProviderConfig,
   ReleaseConfig,
@@ -205,7 +206,18 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
     knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true, lessons_in_prompts: false, max_prompt_lessons: 3, lesson_expiry_days: 28 },
     guard: { terms_file: null, allowed_emails: [] },
     notifications: defaultNotifications(),
+    repo_map: defaultRepoMap(),
   };
+}
+
+/** #175: the prompt slice is off until a full benchmark shows it helps; the map's deterministic uses are always on. */
+export function defaultRepoMap(): RepoMapConfig {
+  return { prompt_slice: false, prompt_slice_tokens: 1500, prompt_slice_min_files: 500 };
+}
+
+/** The repository map settings of a config; a snapshot written before the section existed reads the defaults. */
+export function repoMapPolicy(config: Pick<OrbitConfig, 'repo_map'>): RepoMapConfig {
+  return { ...defaultRepoMap(), ...(config.repo_map ?? {}) };
 }
 
 /** ADR 0008: desktop notifications on; webhook, pull request comments and remote answers off. */

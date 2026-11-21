@@ -144,6 +144,17 @@ groups runs, proposes, and applies an approved check on a branch. What remains:
   input on its own and propose a check that fails on the reverted candidate.
 - SC-001: replay the runs behind #132, #133 and #156 and compare the proposals
   with the issues a maintainer filed by hand.
+### G60. The repository map's benchmark evidence waits on `orbit bench` (should)
+
+Covers S8.39. The map, its gates and the prompt slice are in (S8.32 to S8.38);
+what needs the benchmark of #172 is not:
+
+- Add lab scenarios for #157 (a committed generated bundle under the size
+  limit) and #144 (a missing-test finding about a covered file) to the lab
+  tier once it exists, and see them pass (#175 SC-001).
+- Run the lab with `repo_map.prompt_slice` on and off and compare turns, then
+  the live tier; turn the switch on by default only if the pass rate does not
+  fall and median turns per attempt drop by at least 10% (#175 SC-002).
 
 ## Nice
 

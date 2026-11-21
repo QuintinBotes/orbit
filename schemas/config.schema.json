@@ -436,6 +436,16 @@
         "allowed_emails": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 3, "maxLength": 320 } }
       }
     },
+    "repo_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt_slice", "prompt_slice_tokens", "prompt_slice_min_files"],
+      "properties": {
+        "prompt_slice": { "type": "boolean" },
+        "prompt_slice_tokens": { "type": "integer", "minimum": 100, "maximum": 8000 },
+        "prompt_slice_min_files": { "type": "integer", "minimum": 0 }
+      }
+    },
     "notifications": {
       "type": "object",
       "additionalProperties": false,

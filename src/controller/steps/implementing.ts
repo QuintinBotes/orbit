@@ -21,6 +21,9 @@ import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
 import { recoveryAttemptsRemaining, spendRecoveryAttempt } from '../../recovery/budget.ts';
 import { stopRowProcess } from '../../recovery/reconcile.ts';
 import { renderWorkerPrompt, type EvidenceRef, type PromptBrief } from '../../adapters/prompt.ts';
+import { defaultOrbitCommands } from '../../adapters/commands.ts';
+import { repoMapPolicy } from '../../policy/config.ts';
+import { shellQuote } from '../../ui/runner.ts';
 import { isSessionRefusal } from '../../adapters/types.ts';
 import { snapshotCandidate } from '../../evidence/candidate.ts';
 import { invalidateEvidence } from '../../evidence/freshness.ts';
@@ -518,6 +521,7 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
     ...(blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(', ')}. Implement the other criteria only.`] : []),
     ...authorizationLines(auth),
     ...parallelLines(ctx, n, parallel),
+    ...mapToolLines(ctx),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'implementer',
@@ -529,6 +533,16 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
     evidenceRefs: refs,
     advisoryBlock: advisoryBlockFor(ctx, { role: 'implementer', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] }),
   });
+}
+
+/**
+ * The repository map as a tool (#175 FR-005), named only with repo_map.prompt_slice on: what workers are told stays
+ * as it is until a full benchmark shows the map helps.
+ */
+function mapToolLines(ctx: RunContext): string[] {
+  if (!repoMapPolicy(ctx.snapshot.config).prompt_slice) return [];
+  const cli = defaultOrbitCommands().cli.map(shellQuote).join(' ');
+  return [`Plain search stays your default. For a structural question (what imports a file, which tests cover it, which checks name it), \`${cli} map query <path>\` prints the repository map's answer for the checkout's HEAD.`];
 }
 
 /** A unit writer's share of the attempt, or what the serial implementer takes over from units that could not be integrated. */

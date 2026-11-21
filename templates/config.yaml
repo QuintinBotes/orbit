@@ -448,6 +448,20 @@ knowledge:
   # A lesson with no supporting run for this many days is not put in a prompt.
   lesson_expiry_days: 28
 
+# Repository map (orbit map build|query): files, generated files, tests,
+# imports and check paths of a tree, built from git without a model. The
+# scope gate leaves generated files (linguist-generated in .gitattributes, or
+# a generated header in a JS, TS, Python, Rust or Go file up to 1 MiB) out of
+# changed_lines, and a review finding filed as missing-test is refuted when the
+# map links a test to its file. Those uses are always on.
+repo_map:
+  # Give the planner and the reviewer the map's slice for the files a goal
+  # names. Off until a full benchmark shows it helps.
+  prompt_slice: false
+  prompt_slice_tokens: 1500
+  # Repositories with fewer tracked files get no slice.
+  prompt_slice_min_files: 500
+
 # Publication guard: private terms that must never leave this repository
 # through Orbit (global knowledge, overlays, reports written elsewhere).
 guard:
