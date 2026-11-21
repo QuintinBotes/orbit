@@ -126,7 +126,7 @@ export function makeSandbox(opts: { config?: string | null; fakes?: { claude?: R
     env,
     run(args, o = {}) {
       return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: o.cwd ?? repo, env: env(o.env), stdio: ['pipe', 'pipe', 'pipe'], detached: o.detached === true });
+        const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: o.cwd ?? repo, env: env(o.env), stdio: ['pipe', 'pipe', 'pipe'], detached: o.detached === true });
         let stdout = '';
         let stderr = '';
         child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));

@@ -287,7 +287,7 @@ export function alignPlanToIssue(plan: PlannerOutput, goal: IssueGoal): PlannerO
   const fromIssue: Criterion[] = wanted.map((w) => {
     const mine = plan.criteria.find((c) => c.key === w.key);
     const proof = (mine?.proof ?? []).filter((p) => p.trim() !== '');
-    return { key: w.key, statement: w.statement, mandatory: true, ui: mine?.ui ?? false, proof: proof.length > 0 ? proof : [w.proof], check_ids: mine?.check_ids ?? [], changes: mine?.changes ?? [] };
+    return { key: w.key, statement: w.statement, mandatory: true, ui: mine?.ui ?? false, proof: proof.length > 0 ? proof : [w.proof], check_ids: mine?.check_ids ?? [], changes: mine?.changes ?? [], kind: mine?.kind ?? 'change', tests: mine?.tests ?? [] };
   });
   return { ...plan, criteria: [...fromIssue, ...plan.criteria.filter((c) => !keys.has(c.key))] };
 }

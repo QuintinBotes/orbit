@@ -133,8 +133,9 @@ describe('dispatch', () => {
   it('names the subcommands of a group, and the known commands otherwise', async () => {
     expect((await run(['service'])).err).toContain('"orbit service" needs a subcommand: install, uninstall, status, run');
     expect((await run(['policy', '--json'])).err).toContain('needs a subcommand: show');
-    const unknown = await run(['wat']);
-    expect(unknown.err).toMatch(/unknown command "wat"; commands: doctor, init, run/);
+    // A word near no command ("wat" is now near "map").
+    const unknown = await run(['frobnicate']);
+    expect(unknown.err).toMatch(/unknown command "frobnicate"; commands: doctor, init, run/);
     expect(unknown.err).toContain('run "orbit help" for the commands');
     // A flag after the first word is not a subcommand.
     expect((await run(['models', '--json'])).err).toContain('needs a subcommand: list, refresh');

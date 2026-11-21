@@ -21,7 +21,14 @@ import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
 import { recoveryAttemptsRemaining, spendRecoveryAttempt } from '../../recovery/budget.ts';
 import { stopRowProcess } from '../../recovery/reconcile.ts';
 import { renderWorkerPrompt, type EvidenceRef, type PromptBrief } from '../../adapters/prompt.ts';
-import { isSessionRefusal } from '../../adapters/types.ts';
+import { defaultOrbitCommands } from '../../adapters/commands.ts';
+import { repoMapPolicy } from '../../policy/config.ts';
+import { shellQuote } from '../../ui/runner.ts';
+import { isSessionRefusal, type TaskResult } from '../../adapters/types.ts';
+import type { ClaudeTaskResult } from '../../adapters/claude-transcript.ts';
+import type { ImplementerOutput } from '../../contract/model-outputs.ts';
+import { listDecisions } from '../../storage/decisions.ts';
+import { decideTurnExtension } from '../../scheduling/turn-cap.ts';
 import { snapshotCandidate } from '../../evidence/candidate.ts';
 import { invalidateEvidence } from '../../evidence/freshness.ts';
 import { currentEvidenceReport, listCheckRuns, listEvidenceReports, listFailures } from '../../evidence/store.ts';
@@ -33,12 +40,13 @@ import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
-import { ensureWorker, raiseOutputCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason } from '../workers.ts';
+import { ensureWorker, raiseOutputCap, recordedTurnCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, type RouteChoice } from '../workers.ts';
+import { attemptRouteDecision, skippedPartners, skipPartner } from '../route-outcome.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
 import { attemptSubject, deniedWorkerOperations, grantFor, requestAttemptAuthorization, runApprovedOperation, sessionEvents, ungrantedCommands, type ApprovedRun, type GuardedOperation } from '../authorization.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, move, note, policySummary, progress, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnRefusedSession, decide, finishRun, move, note, policySummary, progress, repoInstructions, retryWait, safePoint, scheduleTransientRetry, WAIT, type StepResult } from './common.ts';
 import { attemptStart, latestAttempt } from './obtain.ts';
 
 export const ATTEMPT_EVENT = 'implementation.attempt';
@@ -48,7 +56,7 @@ export const WORKER_ENDED_EVENT = 'implementation.worker-ended';
 /** A repair brief waiting for an attempt, as DIAGNOSING, REVIEWING or AWAITING_CI wrote it. */
 export interface StoredBrief {
   attempt: number;
-  source: 'diagnosis' | 'review' | 'ci' | 'scope';
+  source: 'diagnosis' | 'review' | 'ci' | 'scope' | 'proof' | 'failures';
   fingerprint: string | null;
   brief: object;
   /** Paths of evidence the brief cites, relative to the run directory. */
@@ -95,7 +103,7 @@ export async function implementingStep(ctx: RunContext): Promise<StepResult> {
 /** Admit and count a new attempt. Returns a step result when it may not start (budget, capacity). */
 async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | null> {
   const ledger = ctx.ledger!;
-  const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
+  const route = implementRoute(ctx, n);
   const scheduler = schedulerFor(ctx);
   // Capacity is the machine's, not the run's: every live worker of this repository's database occupies a slot,
   // whichever run it belongs to (spec section 8; scenario 15 with two runs under one controller).
@@ -173,15 +181,32 @@ export function runningUnits(ctx: RunContext): { runId: string; unit: WorkUnit }
   return out;
 }
 
+/**
+ * The route of attempt `n`: its recorded decision, or, once the partner it named was skipped for the run (issue #176),
+ * the decision that replaced it for the same attempt, so a partner's quota or login never costs an attempt.
+ */
+export function implementRoute(ctx: RunContext, n: number): RouteChoice {
+  const skipped = skippedPartners(ctx);
+  let purpose = `implement:${n}`;
+  let route = routeFor(ctx, purpose, 'routine-code', routeSignals(ctx, n));
+  for (let hop = 0; route.provider in skipped && hop < 8; hop++) {
+    purpose = `${purpose}~${route.provider}`;
+    route = routeFor(ctx, purpose, 'routine-code', routeSignals(ctx, n));
+  }
+  return route;
+}
+
 async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable<RunContext['contract']>): Promise<StepResult> {
-  const route = routeFor(ctx, `implement:${n}`, 'routine-code', routeSignals(ctx, n));
+  let route = implementRoute(ctx, n);
   const base = `implement:${n}`;
   const units = recordedUnits(ctx, n);
   if (units && latestAttempt(ctx, base) === 0) {
     const r = await runParallelUnits(ctx, n, units, { route, contract, prompt: (u, all, workerId) => implementerPrompt(ctx, n, workerId, null, { unit: u, all }), running: () => runningUnits(ctx), maxTurns: ctx.ledger!.maxTurnsPerSession() });
     if (r.kind === 'step') return r.result;
     if (r.kind === 'done') return snapshot(ctx, n, r.workerId);
-    // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree.
+    // Some units could not be integrated in parallel: one implementer finishes their criteria on the integrated tree,
+    // on the route as it stands now (a partner a unit found out of quota is skipped).
+    route = implementRoute(ctx, n);
   }
   // A resume after a person fixed what blocked this attempt (a login) starts a fresh session instead of replaying the stored failure.
   const start = await attemptStart(ctx, base, `implementer (attempt ${n})`);
@@ -211,7 +236,13 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
     });
     if (st.status === 'running') return WAIT(`implementer ${st.worker.id} (attempt ${n}) is running`);
     const r = st.result;
-    if (r.status === 'auth_failed') return blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error);
+    if (r.status === 'auth_failed') {
+      // A partner out of quota or logged out is skipped for the run; the attempt goes on with the next route, uncharged (FR-005).
+      if (!skipPartner(ctx, st.worker.provider, n, r.error ?? 'authentication failed')) return blockOnAuth(ctx, st.worker.provider, 'auth_failed', r.error);
+      route = implementRoute(ctx, n);
+      k++;
+      continue;
+    }
     // A session Orbit refused after it started (a plugin the policy does not allow, ...) would be refused again by the next: its edits are not verified as an attempt, and no attempt is spent on a retry.
     if (isSessionRefusal(r)) return blockOnRefusedSession(ctx, `implementer (attempt ${n})`, r.error);
     const stray = r.status === 'cancelled' && !ctx.refresh().cancelRequested;
@@ -250,9 +281,48 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       k++;
       continue;
     }
+    // A session that reached its turn reminder and said what remains continues in one more session of this attempt, in
+    // the same worktree, instead of having its unfinished tree verified and diagnosed as a defect (issue #177).
+    if (r.status === 'succeeded' && turnExtension(ctx, n, st.worker, r)) {
+      k++;
+      continue;
+    }
     if (r.status !== 'succeeded') note(ctx, WORKER_ENDED_EVENT, { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
     return snapshot(ctx, n, st.worker.id);
   }
+}
+
+export const TURN_EXTENSION_KIND = 'budget.turn-extension';
+
+interface TurnExtension {
+  attempt: number;
+  worker_id: string;
+  turns: number;
+  cap: number;
+  remainder: string;
+}
+
+function turnExtensionsOf(ctx: RunContext, n: number): TurnExtension[] {
+  return listDecisions(ctx.db, ctx.run.id, { kind: TURN_EXTENSION_KIND }).map((d) => d.data as TurnExtension).filter((d) => d.attempt === n);
+}
+
+/**
+ * Whether session `w` of attempt `n` gets the attempt's one turn extension (issue #177): it asked with
+ * next_action continue-implementation, stated what remains, and had reached its turn reminder. Granted once, recorded,
+ * and still granted for the same session after a restart.
+ */
+function turnExtension(ctx: RunContext, n: number, w: WorkerRecord, r: TaskResult): boolean {
+  const granted = turnExtensionsOf(ctx, n);
+  if (granted.some((g) => g.worker_id === w.id)) return true;
+  const next = (r.structured as Partial<ImplementerOutput> | null)?.next_action;
+  const remainder = next?.kind === 'continue-implementation' ? next.detail : null;
+  const turns = (r as Partial<ClaudeTaskResult>).modelRequests ?? null;
+  const recorded = recordedTurnCap(ctx.db, ctx.run.id, w.id);
+  const d = decideTurnExtension({ remainder, turns, remindAt: recorded?.remindAt ?? null, granted: granted.length });
+  if (!d.granted || !remainder || !recorded) return false;
+  const data: TurnExtension = { attempt: n, worker_id: w.id, turns: turns!, cap: recorded.cap, remainder: remainder.slice(0, 2000) };
+  decide(ctx, { id: `dec-${ctx.run.id}-turn-extension-${n}`, kind: TURN_EXTENSION_KIND, summary: `attempt ${n}: ${d.reason} (${turns} of ${recorded.cap} turns); one more session continues it in the same worktree`, data });
+  return true;
 }
 
 export const AUTHORIZATION_RETRY_EVENT = 'authorization.retry';
@@ -402,8 +472,8 @@ function capOf(ctx: RunContext, n: number, purpose: string): number | null {
 export function routeSignals(ctx: RunContext, n: number): Parameters<typeof routeFor>[3] {
   const difficulty = (ctx.run.difficulty ?? 'medium') as DifficultyClass;
   const failures = listFailures(ctx.db, ctx.run.id);
-  const prev = n > 1 ? ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${n - 1}`) : undefined;
-  const prevRoute = prev ? (JSON.parse(prev.data_json) as { provider: string; model: string; effort: string | null }) : null;
+  const prev = n > 1 ? attemptRouteDecision(ctx, n - 1) : null;
+  const prevRoute = prev ? (prev.data as { provider: string; model: string; effort: string | null }) : null;
   const solved = n > 1 && diagnosisSolved(ctx, n);
   const latest = failures.at(-1) ?? null;
   const same = latest && !solved ? failures.filter((f) => f.fingerprint === latest.fingerprint) : [];
@@ -441,8 +511,7 @@ function criticalSecurity(ctx: RunContext): boolean {
 function diagnosisSolved(ctx: RunContext, n: number): boolean {
   let escalatedAt = 0;
   for (let k = n - 1; k >= 1; k--) {
-    const row = ctx.db.get<{ data_json: string }>('SELECT data_json FROM decisions WHERE id = ?', `dec-route-${ctx.run.id}-implement_${k}`);
-    const d = row ? (JSON.parse(row.data_json) as { escalated_from?: unknown }) : null;
+    const d = (attemptRouteDecision(ctx, k)?.data ?? null) as { escalated_from?: unknown } | null;
     if (d?.escalated_from) {
       escalatedAt = k;
       break;
@@ -475,6 +544,8 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
   const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists<StoredBrief>(briefPath(ctx, n));
   const briefs: PromptBrief[] = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n}.json` }] : [];
+  const extension = turnExtensionsOf(ctx, n)[0] ?? null;
+  if (extension) briefs.push({ label: 'what the earlier session said remains', content: extension.remainder });
   const refs: EvidenceRef[] = [];
   const cand = ctx.candidate;
   if (stored && cand) {
@@ -495,17 +566,30 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
     ...(blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(', ')}. Implement the other criteria only.`] : []),
     ...authorizationLines(auth),
     ...parallelLines(ctx, n, parallel),
+    ...(extension ? [`An earlier session of this attempt reached its turn cap (${extension.turns} of ${extension.cap} turns) and asked to continue. Its edits are in this worktree: keep them and finish what it said remains, below. This is the attempt's one extension.`] : []),
+    ...mapToolLines(ctx),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'implementer',
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: false }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand?.commitSha ?? null, treeHash: cand?.treeHash ?? null, base: ctx.run.baseRevision },
     briefs,
     evidenceRefs: refs,
     advisoryBlock: advisoryBlockFor(ctx, { role: 'implementer', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: stored?.fingerprint ? [stored.fingerprint] : [] }),
   });
+}
+
+/**
+ * The repository map as a tool (#175 FR-005), named only with repo_map.prompt_slice on: what workers are told stays
+ * as it is until a full benchmark shows the map helps.
+ */
+function mapToolLines(ctx: RunContext): string[] {
+  if (!repoMapPolicy(ctx.snapshot.config).prompt_slice) return [];
+  const cli = defaultOrbitCommands().cli.map(shellQuote).join(' ');
+  return [`Plain search stays your default. For a structural question (what imports a file, which tests cover it, which checks name it), \`${cli} map query <path>\` prints the repository map's answer for the checkout's HEAD.`];
 }
 
 /** A unit writer's share of the attempt, or what the serial implementer takes over from units that could not be integrated. */

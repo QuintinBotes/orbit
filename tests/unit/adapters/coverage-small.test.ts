@@ -33,11 +33,12 @@ function code(fn: () => unknown): string | undefined {
 
 describe('orbit commands', () => {
   it('builds the bundle and source invocations', () => {
-    expect(orbitCommands('/opt/orbit.mjs', '/usr/bin/node')).toEqual({ shim: ['/usr/bin/node', '/opt/orbit.mjs', 'shim'], hook: ['/usr/bin/node', '/opt/orbit.mjs', 'hook', 'pre-tool-use'] });
+    expect(orbitCommands('/opt/orbit.mjs', '/usr/bin/node')).toEqual({ shim: ['/usr/bin/node', '/opt/orbit.mjs', 'shim'], hook: ['/usr/bin/node', '/opt/orbit.mjs', 'hook', 'pre-tool-use'], cli: ['/usr/bin/node', '/opt/orbit.mjs'] });
     const src = sourceCommands('/usr/bin/node');
     expect(src.shim.slice(0, 2)).toEqual(['/usr/bin/node', '--no-warnings']);
     expect(src.shim[2]).toMatch(/shim-main\.ts$/);
     expect(src.hook[2]).toMatch(/hook-main\.ts$/);
+    expect(src.cli[2]).toMatch(/cli\/main\.ts$/);
     expect(sourceCommands().shim[0]).toBe(process.execPath);
   });
 

@@ -81,6 +81,19 @@ function addAttempt(k: number, opts: { supported?: boolean; fingerprint?: string
 }
 
 describe('preconditions and stops', () => {
+  it('with the diagnosis stage off (orbit bench --without diagnosis, #172) the brief is the failure records and no verifier session starts', async () => {
+    const { adapter } = await setup();
+    lab.deps.withoutDiagnosis = true;
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(adapter.specs).toEqual([]);
+    const stored = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8')) as { source: string; brief: { evidence: string[]; post_fix_checks: string[] } };
+    expect(stored.source).toBe('failures');
+    expect(stored.brief.evidence).toEqual(['unit: mul(2, 3) expected 6, got 5']);
+    expect(stored.brief.post_fix_checks.length).toBeGreaterThan(0);
+    expect(decisions('repair.brief').map((d) => d.summary)).toEqual([`repair brief (failures) for attempt 2: ${FP}`]);
+  });
+
   it('stops at a safe point; needs a candidate and a budget', async () => {
     await setup();
     requestCancel(lab.db, lab.runId, 'u', lab.clock);
@@ -179,6 +192,7 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     expect(done.outcomeReason).toContain('over scheduler.hard_limits.changed_lines again (3010 lines against a limit of 2000)');
     expect(done.outcomeReason).toContain('The largest changes: dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
     expect(done.outcomeReason).toContain('too small for a generated file the task requires');
+    expect(done.outcomeReason).toContain('name a committed generated file in scope.generated_paths');
     expect(done.outcomeReason).toContain(`resume with orbit resume ${lab.runId} --force`);
     expect(done.outcomeReason).not.toMatch(/[\u2013\u2014]/u);
     expect(JSON.parse(done.outcomeJson!)).toMatchObject({ frozen_policy: { setting: 'scheduler.hard_limits.changed_lines' } });
