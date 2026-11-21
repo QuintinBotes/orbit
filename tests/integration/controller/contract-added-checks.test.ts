@@ -74,7 +74,7 @@ function plannerCiting(checkId: string, opts: { mandatory?: boolean; statement?:
     ...PLANNER_OUTPUT,
     criteria: [
       ...PLANNER_OUTPUT.criteria,
-      { key: checkId, statement: opts.statement ?? 'The changed files keep the repository formatting.', mandatory: opts.mandatory ?? false, ui: false, proof: [`check ${checkId} passes`], check_ids: [checkId], changes: [] },
+      { key: checkId, statement: opts.statement ?? 'The changed files keep the repository formatting.', mandatory: opts.mandatory ?? false, ui: false, proof: [`check ${checkId} passes`], check_ids: [checkId], changes: [], kind: 'keep', tests: [] },
     ],
   };
 }

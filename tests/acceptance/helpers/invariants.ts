@@ -15,6 +15,8 @@ import { staleReasons } from '../../../src/evidence/freshness.ts';
 import { listReviews } from '../../../src/review/store.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import type { OrbitDb } from '../../../src/storage/db.ts';
+import { listDecisions } from '../../../src/storage/decisions.ts';
+import { PROOF_RESULT_KIND, type ProofResult } from '../../../src/review/proof.ts';
 import { git, type Lab } from './lab.ts';
 
 export interface EventRow {
@@ -167,9 +169,30 @@ export function assertNoVerifiedCandidateExhausted(db: OrbitDb, runId: string): 
   expect(ev?.verdict, `the run ended EXHAUSTED holding candidate ${held.seq}, which passed verification (${ev?.id})`).not.toBe('PASS');
 }
 
+/**
+ * Issue #200, SC-004: no lab scenario reports a criterion proven when its mapped test passed on the base tree or its
+ * auditor answered yes, and no run succeeds while a proof result of its delivered tree is open. Part of
+ * assertRunInvariants, so every scenario is held to it.
+ */
+export function assertProofHonest(db: OrbitDb, runId: string): void {
+  const results = listDecisions(db, runId, { kind: PROOF_RESULT_KIND }).map((d) => d.data as ProofResult);
+  for (const p of results) {
+    for (const c of p.criteria.filter((x) => x.status === 'proven')) {
+      expect(c.audit?.answer, `${c.criterion_id} proven on tree ${p.tree_hash} only on the auditor's "no"`).toBe('no');
+      expect(c.fail_before?.accepted_by !== undefined || c.fail_before?.outcome === (c.kind === 'keep' ? 'kept' : 'failed-before'), `${c.criterion_id} proven on tree ${p.tree_hash} only by its own fail-before`).toBe(true);
+    }
+  }
+  const run = getRun(db, runId);
+  if (run.state !== 'SUCCEEDED') return;
+  const tree = (JSON.parse(run.outcomeJson ?? '{}') as { tree?: string }).tree;
+  const mine = results.filter((p) => p.tree_hash === tree);
+  for (const p of mine) expect(p.open, `the delivered tree ${tree} has no open proof result`).toEqual([]);
+}
+
 export function assertRunInvariants(lab: Lab, runId: string): void {
   const db = lab.db();
   assertNoVerifiedCandidateExhausted(db, runId);
+  assertProofHonest(db, runId);
   assertTransitionsDurable(db, runId);
   assertLeases(db, runId);
   assertPolicyFrozen(db, runId);

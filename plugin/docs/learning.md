@@ -30,9 +30,9 @@ Lesson statuses:
 
 | Status | Meaning |
 |---|---|
-| `candidate` | newly extracted or ingested; retrieved only with a clear label |
+| `candidate` | newly extracted or ingested; never put in a prompt (only validated lessons are) |
 | `validated` | supported by evidence from at least two distinct runs and not contradicted |
-| `deprecated` | contradictions outnumber support |
+| `deprecated` | contradictions outnumber support, or two distinct runs contradicted it |
 | `rejected` | refused by validation or by the publication guard |
 
 Confidence is `low`, `medium` or `high`, and support and contradiction are
@@ -44,8 +44,48 @@ prompt additions distilled from lessons that keep proving themselves. Starting
 allowances and difficulty classes are not adjusted from outcomes: they come
 from the policy and from the planner's assessment of each run.
 
-Set `knowledge.enabled: false` to turn the layer off. A worker prompt gets at
-most `knowledge.max_advisory_tokens` (default 800) of advisory text.
+Set `knowledge.enabled: false` to turn the layer off. Lessons and overlays
+enter worker prompts only with `knowledge.lessons_in_prompts: true`, which is
+off by default until a full benchmark shows that they help; everything else in
+this section runs either way. With it on, a worker prompt gets at most
+`knowledge.max_prompt_lessons` (default 3) validated lessons and at most
+`knowledge.max_advisory_tokens` (default 800) of advisory text.
+
+## Cited, re-checked, contradicted and expired lessons
+
+Every lesson curated from a run cites that run and, where the run's records name
+one, the file and line, the check or the review finding it came from (`citation`
+in `schemas/lesson.schema.json`), taken from the controller's own observations,
+never from the curator. A run lesson that cites no file or check (one resting
+only on a CI failure or a decision, say) cannot be re-checked and stays out of
+prompts. A lesson
+that names a secret or a person (an email address, a home directory, a value the
+redactor masks) is refused when it is written.
+
+Before a lesson may enter a prompt, and at the end of every run, it is
+re-checked against the repository: its cited file must still exist (and the
+cited line be inside it), its cited check must still be configured, and it must
+have had supporting evidence within `knowledge.lesson_expiry_days` (default 28).
+A lesson that fails is marked stale with the reason and is not retrieved; it is
+eligible again once the check passes. A lesson from a run that cites no file or
+check cannot be re-checked and is not retrieved. Seeds and ingested material
+cite their source, not the repository, and are checked for age only.
+
+When a run ends, the lessons it was shown are settled from its records alone. A
+lesson shown to a worker that was repairing a failure fingerprint is
+contradicted when that worker's own candidate fails with the same fingerprint
+again; contradictions from two distinct runs deprecate it. A run that succeeded
+supports only the lessons whose cited file, path globs or checks it touched: a
+file one of its candidates changed, or a check that failed on one.
+
+A run that ends without succeeding also stores an observation keyed by its
+failure class, naming each check that failed or could not run with its
+fingerprint or signature (table `observations`). It is written without a model
+call, also when the run's budget reserve cannot pay for curation.
+
+`orbit learn list` shows each lesson's status (with `stale` or `expired` when
+it is not eligible), supporting and contradicting runs, and age;
+`orbit learn show` names its citation and why it is not eligible.
 
 ## Routing from measured outcomes
 
@@ -127,7 +167,7 @@ are still recorded, and routing reads none of them.
 | Data | Location |
 |---|---|
 | Route outcomes | `<repo>/.orbit/state.sqlite`, table `route_outcomes` |
-| Repository lessons | `<repo>/.orbit/knowledge.sqlite` (SQLite with FTS5; kept out of `git status` by `orbit init`) |
+| Repository lessons and run-end observations | `<repo>/.orbit/knowledge.sqlite` (SQLite with FTS5; kept out of `git status` by `orbit init`) |
 | Repository overlays | `<repo>/.orbit/knowledge/` |
 | Global lessons and overlays | `~/.orbit/knowledge.sqlite` and `~/.orbit/knowledge/` |
 
@@ -155,9 +195,18 @@ suite of past successful tasks and compared with the active overlay. It is
 adopted automatically (`knowledge.auto_adopt_overlays: true`) only if verified
 pass rate or cost improves and no metric regresses. Replays spend real model
 usage, so they run only within `knowledge.eval_budget_usd`; the default `0`
-disables evaluation and therefore automatic adoption. When live metrics of an
+disables evaluation and therefore automatic adoption. When an evaluation also
+has a result from the benchmark's held-out scenarios, a candidate whose pass
+rate there is lower than the current prompt's is not adopted, and the reason is
+recorded with the evaluation. Until the benchmark (issue #172) supplies that
+result, evaluations have none. A replay puts the overlay under test in the
+replay's prompts whatever `knowledge.lessons_in_prompts` says, since measuring
+it there is the point. When live metrics of an
 active overlay regress past a threshold, it is rolled back automatically and the
-previous known-good overlay is restored. Every version is kept.
+previous known-good overlay is restored. Live runs judge an overlay only while
+`knowledge.lessons_in_prompts` is on: with it off no prompt carries the
+overlay, and the runs that ended with it off are left out of the window when it
+is turned on again. Every version is kept.
 
 Roll back by hand:
 

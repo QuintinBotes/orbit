@@ -153,6 +153,21 @@ scheduler:
   # Share of the cost and wall-time budget held back for final verification,
   # independent review and the report.
   final_reserve_fraction: 0.2
+  # A session's turn cap follows the task: the 75th percentile of the turns
+  # earlier successful sessions of the same role and difficulty took (a
+  # session the cap stopped, or that asked to continue, counts as the
+  # ceiling), kept within floor..ceiling (never above
+  # hard_limits.worker_turns_per_session). Once a session of a role outgrew
+  # its cap, the run's later sessions of that role get the ceiling.
+  # With no history, default applies. A session is told the turns it has left
+  # from reminder_fraction of its cap on, and an implementer that states what
+  # remains gets one extension per attempt. Without this section: floor 10,
+  # ceiling and default the hard cap, reminder_fraction 0.8.
+  # turn_cap:
+  #   floor: 10
+  #   ceiling: 30
+  #   default: 30
+  #   reminder_fraction: 0.8
 
 agents:
   default_parallelism: 1
@@ -249,6 +264,9 @@ checks:
 #     command: [npm, test]
 #     category: test
 #     flaky_reruns: 1
+#     # Runs only the test files appended to it: each criterion's mapped tests
+#     # alone, for its fail-before (verification.fail_before).
+#     tests_command: [npx, vitest, run]
 #   build:
 #     command: "npm run build && test -f dist/index.js"
 #     shell: true
@@ -437,6 +455,27 @@ knowledge:
   eval_budget_usd: 0
   # Adopt an overlay automatically when replay evals improve with no regression.
   auto_adopt_overlays: true
+  # Put lessons and overlays into worker prompts. Off until a full benchmark
+  # shows they help; lessons are still recorded, cited, re-checked and expired.
+  lessons_in_prompts: false
+  # With lessons_in_prompts: most lessons in one prompt (validated ones only).
+  max_prompt_lessons: 3
+  # A lesson with no supporting run for this many days is not put in a prompt.
+  lesson_expiry_days: 28
+
+# Repository map (orbit map build|query): files, generated files, tests,
+# imports and check paths of a tree, built from git without a model. The
+# scope gate leaves generated files (linguist-generated in .gitattributes, or
+# a generated header in a JS, TS, Python, Rust or Go file up to 1 MiB) out of
+# changed_lines, and a review finding filed as missing-test is refuted when the
+# map links a test to its file. Those uses are always on.
+repo_map:
+  # Give the planner and the reviewer the map's slice for the files a goal
+  # names. Off until a full benchmark shows it helps.
+  prompt_slice: false
+  prompt_slice_tokens: 1500
+  # Repositories with fewer tracked files get no slice.
+  prompt_slice_min_files: 500
 
 # Publication guard: private terms that must never leave this repository
 # through Orbit (global knowledge, overlays, reports written elsewhere).
@@ -470,14 +509,18 @@ verification:
   # A check that fails and then passes on a rerun is reported as flaky. When
   # false, a flaky pass cannot make the evidence verdict PASS.
   allow_flaky_pass: false
-  # Fail-before evidence (docs/decisions/0014-fail-before.md): do a
-  # candidate's new tests fail on the base revision? Orbit runs each test
-  # check a criterion cites on the base tree with the candidate's test files,
-  # once per candidate. off: not run. advisory: reported only. required: a
-  # criterion resting on new tests that pass on the base revision goes to
-  # repair, then to a person; one that cannot be probed blocks for a person.
-  # orbit run --fail-before can raise this for one run, never lower it.
-  fail_before: advisory
+  # Fail-before evidence (docs/decisions/0014-fail-before.md): does each
+  # criterion's proof fail without it? Under required (the default) each
+  # criterion's mapped tests run alone (its check's tests_command) on the base
+  # tree with the candidate's test files, where they must fail, and on the
+  # candidate, where they must pass; a fresh reviewer then audits each
+  # criterion's tests, each MUST is quoted from the code, and the docs and the
+  # pull request body are checked against the candidate before delivery.
+  # A criterion whose tests pass on the base revision goes to repair, then to
+  # a person; one that cannot be probed blocks for a person. advisory: the
+  # per-check probe is reported only, and the audits do not run. off: neither.
+  # Only a person lowers it; orbit run --fail-before can only raise it.
+  fail_before: required
   # The one wall-clock bound of a whole probe; skipped when the run has less
   # wall time left.
   fail_before_timeout_seconds: 900

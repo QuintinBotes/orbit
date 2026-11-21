@@ -4,7 +4,7 @@
 // and answers with `--json` JSONL events. See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, roleFromSchema, sleep } from './scenario.mjs';
+import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, proofRole, roleFromSchema, sleep } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -88,9 +88,6 @@ if (schemaPath) {
     process.exit(1);
   }
 }
-const role = roleFromSchema(schema);
-const loaded = loadStep(role, env);
-const call = loaded.call;
 const lastMessage = flagValue(argv, '-o') ?? flagValue(argv, '--output-last-message');
 const cwd = flagValue(argv, '-C') ?? flagValue(argv, '--cd') ?? process.cwd();
 process.stderr.write('Reading additional input from stdin...\n');
@@ -99,6 +96,9 @@ if (argv.at(-1) === '-' && prompt.trim() === '') {
   process.stderr.write('No prompt provided via stdin.\n');
   process.exit(1);
 }
+const role = proofRole(roleFromSchema(schema), prompt, env);
+const loaded = loadStep(role, env);
+const call = loaded.call;
 const step = renderPlaceholders(loaded.step, prompt);
 logArgv(env, { tool: 'codex', role, call, argv, envKeys: Object.keys(env).sort(), cwd, promptBytes: prompt.length });
 
@@ -114,6 +114,11 @@ if (step.exitBeforeOutput) process.exit(step.exitCode ?? 1);
 out({ type: 'thread.started', thread_id: randomUUID() });
 out({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata for `fake` not found. Defaulting to fallback metadata.' } });
 out({ type: 'turn.started' });
+// A used-up allowance fails the first request: the turn fails before any item.
+if (step.outcome === 'quota') {
+  out({ type: 'turn.failed', error: { message: "You've hit your usage limit. Upgrade to Pro (https://openai.com/chatgpt/pricing) or try again later." } });
+  process.exit(1);
+}
 for (const [i, e] of (step.edits ?? []).entries()) {
   applyEdits(cwd, [e]);
   out({ type: 'item.completed', item: { id: `item_e${i}`, type: 'file_change', changes: [{ path: e.path, kind: 'update' }], status: 'completed' } });

@@ -38,7 +38,9 @@
           "proof": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
           "mandatory": { "type": "boolean" },
           "ui": { "type": "boolean" },
-          "check_ids": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } }
+          "check_ids": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" } },
+          "kind": { "enum": ["change", "keep", "person"], "description": "change (absent): proven by mapped tests that fail on the base revision and pass on the candidate; keep: behaviour that must still hold, proven by mapped tests that pass on both; person: a person's decision, approval or merge, never proven by a test." },
+          "tests": { "type": "array", "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 512 }, "description": "The criterion's mapped tests: repository paths of test files, each run alone by its check's tests_command." }
         }
       }
     },

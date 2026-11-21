@@ -31,7 +31,8 @@ const EDGES: Record<RunState, RunState[]> = {
   // No VERIFYING -> SUCCEEDED edge: every successful run passes independent review.
   VERIFYING: ['REVIEWING', 'DIAGNOSING', 'INQUISITION', ...ALWAYS],
   REVIEWING: ['DELIVERING', 'REPAIRING', 'DIAGNOSING', 'INQUISITION', 'SUCCEEDED', ...ALWAYS],
-  DELIVERING: ['AWAITING_CI', 'SUCCEEDED', 'VERIFYING', ...ALWAYS],
+  // REPAIRING: a candidate the proof gate finds not done goes to repair before any delivery action (issue #200).
+  DELIVERING: ['AWAITING_CI', 'SUCCEEDED', 'VERIFYING', 'REPAIRING', ...ALWAYS],
   // VERIFYING: a task branch rebased onto a moved base branch is a new candidate (actions.rebase_task_branch).
   AWAITING_CI: ['SUCCEEDED', 'DIAGNOSING', 'VERIFYING', ...ALWAYS],
   INQUISITION: [...WORKING, 'IMPOSSIBLE', ...ALWAYS],

@@ -127,6 +127,9 @@ export function labConfig(repo: string, tweak?: (c: OrbitConfig) => void): Orbit
   c.dependencies = { ...c.dependencies, install_command: ['ln', '-sfn', join(repo, 'node_modules'), 'node_modules'] };
   c.knowledge = { ...c.knowledge, enabled: false };
   if (c.ui) c.ui.environment.base_url = `http://127.0.0.1:${freePort()}`;
+  // The scenarios written before issue #200 judge fail-before per check and script no proof sessions; proof.test.ts sets
+  // `required`, the demo's own default, to run the per-criterion probes and the proof gate before delivery.
+  c.verification = { ...c.verification, fail_before: 'advisory' };
   tweak?.(c);
   return c;
 }

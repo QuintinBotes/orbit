@@ -188,7 +188,7 @@ describe('what an issue goal gives a run', () => {
     ...over,
   });
   const plan = (criteria: PlannerOutput['criteria']): PlannerOutput => ({ criteria }) as PlannerOutput;
-  const crit = (key: string, over: Partial<PlannerOutput['criteria'][number]> = {}): PlannerOutput['criteria'][number] => ({ key, statement: `planner wording for ${key}`, mandatory: false, ui: false, proof: [`proof of ${key}`], check_ids: ['unit'], changes: [], ...over });
+  const crit = (key: string, over: Partial<PlannerOutput['criteria'][number]> = {}): PlannerOutput['criteria'][number] => ({ key, statement: `planner wording for ${key}`, mandatory: false, ui: false, proof: [`proof of ${key}`], check_ids: ['unit'], changes: [], kind: 'change', tests: [], ...over });
 
   it("the run's goal is Orbit's own sentence: the issue, its body hash, and no word of the issue", () => {
     const text = issueGoalText(goal());

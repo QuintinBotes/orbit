@@ -1,6 +1,6 @@
 # 0014. Fail-before evidence: reported always, required on request (issue #65)
 
-Status: accepted (2026-10-12); amended 2026-10-13 (0.3.1, see the addendum)
+Status: accepted (2026-10-12); amended 2026-10-13 (0.3.1, see the addendum) and 2026-11-20 (issue #200, second addendum)
 
 ## Context
 
@@ -234,3 +234,75 @@ what Orbit did with its outcome did not. Five changes, each with the run that sh
    packet still shows the probe, it now shows the lines of each log that report a failure, in any runner's
    words, with a little context, within 4,000 characters, and the head and tail of a log without one; and it
    says the log is check-wide, every test the check runs and not one criterion's.
+
+## Addendum (2026-11-20, issue #200): a run is done only when each criterion's proof would fail without it
+
+Four pull requests of Orbit's own work on 2026-11-16 showed that a green, reviewed run is not yet a done one: #196's
+SC-001 test had a person do the merge its criterion said never happens, and its FR-004 counted issues where the spec said
+runs; #193's pull request body and an ADR described behaviour the code no longer had; #192 changed a routing function
+whose other callers nobody listed. This addendum changes sections 1, 3 and 4 above; the probe tree, the outcomes, the
+records and the person-only setting stay as they are.
+
+1. **`required` is the default.** `verification.fail_before` defaults to `required`, in the built-in default and in the
+   template `orbit init` writes. Only a person lowers it, as before; `orbit run --fail-before` still only raises it. A
+   run started before the change keeps the mode its snapshot froze.
+2. **The granularity is the criterion.** The plan maps each criterion to its own test files (`tests`) and its `kind`:
+   `change` (the default), `keep` (behaviour that must still hold) or `person` (a decision, an approval or a merge only
+   a person makes). A check gains `tests_command`, trusted argv that runs only the test files appended to it. Under
+   `required`, for a contract that maps tests, each mapped test runs alone with it, on the probe tree and on the
+   candidate (decisions `verification.criterion-probe` and `verification.criterion-candidate`), and the criterion's
+   `fail_before` entry is its own: `failed-before` when every mapped test of a change criterion failed on the probe tree
+   and passed on the candidate, `kept` when every test of a keep criterion passed on both, `passed-before` when one
+   test did not (it goes to repair, as section 4 says), otherwise not established (a question for a person). The
+   outcome is still read from exit status alone; a test that only fails to load still counts as failing before. A
+   criterion with no mapped test, or whose test no cited check's `tests_command` can run alone, is not established. A
+   UI criterion keeps the browser probe of ADR 0016. A contract that maps no tests (one written before the change) keeps
+   the check-wide judgement of section 4.
+3. **The criterion audit.** Fail-before shows that a test depends on the change, not that it tests the criterion
+   (#196's SC-001 test failed on the base revision because it imported a new function). So before delivery, each
+   criterion that is not person-checked gets a fresh reviewer session that sees only its text and its mapped tests with
+   the test-owned files they import (found by their relative imports), in a directory that holds only those files; no
+   contract, plan, implementation or worker report. It answers "would these tests still pass if the criterion were
+   false?" in the review output: `APPROVE` with one info finding `AUDIT-1` is "no", `REPAIR_REQUIRED` with a blocking
+   `AUDIT-1` is "yes", each with a one-sentence reason. "Yes", any other answer, a session that gives none, and tests
+   too long to audit (over 60,000 characters or 25 files with their helpers) leave the criterion unproven. A criterion is proven
+   only by its own fail-before (or a person's acceptance of it for the tree) and the auditor's "no".
+4. **Conformance.** Each MUST of the goal (MUST as a verb, in the issue spec a run started from, the goal and the
+   objective; a labelled line keeps its id, such as FR-004) gets one fresh session that quotes the lines implementing
+   its exact wording (`path:start-end` and the lines themselves) or marks it unmet. Orbit checks each quote against the
+   candidate byte for byte; a quote that does not match makes the MUST unmet, and so does an answer other than `APPROVE`
+   with no finding above info. Counting something else, another number
+   or a lost negation is unmet by the session's judgement, as the prompt asks. For each function the candidate changes
+   that holds a quoted line, the record lists its callers in the candidate, found by search
+   (`git grep` of its name, the function found by its declaration); the session is shown every changed function with
+   its callers, and a changed behaviour at a caller that no requirement covers is a finding (`CALLER-n`).
+5. **Artifacts.** One fresh session checks the pull request body Orbit will deliver and every documentation file the
+   candidate adds or changes (docs, changelog, ADRs, README; generated paths skipped) against the candidate; each
+   sentence describing behaviour the candidate does not have is a finding (`DOC-n`) with its file, the sentence and the
+   reason. An untouched document that names a removed or renamed command, option or state is one too; documents are not
+   otherwise searched. An answer other than `APPROVE` with no finding is open, never passed.
+6. **Done.** The three run in DELIVERING, on the final candidate, before any delivery action, each answer a
+   `proof.answer` decision and the judgement one `proof.result` decision of the tree. An open result goes to repair
+   (`DELIVERING -> REPAIRING`, a `proof` repair brief naming each) within the attempt budget; a repair that leaves the
+   same results open is non-progress. The repaired candidate is verified and reviewed again, and every check runs
+   again on its tree. The completion gate refuses a tree whose proof result is missing or open, so no run is delivered
+   or succeeds before. Person-checked criteria are neither audited nor probed, never count as proven by a test, and the
+   report lists them as waiting on that person. The final report has a Proof section and `proof` in `final.json`.
+
+Why the reviewer's output format: the three sessions are reviewer sessions of the run's selected reviewer, so they need
+no new worker role, schema or recovery path, and a restarted controller collects them like any review. They spend model
+budget and no review round. They run one at a time, so a run with many MUSTs takes longer before delivery; the
+benchmark (#172) reports the cost.
+
+Limits, each a decision a person may revisit:
+
+- Under `advisory` and `off` neither the per-criterion probe nor the three sessions run: a person who lowers the mode
+  lowers the whole bar.
+- The auditor's directory holds only the mapped tests and their helpers, and its prompt only them; a provider whose
+  read-only sandbox allows reading outside its working directory could still read elsewhere.
+- Imports are followed in JavaScript and TypeScript syntax only, and functions are recognized by their declarations
+  (JavaScript, TypeScript, Python, Go, Rust, methods), not parsed; #175's repository map can replace the search.
+- `orbit init` does not yet propose a `tests_command`: a repository without one gets each criterion's fail-before as
+  not established, which a person may accept per tree.
+- A defect no criterion describes (#191's cubic-time regexes) is outside what this can prove.
+

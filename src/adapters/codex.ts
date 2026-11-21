@@ -1,22 +1,29 @@
 /**
- * Codex adapter, for independent review only (spec section 12;
- * codex-cli.md section 10). Codex never edits: the adapter refuses a task
- * that is not read-only, and runs
+ * Codex adapter (spec section 12; codex-cli.md section 10): an independent reviewer, read-only, and since issue #176
+ * a partner implementer of a bounded unit in its own writable worktree. Any other task that is not read-only is
+ * refused. It runs
  *
  *   codex exec --sandbox <mode> --ephemeral --ignore-user-config --json
  *     --output-schema <workerDir>/schema.json -o <workerDir>/last-message.json
  *     -m <model> [-c model_reasoning_effort="<e>"] -c web_search="disabled"
- *     --disable multi_agent -C <checkout> -          (prompt on stdin)
+ *     [implementer, codex-sandbox tier: -c sandbox_workspace_write.exclude_slash_tmp=true
+ *      -c sandbox_workspace_write.network_access=false]
+ *     --disable multi_agent -C <checkout or worktree> -          (prompt on stdin)
  *
  * in one of two tiers (ADR 0001, "Codex reviewer tiers"). os-sandbox: inside
  * srt, with <mode> `danger-full-access`, because Codex's own Seatbelt sandbox
  * cannot start inside srt on macOS (`sandbox_apply: Operation not permitted`);
  * srt's profile is then the only confinement (codexReviewerProfile: writes to
- * the worker directory and Codex's state directory only, never the checkout).
- * codex-sandbox: no srt, unwrapped, with <mode> `read-only`; reads are then
- * unrestricted and the handle says so. `danger-full-access` is passed only
- * together with the sandbox-runtime wrapper, and the adapter refuses it in any
- * other combination.
+ * the worker directory and Codex's state directory only, never the checkout;
+ * an implementer's profile adds its worktree). codex-sandbox: no srt,
+ * unwrapped, with <mode> `read-only` for a reviewer and `workspace-write` for
+ * an implementer (writes of the commands it runs confined to the worktree and
+ * its private $TMPDIR, network off); reads are then unrestricted and the handle says so.
+ * `danger-full-access` is passed only together with the sandbox-runtime
+ * wrapper, and the adapter refuses it in any other combination. The data
+ * sharing switches the CLI has stay off for both roles: `--ephemeral` keeps no
+ * session files, `--ignore-user-config` drops the user's settings, web search
+ * is disabled, and OpenTelemetry export is off unless configured (ADR 0022).
  *
  * The tier is chosen by login type (ADR 0001, "Second live finding"; see
  * decideCodexTier): inside srt Codex cannot use a ChatGPT login, so `auto`
@@ -186,6 +193,8 @@ export const CODEX_MODEL_MIN_CLI_VERSIONS: Readonly<Record<string, string>> = {
 };
 
 const NO_OS_ISOLATION = 'No OS isolation around the codex process itself; only its own read-only sandbox applies to the commands it runs.';
+/** The codex-sandbox tier of an implementer (issue #176): Codex's own workspace-write sandbox is the boundary. */
+const NO_OS_ISOLATION_WRITABLE = "No OS isolation around the codex process itself: its own workspace-write sandbox confines the writes of the commands it runs to the worktree and the worker's private temp directory and keeps the network off; reads are unrestricted, so a credential file it can read is kept out of the candidate only by the secret scan.";
 
 /** The reviewer's temp directory under srt: inside the worker directory, which it may write anyway, so its write set stays at two directories. */
 const REVIEWER_TMP_DIR = 'tmp';
@@ -234,6 +243,8 @@ export class CodexAdapter implements ProviderAdapter {
     return {
       provider: this.id,
       available,
+      // The writable tier needs nothing the review invocation does not (`--sandbox workspace-write`), so it is there when Codex is.
+      writable: { ok: available, why: available ? '' : 'the codex CLI is not usable here' },
       version: v,
       models: slugs,
       modelMinimumVersions: CODEX_MODEL_MIN_CLI_VERSIONS,
@@ -275,12 +286,14 @@ export class CodexAdapter implements ProviderAdapter {
   }
 
   async startTask(spec: CodexTaskSpec): Promise<CodexTaskHandle> {
-    if (!spec.readOnly) throw new OrbitError('POLICY_DENIED', 'the Codex adapter runs read-only review tasks only', { workerId: spec.workerId, role: spec.role });
+    // Writable only for an implementer, in its own worktree (issue #176); every other role is read-only.
+    const writable = !spec.readOnly;
+    if (writable && spec.role !== 'implementer') throw new OrbitError('POLICY_DENIED', 'the Codex adapter runs read-only tasks, and writes only as an implementer in its own worktree', { workerId: spec.workerId, role: spec.role });
     if (!spec.model) throw new OrbitError('CONFIG_INVALID', 'Codex needs an explicit model (-m): the configured default may not work with the installed CLI');
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(spec.model)) throw new OrbitError('CONFIG_INVALID', `invalid Codex model ${JSON.stringify(spec.model)}`);
     if (spec.effort !== null && !CODEX_EFFORTS.includes(spec.effort)) throw new OrbitError('CONFIG_INVALID', `unsupported Codex reasoning effort ${JSON.stringify(spec.effort)}`);
     for (const p of [spec.cwd, spec.workerDir, spec.policyPath]) if (!isAbsolute(p)) throw new OrbitError('CONFIG_INVALID', `paths must be absolute: ${p}`);
-    if (!existsSync(spec.cwd) || !statSync(spec.cwd).isDirectory()) throw new OrbitError('NOT_FOUND', `review checkout does not exist: ${spec.cwd}`);
+    if (!existsSync(spec.cwd) || !statSync(spec.cwd).isDirectory()) throw new OrbitError('NOT_FOUND', `${writable ? 'worktree' : 'review checkout'} does not exist: ${spec.cwd}`);
     const violations = strictSchemaViolations(spec.outputSchema);
     if (violations.length > 0) throw new OrbitError('SCHEMA_INVALID', `output schema is outside the strict subset Codex sends with strict: true: ${violations.slice(0, 5).join('; ')}`, { violations });
 
@@ -306,7 +319,7 @@ export class CodexAdapter implements ProviderAdapter {
     const tmpDir = choice.srt ? reviewerTmpDir(workerDir) : prepareWorkerTmpDir(workerDir);
     const env = buildWorkerEnv({ provider: 'codex', base: this.baseEnv(), policyPath: spec.policyPath, policyHash, worktree: checkout, tmpDir, extra: { ...passThrough(this.baseEnv(), this.opts.passEnv), ...spec.env } });
     // Built before anything is written or launched: a layout that would make the checkout writable is refused outright.
-    const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env), env: this.baseEnv() }) } : null;
+    const srt = choice.srt ? { provider: choice.srt, profile: codexReviewerProfile(spec.sandbox, { checkout, workerDir, codexHome: codexHomeFor(homeOf(env), env), homeDir: homeOf(env), env: this.baseEnv(), writable }) } : null;
     writeFileSync(join(workerDir, CODEX_PROMPT_FILE), `${spec.systemPrompt.trim()}\n\n${spec.prompt}${outputTokens === null ? '' : `\n${outputBudgetInstruction(outputTokens)}\n`}`, { mode: 0o600 });
     atomicWriteJson(join(workerDir, CODEX_SCHEMA_FILE), spec.outputSchema, 0o600);
     // -o is written only after turn.completed; a stale file from an earlier
@@ -314,7 +327,7 @@ export class CodexAdapter implements ProviderAdapter {
     rmSync(join(workerDir, CODEX_LAST_MESSAGE_FILE), { force: true });
 
     const tier: CodexTier = choice.decision.tier;
-    const argv = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null });
+    const argv = buildCodexArgv({ command: this.command, model: spec.model, effort: spec.effort, cwd: checkout, schemaPath: join(workerDir, CODEX_SCHEMA_FILE), lastMessagePath: join(workerDir, CODEX_LAST_MESSAGE_FILE), tier, wrapper: srt?.provider.kind ?? null, writable });
     let launchArgv = argv;
     let launchEnv = env;
     const limitations = [...(srt ? CODEX_OS_SANDBOX_LIMITATIONS : CODEX_LIMITATIONS)];
@@ -334,8 +347,8 @@ export class CodexAdapter implements ProviderAdapter {
       for (const a of wrapped.argv) if (isAbsolute(a) && basename(dirname(a)).startsWith('orbit-srt-')) cleanupPaths.push(dirname(a));
       if (choice.decision.risky) limitations.push(`Codex runs in the os-sandbox tier although it may not work there: ${choice.decision.reason}.`);
     } else {
-      limitations.push(NO_OS_ISOLATION);
-      limitations.push(`Codex runs in the codex-sandbox tier, under its own read-only sandbox and without srt: ${choice.decision.reason}.`);
+      limitations.push(writable ? NO_OS_ISOLATION_WRITABLE : NO_OS_ISOLATION);
+      limitations.push(`Codex runs in the codex-sandbox tier, under its own ${writable ? 'workspace-write' : 'read-only'} sandbox and without srt: ${choice.decision.reason}.`);
     }
 
     const handle = await launchShim({
@@ -350,7 +363,7 @@ export class CodexAdapter implements ProviderAdapter {
       graceMs: this.opts.graceMs,
       stdinPath: join(workerDir, CODEX_PROMPT_FILE),
       cleanupPaths: [...new Set(cleanupPaths)],
-      meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens },
+      meta: { tier, limitations, model: spec.model, outputBudgetTokens: outputTokens, writable },
       clock: this.clock,
     });
     return { ...handle, tier, limitations };
@@ -460,6 +473,8 @@ export interface CodexArgvInput {
   tier?: CodexTier;
   /** The kind of isolation provider that will wrap this argv, or null when it runs bare. */
   wrapper?: IsolationProvider['kind'] | null;
+  /** An implementer in its own worktree (issue #176): `workspace-write` in the codex-sandbox tier. Default false. */
+  writable?: boolean;
 }
 
 export function buildCodexArgv(i: CodexArgvInput): string[] {
@@ -471,7 +486,7 @@ export function buildCodexArgv(i: CodexArgvInput): string[] {
     ...i.command,
     'exec',
     '--sandbox',
-    tier === 'os-sandbox' ? DANGER_FULL_ACCESS : 'read-only',
+    tier === 'os-sandbox' ? DANGER_FULL_ACCESS : i.writable ? 'workspace-write' : 'read-only',
     '--ephemeral',
     '--ignore-user-config',
     '--json',
@@ -484,6 +499,8 @@ export function buildCodexArgv(i: CodexArgvInput): string[] {
     ...(i.effort ? ['-c', `model_reasoning_effort="${i.effort}"`] : []),
     '-c',
     'web_search="disabled"',
+    // workspace-write would also let the commands write the shared /tmp, and a project config could open the network.
+    ...(tier !== 'os-sandbox' && i.writable ? ['-c', 'sandbox_workspace_write.exclude_slash_tmp=true', '-c', 'sandbox_workspace_write.network_access=false'] : []),
     '--disable',
     'multi_agent',
     '-C',

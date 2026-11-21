@@ -84,6 +84,11 @@ export interface ControllerDeps {
   schedulerProbe?: SystemProbe;
   /** Notification and comment collaborators (ADR 0008); tests replace them, the default is the real machine and gh. */
   notify?: Partial<NotifyDeps>;
+  /**
+   * The lab bench's stage ablation (`orbit bench --tier lab --without diagnosis`): no verifier session writes a repair
+   * brief; the brief is the failure records as they are. Never set by `orbit run` or the service.
+   */
+  withoutDiagnosis?: boolean;
 }
 
 export interface RunContext {

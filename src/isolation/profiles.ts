@@ -307,6 +307,8 @@ export interface CodexReviewerProfileInput {
   homeDir: string;
   /** For ORBIT_HOME; defaults to process.env. */
   env?: Readonly<Record<string, string | undefined>>;
+  /** A partner implementer (issue #176): `checkout` is its worktree, which it may write. Default false. */
+  writable?: boolean;
 }
 
 /**
@@ -343,9 +345,10 @@ export function codexReviewerProfile(profile: SandboxProfile, input: CodexReview
   }
   const defaultCodexHome = join(home, '.codex');
   return {
-    writablePaths: [workerDir, codexHome],
+    writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...(defaultCodexHome === codexHome ? [] : [defaultCodexHome])]),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
+    // A writable worktree is not listed as readable too: srt would write-deny it as a read-only path.
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout]), ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits },
   };
@@ -355,6 +358,8 @@ export interface MuseReviewerProfileInput {
   /** The review checkout: readable, never writable. */
   checkout: string;
   workerDir: string;
+  /** A partner implementer (issue #176): `checkout` is its worktree, which it may write. Default false. */
+  writable?: boolean;
 }
 
 /**
@@ -374,9 +379,9 @@ export function museReviewerProfile(profile: SandboxProfile, input: MuseReviewer
     throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let the reviewer write ${workerDir}: the worker directory overlaps the review checkout ${checkout}, which must stay read-only`, { path: workerDir });
   }
   return {
-    writablePaths: [workerDir],
+    writablePaths: input.writable ? [workerDir, checkout] : [workerDir],
     denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout])]),
     allowedHosts: [...PROVIDER_HOSTS.muse],
     limits: { ...profile.limits },
   };

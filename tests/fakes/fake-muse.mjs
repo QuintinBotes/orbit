@@ -4,7 +4,7 @@
 // answers with `--json` JSONL envelopes. See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { attemptWrite, flagValue, loadStep, logArgv, renderPlaceholders, roleFromSchema, sleep, spawnGrandchild } from './scenario.mjs';
+import { applyEdits, attemptWrite, flagValue, loadStep, logArgv, proofRole, renderPlaceholders, roleFromSchema, sleep, spawnGrandchild } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -35,6 +35,9 @@ Options:
       --model <MODEL>
       --reasoning-effort <EFFORT>
       --workspace <DIR>
+      --worktree <on|off>
+      --contributor-mode <on|off>
+      --disable-approval
       --permission-profile <PROFILE>
       --disable-request-user-input
       --disable-write
@@ -71,7 +74,9 @@ if (argv[1] === '--help') {
   process.stdout.write(HELP);
   process.exit(0);
 }
-for (const bad of ['--yolo', '--disable-sandbox', '--disable-approval', '--trust-workspace']) {
+// A tripwire, not Muse's own rule: --disable-approval belongs to the writable tier (issue #176), never to a read-only run.
+const forbidden = ['--yolo', '--disable-sandbox', '--trust-workspace', ...(argv.includes('--disable-write') ? ['--disable-approval'] : [])];
+for (const bad of forbidden) {
   if (argv.includes(bad) || argv.some((a) => a.startsWith(`${bad}=`))) {
     process.stderr.write(`error: unexpected argument '${bad}' found\n`);
     process.exit(2);
@@ -125,7 +130,7 @@ if (!promptFile) {
   process.exit(0);
 }
 
-const loaded = loadStep(role, env);
+const loaded = loadStep(proofRole(role, prompt, env), env);
 const call = loaded.call;
 const step = renderPlaceholders(loaded.step, prompt);
 logArgv(env, { tool: 'muse', role, call, argv, envKeys: Object.keys(env).sort(), cwd: workspace, promptBytes: prompt.length });
@@ -150,7 +155,16 @@ out('session.run.linked', {});
 out('run.lifecycle.started', {});
 out('run.model.configured', { model_id: model });
 out('turn.input.user', {});
+// A used-up allowance fails the first request, before any tool runs.
+if (step.outcome === 'quota') {
+  out('run.terminal.failed', { text: '', reason: 'usage limit reached for this account; try again later' });
+  process.exit(1);
+}
 
+for (const [i, e] of (step.edits ?? []).entries()) {
+  applyEdits(workspace, [e]);
+  out('tool.result', { correlation_facts: { tool_name: 'Write', call: i }, text: `wrote ${e.path}` });
+}
 const writeSpec = step.forbiddenWrite ?? step.attemptWrite;
 if (writeSpec) {
   const r = attemptWrite(workspace, writeSpec);
@@ -165,6 +179,10 @@ if (grandchild) grandchild.unref();
 const usageModel = { model_id: model, input_tokens: 1234, cached_tokens: 1000, output_tokens: 56, reasoning_tokens: 7, calls: 1, ...(step.usage ?? {}) };
 
 if (step.outcome === 'no_result') process.exit(step.exitCode ?? 1);
+if (step.outcome === 'quota') {
+  out('run.terminal.failed', { text: '', reason: 'usage limit reached for this account; try again later' });
+  process.exit(1);
+}
 if (step.failReason !== undefined || step.outcome === 'run_failed' || step.outcome === 'step_cap') {
   out('run.usage', { models: [usageModel] });
   const reason = step.failReason ?? (step.outcome === 'step_cap' ? 'model did not reach a terminal state within 200 step(s)' : 'run failed');

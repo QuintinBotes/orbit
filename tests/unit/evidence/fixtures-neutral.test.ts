@@ -17,8 +17,8 @@ const root = join(here, '../../fixtures');
 const CAPTURES = ['environment', 'misconfigured'];
 /** A fixture that is an application, not a capture of output. */
 const APPLICATIONS = ['ui-app'];
-/** Hand-written inputs, not captured on a machine: the spec bodies of issue #170. */
-const INPUTS = ['specs'];
+/** Hand-written inputs, not captured on a machine: the spec bodies of issue #170 and the live goal catalog of issue #172. */
+const INPUTS = ['bench', 'specs'];
 
 interface Rule {
   name: string;

@@ -84,12 +84,16 @@ export function labConfig(tweak?: (c: OrbitConfig) => void): OrbitConfig {
   const c = defaultConfig('autonomous');
   c.isolation = { provider: 'none', allow_unisolated: true, container: null };
   c.scope.allowed_paths = ['apps/**', 'tests/**'];
-  c.checks = { unit: { ...defaultCheck('unit'), command: [process.execPath, 'tests/run.mjs'], timeout_seconds: 120 } };
+  // Each test file is a script of its own, so `node <file>` runs one alone: a criterion's mapped test (issue #200).
+  c.checks = { unit: { ...defaultCheck('unit'), command: [process.execPath, 'tests/run.mjs'], timeout_seconds: 120, tests_command: [process.execPath] } };
   c.providers = {
     claude: { command: FAKE_CLAUDE, data_policy_eligible: true, model: null, reasoning_effort: null, extra_args: [] },
     codex: { command: FAKE_CODEX, data_policy_eligible: true, model: 'gpt-6-astra', reasoning_effort: null, extra_args: [] },
   };
   c.knowledge = { ...c.knowledge, enabled: false };
+  // The tests written before issue #200 judge fail-before per check and script no proof sessions; a test of the proof
+  // gate or of `required` sets it (PROOF_PASSES answers the proof sessions of a tree that is done).
+  c.verification = { ...c.verification, fail_before: 'advisory' };
   tweak?.(c);
   return c;
 }
@@ -197,6 +201,8 @@ export const PLANNER_OUTPUT = {
       proof: ['tests/mul.test.mjs asserts mul(2, 3) === 6'],
       check_ids: ['unit'],
       changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }],
+      kind: 'change',
+      tests: ['tests/mul.test.mjs'],
     },
   ],
   expected_changed_files: [
@@ -289,6 +295,12 @@ export const DIAGNOSIS = {
     confidence: 'high',
   },
 };
+
+const proofFinding = (id: string, severity: string, category: string, claim: string) => ({ id, severity, category, location: 'tests/mul.test.mjs:2', claim, evidence: 'if (mul(2, 3) !== 6)', suggested_validation: null });
+/** The criterion auditor's "no" (issue #200): the test's assertion would fail if the criterion were false. */
+export const AUDIT_NO = { structured: { verdict: 'APPROVE', candidate_revision: '$CANDIDATE', findings: [proofFinding('AUDIT-1', 'info', 'criterion-audit', 'mul(2, 3) !== 6 exits 1 for any mul that does not multiply.')] } };
+/** The proof sessions of a tree that is done, under `required`: the audit says "no" and the documents match. */
+export const PROOF_PASSES = { auditor: [AUDIT_NO], artifacts: [APPROVE] };
 
 export function baseScenario(roles: Record<string, object[]>): object {
   return { auth: { loggedIn: true, authMethod: 'api_key', method: 'api_key', valid: true }, roles: { planner: [{ structured: PLANNER_OUTPUT }], reviewer: [APPROVE], ...roles } };

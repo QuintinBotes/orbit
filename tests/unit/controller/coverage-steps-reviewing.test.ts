@@ -50,6 +50,8 @@ interface Setup {
   tweak?: Parameters<typeof makeUnitLab>[0] extends infer O ? (O extends { tweak?: infer T } ? T : never) : never;
   edit?: boolean;
   onReviewerStart?: Parameters<typeof scriptedAdapter>[2];
+  /** More files the candidate adds. */
+  files?: Record<string, string>;
 }
 
 async function setup(o: Setup = {}) {
@@ -69,6 +71,10 @@ async function setup(o: Setup = {}) {
   setContract(lab, { baseline_revision: repo.base, allowed_paths: ['apps/calc.mjs'] });
   initLedger(lab);
   writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n');
+  for (const [rel, text] of Object.entries(o.files ?? {})) {
+    mkdirSync(join(repo.worktree, rel, '..'), { recursive: true });
+    writeFileSync(join(repo.worktree, rel), text);
+  }
   const cand = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: repo.base, attempt: 1, workerId: null });
   lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 1 }));
   lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 1, candidate_id: cand.id }));
@@ -542,6 +548,28 @@ describe('a review that is already recorded', () => {
     expect(state()).toBe('BLOCKED');
     expect(decisions('repair.non-progress')).toHaveLength(1);
     expect(decisions('review.finding-rereview')).toHaveLength(2);
+  });
+});
+
+describe('a missing-test finding and the repository map (#144, #175)', () => {
+  const missing = finding('TEST-1', { category: 'missing-test', location: 'apps/calc.mjs', line: null, claim: 'apps/calc.mjs has no test' });
+
+  it('is refuted when a test of the candidate imports the file it names, and is not sent to repair', async () => {
+    const { cand } = await setup({ files: { 'tests/calc.test.mjs': "import { mul } from '../apps/calc.mjs';\n" } });
+    record(cand, 'REPAIR_REQUIRED', [missing]);
+    await run();
+    const [f] = listFindings(lab.db, lab.runId);
+    expect(f!.status).toBe('rejected');
+    expect(f!.resolution).toContain('tests/calc.test.mjs');
+    expect(state()).not.toBe('REPAIRING');
+  });
+
+  it('goes to repair as before when no test of the candidate covers the file', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [missing]);
+    await run();
+    expect(listFindings(lab.db, lab.runId)[0]!.status).not.toBe('rejected');
+    expect(state()).toBe('REPAIRING');
   });
 });
 

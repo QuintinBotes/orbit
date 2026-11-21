@@ -2,9 +2,10 @@ import { OrbitError } from '../core/errors.ts';
 import type { DifficultyClass } from '../scheduling/types.ts';
 import { FAMILY_TIER, tierOf } from './registry.ts';
 import { roundUsd } from './pricing.ts';
-import { DEFAULT_ROUTING_LEARNING, isIndependentReviewer, routingLearning } from '../policy/config.ts';
+import { DEFAULT_ROUTING_LEARNING, isIndependentReviewer, partnerImplementers, providerFamily, routingLearning } from '../policy/config.ts';
 import { reviewFallback, reviewProviderOrder } from '../policy/review.ts';
 import {
+  FAMILY_SURFACE,
   WORK_KINDS,
   type CostBasis,
   type CostBreakdown,
@@ -52,6 +53,14 @@ import {
  * of the same run ran on, and never against `routing.overrides`. The caller
  * passes outcomes only for implementation attempts.
  * Every decision that read outcomes records what it read and why (`learning`).
+ *
+ * Partner implementers (issue #176): with `routing.implementers` naming Codex or Muse, an implementation attempt of
+ * routine candidate work (routine-code, focused-tests; `signals.implementation`) goes to the first listed partner that
+ * may take it, before the Claude ladder. A planner, a diagnosis or an inquiry stays on the ladder whatever its work kind. A partner
+ * is passed over for the rest of the run once it was skipped (quota, login, no writable tier) or once
+ * PARTNER_MAX_FAILURES of its candidates failed verification or review, and across runs once its measured pass rate for
+ * the task class falls below `routing.learning.min_pass_rate`. Claude is always the fallback, and Claude's
+ * verification decides whether a partner's candidate is kept.
  *
  * route() is pure: it reads the registry and the outcomes it is given and
  * returns a JSON-ready decision for the controller to record.
@@ -199,7 +208,85 @@ export function route(req: RouteRequest): RouteDecision {
     previous,
     previousTier: previous && previous.provider === 'claude' ? tierOf(previous) : null,
   };
-  return req.workKind === 'safety-review' ? routeSafetyReview(ctx) : routeLadder(ctx);
+  if (req.workKind === 'safety-review') return routeSafetyReview(ctx);
+  return routePartner(ctx) ?? routeLadder(ctx);
+}
+
+/** A partner whose candidates failed this many times in one run hands the next attempt to Claude (issue #176). */
+export const PARTNER_MAX_FAILURES = 2;
+
+/**
+ * The first partner `routing.implementers` lists that may implement this unit, or null for the Claude ladder. Why each
+ * listed partner was passed over is recorded with the decision either way.
+ */
+function routePartner(ctx: Ctx): RouteDecision | null {
+  const partners = partnerImplementers(ctx.policy);
+  const s = ctx.signals;
+  if (partners.length === 0 || s.implementation !== true) return null;
+  if (ctx.profile.output !== 'candidate' || !ctx.profile.routine) {
+    ctx.ignored.push(`routing.implementers names ${partners.join(', ')}, but ${ctx.workKind} is not a bounded unit a partner implements`);
+    return null;
+  }
+  const passed: RouteAlternative[] = [];
+  for (const p of partners) {
+    const cfg = ctx.policy.providers[p];
+    const failures = s.partnerFailures?.[p] ?? 0;
+    const skipped = s.partnersSkipped?.[p];
+    const why =
+      skipped !== undefined
+        ? `skipped for the rest of this run: ${skipped}`
+        : failures >= PARTNER_MAX_FAILURES
+          ? `${failures} of its candidates in this run failed verification or review`
+          : cfg?.data_policy_eligible !== true
+            ? `providers.${p}.data_policy_eligible is not true, so the code may not be sent to it`
+            : !cfg.model
+              ? `providers.${p}.model names no model`
+              : measuredBelowFloor(ctx, p, cfg.model);
+    if (why !== null) {
+      passed.push({ provider: p, model: cfg?.model ?? '', family: providerFamily(p), eligible: false, expected_cost_per_verified_task: null, cost_basis: 'unavailable', rejected_because: why });
+      continue;
+    }
+    const model = cfg!.model as string;
+    const family = providerFamily(p) as 'codex' | 'muse';
+    const entry = ctx.registry.get(model);
+    const cost = entry ? estimateRoute(entry, ctx) : null;
+    const reason = [
+      `routing.implementers lets ${p} implement ${ctx.workKind}`,
+      ...passed.map((a) => `${a.provider} passed over: ${a.rejected_because}`),
+      `${p} implements in its own writable worktree; Claude's verification decides whether its candidate is kept`,
+      cost ? costText(cost) : 'expected cost per verified task unavailable (no pricing or measured cost)',
+    ].join('; ');
+    return {
+      kind: 'route',
+      summary: `route ${ctx.workKind} -> ${p}/${model} (partner)`,
+      work_kind: ctx.workKind,
+      provider: p,
+      model,
+      surface: FAMILY_SURFACE[family],
+      family: entry?.family ?? family,
+      effort: cfg!.reasoning_effort ?? null,
+      reason,
+      justification: { signals: [], evidence: [...ctx.evidence], ignored: ctx.ignored },
+      alternatives_considered: passed,
+      expected_cost_per_verified_task: cost?.total ?? null,
+      expected_cost_breakdown: cost?.breakdown ?? null,
+      cost_basis: cost?.basis ?? 'unavailable',
+      success_probability: round3(cost?.success ?? (PRIOR_SUCCESS[2] as Record<DifficultyClass, number>)[s.difficulty]),
+      attempt: s.attempt,
+      difficulty: s.difficulty,
+    };
+  }
+  ctx.ignored.push(`no partner implements: ${passed.map((a) => `${a.provider} ${a.rejected_because}`).join('; ')}; Claude implements`);
+  return null;
+}
+
+/** Why measured outcomes drop a partner for this task class (FR-004), or null while they do not. */
+function measuredBelowFloor(ctx: Ctx, provider: string, model: string): string | null {
+  const st = ctx.outcomes.find((o) => o.provider === provider && o.modelId === model && o.workKind === ctx.workKind && (o.difficulty === undefined || o.difficulty === null || o.difficulty === ctx.signals.difficulty));
+  const judged = st ? st.verified + st.failed + st.rejected : 0;
+  if (!st || judged === 0 || judged < ctx.learning.min_samples) return null;
+  const rate = st.verified / judged;
+  return rate < ctx.learning.min_pass_rate ? `measured pass rate ${pct(rate)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) is below ${pct(ctx.learning.min_pass_rate)}` : null;
 }
 
 /** The decisions-table shape: kind, one-line summary, and the full decision as data. */

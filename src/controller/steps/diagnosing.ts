@@ -24,10 +24,10 @@ import { listDecisions } from '../../storage/decisions.ts';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
-import { routeFor } from '../workers.ts';
+import { recordedTurnCap, routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
@@ -91,6 +91,8 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   if (existing) stored = existing;
   else if (primary?.source === 'worker' && primary.sourceId?.startsWith('scope:')) {
     stored = { attempt: next, source: 'scope', fingerprint, brief: scopeBrief(ctx, fingerprint, primary.excerpt ?? 'scope inspection denied the candidate') };
+  } else if (ctx.deps.withoutDiagnosis) {
+    stored = { attempt: next, source: 'failures', fingerprint, brief: failuresBrief(ctx, fingerprint, failures), refs: failures.map((f) => `failure:${f.id}`) };
   } else {
     const priors = listHypotheses(ctx.db, ctx.run.id).map(toPrior);
     const timeouts = timeoutContext(ctx, cand.id);
@@ -329,6 +331,22 @@ function scopeBrief(ctx: RunContext, fingerprint: string, why: string): RepairBr
   };
 }
 
+/** The brief with the diagnosis stage off (orbit bench --without diagnosis): the failure records as they are, no hypothesis tested. */
+function failuresBrief(ctx: RunContext, fingerprint: string, failures: FailureRecord[]): RepairBrief {
+  const evidence = failures.map((f) => `${f.sourceId ?? f.source}: ${(f.excerpt ?? 'no excerpt').slice(0, 500)}`);
+  const why = evidence[0] ?? `candidate ${ctx.candidate?.seq ?? '?'} failed verification`;
+  return {
+    fingerprint,
+    evidence: evidence.length > 0 ? evidence : [why],
+    hypotheses: [{ statement: 'The candidate change causes the recorded failures', supporting: why }],
+    experiment: 'Run the failing checks on the candidate',
+    expected_observation: 'The recorded failures reproduce',
+    scoped_fix: 'Change the candidate so that the failing checks pass and every criterion keeps its behaviour test, without weakening a test',
+    post_fix_checks: assertContract(ctx).required_check_ids,
+    preserved_constraints: ['Do not edit protected paths, policy, CI configuration or check definitions', 'Keep the behaviour tests that prove the acceptance criteria'],
+  };
+}
+
 function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: FailureRecord[], workerId: string, timeouts: TimeoutContext | null): string {
   const contract = assertContract(ctx);
   const cand = ctx.candidate!;
@@ -354,6 +372,7 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     evidenceRefs: refs,
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt! })),
@@ -366,7 +385,9 @@ export function sessionEndPromptLines(ctx: RunContext): string[] {
   const attempt = currentAttempt(ctx);
   const row = ctx.db.get<{ status: string | null }>("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
   if (row?.status !== 'max_turns' && row?.status !== 'timeout') return [];
-  const cap = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  // The cap the session ran under (issue #177: derived per role and task class), else the hard cap.
+  const last = ctx.db.get<{ id: string }>("SELECT id FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, attempt);
+  const cap = (last && recordedTurnCap(ctx.db, ctx.run.id, last.id)?.cap) ?? ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
   return [
     `Session end: the implementer session of attempt ${attempt} ended at ${row.status === 'max_turns' ? `its turn cap (${cap} model requests)` : 'its timeout'} before it finished, so the candidate may be unfinished.`,
     'One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done.',

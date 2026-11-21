@@ -7,6 +7,7 @@ import type { PolicySnapshot } from '../policy/types.ts';
 import {
   EVIDENCE_CLASSIFICATION_CATEGORY,
   FINDING_SEVERITIES,
+  isMissingTest,
   UNRESOLVED_FINDING_STATUSES,
   findingFingerprint,
   isEvidenceClassification,
@@ -258,6 +259,23 @@ function assessEvidence(e: ClaimEvidence, treeHash: string): EvidenceEffect {
     return e.status === 'PASSED' ? { ok: true, effect: 'refutes' } : { ok: false, why: `a refuting check must pass on the candidate, status is ${e.status}` };
   }
   return e.status === 'FAILED' ? { ok: true, effect: 'confirms' } : { ok: false, why: `a confirming check must fail on the candidate, status is ${e.status}` };
+}
+
+/**
+ * Static evidence from the repository map (#175 FR-003): a finding filed as missing-test, about a source file the map of
+ * the candidate tree links tests to, is refuted by those tests' existence. Structure decides it, never the claim's
+ * wording: the category and the location's path. Matched by fingerprint, so a carried report of the claim is closed too.
+ */
+export function missingTestRefutations(findings: readonly ResolvableFinding[], testsFor: (path: string) => readonly string[], treeHash: string): ClaimEvidence[] {
+  const out: ClaimEvidence[] = [];
+  for (const f of findings) {
+    if (!isMissingTest(f.category)) continue;
+    const { path } = splitLocation(f.location);
+    const tests = path === null ? [] : testsFor(path);
+    if (tests.length === 0) continue;
+    out.push({ fingerprint: findingFingerprint(f), kind: 'static_analysis', treeHash, verdict: 'refutes', status: 'PASSED', exercisesClaim: true, checkId: 'repository-map', ref: `repository map of tree ${treeHash.slice(0, 12)}: ${path} is covered by ${tests.join(', ')}` });
+  }
+  return out;
 }
 
 function describeEvidence(e: ClaimEvidence): string {

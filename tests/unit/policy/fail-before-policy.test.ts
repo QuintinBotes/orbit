@@ -89,12 +89,13 @@ describe('isTestOwnedPath: what the probe tree takes from the candidate', () => 
 });
 
 describe('verification.fail_before: a person sets it, the snapshot freezes it', () => {
-  it('defaults to advisory with a 900 second probe bound', () => {
+  // Issue #200, FR-003: required is the default; only a person lowers it.
+  it('defaults to required with a 900 second probe bound', () => {
     const c = defaultConfig('autonomous');
-    expect(c.verification).toEqual({ allow_flaky_pass: false, fail_before: 'advisory', fail_before_timeout_seconds: 900 });
-    expect(failBeforePolicy(c)).toEqual({ mode: 'advisory', timeoutSeconds: 900 });
+    expect(c.verification).toEqual({ allow_flaky_pass: false, fail_before: 'required', fail_before_timeout_seconds: 900 });
+    expect(failBeforePolicy(c)).toEqual({ mode: 'required', timeoutSeconds: 900 });
     const parsed = parseConfig('version: 1\nmode: autonomous\n');
-    expect(failBeforePolicy(parsed)).toEqual({ mode: 'advisory', timeoutSeconds: 900 });
+    expect(failBeforePolicy(parsed)).toEqual({ mode: 'required', timeoutSeconds: 900 });
   });
 
   it('accepts off, advisory and required, and a bound of its own', () => {
