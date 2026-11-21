@@ -49,7 +49,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["key", "statement", "mandatory", "ui", "proof", "check_ids", "changes"],
+        "required": ["key", "statement", "mandatory", "ui", "proof", "check_ids", "changes", "kind", "tests"],
         "properties": {
           "key": {
             "type": "string",
@@ -71,6 +71,17 @@
             "maxItems": 20,
             "description": "Ids of checks defined in the policy whose passing result counts as evidence. Never commands.",
             "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["change", "keep", "person"],
+            "description": "change: new behaviour, proven by mapped tests that fail on the base revision and pass on the candidate. keep: behaviour that must still hold (a refactor, \"X still works\"), proven by mapped tests that pass on both. person: what only a person can satisfy (a decision, an approval, a merge); never proven by a test, and listed as waiting on that person."
+          },
+          "tests": {
+            "type": "array",
+            "maxItems": 20,
+            "description": "The criterion's mapped tests: repository paths of the test files that prove it and only it (existing or to be written). Orbit runs each alone with its check's tests_command, on the base revision with the candidate's tests and on the candidate. Empty only for a person criterion.",
+            "items": { "type": "string" }
           },
           "changes": {
             "type": "array",

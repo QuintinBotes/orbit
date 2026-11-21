@@ -58,7 +58,7 @@ function planner(extra: object = {}): object {
   return {
     structured: {
       ...PLANNER_OUTPUT,
-      criteria: KEYS.map((key) => ({ key, statement: key, mandatory: true, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] })),
+      criteria: KEYS.map((key) => ({ key, statement: key, mandatory: true, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }], kind: 'change', tests: ['tests/mul.test.mjs'] })),
       ...extra,
     },
   };

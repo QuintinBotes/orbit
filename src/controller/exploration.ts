@@ -26,7 +26,7 @@ import { exploreUi, explorationConfigOf, explorationFollowUps, renderExploration
 import type { UiConfig } from '../policy/types.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { ensureWorker, routeFor, stopAndSettle, type WorkerRequest } from './workers.ts';
-import { assertContract, decide, policySummary } from './steps/common.ts';
+import { assertContract, decide, policySummary, repoInstructions } from './steps/common.ts';
 
 /** Structured output of the spec-writing call. */
 export const SPEC_OUTPUT_SCHEMA = {
@@ -83,6 +83,7 @@ export async function exploreCandidate(ctx: RunContext, cand: CandidateRecord, c
             task: task.workUnit,
             contract,
             policySummary: policySummary(ctx, { readOnly: true }),
+            repoInstructions: repoInstructions(ctx),
             candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
           }),
       }, task.timeoutMs, task.signal);
@@ -114,6 +115,7 @@ export async function exploreCandidate(ctx: RunContext, cand: CandidateRecord, c
             task: text,
             contract,
             policySummary: policySummary(ctx, { readOnly: true }),
+            repoInstructions: repoInstructions(ctx),
             candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
             untrusted: [{ label: `candidate finding ${finding.id}`, content: JSON.stringify({ summary: finding.summary, steps: finding.steps, expected: finding.expected, observed: finding.observed, proposed_test: finding.proposed_test }, null, 1) }],
           }),

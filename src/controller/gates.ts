@@ -34,6 +34,8 @@ import { isOrbitError } from '../core/errors.ts';
 import { criteriaBlockedByQuestions, openQuestions } from '../inquisition/questions.ts';
 import { listLedger, type QuestionRecord } from '../inquisition/store.ts';
 import type { RunRecord } from './run-store.ts';
+import { getDecision } from '../storage/decisions.ts';
+import { proofResultId, type ProofResult } from '../review/proof.ts';
 import type { SecretScanResult } from './security.ts';
 
 export const GATES = ['intake', 'environment', 'baseline', 'implementation', 'static_security', 'behaviour', 'ui', 'independent_review', 'delivery', 'completion'] as const;
@@ -451,6 +453,8 @@ export interface CompletionInput {
   /** Delivery modes: the tree of the delivered commit; local modes: the tree the local branch points at. */
   deliveredTree: string | null;
   now: number;
+  /** The proof gate applies to the run (controller/proof.ts proofApplies): the tree's proof result must be closed. */
+  proofRequired?: boolean;
 }
 
 /** Criteria blocked by open material questions, with the questions that block them. */
@@ -489,6 +493,13 @@ export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<
   // A choice only a person may make (a needs-decision ledger entry) is not made by succeeding (spec section 10 "Ledger").
   const undecided = listLedger(db, input.run.id, { status: 'needs-decision' }).map((e) => e.id);
   if (undecided.length > 0) reasons.push(`assumption ledger ${undecided.length === 1 ? 'entry' : 'entries'} ${undecided.join(', ')} ${undecided.length === 1 ? 'needs' : 'need'} a person's decision`);
+  // Done means proven (issue #200): no run succeeds while a criterion audit, a MUST or a document check is open.
+  if (input.proofRequired === true) {
+    const proof = getDecision(db, proofResultId(input.run.id, c.treeHash))?.data as ProofResult | undefined;
+    if (!proof) reasons.push(`tree ${c.treeHash} has no proof result: the criterion audits, the conformance checks and the artifact check have not all run on it`);
+    else if (proof.open.length > 0) reasons.push(clipAtWord(`tree ${c.treeHash} is not done: ${proof.open.join('; ')}`, 1000));
+    else evidence.push(`proof of tree ${c.treeHash}: ${proof.criteria.filter((x) => x.status === 'proven').length} criteria proven, ${proof.requirements.length} MUSTs met, no artifact finding`);
+  }
   if (input.deliveredTree === null) reasons.push('no delivered commit to compare with the reviewed tree');
   else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
   else evidence.push(`delivered tree ${input.deliveredTree}`);

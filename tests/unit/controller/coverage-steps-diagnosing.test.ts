@@ -81,6 +81,19 @@ function addAttempt(k: number, opts: { supported?: boolean; fingerprint?: string
 }
 
 describe('preconditions and stops', () => {
+  it('with the diagnosis stage off (orbit bench --without diagnosis, #172) the brief is the failure records and no verifier session starts', async () => {
+    const { adapter } = await setup();
+    lab.deps.withoutDiagnosis = true;
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(adapter.specs).toEqual([]);
+    const stored = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8')) as { source: string; brief: { evidence: string[]; post_fix_checks: string[] } };
+    expect(stored.source).toBe('failures');
+    expect(stored.brief.evidence).toEqual(['unit: mul(2, 3) expected 6, got 5']);
+    expect(stored.brief.post_fix_checks.length).toBeGreaterThan(0);
+    expect(decisions('repair.brief').map((d) => d.summary)).toEqual([`repair brief (failures) for attempt 2: ${FP}`]);
+  });
+
   it('stops at a safe point; needs a candidate and a budget', async () => {
     await setup();
     requestCancel(lab.db, lab.runId, 'u', lab.clock);

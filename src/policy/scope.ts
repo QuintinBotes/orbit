@@ -17,6 +17,7 @@ import { OrbitError } from '../core/errors.ts';
 import { canonicalJson } from '../core/hash.ts';
 import type { ScopeReport } from '../evidence/types.ts';
 import type { PolicySnapshot } from './types.ts';
+import { buildRepoMap } from '../repomap/map.ts';
 import { BUILTIN_PROTECTED_PATHS } from './builtin.ts';
 import { compileGlobs } from './globs.ts';
 import { gitTreeReader, loadTestLayout } from './test-files.ts';
@@ -106,14 +107,21 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const textChanges = changes.filter((c) => !binary.has(c.path));
   const diffs = await perFileDiffs(repoRoot, base, cand, textChanges.map((c) => c.path));
   for (const p of forcedText) linesByPath.set(p, (linesByPath.get(p) ?? 0) + countPatchLines(diffs.get(p) ?? ''));
-  // Generated files are named by the frozen policy only, never by the candidate (a .gitattributes the worker can edit).
+  // A committed generated file a check rebuilds (a bundle) is not authored change (#157): its lines are reported apart.
+  // It is generated when the frozen policy names it, or when it is marked generated in both trees, so the candidate
+  // alone (a .gitattributes or header the worker can edit) can never mark a file generated.
   const isGenerated = compileGlobs(config.scope.generated_paths ?? [], { nocase: false });
-  let changedLines = 0;
+  const detected = new Set(await generatedOnBoth(repoRoot, base, cand));
   let generatedLines = 0;
-  for (const [p, n] of linesByPath) {
-    if (isGenerated(p)) generatedLines += n;
-    else changedLines += n;
+  const generatedPaths: string[] = [];
+  for (const [p, n] of [...linesByPath]) {
+    if (!isGenerated(p) && !detected.has(p)) continue;
+    generatedLines += n;
+    generatedPaths.push(p);
+    linesByPath.delete(p);
   }
+  let changedLines = 0;
+  for (const n of linesByPath.values()) changedLines += n;
   const weakeningInputs: WeakeningInput[] = changes.map((c) => ({ path: c.path, status: c.status, diff: diffs.get(c.path) ?? '' }));
   // Which changed files are tests depends on project files of both trees (.NET test projects, Rust crates; ADR 0011).
   const testLayout = await loadTestLayout(gitTreeReader(async (args) => (await git(repoRoot, [...args])).toString('utf8')), base, cand, changes.map((c) => c.path));
@@ -127,15 +135,30 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
     out_of_scope_paths_changed: outOfScope,
     changed_files: changes.length,
     changed_lines: changedLines,
+    ...(generatedPaths.length > 0 ? { generated_lines: generatedLines, generated_paths: generatedPaths.sort() } : {}),
     within_size_limits: withinSize,
-    ...(generatedLines > 0 ? { generated_lines: generatedLines } : {}),
-    ...(withinSize ? {} : { largest_changes: [...linesByPath].filter(([path]) => !isGenerated(path)).map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) }),
+    ...(withinSize ? {} : { largest_changes: [...linesByPath].map(([path, lines]) => ({ path, lines })).sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path)).slice(0, 5) }),
     lockfile_changed: lockfileChanged,
     dependency_manifest_changed: manifests,
     symlinks_escaping: symlinks,
     weakening_signals: weakening,
     visual_baseline_changes: visual,
   };
+}
+
+/**
+ * The paths the repository maps of both trees flag as generated. The base tree's flag is what the worker cannot
+ * change; the candidate's keeps a file the change rewrote as authored code (no longer marked) counted. A map that
+ * cannot be built flags nothing, so every line counts, as before the map.
+ */
+async function generatedOnBoth(repoRoot: string, base: string, cand: string): Promise<string[]> {
+  try {
+    const [b, c] = await Promise.all([buildRepoMap(repoRoot, base), buildRepoMap(repoRoot, cand)]);
+    const inCand = new Set(c.files.filter((f) => f.generated).map((f) => f.path));
+    return b.files.filter((f) => f.generated && inCand.has(f.path)).map((f) => f.path);
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------

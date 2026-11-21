@@ -54,6 +54,8 @@ export function unitConfig(tweak?: (c: OrbitConfig) => void): OrbitConfig {
   c.scope.allowed_paths = ['apps/**', 'tests/**'];
   c.checks = { unit: { ...defaultCheck('unit'), command: [process.execPath, '-e', '0'], timeout_seconds: 60 } };
   c.knowledge = { ...c.knowledge, enabled: false };
+  // Written before issue #200 made `required` the default: these tests judge fail-before per check, as reported only.
+  c.verification = { ...c.verification, fail_before: 'advisory' };
   tweak?.(c);
   return c;
 }

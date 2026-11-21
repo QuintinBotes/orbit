@@ -3,6 +3,7 @@ import type { KnowledgeStore } from './store.ts';
 import type { Lesson, LessonStats, RetrievalContext, RetrievedLesson } from './types.ts';
 import { visibleText } from './authority.ts';
 import { defang, estimateTokens, oneLine, truncate } from './text.ts';
+import { recheckLessons } from './recheck.ts';
 
 /**
  * Retrieval: pick the few lessons most likely to help one worker, and put
@@ -140,7 +141,9 @@ function compare(x: Scored, y: Scored): number {
 /**
  * Rank the graph's validated lessons (and at most a small, labelled share of
  * candidates) for one worker, keeping the rendered block within
- * ctx.maxTokens. Deprecated and rejected lessons are never returned.
+ * ctx.maxTokens. Deprecated and rejected lessons are never returned, and with
+ * ctx.recheck neither are lessons whose citation no longer holds or that
+ * expired (each is marked stale with the reason).
  */
 export function retrieve(store: KnowledgeStore, ctx: RetrievalContext, options: RetrievalOptions = {}): RetrievedLesson[] {
   const maxLessons = options.maxLessons ?? DEFAULTS.maxLessons;
@@ -150,7 +153,8 @@ export function retrieve(store: KnowledgeStore, ctx: RetrievalContext, options: 
   // (NaN compares false with everything) would otherwise admit every lesson.
   if (!Number.isFinite(ctx.maxTokens) || ctx.maxTokens <= 0 || !(maxLessons > 0)) return [];
 
-  const pool = store.listLessons({ statuses: ['validated', 'candidate'], roles: [ctx.role] });
+  const listed = store.listLessons({ statuses: ['validated', 'candidate'], roles: [ctx.role] });
+  const pool = ctx.recheck ? recheckLessons(store, listed, ctx.recheck) : listed;
   if (pool.length === 0) return [];
   const query = [ctx.goal, ...ctx.checkIds, ...ctx.fingerprints].join(' ');
   const hits = store.search(query, { statuses: ['validated', 'candidate'], limit: 200 });
@@ -233,11 +237,12 @@ export function renderAdvisoryBlock(lessons: readonly RetrievedLesson[]): string
 }
 
 /** Record which lessons went into which worker's prompt, for feedback when the run settles. */
-export function recordRetrieval(store: KnowledgeStore, ctx: Pick<RetrievalContext, 'runId' | 'workerId'>, lessons: readonly RetrievedLesson[]): number {
+export function recordRetrieval(store: KnowledgeStore, ctx: Pick<RetrievalContext, 'runId' | 'workerId'> & { fingerprints?: readonly string[] }, lessons: readonly RetrievedLesson[]): number {
   if (lessons.length === 0) return 0;
   return store.recordRetrievals(
     ctx.runId,
     ctx.workerId,
     lessons.map((l) => ({ lessonId: l.lesson.id, score: l.score })),
+    ctx.fingerprints ?? [],
   );
 }

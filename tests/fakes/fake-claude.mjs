@@ -5,7 +5,7 @@
 // observed runs). See README.md for the scenario format.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { applyEdits, attemptWrite, crashMidEdit, flagValue, loadStep, logArgv, readStdin, renderPlaceholders, roleFromSchema, sleep, spawnDetachedWriter, spawnGrandchild } from './scenario.mjs';
+import { applyEdits, attemptWrite, crashMidEdit, flagValue, loadStep, logArgv, proofRole, readStdin, renderPlaceholders, roleFromSchema, sleep, spawnDetachedWriter, spawnGrandchild } from './scenario.mjs';
 
 const argv = process.argv.slice(2);
 const env = process.env;
@@ -50,10 +50,10 @@ if (schemaText !== null) {
     process.exit(1);
   }
 }
-const role = roleFromSchema(schema);
+const prompt = readStdin();
+const role = proofRole(roleFromSchema(schema), prompt, env);
 const loaded = loadStep(role, env);
 const call = loaded.call;
-const prompt = readStdin();
 const step = renderPlaceholders(loaded.step, prompt);
 const sessionId = flagValue(argv, '--session-id') ?? randomUUID();
 const model = step.model ?? resolveModel(flagValue(argv, '--model'));

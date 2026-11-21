@@ -212,6 +212,27 @@ export function summarizeUsage(db: OrbitDb, runId: string): UsageSummary {
   return { runId, totals, byProviderModel, unavailableCost, costComplete, note };
 }
 
+/** The run's usage grouped by the role of the worker that used it (issue #177); records without a worker are `unattributed`. */
+export function usageByRole(db: OrbitDb, runId: string): ({ role: string } & UsageTotals)[] {
+  const rows = db.all<UsageRow & { role: string | null }>('SELECT u.*, w.role AS role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id', runId);
+  const groups = new Map<string, { role: string } & UsageTotals & { promptTokens: number; cachedTokens: number }>();
+  for (const r of rows) {
+    const role = r.role ?? 'unattributed';
+    let g = groups.get(role);
+    if (!g) {
+      g = { role, ...emptyTotals(), promptTokens: 0, cachedTokens: 0 };
+      groups.set(role, g);
+    }
+    addRow(g, r);
+    const prompt = promptOf(r);
+    if (prompt !== null) {
+      g.promptTokens += prompt;
+      g.cachedTokens += r.cache_read_tokens ?? 0;
+    }
+  }
+  return [...groups.values()].map(({ promptTokens: p, cachedTokens: c, ...rest }) => ({ ...rest, cacheHitRatio: ratio(c, p) })).sort((a, b) => a.role.localeCompare(b.role));
+}
+
 function emptyTotals(): UsageTotals {
   return {
     records: 0,

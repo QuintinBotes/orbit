@@ -69,6 +69,24 @@ const has = (o: Record<string, unknown>, key: string): boolean => {
   return Array.isArray(v) ? v.length > 0 : true;
 };
 
+/** The outcome keys that mark each class, by name; `orbit retro` groups on the names a run's class was set from, never their contents. */
+const MARKER_KEYS: Partial<Record<FailureClass, readonly string[]>> = {
+  credentials: ['git_credentials'],
+  'check-misconfigured': ['misconfigured_checks'],
+  environment: ['environment_failures', 'incomplete_checks', 'worker_refusal', 'dirty', 'reviewer', 'release_error', 'release_pending', 'base_conflict'],
+  scope: ['scope', 'ungranted', 'largest_changes'],
+  'review-dispute': ['open_findings', 'held_findings'],
+  'gate-deadlock': ['questions', 'blocked_criteria', 'authorization', 'ledger_entries', 'ledger_declined', 'fail_before', 'review_gate', 'shallow_reviews'],
+};
+
+/** The outcome markers of `cls` that `outcome` carries, by key name: the same test classifyRunEnd applies. */
+export function classMarkers(cls: FailureClass, outcome: Record<string, unknown>): string[] {
+  const found = (MARKER_KEYS[cls] ?? []).filter((k) => has(outcome, k));
+  // A gate list (not a gate record, which names the environment) marks a deadlock.
+  if (cls === 'gate-deadlock' && Array.isArray(outcome.gate)) found.push('gate');
+  return found;
+}
+
 /**
  * The causes the records show, in the order they stop a run: what made the work impossible to judge comes before
  * what then held it at a gate. Each rule reads one structured marker; the first that holds is the run's class.
@@ -83,20 +101,13 @@ function markedCauses(outcome: Record<string, unknown>, data: Record<string, unk
   const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === 'string' ? outcome.frozen_policy.setting : '';
   const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === 'string' ? outcome.gate.gate : null;
 
-  add('credentials', (isRecord(outcome.blocker) && outcome.blocker.kind === 'authentication') || data.kind === 'authentication' || has(outcome, 'git_credentials') || code === 'credentials');
-  add('check-misconfigured', has(outcome, 'misconfigured_checks') || /^checks\./.test(frozen));
-  add(
-    'environment',
-    has(outcome, 'environment_failures') || has(outcome, 'incomplete_checks') || has(outcome, 'worker_refusal') || has(outcome, 'dirty') || has(outcome, 'reviewer') || has(outcome, 'release_error') || has(outcome, 'release_pending') || has(outcome, 'base_conflict') ||
-      gate === 'environment' || gate === 'baseline' || code === 'environment' || (counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)),
-  );
-  add('scope', has(outcome, 'scope') || has(outcome, 'ungranted') || has(outcome, 'largest_changes') || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code === 'scope');
-  add('review-dispute', has(outcome, 'open_findings') || has(outcome, 'held_findings') || counter === 'review_rounds');
-  add(
-    'gate-deadlock',
-    has(outcome, 'questions') || has(outcome, 'blocked_criteria') || has(outcome, 'authorization') || has(outcome, 'ledger_entries') || has(outcome, 'ledger_declined') || has(outcome, 'fail_before') || has(outcome, 'review_gate') || has(outcome, 'shallow_reviews') ||
-      Array.isArray(outcome.gate),
-  );
+  const marked = (c: FailureClass): boolean => classMarkers(c, outcome).length > 0;
+  add('credentials', (isRecord(outcome.blocker) && outcome.blocker.kind === 'authentication') || data.kind === 'authentication' || marked('credentials') || code === 'credentials');
+  add('check-misconfigured', marked('check-misconfigured') || /^checks\./.test(frozen));
+  add('environment', marked('environment') || gate === 'environment' || gate === 'baseline' || code === 'environment' || (counter !== null && INFRASTRUCTURE_COUNTERS.has(counter)));
+  add('scope', marked('scope') || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code === 'scope');
+  add('review-dispute', marked('review-dispute') || counter === 'review_rounds');
+  add('gate-deadlock', marked('gate-deadlock'));
   return causes;
 }
 
