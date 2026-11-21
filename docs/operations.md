@@ -227,6 +227,8 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit verify [run-id]` | see below |
 | `orbit repair <run-id \| description \| ->` | `--foreground` or `--detach`, `--mode <mode>`, `--policy <path>`; `-` reads the description from stdin |
 | `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w`; `--orbit-version <version>`: only runs that version started (`unknown` for runs from before the version was recorded) |
+| `orbit retro` | `--since <when>` (as for `orbit stats`), `--issue-repo <owner/repo>` (where an approved Orbit issue draft is filed, default `QuintinBotes/orbit`), `--json` (asks nothing, so applies and sends nothing); see spec section 16, Retro |
+| `orbit bench` | `--tier lab\|live`; lab: `--without <stage>`; live: `--budget <usd>` and `--approved-by <name>` (both required), `--baseline`, `--catalog <file>`; both: `--only <ids>`, `--false-dones <file>`, `--out <dir>`. See [Benchmark](#benchmark) |
 | `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
 | `orbit policy show <run-id>` | none |
@@ -526,6 +528,59 @@ install a person approved once, filled; ADR 0009)
 alone, since every later run of the repository reads them. Remove that
 directory to start clean (`chmod -R u+w` it first: Go writes its module cache
 read-only); the next dependency install fills it again.
+
+### Benchmark
+
+`orbit bench` scores one Orbit version on a fixed set of goals and writes the
+scorecard to `docs/scorecards/orbit-<version>-<tier>.json` in the Orbit source
+checkout it runs from (`--out <dir>` writes it elsewhere). The file is stable
+JSON, so two versions diff line by line. It needs the source checkout
+(`examples/demo-app`, `tests/fakes` and the installed dependencies), not an
+installed plugin.
+
+```bash
+orbit bench --tier lab                                  # the regression suite: fake providers, no model
+orbit bench --tier lab --only advisory-finding-repaired # one scenario; writes no scorecard without --out
+orbit bench --tier lab --without diagnosis              # the same scenarios with a stage off, compared
+orbit bench --tier live --budget 40 --approved-by <owner> [--baseline]   # spends money
+```
+
+- **lab**: one scenario per issue Orbit fixed (`src/bench/scenarios.ts`),
+  replayed on the demo app with the fake providers and the real controller.
+  Each row gives pass or fail, the state and failure class the run ended
+  with, its attempts and its simulated spend. A failed scenario makes the
+  command exit 1 and name it with its issue; CI runs the whole lab.
+- **live**: the goals of `data/bench/live-goals.json` (`--catalog` for
+  another file), each pinned to a commit of one of the owner's repositories
+  where a real failure happened, with a held-out check: test files of the
+  accepted fix laid over the tree the run delivered, and a command that must
+  pass. A goal whose check does not fail on its commit and pass on the fix
+  is invalid and excluded. Each goal runs three times (Orbit in `autonomous`
+  mode, with the policy `orbit init` writes), and with `--baseline` three
+  times more as one plain `claude -p` session; every result is kept. Each
+  session works in a fresh repository that holds the pinned commit and its
+  history only, with no remote, so the accepted fix is not in it; it
+  is fetched only to grade. The report gives pass rate, cost per accepted task and time,
+  and the difference to the plain session. It refuses to start without
+  `--budget <usd>` (no default) and `--approved-by <name>`; each session is
+  capped at an equal share of the budget.
+- **--without <stage>** (lab): `diagnosis` (no verifier session; the repair
+  brief is the failure records as they are) or `fail-before` (new tests are
+  not run on the base revision). Scope, secrets and verification are gates
+  and cannot be turned off.
+
+The headline of every scorecard is the false-done rate of its version: runs
+reported done that were later found defective, over the runs reported done.
+Record each one by hand in `docs/scorecards/false-dones.json`
+(`--false-dones <file>` for another file); nothing is collected
+automatically:
+
+```json
+[{ "orbit_version": "0.4.0", "ref": "https://github.com/QuintinBotes/orbit/pull/300", "found_by": "revert", "link": "https://github.com/QuintinBotes/orbit/commit/<sha>" }]
+```
+
+`found_by` is one of `hidden-check`, `review-finding`, `reopened-issue` or
+`revert`; a malformed record stops the bench instead of being skipped.
 
 ## Using the native /goal command
 

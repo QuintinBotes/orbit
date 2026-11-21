@@ -38,7 +38,8 @@ import { marksCharges } from '../scheduling/accounting.ts';
 import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, providerFamily, routingLearning } from '../policy/config.ts';
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, partnerImplementers, providerFamily, routingLearning } from '../policy/config.ts';
+import { partnerFailures, skippedPartners } from './route-outcome.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -1104,7 +1105,9 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
     const learning = routingLearning(config);
     const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
     const outcomes = learns ? routeStats(ctx.db, { workKind, role: 'implementer', difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 86_400_000 }) : [];
-    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes });
+    // Only an implementation attempt may go to a partner (issue #176), judged on this run's records: its failed candidates and its skips.
+    const partners = purpose.startsWith(IMPLEMENT_PURPOSE) && partnerImplementers(config).length > 0 ? { implementation: true, partnerFailures: partnerFailures(ctx), partnersSkipped: skippedPartners(ctx) } : {};
+    const decision = route({ workKind, signals: { ...signals, ...partners }, registry: ctx.deps.registry, policy: config, outcomes });
     const rec = toDecisionRecord(decision);
     recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose, ...(learning.enabled ? {} : { learning_disabled: 'routing.learning.enabled is false: measured outcomes were not read' }) } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId };

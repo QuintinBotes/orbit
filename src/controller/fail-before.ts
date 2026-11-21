@@ -18,13 +18,14 @@
  */
 import { join } from 'node:path';
 import { hashObject } from '../core/hash.ts';
-import { acceptableCause, changesBetween, isBrowserCheck, isTestCommandCheck, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeResult } from '../evidence/fail-before.ts';
+import { acceptableCause, changesBetween, CRITERION_CANDIDATE, CRITERION_PROBE, isBrowserCheck, isTestCommandCheck, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeFlavour, type ProbeResult } from '../evidence/fail-before.ts';
+import { criterionProofEntry, criterionTestDefinition, criterionTests, mapsTests, type CriterionProbes } from '../evidence/criterion-tests.ts';
 import { runUiFailBeforeProbe, type UiRunner } from './fail-before-ui.ts';
 import { git } from '../evidence/git.ts';
 import type { BaseComparison } from '../evidence/report.ts';
 import type { RunnerContext } from '../evidence/runner.ts';
 import { currentEvidenceReport, type CandidateRecord, type EvidenceReportRecord } from '../evidence/store.ts';
-import type { CheckResult, CriterionEvidence, EvidenceReport } from '../evidence/types.ts';
+import type { CheckResult, CriterionEvidence, CriterionFailBefore, EvidenceReport } from '../evidence/types.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { isHumanActor } from '../inquisition/actors.ts';
 import { findQuestion, insertQuestion, withdrawQuestion, type QuestionRecord } from '../inquisition/store.ts';
@@ -62,17 +63,18 @@ export interface CollectFailBeforeInput {
 export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput): Promise<FailBeforeEvidence> {
   const { mode, timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
   const accepted = acceptedWithoutFailBefore(ctx, cand.treeHash);
-  const evidence = (probe: FailBeforeEvidence['probe'], skipped: FailBeforeEvidence['skipped'] = null): FailBeforeEvidence => ({ mode, probe, skipped, accepted });
+  // Under required, a plan that maps tests to criteria has each criterion judged by its own tests (issue #200); a UI
+  // criterion keeps the browser probe of ADR 0016, which no tests_command runs.
+  const own = mode === 'required' && mapsTests(input.contract) ? input.contract.acceptance_criteria.filter((c) => c.ui !== true) : [];
+  const criteria = own.length > 0 ? await collectCriterionProbes(ctx, cand, input, { ...input.contract, acceptance_criteria: own }, accepted) : null;
+  const ownIds = new Set(own.map((c) => c.id));
+  const evidence = (probe: FailBeforeEvidence['probe'], skipped: FailBeforeEvidence['skipped'] = null): FailBeforeEvidence => ({ mode, probe: probe ?? criteria?.probe ?? null, skipped, accepted, ...(criteria ? { criteria: criteria.entries } : {}) });
   if (mode === 'off') return evidence(null);
-  const resting = newTestSupport(input.contract, ctx.snapshot, input.base).filter((s) => s.flips.length === 0 && s.withTests.length > 0);
+  const resting = newTestSupport(input.contract, ctx.snapshot, input.base).filter((s) => !ownIds.has(s.criterionId) && s.flips.length === 0 && s.withTests.length > 0);
   const byCheck = new Map<string, string[]>();
   for (const s of resting) for (const id of s.probeable) byCheck.set(id, [...(byCheck.get(id) ?? []), s.criterionId]);
   if (byCheck.size === 0) return evidence(null);
-  const allowFlaky = ctx.snapshot.config.verification.allow_flaky_pass === true;
-  const required = [...new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === 'command').map((c) => c.id)])].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command');
-  // A failure the report accepts as the contract's baseline exception does not make the candidate unacceptable.
-  const exceptions = new Map((input.contract.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint] as const));
-  if (!input.installOk || !otherwiseAcceptable(input.results, required, allowFlaky, exceptions)) {
+  if (!acceptable(ctx, input)) {
     return evidence(null, { cause: 'not-acceptable', reason: 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)' });
   }
   const baseRev = ctx.run.baseRevision!;
@@ -117,6 +119,58 @@ export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, 
         : { ...probe, checks: [...probe.checks, ...uiProbe.checks], reused: false };
   }
   return evidence(probe);
+}
+
+/** Whether the candidate is otherwise acceptable, as a probe needs: its install and every required command check passed. */
+function acceptable(ctx: RunContext, input: CollectFailBeforeInput): boolean {
+  const allowFlaky = ctx.snapshot.config.verification.allow_flaky_pass === true;
+  const required = [...new Set([...input.contract.required_check_ids, ...Object.values(ctx.snapshot.config.checks).filter((c) => c.mandatory && c.kind === 'command').map((c) => c.id)])].filter((id) => ctx.snapshot.config.checks[id]?.kind === 'command');
+  // A failure the report accepts as the contract's baseline exception does not make the candidate unacceptable.
+  const exceptions = new Map((input.contract.baseline_exceptions ?? []).map((e) => [e.check_id, e.fingerprint] as const));
+  return input.installOk && otherwiseAcceptable(input.results, required, allowFlaky, exceptions);
+}
+
+/**
+ * Each criterion's own fail-before (issue #200, FR-003): every mapped test run alone (its check's tests_command) on the
+ * base tree with the candidate's test-owned paths and on the candidate, each probe within the policy's one bound. A
+ * candidate that changes a dependency manifest is not probed on the base tree, as ADR 0014 says.
+ */
+async function collectCriterionProbes(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput, contract: GoalContract, accepted: CriterionProbes['accepted']): Promise<{ entries: Map<string, CriterionFailBefore>; probe: ProbeResult | null }> {
+  const { mode, timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
+  const baseRev = ctx.run.baseRevision!;
+  const changes = await probeChanges(ctx.run.repoRoot, baseRev, cand.commitSha);
+  const mapped = contract.acceptance_criteria.flatMap((c) => c.tests ?? []);
+  const layout = await loadTestLayout(gitTreeReader((args) => git(ctx.run.repoRoot, args)), baseRev, cand.commitSha, [...new Set([...changes.all.map((c) => c.path), ...mapped])], { allDotnetOwners: true });
+  const units = criterionTests(contract, ctx.snapshot, (p) => isTestOwnedPath(p, layout));
+  const entries = (p: Omit<CriterionProbes, 'mode' | 'accepted'>): Map<string, CriterionFailBefore> => new Map(units.map((u) => [u.criterionId, criterionProofEntry(u, { ...p, mode, accepted })] as const));
+  const skip = (cause: NotEstablishedCause, reason: string) => ({ entries: entries({ base: null, candidate: null, skipped: { cause, reason } }), probe: null });
+  const runnable = new Map<string, { checkId: string; path: string; criteria: string[] }>();
+  for (const u of units) for (const t of u.tests) if (t.unitId !== null) runnable.set(t.unitId, { checkId: t.checkId!, path: t.path, criteria: [...(runnable.get(t.unitId)?.criteria ?? []), u.criterionId] });
+  if (runnable.size === 0) return skip('not-probed', 'no mapped test can run alone');
+  if (!acceptable(ctx, input)) return skip('not-acceptable', 'the probe did not run: the candidate is not otherwise acceptable (a required check or the dependency install did not pass)');
+  if (changes.manifests.length > 0) return skip('manifest', `not probed: the candidate changes ${changes.manifests.join(', ')}, a dependency manifest or lockfile outside test-owned paths, so a test could fail or pass on the base revision for a dependency rather than for the change`);
+  const definitions = new Map([...runnable].map(([id, r]) => [id, criterionTestDefinition(ctx.snapshot.config.checks[r.checkId]!, id, r.path)] as const));
+  const checks = [...runnable].sort(([a], [b]) => a.localeCompare(b)).map(([checkId, r]) => ({ checkId, criteria: r.criteria }));
+  const run = (flavour: ProbeFlavour, probeChanges: readonly ProbeChange[]) =>
+    runFailBeforeProbe({
+      runner: input.runner,
+      repoRoot: ctx.run.repoRoot,
+      baseRev,
+      candidate: cand,
+      checks,
+      changes: probeChanges,
+      checkoutDir: join(runWorktreeRoot(ctx), `${flavour.name}-${cand.seq}`),
+      timeoutMs: timeoutSeconds * 1000,
+      wallRemainingMs: wallRemaining(ctx),
+      decide: (d) => decide(ctx, d),
+      flavour,
+      definitions,
+    });
+  const base = await run(CRITERION_PROBE, changes.owned);
+  // The candidate's own tree: the base revision with every change the candidate makes.
+  const candidate = await run(CRITERION_CANDIDATE, changes.all);
+  const byId = (r: ProbeResult) => new Map(r.checks.map((c) => [c.checkId, c] as const));
+  return { entries: entries({ base: { tree: base.probeTree, checks: byId(base) }, candidate: byId(candidate), skipped: null }), probe: { ...base, reused: base.reused && candidate.reused } };
 }
 
 /** What a probe from `from` to `to` may take, and what keeps it from running at all (ADR 0014 section 2). */
@@ -294,6 +348,8 @@ function neverAccepted(e: CriterionEvidence): boolean {
 }
 
 const PASSED_BEFORE_NOTE = 'the new tests pass on the base revision';
+/** The same gap judged per criterion (issue #200): a mapped test passed on the base revision or failed on the candidate. */
+const NOT_SHOWN_NOTE = 'the mapped tests do not show';
 const NOT_ESTABLISHED_NOTE = 'fail-before not established';
 
 /** The mandatory criteria fail-before keeps from support under `required`: passed-before (unverified) or not established (blocked). */
@@ -302,7 +358,7 @@ export function failBeforeGaps(ctx: RunContext, report: EvidenceReport): Criteri
   return report.acceptance_evidence.filter((e) => {
     const fb = e.fail_before;
     if (!mandatory.has(e.criterion_id) || fb === undefined || fb.mode !== 'required' || fb.accepted !== undefined) return false;
-    return (fb.outcome === 'passed-before' && e.status === 'unverified' && (e.note ?? '').startsWith(PASSED_BEFORE_NOTE)) || (fb.outcome === 'not-established' && e.status === 'blocked' && (e.note ?? '').startsWith(NOT_ESTABLISHED_NOTE));
+    return (fb.outcome === 'passed-before' && e.status === 'unverified' && ((e.note ?? '').startsWith(PASSED_BEFORE_NOTE) || (e.note ?? '').startsWith(NOT_SHOWN_NOTE))) || (fb.outcome === 'not-established' && e.status === 'blocked' && (e.note ?? '').startsWith(NOT_ESTABLISHED_NOTE));
   });
 }
 

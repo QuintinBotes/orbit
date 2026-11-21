@@ -9,6 +9,7 @@
 ## Checklist
 
 - [ ] A test that failed before this change passes now (no assertion was loosened or removed)
+- [ ] A fixed issue adds a lab scenario to `src/bench/scenarios.ts` that replays it (`orbit bench --tier lab`)
 - [ ] `npm run verify` passes locally
 - [ ] `plugin/dist/` is rebuilt (`npm run build`) if anything under `src/` changed
 - [ ] Docs, `CHANGELOG.md` and, for a design decision, an ADR under `docs/decisions/` are updated

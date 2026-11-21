@@ -41,6 +41,12 @@ export interface CheckDefinition {
    * controller's static security gate lists the 'sast' checks (sastCheckIds).
    */
   category?: CheckCategory;
+  /**
+   * argv that runs only some of this check's tests: a criterion's mapped test paths (relative to `cwd`) are appended, one
+   * argument each, so each criterion's fail-before is read from that command's exit status alone (issue #200, FR-004).
+   * Absent: no criterion citing this check can be probed on its own.
+   */
+  tests_command?: string[];
 }
 
 export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build' | 'sast' | 'ui' | 'other';
@@ -365,6 +371,11 @@ export interface OrbitConfig {
     output_budgets?: Record<BudgetRole, number>;
     /** When measured route outcomes may displace the table's choice. Parsed configs always carry it; older snapshots read the defaults. */
     learning?: Partial<RoutingLearning>;
+    /**
+     * Providers that may implement a bounded unit, in preference order (issue #176). Claude always remains the fallback.
+     * Parsed configs always carry it (default `[claude]`: partners off); older snapshots read Claude only.
+     */
+    implementers?: string[];
   };
   /** Severity and exception rules for the static security gate. Parsed configs always carry it. */
   static_security?: StaticSecurityConfig;
@@ -396,6 +407,16 @@ export interface OrbitConfig {
     eval_budget_usd: number;
     /** ADR 0002: adopt overlays automatically when replay evals improve with no regression. */
     auto_adopt_overlays: boolean;
+    /**
+     * Issue #173: whether lessons and overlays enter worker prompts. Off until a full benchmark shows they help;
+     * recording, citing, re-checking and expiring lessons run either way. Parsed configs always carry these three;
+     * optional in the type so older snapshots still read (absent: off, 3 lessons, 28 days).
+     */
+    lessons_in_prompts?: boolean;
+    /** Most lessons in one prompt; only validated lessons are shown. */
+    max_prompt_lessons?: number;
+    /** A lesson with no support for this many days is not eligible for a prompt. */
+    lesson_expiry_days?: number;
   };
   /**
    * Notifications and remote answers (ADR 0008). Parsed configs always carry it; optional in the type so older

@@ -187,7 +187,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
     delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60, require_ci: false },
-    verification: { allow_flaky_pass: false, fail_before: 'advisory', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
+    verification: { allow_flaky_pass: false, fail_before: 'required', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
     checks: {},
     ui: null,
     isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
@@ -198,11 +198,12 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       codex: defaultProvider('codex', false),
     },
     // Fable is left out on purpose: headless Claude Code bills Fable usage credits without asking.
-    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING } },
+    // Partner implementers are off until a full benchmark shows they help (issue #176): Claude implements alone.
+    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING }, implementers: ['claude'] },
     static_security: defaultStaticSecurity(),
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
-    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
+    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true, lessons_in_prompts: false, max_prompt_lessons: 3, lesson_expiry_days: 28 },
     guard: { terms_file: null, allowed_emails: [] },
     notifications: defaultNotifications(),
     repo_map: defaultRepoMap(),
@@ -448,6 +449,11 @@ export function providerFamily(id: string): 'claude' | 'codex' | 'muse' | null {
     if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
   }
   return null;
+}
+
+/** The partners `routing.implementers` lets implement, in its order: every listed provider except Claude (issue #176). */
+export function partnerImplementers(config: { routing: { implementers?: readonly string[] } }): string[] {
+  return (config.routing.implementers ?? []).filter((id) => providerFamily(id) === 'codex' || providerFamily(id) === 'muse');
 }
 
 /** A review is independent only when both ids resolve to a family and the families differ; an unknown id fails closed. */
@@ -962,6 +968,14 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     for (const [work, model] of Object.entries(c.routing.overrides)) {
       if (!modelPermitted(model, c.routing.allowed_models)) problems.push(`routing.overrides.${work}: "${model}" is not permitted by routing.allowed_models`);
     }
+    const implementers = c.routing.implementers ?? [];
+    implementers.forEach((id, i) => {
+      const family = providerFamily(id);
+      if (family === null || (family === 'claude' && id !== 'claude')) problems.push(`routing.implementers[${i}]: "${id}" is not claude or a codex or muse provider`);
+      else if (!Object.hasOwn(c.providers, id)) problems.push(`routing.implementers[${i}]: "${id}" is not defined under providers`);
+      // A partner always goes before the Claude ladder, so one listed after claude would not mean what the order says.
+      else if (family !== 'claude' && implementers.slice(0, i).includes('claude')) problems.push(`routing.implementers[${i}]: "${id}" comes after claude; list partners first (Claude is always the fallback)`);
+    });
   },
   function retentionPatterns(c, problems) {
     c.retention.redact_patterns.forEach((p, i) => {

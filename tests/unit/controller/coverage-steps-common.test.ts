@@ -504,6 +504,18 @@ describe('handleWorkerFailure', () => {
     expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
   });
 
+  it('a session out of quota goes straight to the caller\'s outcome (a reviewer fails over), and blocks only without one (issue #176)', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const quota = { provider: 'codex', status: 'auth_failed', error: "out of quota: You've hit your usage limit", reason: 'quota' };
+    const failover = await handleWorkerFailure(lab.ctx(), quota, { ...opts, exhausted: async (f) => ({ progressed: true, waiting: `failed over: ${f.status}` }) });
+    expect(failover).toEqual({ retry: false, result: { progressed: true, waiting: 'failed over: auth_failed' } });
+    expect(getRun(lab.db, lab.runId).state).toBe('PREFLIGHT');
+    // A rejected login still blocks, whoever asked: logging in again is what fixes it.
+    const login = await handleWorkerFailure(lab.ctx(), { ...quota, reason: 'auth' }, { ...opts, exhausted: async () => ({ progressed: true, waiting: 'no' }) });
+    expect(login).toMatchObject({ retry: false, result: { done: true } });
+    expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
+  });
+
   it('a cancelled worker in a run that is being cancelled ends the step, and otherwise is regenerated', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     expect(await handleWorkerFailure(lab.ctx(), { provider: 'claude', status: 'cancelled', error: null }, opts)).toEqual({ retry: true });

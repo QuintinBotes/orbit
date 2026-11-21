@@ -78,7 +78,8 @@ in, because the tests a worker adds are changes too.
 A worker may change only `allowed_paths`; anything else fails the scope gate.
 A goal contract can narrow the scope but never widen it. Protected paths win
 over allowed ones. Built-in protections you cannot remove: `.orbit/**`, `.git`,
-nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, `**/.env*`,
+nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, the partner
+CLIs' project config `.codex/**`, `.muse/**` and `.agents/**`, `**/.env*`,
 `**/*.pem`, SSH keys, `**/.npmrc` and `**/.netrc`.
 
 ## actions
@@ -486,13 +487,28 @@ providers Orbit has an adapter for can be listed: today that is `codex` and
 `muse` (or a second configuration of either, such as `codex-review`, defined
 under `providers`), in any order, for example `providers: [codex, muse]`.
 Any other id, such as `gemini`, is a configuration error that names the
-supported ones. Each listed id must be defined under `providers`. Muse is a
-reviewer only and needs Muse 1.4.11 or later; see
+supported ones. Each listed id must be defined under `providers`. Muse
+needs Muse 1.4.11 or later; see
 `providers.muse` under [isolation and providers](#isolation-and-providers)
-and [ADR 0017](decisions/0017-muse-reviewer.md).
+and [ADR 0017](decisions/0017-muse-reviewer.md), replaced by
+[ADR 0022](decisions/0022-partner-implementers.md).
+
+Independence is computed from who implemented in the run: when a partner
+(`routing.implementers`) implemented, Claude counts as an independent reviewer
+after the listed ones, and a tree two families wrote is reviewed independently
+only by a third. A risky change (the planning assessment classes it `complex`)
+gets a second review: after the cross-model review, the implementer's own
+family reviews it again in a fresh session, and the final report names it as
+the "Same-family review". The cross-model reviewer of a risky change must be its
+provider's top tier (a Claude model at the opus-class floor, or Codex's
+recommended model in its live catalog); with only a weaker one, the
+cross-model pass is skipped, the report says why under "Cross-model review
+skipped", and `when_unavailable` decides as for any review that is not
+independent.
 
 A reviewer that is selected but then fails at run time (a timeout, a non-zero
-exit, or a malformed answer once its regenerations are used) is recorded with
+exit, a malformed answer once its regenerations are used, or a used-up
+allowance, at once) is recorded with
 the reason as a `review.reviewer-failed` decision, and the selection runs again
 without it: the next listed reviewer reviews under its own name, and with none
 left `review.when_unavailable` applies. The final report's `Reviewer:` line
@@ -675,6 +691,7 @@ checks:
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 | `category` | what the check evidences: `test` (default), `lint`, `typecheck`, `build`, `sast`, `ui` (the default of a `playwright` check) or `other`. Only a command check of category `test` is run by the [fail-before probe](#verification) and by the repair probe, so only such a check can show that a test a repair wrote for a review finding tells the repaired tree from the one before; `sast` checks feed the static security gate |
+| `tests_command` | argv, run without a shell, that runs only the test files appended to it (one argument each, relative to `cwd`): `[node, --test]`, `[npx, vitest, run]`, `[pytest]`. Under `verification.fail_before: required` each criterion's mapped tests run alone with it, so that each criterion's fail-before is its own (issue #200). Without it, a criterion citing only this check cannot be probed on its own, and its fail-before is not established |
 
 Set `category` on every check that is not a test suite.
 A check without a category is treated as `test` and is probed: a lint or
@@ -1203,9 +1220,10 @@ from the packet alone is visible; see
 
 `providers.muse` configures Muse as an independent reviewer
 ([ADR 0017](decisions/0017-muse-reviewer.md); the verified CLI surface is
-[interfaces/muse](interfaces/muse.md)). Muse never implements: the adapter
-runs read-only review tasks only and needs Muse 1.4.11 or later (last measured
-on 1.4.14). There is no
+[interfaces/muse](interfaces/muse.md)). The adapter runs read-only review
+tasks, and implements only when `routing.implementers` lists it, in the
+os-sandbox tier (`META_API_KEY` plus srt; [ADR 0022](decisions/0022-partner-implementers.md)).
+It needs Muse 1.4.11 or later (last measured on 1.4.14). There is no
 `muse` provider in the defaults; adding the block (under `muse`, or an id
 starting with `muse-` or `muse_`) creates it with the defaults shown above.
 The model is passed through unchanged (Muse has no model catalog command, so
@@ -1311,6 +1329,7 @@ routing:
     min_samples: 20                       # judged outcomes of one model in one task class, 1 to 100000
     min_pass_rate: 0.8                    # measured pass rate needed to displace the table's choice, 0 to 1
     window_days: 90                       # older outcomes are not read, 1 to 3650
+  implementers: [claude]                  # who may implement, in order; partners off until a benchmark shows they help
 
 retention:
   keep_runs_days: 30
@@ -1323,6 +1342,25 @@ attempts may displace the routing table's choice; the rules are in
 chooses among `allowed_models`, and an entry in `overrides` always wins over
 it. The settings are read from the policy frozen at the start of a run, like
 every other setting.
+
+`implementers` lists the providers that may implement a bounded unit
+(routine coding and focused tests), in preference order (issue #176,
+[ADR 0022](decisions/0022-partner-implementers.md)). The default, `[claude]`,
+keeps partner implementers off: they stay off until a full benchmark shows they
+help. Each entry is `claude` or a Codex or Muse provider defined under
+`providers`, partners before `claude` (a partner listed after it is a config
+error); with `[codex, claude]` an attempt goes to Codex on
+`providers.codex.model` and `providers.codex.reasoning_effort`, in its own
+writable worktree, and Claude's verification decides whether its candidate is
+kept. Claude is always the fallback: once two of a partner's candidates in a
+run failed verification or review, for the rest of a run once its quota or
+login failed (classed `credentials`, recorded as `routing.partner-skipped`,
+and charged to no candidate: the attempt goes on with Claude), when its
+measured pass rate for the task class falls below `learning.min_pass_rate`, or
+when its data policy is not attested. Codex implements under its own
+`workspace-write` sandbox, or inside srt; Muse implements only inside srt
+(`META_API_KEY` plus srt), so without them preflight skips it. Independence of
+review is computed from who implemented, so Claude reviews a partner's work.
 
 `output_budgets` defaults follow the token-efficiency table in
 [the architecture](architecture.md); a partial map overrides only the roles it
@@ -1389,6 +1427,9 @@ knowledge:
   curator_budget_usd: 0.25
   eval_budget_usd: 0          # 0 disables replay evaluations and automatic overlay adoption
   auto_adopt_overlays: true
+  lessons_in_prompts: false   # lessons and overlays stay out of worker prompts until a full benchmark shows they help
+  max_prompt_lessons: 3       # with lessons_in_prompts: at most this many validated lessons per prompt
+  lesson_expiry_days: 28      # a lesson with no supporting run for this long is not eligible
 
 guard:
   terms_file: null            # null means ~/.config/publish-guard/terms.txt
@@ -1396,7 +1437,7 @@ guard:
 
 verification:
   allow_flaky_pass: false
-  fail_before: advisory
+  fail_before: required
   fail_before_timeout_seconds: 900
 ```
 
@@ -1409,7 +1450,7 @@ are described in [verification](#verification).
 ```yaml
 verification:
   allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
-  fail_before: advisory               # off | advisory | required
+  fail_before: required               # off | advisory | required
   fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
 ```
 
@@ -1447,8 +1488,22 @@ change", not "an assertion failed".
 | `fail_before` | What it does |
 |---|---|
 | `off` | No probe; `unverified` says it was not run. |
-| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
-| `required` | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+| `advisory` | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
+| `required` (default) | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+
+Under `required`, a plan that maps tests to criteria (every plan a planner
+writes since issue #200) is judged per criterion, not per check: each
+criterion's mapped test files run alone with their check's `tests_command`, on
+the probe tree, where a change criterion's tests must fail and a keep
+criterion's must pass, and on the candidate, where both must pass. One mapped
+test that does not leaves the criterion unproven, whatever the others showed. A
+UI criterion keeps the browser probe. Before delivery, the
+[proof gate](spec.md#completion-proof) then audits each criterion in a fresh
+reviewer session that sees only the criterion and its tests, checks each MUST of
+the goal against quoted lines of the candidate, and checks the pull request body
+and the changed documents against the candidate; an open result goes to repair,
+and nothing is delivered before it closes. Under `advisory` and `off` neither the
+per-criterion probe nor the proof gate runs.
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <

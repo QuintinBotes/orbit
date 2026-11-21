@@ -134,6 +134,11 @@ describe('toGlobalLesson', () => {
     expect(g.supersedes).toBeNull();
     expect(g.provenance.uri).toBeNull();
   });
+
+  it('drops the citation, which names this repository\'s run, file and check (issue #173)', () => {
+    const g = toGlobalLesson(makeLesson({ citation: { run_id: 'r1', path: 'src/billing/invoice.ts', line: 3, check_id: 'unit', finding_id: null } }));
+    expect('citation' in g).toBe(false);
+  });
 });
 
 describe('promoteToGlobal against the real publication guard (verifier)', () => {

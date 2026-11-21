@@ -90,6 +90,25 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | 3.2 A high finding unvalidated across two verified candidates is validated once or dropped | `review-gate.test.ts` | three tests (ADR 0015, amendment of 2026-11-16): issue #156, User Story 3.2 (its one re-review finds it still present; no review round is left, so the run ends BLOCKED naming it and offering the candidate); User Story 3.2: ... its one re-review finds gone, is dropped ... and the run delivers; User Story 3.2: a finding gets one re-review per run ... |
 | SC-003 No scenario ends EXHAUSTED holding a verified candidate | `helpers/invariants.ts` | `assertNoVerifiedCandidateExhausted`, part of `assertRunInvariants`, so every scenario is held to it. Since issue #169 such a run ends BLOCKED naming the candidate, so scenario 16, scenario 19 (the blocking finding) and issue #156, once known expected failures, pass it |
 
+### A run is done only when each criterion's proof would fail without it (issue #200)
+
+Under `verification.fail_before: required` (the demo's default). The fake reviewer answers the proof sessions (`auditor`, `conformance`, `artifacts`) as the reviewers of the replayed pull requests should have; each scenario checks what Orbit does with the answers and with the candidate it runs and reads. `helpers/invariants.ts` `assertProofHonest` (SC-004) holds every scenario to it.
+
+| Scenario | File | Test |
+|---|---|---|
+| 1.1 The #196 SC-001 replay: the auditor's "yes" leaves SC-001 unproven, and it goes to repair | `proof.test.ts` | User Story 1.1 (the #196 SC-001 replay): ... |
+| 1.2 A criterion whose mapped test passes on the base tree is unproven, whatever the others showed | `proof.test.ts` | User Story 1.2: ... |
+| 1.3 A test that fails before, passes after and gets "no" proves its criterion; the report shows both | `proof.test.ts` | User Story 1.3, 2.4 and 3.3: ... |
+| 1.4 The #191 replay: green checks alone never end a run as done | `proof.test.ts` | User Story 1.4 (the #191 replay): ... |
+| 2.1 The #196 FR-004 replay: unmet, with the wording and the quoted line side by side | `proof.test.ts` | User Story 2.1 and 2.2 (the #196 FR-004 replay): ... |
+| 2.2 A quote not in the candidate exactly as quoted makes its MUST unmet | `proof.test.ts` | User Story 2.1 and 2.2 (the #196 FR-004 replay): ... |
+| 2.3 The #192 replay: the callers are listed and the change to their routes is a finding | `proof.test.ts` | User Story 2.3 (the #192 replay): ... |
+| 2.4 Every MUST quoted and matched: the report lists each with its file and line range | `proof.test.ts` | User Story 1.3, 2.4 and 3.3: ... |
+| 3.1 The #193 replay: each false sentence of the pull request body and the ADR is a finding, and delivery waits | `proof.test.ts` | User Story 3.1 and 3.2 (the #193 replay): ... |
+| 3.2 After the repair the check runs again on the new candidate and the finding closes | `proof.test.ts` | User Story 3.1 and 3.2 (the #193 replay): ... |
+| 3.3 Documents that match the candidate give no finding, and delivery goes on | `proof.test.ts` | User Story 1.3, 2.4 and 3.3: ... |
+| SC-004 No scenario reports a criterion proven when its test passed on the base tree or its auditor said "yes" | `helpers/invariants.ts` | `assertProofHonest`, part of `assertRunInvariants` |
+
 ### Safe stops (spec section 2)
 
 | Stop | File | Test |
@@ -101,6 +120,16 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | Expired credentials | `safe-stops.test.ts`, `credentials-and-routing.test.ts` | expired credentials: ...; scenario 12 |
 | Unavailable mandatory reviewer | `safe-stops.test.ts` | unavailable mandatory reviewer: ...; unavailable mandatory reviewer mid-run: ... |
 
+### Partner implementers (issue #176)
+
+| Scenario | File | Test |
+|---|---|---|
+| SC-001: the lab passes with each of Claude, Codex and Muse as implementer (Muse behind a stand-in for srt) | `partner-implementers.test.ts` | SC-001: the lab passes with %s as implementer |
+| US1 scenario 1: a Codex candidate meets the same scope and policy gates | `partner-implementers.test.ts` | US1 scenario 1: a Codex candidate that edits protected paths ... |
+| US1 scenario 2: two failed partner candidates hand the third attempt to Claude | `partner-implementers.test.ts` | US1 scenario 2: ... |
+| US2 scenario 1: a risky change gets a cross-model pass and a fresh same-family pass | `partner-implementers.test.ts` | US2 scenario 1: ... |
+| Edge cases: a partner out of quota, or without a writable tier, is skipped for the run | `partner-implementers.test.ts` | edge case: ... |
+
 ### Demo runs (spec section 2)
 
 | Run | File | Test |
@@ -108,6 +137,16 @@ One scenario per issue fixed for #166. Each fails on the sources as they were be
 | Simple task on a low-cost route | `demo-shapes.test.ts` | demo 1 (driven by `orbit run --foreground` as a child process) |
 | Difficult task with evidence-backed escalation | `demo-shapes.test.ts` | demo 2 |
 | UI task: fails browser checks, repairs, independent review, draft PR | `ui.test.ts` | scenario 17 (and demo run 3) |
+
+### The benchmark's lab tier (issue #172)
+
+`orbit bench --tier lab` runs the lab scenarios of `src/bench/scenarios.ts`, one per fixed issue; CI runs all of them in the "Lab bench" step. These tests run a few through the command.
+
+| Scenario | File | Test |
+|---|---|---|
+| User Story 1.1: each scenario reports pass or fail, failure class, attempts and simulated spend; two runs give the same scorecard | `bench-lab.test.ts` | User Story 1, scenario 1 and its independent test: ... |
+| User Story 1.2: a scenario whose fixed outcome no longer holds fails the command, named with its issue | `bench-lab.test.ts` | User Story 1, scenario 2: ... |
+| User Story 3.1: `--without diagnosis` shows pass rate and spend with and without the stage | `bench-lab.test.ts` | User Story 3, scenario 1: ... |
 
 ## Helpers
 

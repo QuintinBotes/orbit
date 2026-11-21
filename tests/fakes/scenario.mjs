@@ -18,6 +18,25 @@ export function roleFromSchema(schema) {
   return '*';
 }
 
+/** The proof check a reviewer prompt asks for (controller/proof.ts writes the marker line), as its scenario role. */
+const PROOF_ROLES = { 'criterion audit': 'auditor', conformance: 'conformance', artifacts: 'artifacts' };
+
+/**
+ * A reviewer session that runs one of the proof checks before delivery (issue #200) takes its steps from the scenario's
+ * `auditor`, `conformance` or `artifacts` list when the scenario has one, else from `reviewer` like any review.
+ */
+export function proofRole(role, prompt, env = process.env) {
+  if (role !== 'reviewer') return role;
+  const kind = /^Orbit proof check: (criterion audit|conformance|artifacts)$/m.exec(prompt)?.[1];
+  if (!kind || !env.ORBIT_FAKE_SCENARIO) return role;
+  try {
+    const roles = JSON.parse(readFileSync(env.ORBIT_FAKE_SCENARIO, 'utf8')).roles ?? {};
+    return Array.isArray(roles[PROOF_ROLES[kind]]) ? PROOF_ROLES[kind] : role;
+  } catch {
+    return role;
+  }
+}
+
 /**
  * The scenario step for this call: scenario.roles[role][n] (n counts calls
  * per role, starting at 0), falling back to roles['*'], repeating the last

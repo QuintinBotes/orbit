@@ -388,6 +388,7 @@
             "explorer": { "type": "integer", "minimum": 100, "maximum": 200000 }
           }
         },
+        "implementers": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/providerId" } },
         "learning": {
           "type": "object",
           "additionalProperties": false,
@@ -413,14 +414,17 @@
     "knowledge": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "share_globally", "max_advisory_tokens", "curator_budget_usd", "eval_budget_usd", "auto_adopt_overlays"],
+      "required": ["enabled", "share_globally", "max_advisory_tokens", "curator_budget_usd", "eval_budget_usd", "auto_adopt_overlays", "lessons_in_prompts", "max_prompt_lessons", "lesson_expiry_days"],
       "properties": {
         "enabled": { "type": "boolean" },
         "share_globally": { "type": "boolean" },
         "max_advisory_tokens": { "type": "integer", "minimum": 0, "maximum": 8000 },
         "curator_budget_usd": { "type": "number", "minimum": 0, "maximum": 100 },
         "eval_budget_usd": { "type": "number", "minimum": 0, "maximum": 1000 },
-        "auto_adopt_overlays": { "type": "boolean" }
+        "auto_adopt_overlays": { "type": "boolean" },
+        "lessons_in_prompts": { "type": "boolean" },
+        "max_prompt_lessons": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "lesson_expiry_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
       }
     },
     "guard": {
@@ -588,7 +592,11 @@
         "mandatory": { "type": "boolean" },
         "flaky_reruns": { "type": "integer", "minimum": 0, "maximum": 5 },
         "kind": { "enum": ["command", "playwright"] },
-        "category": { "enum": ["test", "lint", "typecheck", "build", "sast", "ui", "other"] }
+        "category": { "enum": ["test", "lint", "typecheck", "build", "sast", "ui", "other"] },
+        "tests_command": {
+          "$ref": "#/$defs/argv",
+          "description": "argv, executed without a shell, that runs only the test files appended to it (one argument each, relative to cwd): how a criterion's mapped tests run alone for its fail-before (issue #200)."
+        }
       }
     },
     "ui": {

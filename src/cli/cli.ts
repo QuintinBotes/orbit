@@ -11,6 +11,7 @@ import { EXIT, EXIT_CODE_DOCS, UsageError, exitCodeFor } from './exit.ts';
 import { ORBIT_VERSION } from './version.ts';
 import { setInvocationEnv } from '../core/invocation.ts';
 import { closest } from '../core/near-miss.ts';
+import { BENCH_OPTIONS, BENCH_USAGE, benchCommand } from './commands/bench.ts';
 import { cancelCommand, CANCEL_OPTIONS, pauseCommand, resumeCommand, RESUME_OPTIONS } from './commands/control.ts';
 import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, QUESTIONS_USAGE, questionsCommand } from './commands/decide.ts';
 import { DOCTOR_OPTIONS, doctorCommand } from './commands/doctor.ts';
@@ -43,6 +44,7 @@ import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand,
 import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
 import { SPEC_CHECK_OPTIONS, SPEC_CHECK_USAGE, specCheckCommand } from './commands/spec.ts';
 import { QUEUE_LIST_OPTIONS, QUEUE_LIST_USAGE, QUEUE_RUN_OPTIONS, QUEUE_RUN_USAGE, queueListCommand, queueRunCommand } from './commands/queue.ts';
+import { RETRO_OPTIONS, RETRO_USAGE, retroCommand } from './commands/retro.ts';
 import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
 import { TIMELINE_OPTIONS, TIMELINE_USAGE, timelineCommand } from './commands/timeline.ts';
@@ -89,7 +91,9 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'service run', summary: 'run the persistent controller in this process (what the service definition starts)', usage: 'orbit service run', run: serviceRunCommand },
   { name: 'verify', summary: 'independent verification of a run\'s latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)', usage: 'orbit verify [run-id] [--json]', run: verifyCommand },
   { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description | -> [--foreground | --detach] [--mode <mode>] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
+  { name: 'bench', summary: 'score this Orbit version: the lab tier replays fixed issues with fake providers (no model), the live tier runs pinned goals with real providers (owner approval and --budget required)', usage: BENCH_USAGE, options: BENCH_OPTIONS, run: benchCommand },
   { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+  { name: 'retro', summary: 'group finished runs by failure class and signature and propose a check, a reviewer standard, a policy change or an Orbit issue draft for each repeated failure; nothing is applied or sent without your yes', usage: RETRO_USAGE, options: RETRO_OPTIONS, run: retroCommand },
   { name: 'release resolve', summary: 'settle a deploy whose outcome is unknown: run the environment\'s verify_command, or record --deployed / --not-deployed', usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
   { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
   { name: 'notify test', summary: 'send a test notification through the configured channels (desktop on Linux only, webhook, GitHub comment) and print each outcome', usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },

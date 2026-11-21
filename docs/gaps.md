@@ -109,7 +109,42 @@ and a private repository, so it cannot be closed from the test suite):
 
 ## Should
 
-### G58. The repository map's benchmark evidence waits on `orbit bench` (should)
+### G58. The live benchmark has three seed goals and no published scorecard (should)
+
+Covers I172.SC2 (missing) and I172.SC3 (partial). `orbit bench --tier live`
+is implemented and tested with a fake executor and a fixture catalog of twenty
+goals, but `data/bench/live-goals.json` holds three seed goals (owner decision
+on #172) and the live tier has never run: it spends money, and every run needs
+the owner's approval. The README makes no result claim that rests on a
+scorecard.
+
+Fix (needs the owner's approval and a budget, so it cannot be closed from the
+test suite):
+
+1. Add goals to `data/bench/live-goals.json` until there are twenty, each at a
+   commit of an owner repository where a real failure happened, with the
+   accepted fix as `reference` and its test files as the held-out check.
+2. With the owner's approval, run `orbit bench --tier live --budget <usd>
+   --approved-by <owner> --baseline` from an Orbit checkout, and commit
+   `docs/scorecards/orbit-<version>-live.json` after reading it for tokens,
+   personal names and host paths.
+3. Cite that scorecard wherever the README states a result, and set I172.SC2
+   and I172.SC3 to done in `docs/traceability.md`.
+
+### G59. Retro: reviewer standards, false dones and the replay (should)
+
+Covers S16.20 and S16.21 (#174 FR-004, FR-006, SC-001, SC-003). `orbit retro`
+groups runs, proposes, and applies an approved check on a branch. What remains:
+
+- FR-004: a file of reviewer standards that the reviewer prompt includes from
+  the base revision and that implementers cannot read (a guard rule), with an
+  accepted standard committed to it on a branch as a check is. Test: a reviewer
+  prompt carries the standard and an implementer's read of the file is denied.
+- FR-006 and SC-003: once false dones are recorded (#172), make each one retro
+  input on its own and propose a check that fails on the reverted candidate.
+- SC-001: replay the runs behind #132, #133 and #156 and compare the proposals
+  with the issues a maintainer filed by hand.
+### G60. The repository map's benchmark evidence waits on `orbit bench` (should)
 
 Covers S8.39. The map, its gates and the prompt slice are in (S8.32 to S8.38);
 what needs the benchmark of #172 is not:
