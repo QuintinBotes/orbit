@@ -24,7 +24,11 @@ import { renderWorkerPrompt, type EvidenceRef, type PromptBrief } from '../../ad
 import { defaultOrbitCommands } from '../../adapters/commands.ts';
 import { repoMapPolicy } from '../../policy/config.ts';
 import { shellQuote } from '../../ui/runner.ts';
-import { isSessionRefusal } from '../../adapters/types.ts';
+import { isSessionRefusal, type TaskResult } from '../../adapters/types.ts';
+import type { ClaudeTaskResult } from '../../adapters/claude-transcript.ts';
+import type { ImplementerOutput } from '../../contract/model-outputs.ts';
+import { listDecisions } from '../../storage/decisions.ts';
+import { decideTurnExtension } from '../../scheduling/turn-cap.ts';
 import { snapshotCandidate } from '../../evidence/candidate.ts';
 import { invalidateEvidence } from '../../evidence/freshness.ts';
 import { currentEvidenceReport, listCheckRuns, listEvidenceReports, listFailures } from '../../evidence/store.ts';
@@ -36,7 +40,7 @@ import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
-import { ensureWorker, raiseOutputCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, type RouteChoice } from '../workers.ts';
+import { ensureWorker, raiseOutputCap, recordedTurnCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, type RouteChoice } from '../workers.ts';
 import { attemptRouteDecision, skippedPartners, skipPartner } from '../route-outcome.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
@@ -277,9 +281,48 @@ async function continueAttempt(ctx: RunContext, n: number, contract: NonNullable
       k++;
       continue;
     }
+    // A session that reached its turn reminder and said what remains continues in one more session of this attempt, in
+    // the same worktree, instead of having its unfinished tree verified and diagnosed as a defect (issue #177).
+    if (r.status === 'succeeded' && turnExtension(ctx, n, st.worker, r)) {
+      k++;
+      continue;
+    }
     if (r.status !== 'succeeded') note(ctx, WORKER_ENDED_EVENT, { attempt: n, status: r.status, error: r.error?.slice(0, 300) ?? null, note: 'its edits are verified like any other' });
     return snapshot(ctx, n, st.worker.id);
   }
+}
+
+export const TURN_EXTENSION_KIND = 'budget.turn-extension';
+
+interface TurnExtension {
+  attempt: number;
+  worker_id: string;
+  turns: number;
+  cap: number;
+  remainder: string;
+}
+
+function turnExtensionsOf(ctx: RunContext, n: number): TurnExtension[] {
+  return listDecisions(ctx.db, ctx.run.id, { kind: TURN_EXTENSION_KIND }).map((d) => d.data as TurnExtension).filter((d) => d.attempt === n);
+}
+
+/**
+ * Whether session `w` of attempt `n` gets the attempt's one turn extension (issue #177): it asked with
+ * next_action continue-implementation, stated what remains, and had reached its turn reminder. Granted once, recorded,
+ * and still granted for the same session after a restart.
+ */
+function turnExtension(ctx: RunContext, n: number, w: WorkerRecord, r: TaskResult): boolean {
+  const granted = turnExtensionsOf(ctx, n);
+  if (granted.some((g) => g.worker_id === w.id)) return true;
+  const next = (r.structured as Partial<ImplementerOutput> | null)?.next_action;
+  const remainder = next?.kind === 'continue-implementation' ? next.detail : null;
+  const turns = (r as Partial<ClaudeTaskResult>).modelRequests ?? null;
+  const recorded = recordedTurnCap(ctx.db, ctx.run.id, w.id);
+  const d = decideTurnExtension({ remainder, turns, remindAt: recorded?.remindAt ?? null, granted: granted.length });
+  if (!d.granted || !remainder || !recorded) return false;
+  const data: TurnExtension = { attempt: n, worker_id: w.id, turns: turns!, cap: recorded.cap, remainder: remainder.slice(0, 2000) };
+  decide(ctx, { id: `dec-${ctx.run.id}-turn-extension-${n}`, kind: TURN_EXTENSION_KIND, summary: `attempt ${n}: ${d.reason} (${turns} of ${recorded.cap} turns); one more session continues it in the same worktree`, data });
+  return true;
 }
 
 export const AUTHORIZATION_RETRY_EVENT = 'authorization.retry';
@@ -501,6 +544,8 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
   const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists<StoredBrief>(briefPath(ctx, n));
   const briefs: PromptBrief[] = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n}.json` }] : [];
+  const extension = turnExtensionsOf(ctx, n)[0] ?? null;
+  if (extension) briefs.push({ label: 'what the earlier session said remains', content: extension.remainder });
   const refs: EvidenceRef[] = [];
   const cand = ctx.candidate;
   if (stored && cand) {
@@ -521,6 +566,7 @@ function implementerPrompt(ctx: RunContext, n: number, workerId: string, auth: A
     ...(blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(', ')}. Implement the other criteria only.`] : []),
     ...authorizationLines(auth),
     ...parallelLines(ctx, n, parallel),
+    ...(extension ? [`An earlier session of this attempt reached its turn cap (${extension.turns} of ${extension.cap} turns) and asked to continue. Its edits are in this worktree: keep them and finish what it said remains, below. This is the attempt's one extension.`] : []),
     ...mapToolLines(ctx),
   ].join('\n');
   return renderWorkerPrompt({

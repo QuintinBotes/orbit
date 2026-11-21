@@ -466,6 +466,8 @@ Use transactions, owner leases, heartbeats, process reconciliation, and atomic a
 
 API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets. Time a run spends paused, or BLOCKED waiting for a person, is not charged to the wall-time budget.
 
+A worker session's turn cap is the 75th percentile of the turns that earlier successful sessions of the same role and task class took, a session the cap stopped or that asked to continue counting as the ceiling, within a configured floor and ceiling and never above the hard cap; with no history the configured default applies, and once a session of a role in a run outgrew its cap the run's later sessions of that role get the ceiling. From 80% of its cap a session is told how many turns remain. An implementer session that reaches that point and states what remains gets one extension for its attempt, and its unfinished work is neither verified nor diagnosed as a defect; a session the cap stops is recorded as `turn-cap`.
+
 ### Initial allowance
 
 Classify task difficulty using acceptance-criterion count, subsystem coupling, external integrations, baseline health, ambiguity, security impact, UI complexity, repository familiarity, and test availability. Record why an allowance was selected.
@@ -544,11 +546,11 @@ Escalate using observed difficulty, not worker confidence. Increase reasoning ef
 - Keep full logs in artifacts and send relevant excerpts.
 - Retrieve repository context on demand.
 - Maintain compact contracts, decisions, and repair briefs.
-- Use supported prompt caching.
+- Use supported prompt caching: stable prompt content comes before volatile content.
 - Avoid repeating this entire document in each worker.
 - Set role-specific output budgets.
 - Preserve evidence references and hashes in handoffs.
-- Track input/output/cached tokens and cost per accepted run.
+- Track input/output/cached tokens and cost per accepted run, and per role with its cache hit ratio; warn when a role's ratio is under the threshold.
 - Keep learned lessons and overlays out of worker prompts unless `knowledge.lessons_in_prompts` is on (off by default until a full benchmark shows they help). Whether or not they enter prompts, every lesson cites its run and the file and line, check or finding it came from; it is re-checked against the repository, and marked stale and not retrieved when its cited file or check is gone or it had no support for `knowledge.lesson_expiry_days` (default 28). A lesson shown to a worker whose own candidate then repeats the failure it was repairing is contradicted, and contradictions from two distinct runs deprecate it. Support goes only to lessons whose cited area the run touched. Every run that ends without succeeding stores an observation keyed by its failure class without a model call. At most `knowledge.max_prompt_lessons` (default 3) validated lessons enter a prompt, a lesson that names a secret or a person is refused when it is written, and an overlay whose evaluation shows a lower pass rate on the benchmark's held-out scenarios is not adopted.
 
 ### Repository map

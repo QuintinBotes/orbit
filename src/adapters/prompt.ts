@@ -6,8 +6,9 @@
  *                  active, the role's learned overlay; stable across a run,
  *                  so provider prompt caching applies
  *   task prompt    the compact operating rules, then the bounded work unit:
- *                  role, task, contract, policy summary, candidate, evidence
- *                  by reference and hash, briefs, advisory lessons
+ *                  role, policy summary, contract, task, candidate, evidence
+ *                  by reference and hash, briefs, advisory lessons (the parts
+ *                  every session of the role shares first)
  *
  * Trusted text (written by the controller) is plain. Everything else
  * (repository text, logs, CI output, model-written briefs, learned
@@ -160,10 +161,9 @@ export interface WorkerPromptInput {
 export function renderWorkerPrompt(input: WorkerPromptInput): string {
   const blockChars = input.maxBlockChars ?? DEFAULT_BLOCK_CHARS;
   const untrusted = (label: string, content: string, ref?: string) => fence(label, redactForProvider(content, input.secrets), { maxChars: blockChars, ref });
-  const parts: string[] = [OPERATING_PROMPT, `## Role\n\n${input.role}`, `## Work unit\n\n${input.task.trim()}`];
-
+  // Stable before volatile (issue #177): what every session of a role in a run shares comes first, the work unit after it.
+  const parts: string[] = [OPERATING_PROMPT, `## Role\n\n${input.role}`, `## Policy summary\n\n${input.policySummary.trim()}`];
   if (input.contract) parts.push(`## Contract\n\nValidated by the controller. Criteria ids are the ones to cite.\n\n\`\`\`json\n${compactJson(input.contract)}\n\`\`\``);
-  parts.push(`## Policy summary\n\n${input.policySummary.trim()}`);
   const docs = input.repoInstructions ?? [];
   let instructionChars = 0;
   if (docs.length > 0) {
@@ -173,6 +173,7 @@ export function renderWorkerPrompt(input: WorkerPromptInput): string {
     instructionChars = section.length + 2;
     parts.push(section);
   }
+  parts.push(`## Work unit\n\n${input.task.trim()}`);
   if (input.candidate) {
     const c = input.candidate;
     parts.push(`## Candidate\n\n- revision: ${c.revision ?? 'none yet'}\n- tree: ${c.treeHash ?? 'none yet'}${c.base ? `\n- base: ${c.base}` : ''}`);

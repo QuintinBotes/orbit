@@ -8,7 +8,11 @@
  *   deny    exit 0 with {"hookSpecificOutput":{"hookEventName":"PreToolUse",
  *           "permissionDecision":"deny","permissionDecisionReason":"..."}}
  *   allow   exit 0 with no output: the hook never grants anything, it only
- *           takes away, so the session's own permission rules still apply
+ *           takes away, so the session's own permission rules still apply.
+ *           From 80% of the session's turn cap on, the allow carries
+ *           {"hookSpecificOutput":{"hookEventName":"PreToolUse",
+ *           "additionalContext":"..."}} telling the session how many turns
+ *           it has left (issue #177); it still grants nothing
  *   error   exit 2, the only blocking failure code (exit 1 and crashes are
  *           NON-blocking in Claude Code), with the reason on stderr and the
  *           same deny JSON on stdout
@@ -22,6 +26,9 @@ import { isAbsolute } from 'node:path';
 import type { AuthorizationDecision, PolicySnapshot } from './types.ts';
 import { verifySnapshot } from './snapshot.ts';
 import { authorize } from './authorize.ts';
+import { claudeModelRequests } from '../adapters/claude-transcript.ts';
+import { readLogLines } from '../adapters/supervise.ts';
+import { ENV_TURN_CAP, ENV_TURN_REMIND_AT, turnReminder } from '../scheduling/turn-cap.ts';
 
 export interface GuardOptions {
   snapshotPath: string;
@@ -80,9 +87,28 @@ export function runGuardHook(stdin: string, env: Record<string, string | undefin
     if (!expectedHash) throw new GuardInputError(`${ENV_POLICY_HASH} is not set`);
     if (!worktreeRoot) throw new GuardInputError(`${ENV_WORKTREE} is not set`);
     const workerTmpDir = env[ENV_WORKER_TMPDIR];
-    return handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}), ...(workerTmpDir ? { workerTmpDir } : {}) });
+    const result = handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}), ...(workerTmpDir ? { workerTmpDir } : {}) });
+    return result.exitCode === 0 && result.stdout === '' ? withTurnReminder(result, stdin, env) : result;
   } catch (err) {
     return failClosed(err);
+  }
+}
+
+/**
+ * An allow, plus the turns the session has left once it has taken 80% of its cap (issue #177): the session's model
+ * requests so far are counted from its transcript. Anything missing or unreadable leaves the allow as it was; the
+ * reminder never turns an allow into a denial.
+ */
+function withTurnReminder(result: GuardResult, stdin: string, env: Record<string, string | undefined>): GuardResult {
+  try {
+    const cap = Number(env[ENV_TURN_CAP]);
+    const remindAt = Number(env[ENV_TURN_REMIND_AT]);
+    const path = (JSON.parse(stdin) as { transcript_path?: unknown }).transcript_path;
+    if (!Number.isSafeInteger(cap) || !Number.isSafeInteger(remindAt) || typeof path !== 'string' || !isAbsolute(path)) return result;
+    const text = turnReminder(claudeModelRequests(readLogLines(path).events) ?? 0, cap, remindAt);
+    return text ? { ...result, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: text } }) } : result;
+  } catch {
+    return result;
   }
 }
 

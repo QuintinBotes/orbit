@@ -338,6 +338,33 @@ went past the cap, adds a `budget.exhausted` event for the session. Missing
 counts are unavailable, never an assumed zero. The Codex adapter does not enforce this turn cap or
 report session turns.
 
+Within that hard cap, each session's `--max-turns` follows the task: it is the
+75th percentile of the model requests that earlier successful sessions of the
+same role and difficulty took in this repository, kept within
+`scheduler.turn_cap.floor` and `ceiling`, and `default` when there is no
+history. A session that ended at its cap, or asked to continue, counts as the
+ceiling: counting only the sessions that finished would lower the cap run after
+run, since none of them can have taken more turns than the cap allowed.
+Once a session of a role in a run has done so, the run's later sessions of that
+role (a retry of a planner or a review, the next implementation attempt) get the
+ceiling, since under the same cap they would stop again. Without a `turn_cap` section the floor is 10 and the ceiling and the
+default are `worker_turns_per_session`, so a repository with no history runs as
+before. Each session's cap is recorded as a `worker.turn-cap` event. From
+`reminder_fraction` (0.8) of its cap on, Orbit's guard hook tells the session
+before each tool call how many turns it has left. An implementer that returns
+`next_action` `continue-implementation` with what remains, after that point,
+gets one more session of the same attempt in the same worktree
+(`budget.turn-extension`), once per attempt, instead of having its unfinished
+work verified and diagnosed. The inquisitor and the curator keep their own caps.
+
+```yaml
+scheduler:
+  turn_cap: {floor: 10, ceiling: 30, default: 30, reminder_fraction: 0.8}
+```
+
+`floor <= default <= ceiling <= worker_turns_per_session`, and
+`reminder_fraction` lies strictly between 0 and 1.
+
 Once `review_rounds` is spent and the last review did not clear the candidate,
 the run ends `EXHAUSTED` at that point: neither a repair attempt nor an
 Inquisition into the review's findings starts, because nothing either produced

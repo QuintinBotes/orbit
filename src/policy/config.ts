@@ -1006,6 +1006,12 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     for (const [k, v] of Object.entries(c.scheduler.initial_allowances)) {
       if (v > caps.implementation_attempts) problems.push(`scheduler.initial_allowances.${k}: ${v} exceeds hard_limits.implementation_attempts (${caps.implementation_attempts})`);
     }
+    const tc = c.scheduler.turn_cap;
+    if (tc) {
+      if (tc.floor > tc.ceiling) problems.push(`scheduler.turn_cap.floor: ${tc.floor} exceeds turn_cap.ceiling (${tc.ceiling})`);
+      if (tc.ceiling > caps.worker_turns_per_session) problems.push(`scheduler.turn_cap.ceiling: ${tc.ceiling} exceeds hard_limits.worker_turns_per_session (${caps.worker_turns_per_session})`);
+      if (tc.default < tc.floor || tc.default > tc.ceiling) problems.push(`scheduler.turn_cap.default: ${tc.default} is outside turn_cap.floor..ceiling (${tc.floor}..${tc.ceiling})`);
+    }
     if (c.agents.default_parallelism > caps.parallel_workers) {
       problems.push(`agents.default_parallelism: ${c.agents.default_parallelism} exceeds scheduler.hard_limits.parallel_workers (${caps.parallel_workers})`);
     }

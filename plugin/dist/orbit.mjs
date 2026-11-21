@@ -21332,7 +21332,18 @@ var init_config_schema = __esm({
               }
             },
             repeated_failure_threshold: { type: "integer", minimum: 1, maximum: 100 },
-            final_reserve_fraction: { type: "number", minimum: 0, maximum: 0.9 }
+            final_reserve_fraction: { type: "number", minimum: 0, maximum: 0.9 },
+            turn_cap: {
+              type: "object",
+              additionalProperties: false,
+              required: ["floor", "ceiling", "default", "reminder_fraction"],
+              properties: {
+                floor: { type: "integer", minimum: 1, maximum: 1e4 },
+                ceiling: { type: "integer", minimum: 1, maximum: 1e4 },
+                default: { type: "integer", minimum: 1, maximum: 1e4 },
+                reminder_fraction: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 }
+              }
+            }
           }
         },
         agents: {
@@ -22692,6 +22703,12 @@ var init_config = __esm({
         for (const [k, v] of Object.entries(c.scheduler.initial_allowances)) {
           if (v > caps.implementation_attempts) problems.push(`scheduler.initial_allowances.${k}: ${v} exceeds hard_limits.implementation_attempts (${caps.implementation_attempts})`);
         }
+        const tc = c.scheduler.turn_cap;
+        if (tc) {
+          if (tc.floor > tc.ceiling) problems.push(`scheduler.turn_cap.floor: ${tc.floor} exceeds turn_cap.ceiling (${tc.ceiling})`);
+          if (tc.ceiling > caps.worker_turns_per_session) problems.push(`scheduler.turn_cap.ceiling: ${tc.ceiling} exceeds hard_limits.worker_turns_per_session (${caps.worker_turns_per_session})`);
+          if (tc.default < tc.floor || tc.default > tc.ceiling) problems.push(`scheduler.turn_cap.default: ${tc.default} is outside turn_cap.floor..ceiling (${tc.floor}..${tc.ceiling})`);
+        }
         if (c.agents.default_parallelism > caps.parallel_workers) {
           problems.push(`agents.default_parallelism: ${c.agents.default_parallelism} exceeds scheduler.hard_limits.parallel_workers (${caps.parallel_workers})`);
         }
@@ -23149,6 +23166,2277 @@ var init_authorize = __esm({
   }
 });
 
+// src/core/schema.ts
+import { readFileSync as readFileSync5, statSync } from "node:fs";
+import { resolve as resolve2 } from "node:path";
+function instance() {
+  if (!ajv) {
+    ajv = new Ajv2020Ctor({ strict: true, allErrors: true, allowUnionTypes: true });
+    addFormats2(ajv);
+  }
+  return ajv;
+}
+function compileSchema(source) {
+  if (typeof source === "string") return compilePath(source);
+  if (source === null || typeof source !== "object" || Array.isArray(source)) {
+    throw new OrbitError("INTERNAL", "a JSON Schema must be an object or a file path");
+  }
+  const cached = byObject.get(source);
+  if (cached) return cached;
+  const fn = compileObject(source, labelOf(source, null));
+  byObject.set(source, fn);
+  return fn;
+}
+function validate(schema4, value, label) {
+  const fn = typeof schema4 === "function" ? assertSync(schema4) : compileSchema(schema4);
+  if (fn(value)) return value;
+  const errors = formatSchemaErrors(fn.errors);
+  const name = label ?? labels.get(fn) ?? "value";
+  const shown3 = errors.slice(0, 10).join("; ");
+  const more = errors.length > 10 ? ` (and ${errors.length - 10} more)` : "";
+  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown3}${more}`, {
+    schema: labels.get(fn) ?? null,
+    errors: errors.slice(0, MAX_REPORTED_ERRORS)
+  });
+}
+function schemaErrors(schema4, value) {
+  const fn = typeof schema4 === "function" ? assertSync(schema4) : compileSchema(schema4);
+  return fn(value) ? [] : formatSchemaErrors(fn.errors);
+}
+function formatSchemaErrors(errors) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const e of errors ?? []) {
+    const line3 = `${e.instancePath || "(root)"}: ${describe(e)}`;
+    if (seen.has(line3)) continue;
+    seen.add(line3);
+    out.push(line3);
+  }
+  return out;
+}
+function compilePath(path) {
+  const abs = resolve2(path);
+  let stat;
+  try {
+    stat = statSync(abs);
+  } catch (err) {
+    throw new OrbitError("NOT_FOUND", `schema file not found: ${abs}`, { path: abs }, { cause: err });
+  }
+  const hit = byPath.get(abs);
+  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.fn;
+  let parsed3;
+  try {
+    parsed3 = JSON.parse(readFileSync5(abs, "utf8"));
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `schema file ${abs} is not valid JSON: ${err.message}`, { path: abs }, { cause: err });
+  }
+  if (parsed3 === null || typeof parsed3 !== "object" || Array.isArray(parsed3)) {
+    throw new OrbitError("INTERNAL", `schema file ${abs} does not contain a JSON object`, { path: abs });
+  }
+  const fn = compileObject(parsed3, labelOf(parsed3, abs));
+  byPath.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, fn });
+  return fn;
+}
+function compileObject(schema4, label) {
+  const key2 = hashObject(schema4);
+  const cached = byHash.get(key2);
+  if (cached) return cached;
+  const a = instance();
+  const id2 = schema4.$id;
+  if (typeof id2 === "string") a.removeSchema(id2);
+  let fn;
+  try {
+    fn = a.compile(schema4);
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `schema ${label} does not compile: ${err.message}`, { schema: label }, { cause: err });
+  }
+  assertSync(fn, label);
+  labels.set(fn, label);
+  byHash.set(key2, fn);
+  return fn;
+}
+function assertSync(fn, label) {
+  if (fn.$async === true) {
+    const name = label ?? labels.get(fn) ?? "validator";
+    throw new OrbitError("INTERNAL", `schema ${name} is asynchronous ($async); Orbit validates synchronously`, { schema: name });
+  }
+  return fn;
+}
+function labelOf(schema4, path) {
+  const s = schema4;
+  if (typeof s.$id === "string") return s.$id;
+  if (path) return path;
+  if (typeof s.title === "string") return s.title;
+  return "schema";
+}
+function describe(e) {
+  const p = e.params;
+  switch (e.keyword) {
+    case "required":
+      return `missing required property '${String(p.missingProperty)}'`;
+    case "additionalProperties":
+      return `unexpected property '${String(p.additionalProperty)}'`;
+    case "unevaluatedProperties":
+      return `unexpected property '${String(p.unevaluatedProperty)}'`;
+    case "enum":
+      return `must be one of ${p.allowedValues?.map((v) => JSON.stringify(v)).join(", ") ?? "the allowed values"}`;
+    case "const":
+      return `must equal ${JSON.stringify(p.allowedValue)}`;
+    case "type":
+      return `must be ${Array.isArray(p.type) ? p.type.join(" or ") : String(p.type)}`;
+    case "format":
+      return `must be a valid ${String(p.format)}`;
+    default:
+      return e.message ?? e.keyword;
+  }
+}
+var import__2, import_ajv_formats2, Ajv2020Ctor, addFormats2, MAX_REPORTED_ERRORS, ajv, byObject, byHash, byPath, labels;
+var init_schema4 = __esm({
+  "src/core/schema.ts"() {
+    "use strict";
+    import__2 = __toESM(require__(), 1);
+    import_ajv_formats2 = __toESM(require_dist(), 1);
+    init_errors();
+    init_hash();
+    Ajv2020Ctor = import__2.default.default ?? import__2.default;
+    addFormats2 = import_ajv_formats2.default.default ?? import_ajv_formats2.default;
+    MAX_REPORTED_ERRORS = 50;
+    ajv = null;
+    byObject = /* @__PURE__ */ new WeakMap();
+    byHash = /* @__PURE__ */ new Map();
+    byPath = /* @__PURE__ */ new Map();
+    labels = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// src/adapters/claude-plugins.ts
+function pluginPolicyOf(config) {
+  const a = config.agents;
+  return { allowed: [...a.allowed_plugins ?? []], allowManaged: a.allow_managed_plugins === true };
+}
+function parsePluginList(stdout) {
+  let parsed3;
+  try {
+    parsed3 = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed3)) return null;
+  const out = [];
+  for (const e of parsed3) {
+    if (!isRecord(e) || typeof e.id !== "string") continue;
+    out.push({ id: e.id, scope: typeof e.scope === "string" ? e.scope : null, enabled: e.enabled !== false });
+  }
+  return out;
+}
+function isBuiltinPlugin(entry) {
+  return isRecord(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
+}
+function workerPlugins(initPlugins, check) {
+  if (initPlugins === void 0) return [];
+  const entries = Array.isArray(initPlugins) ? initPlugins : [null];
+  const out = [];
+  for (const e of entries) {
+    if (isBuiltinPlugin(e)) continue;
+    const r = isRecord(e) ? e : {};
+    const id2 = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
+    const name = typeof r.name === "string" ? r.name : null;
+    const scope = typeof r.scope === "string" ? r.scope : id2 === null ? null : check.installed?.find((p) => p.id === id2)?.scope ?? null;
+    out.push({ id: id2, name, scope, allowed_by: allowance(id2, scope, check.policy) });
+  }
+  return out;
+}
+function allowance(id2, scope, policy) {
+  if (id2 === null) return null;
+  if (policy.allowed.includes(id2)) return "agents.allowed_plugins";
+  if (scope === "managed" && policy.allowManaged) return "agents.allow_managed_plugins";
+  return null;
+}
+function pluginAllowLines(p) {
+  if (p.id === null) return [];
+  const lines = [`agents.allowed_plugins: ${JSON.stringify([p.id])}`];
+  if (p.scope === "managed") lines.push("agents.allow_managed_plugins: true");
+  return lines;
+}
+function describeRefusedPlugin(p) {
+  if (p.id === null) return p.name === null ? "an entry with no name@marketplace source (no config line can allow it)" : `${p.name} (no name@marketplace source; no config line can allow it)`;
+  return `${p.id} (scope ${p.scope ?? "unknown"}; allow it with ${pluginAllowLines(p).join(" or ")})`;
+}
+function pluginRefusal(plugins) {
+  const refused = plugins.filter((p) => p.allowed_by === null);
+  if (refused.length === 0) return null;
+  return `the session loaded ${refused.length} plugin(s) that are not Claude Code built-ins and that the policy does not allow: ${refused.map(describeRefusedPlugin).join("; ")}`;
+}
+function needsPluginList(initPlugins) {
+  if (!Array.isArray(initPlugins)) return false;
+  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord(e) && typeof e.source === "string" && typeof e.scope !== "string");
+}
+function isRecord(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+var STRICT_PLUGIN_POLICY, WORKER_EXCLUDED_SCOPES;
+var init_claude_plugins = __esm({
+  "src/adapters/claude-plugins.ts"() {
+    "use strict";
+    STRICT_PLUGIN_POLICY = Object.freeze({ allowed: Object.freeze([]), allowManaged: false });
+    WORKER_EXCLUDED_SCOPES = ["user", "project", "local"];
+  }
+});
+
+// src/adapters/claude-transcript.ts
+function classifyClaudeTranscript(input) {
+  const { events, exit } = input;
+  const result2 = lastOf(events, (e) => e.type === "result");
+  const init = events.find((e) => e.type === "system" && e.subtype === "init");
+  const sessionId = claudeSessionId(events);
+  const usage = claudeUsage(events);
+  const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
+  const base = {
+    structured: null,
+    text: result2 ? str(result2.result) : null,
+    exitCode: exit.code,
+    usage,
+    durationMs: num(result2?.duration_ms) ?? Math.max(0, exit.endedAt - exit.startedAt),
+    sessionId,
+    models: modelUsageKeys(result2),
+    permissionDenials: denials(result2),
+    numTurns: num(result2?.num_turns),
+    modelRequests: claudeModelRequests(events),
+    terminalReason: str(result2?.terminal_reason),
+    ...plugins.length > 0 ? { plugins } : {}
+  };
+  const end = (status2, reason, error, structured = null) => ({
+    ...base,
+    status: status2,
+    reason,
+    error,
+    structured
+  });
+  if (exit.error) return end("failed", "spawn_failed", exit.error);
+  const auth = authEvidence(events, result2);
+  if (auth) return end("auth_failed", "auth", auth);
+  if (exit.timedOut) return end("timeout", "timeout", `timed out; the shim sent ${exit.escalation.join(", ") || "no signal"}`);
+  if (exit.cancelled) return end("cancelled", "interrupted", "cancelled by a signal to the worker");
+  if (!result2) {
+    if (exit.escalation.length > 0) {
+      return end("cancelled", "interrupted", `no result line (exit ${exit.code ?? exit.signal}) after ${exit.escalation.join(", ")}; the run was interrupted`);
+    }
+    if (exit.signal !== null) return end("failed", "crashed", `killed by ${exit.signal} without a result line`);
+    if (input.malformedTail) return end("malformed_output", "malformed_transcript", `transcript ends in a line that is not JSON (exit ${exit.code})`);
+    return end("failed", "crashed", `exited ${exit.code} without a result line`);
+  }
+  const subtype = str(result2.subtype);
+  const isError = result2.is_error === true;
+  const errors = Array.isArray(result2.errors) ? result2.errors.filter((e) => typeof e === "string") : [];
+  const detail = errors[0] ?? str(result2.result) ?? null;
+  switch (subtype) {
+    case "error_max_turns":
+      return end("max_turns", "max_turns", detail ?? "reached the maximum number of turns");
+    case "error_max_budget_usd":
+      return end("failed", "max_budget", detail ?? "reached the maximum budget");
+    case "error_max_structured_output_retries":
+      return end("malformed_output", "structured_output_retries", detail ?? "structured output retries exhausted");
+    case "error_during_execution":
+      return end("failed", "execution_error", detail ?? "error during execution");
+    default:
+      break;
+  }
+  if (isError || exit.code !== 0 || subtype !== "success") {
+    const status2 = num(result2.api_error_status);
+    const retryErrors = apiErrors(events);
+    if (status2 !== null && (status2 === 429 || status2 >= 500) || retryErrors.some((e) => CLAUDE_TRANSIENT_ERRORS.includes(e))) {
+      return end("transient_error", "transient_api_error", detail ?? `API error ${status2 ?? ""}`.trim());
+    }
+    if (str(result2.terminal_reason) === "api_error" || status2 !== null) return end("failed", "api_error", detail ?? "API error");
+    return end("failed", "execution_error", detail ?? `exit ${exit.code}, subtype ${subtype ?? "missing"}`);
+  }
+  const unsafe = sessionProblems(init, input.expectedSessionId ?? null, input.plugins);
+  if (unsafe) return end("failed", "unsafe_session", unsafe);
+  if (!("structured_output" in result2) || result2.structured_output === void 0) {
+    return end("malformed_output", "structured_output_missing", "the result has no structured_output");
+  }
+  const problems = schemaErrors(input.outputSchema, result2.structured_output);
+  if (problems.length > 0) {
+    return end("malformed_output", "structured_output_invalid", `structured output does not match the role schema: ${problems.slice(0, 5).join("; ")}`);
+  }
+  return end("succeeded", "success", null, result2.structured_output);
+}
+function claudeRawFinalAnswer(events) {
+  const result2 = lastOf(events, (e) => e.type === "result");
+  if (result2 && "structured_output" in result2 && result2.structured_output !== void 0) return result2.structured_output;
+  const text2 = result2 && result2.is_error !== true ? str(result2.result) : null;
+  if (text2 !== null && text2.trim() !== "") return parsedOrText(text2);
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type !== "assistant" || !isObject(e.message)) continue;
+    const content = e.message.content;
+    if (!Array.isArray(content)) continue;
+    for (let j = content.length - 1; j >= 0; j--) {
+      const block2 = content[j];
+      if (!isObject(block2)) continue;
+      const b = block2;
+      if (b.type === "tool_use" && b.name === STRUCTURED_OUTPUT_TOOL && b.input !== void 0) return b.input;
+    }
+  }
+  return void 0;
+}
+function sessionProblems(init, expectedSessionId = null, plugins = NO_PLUGINS) {
+  if (!init) return "the transcript has no system/init line, so the permission mode and loaded servers cannot be checked";
+  if (init.permissionMode !== "dontAsk") return `the session ran in permission mode ${String(init.permissionMode)}, not dontAsk`;
+  if (!Array.isArray(init.mcp_servers) || init.mcp_servers.length > 0) {
+    return Array.isArray(init.mcp_servers) ? `the session loaded ${init.mcp_servers.length} MCP server(s)` : "system/init does not list its MCP servers";
+  }
+  const refusal2 = pluginRefusal(workerPlugins(init.plugins, plugins));
+  if (refusal2) return refusal2;
+  if (expectedSessionId !== null && init.session_id !== expectedSessionId) {
+    return `the transcript is of session ${String(init.session_id)}, not ${expectedSessionId}`;
+  }
+  return null;
+}
+function authEvidence(events, result2) {
+  for (const e of events) {
+    if (e.type === "system" && e.subtype === "api_retry" && typeof e.error === "string" && CLAUDE_AUTH_ERRORS.includes(e.error)) {
+      return `authentication failed (${e.error}, HTTP ${String(e.error_status ?? "unknown")}); not retried`;
+    }
+    if (e.type === "assistant" && typeof e.error === "string" && CLAUDE_AUTH_ERRORS.includes(e.error)) {
+      return `authentication failed (${e.error}); not retried`;
+    }
+  }
+  if (result2) {
+    const status2 = num(result2.api_error_status);
+    if (status2 === 401 || status2 === 403) return `authentication failed (HTTP ${status2}); not retried`;
+    const text2 = str(result2.result);
+    if (result2.is_error === true && text2 !== null && text2.startsWith("Not logged in")) return "not logged in; not retried";
+  }
+  return null;
+}
+function apiErrors(events) {
+  const out = [];
+  for (const e of events) {
+    if (e.type === "system" && e.subtype === "api_retry" && typeof e.error === "string") out.push(e.error);
+    if (e.type === "assistant" && typeof e.error === "string") out.push(e.error);
+  }
+  return out;
+}
+function claudeUsage(events) {
+  const result2 = lastOf(events, (e) => e.type === "result");
+  const mu = result2 && isObject(result2.modelUsage) ? result2.modelUsage : null;
+  if (mu && Object.keys(mu).length > 0) {
+    let input2 = 0;
+    let output2 = 0;
+    let cacheRead2 = 0;
+    let cacheWrite2 = 0;
+    let cost = 0;
+    let costKnown = true;
+    let main2 = null;
+    for (const [model, raw] of Object.entries(mu)) {
+      if (!isObject(raw)) continue;
+      const u = raw;
+      const out = num(u.outputTokens) ?? 0;
+      input2 += num(u.inputTokens) ?? 0;
+      output2 += out;
+      cacheRead2 += num(u.cacheReadInputTokens) ?? 0;
+      cacheWrite2 += num(u.cacheCreationInputTokens) ?? 0;
+      const c = num(u.costUSD);
+      if (c === null) costKnown = false;
+      else cost += c;
+      const weight = c ?? out;
+      if (!main2 || weight > main2.weight) main2 = { model, weight };
+    }
+    return {
+      provider: "claude",
+      model: main2?.model ?? null,
+      inputTokens: input2,
+      outputTokens: output2,
+      cacheReadTokens: cacheRead2,
+      cacheWriteTokens: cacheWrite2,
+      costUsd: costKnown ? cost : num(result2?.total_cost_usd) ?? null,
+      costSource: costKnown || num(result2?.total_cost_usd) !== null ? "reported" : "unavailable"
+    };
+  }
+  if (result2 && num(result2.total_cost_usd) !== null && num(result2.total_cost_usd) > 0) {
+    return { ...emptyUsage(), model: assistantModel(events), costUsd: num(result2.total_cost_usd), costSource: "reported" };
+  }
+  const seen = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    if (e.type !== "assistant" || !isObject(e.message)) continue;
+    const m = e.message;
+    if (!isObject(m.usage)) continue;
+    seen.set(str(m.id) ?? `#${seen.size}`, m.usage);
+  }
+  if (seen.size === 0) return { ...emptyUsage(), model: assistantModel(events) };
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  for (const u of seen.values()) {
+    input += num(u.input_tokens) ?? 0;
+    output += num(u.output_tokens) ?? 0;
+    cacheRead += num(u.cache_read_input_tokens) ?? 0;
+    cacheWrite += num(u.cache_creation_input_tokens) ?? 0;
+  }
+  return { provider: "claude", model: assistantModel(events), inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, costUsd: null, costSource: "unavailable" };
+}
+function claudeModelRequests(events) {
+  const ids = /* @__PURE__ */ new Set();
+  let messages = 0;
+  for (const e of events) {
+    if (e.type !== "assistant") continue;
+    messages++;
+    if (e.error !== void 0 || e.is_api_error_message === true || typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id.length > 0) continue;
+    const m = isObject(e.message) ? e.message : {};
+    ids.add(str(m.id) ?? `#${messages}`);
+  }
+  return messages === 0 ? null : ids.size;
+}
+function claudeSessionId(events) {
+  const result2 = lastOf(events, (e) => e.type === "result");
+  const init = events.find((e) => e.type === "system" && e.subtype === "init");
+  return str(result2?.session_id) ?? str(init?.session_id) ?? null;
+}
+function emptyUsage(provider = "claude") {
+  return { provider, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: "unavailable" };
+}
+function claudeEvents(lines, now) {
+  const out = [];
+  for (const e of lines) {
+    const at = Date.parse(str(e.timestamp) ?? "") || now;
+    if (e.type === "system" && e.subtype === "init") out.push({ type: "started", at });
+    else if (e.type === "system" && e.subtype === "api_retry") out.push({ type: "error", at, message: `API retry ${String(e.attempt ?? "?")}/${String(e.max_retries ?? "?")}: ${String(e.error ?? "unknown")}` });
+    else if (e.type === "assistant" && isObject(e.message)) {
+      const content = e.message.content;
+      for (const block2 of Array.isArray(content) ? content : []) {
+        if (!isObject(block2)) continue;
+        const b = block2;
+        if (b.type === "text" && typeof b.text === "string") out.push({ type: "message", at, text: clip(b.text, 2e3) });
+        if (b.type === "tool_use" && typeof b.name === "string") out.push({ type: "tool", at, tool: b.name, summary: toolSummary(b.input) });
+      }
+      if (typeof e.error === "string") out.push({ type: "error", at, message: e.error });
+    } else if (e.type === "result") {
+      out.push({ type: "usage", at, usage: claudeUsage([e]) });
+      out.push({ type: "finished", at });
+    }
+  }
+  return out;
+}
+function toolSummary(input) {
+  if (!isObject(input)) return "";
+  const i = input;
+  const pick2 = i.file_path ?? i.notebook_path ?? i.command ?? i.pattern ?? i.path;
+  return typeof pick2 === "string" ? clip(pick2, 200) : "";
+}
+function assistantModel(events) {
+  const a = lastOf(events, (e) => e.type === "assistant" && isObject(e.message) && typeof e.message.model === "string");
+  if (a) return a.message.model;
+  const init = events.find((e) => e.type === "system" && e.subtype === "init");
+  return str(init?.model);
+}
+function modelUsageKeys(result2) {
+  return result2 && isObject(result2.modelUsage) ? Object.keys(result2.modelUsage) : [];
+}
+function denials(result2) {
+  const list3 = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
+  return list3.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
+}
+function lastOf(items, pred) {
+  for (let i = items.length - 1; i >= 0; i--) if (pred(items[i])) return items[i];
+  return void 0;
+}
+function isObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+function str(v) {
+  return typeof v === "string" ? v : null;
+}
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+function clip(s, n2) {
+  return s.length > n2 ? `${s.slice(0, n2)}...` : s;
+}
+function parsedOrText(text2) {
+  try {
+    return JSON.parse(text2);
+  } catch {
+    return text2;
+  }
+}
+var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS, STRUCTURED_OUTPUT_TOOL, NO_PLUGINS;
+var init_claude_transcript = __esm({
+  "src/adapters/claude-transcript.ts"() {
+    "use strict";
+    init_schema4();
+    init_claude_plugins();
+    CLAUDE_AUTH_ERRORS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold"];
+    CLAUDE_TRANSIENT_ERRORS = ["rate_limit", "overloaded", "server_error"];
+    STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+    NO_PLUGINS = { policy: STRICT_PLUGIN_POLICY, installed: null };
+  }
+});
+
+// src/core/clock.ts
+var systemClock;
+var init_clock = __esm({
+  "src/core/clock.ts"() {
+    "use strict";
+    systemClock = {
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((resolve32) => setTimeout(resolve32, ms))
+    };
+  }
+});
+
+// src/core/proc.ts
+import { spawnSync } from "node:child_process";
+import { readdirSync as readdirSync2, readFileSync as readFileSync6 } from "node:fs";
+import { join as join7 } from "node:path";
+function processStartTime(pid) {
+  return processInfo(pid)?.start ?? null;
+}
+function processInfo(pid) {
+  if (!isValidPid(pid)) return null;
+  if (process.platform === "linux") return linuxInfo(pid);
+  return psInfo(pid);
+}
+function isAlive(pid, expectedStart) {
+  if (!isValidPid(pid)) return false;
+  if (!signalZero(pid)) return false;
+  let info;
+  try {
+    info = processInfo(pid);
+  } catch (err) {
+    if (expectedStart == null) return true;
+    throw err;
+  }
+  if (!info) return false;
+  if (info.state.startsWith("Z")) return false;
+  if (expectedStart != null && normalizeStart(expectedStart) !== info.start) return false;
+  return true;
+}
+function isGroupAlive(pgid) {
+  assertSafePgid(pgid);
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return errno(err) === "EPERM";
+  }
+}
+function killGroup(pgid, signal = "SIGTERM") {
+  assertSafePgid(pgid);
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (err) {
+    if (errno(err) === "ESRCH") return false;
+    throw new OrbitError("INTERNAL", `cannot send ${signal} to process group ${pgid}: ${errno(err) ?? String(err)}`, { pgid, signal }, { cause: err });
+  }
+}
+async function terminateGroup(pgid, graceMs, options = {}) {
+  assertSafePgid(pgid);
+  const clock = options.clock ?? realClock;
+  const pollMs = Math.max(1, options.pollMs ?? 25);
+  let last = null;
+  for (const signal of ["SIGINT", "SIGTERM", "SIGKILL"]) {
+    if (!isGroupAlive(pgid)) return { exited: true, signal: last };
+    try {
+      if (!killGroup(pgid, signal)) return { exited: true, signal: last };
+      last = signal;
+    } catch (err) {
+      if (errno(err.cause) !== "EPERM") throw err;
+    }
+    const deadline = clock.now() + Math.max(0, graceMs);
+    while (clock.now() < deadline) {
+      await clock.sleep(Math.min(pollMs, Math.max(1, deadline - clock.now())));
+      if (!isGroupAlive(pgid)) return { exited: true, signal: last };
+    }
+  }
+  return { exited: !isGroupAlive(pgid), signal: last };
+}
+function findProcesses(match, opts = {}) {
+  if ((opts.platform ?? process.platform) === "linux") return procSearch(opts.procDir ?? "/proc", "cmdline", (args) => match(args.join(" ")));
+  return psSearch(false, match);
+}
+function findProcessesWithEnv(name, value, opts = {}) {
+  const entry = `${name}=${value}`;
+  if ((opts.platform ?? process.platform) === "linux") return procSearch(opts.procDir ?? "/proc", "environ", (env) => env.includes(entry));
+  return psSearch(true, (line3) => ` ${line3} `.includes(` ${entry} `));
+}
+function psSearch(withEnvironment, match) {
+  const r = spawnSync("ps", [...withEnvironment ? ["-E"] : [], "-A", "-ww", "-o", "pid=,stat=,args="], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: PS_LOCALE, LANG: PS_LOCALE },
+    timeout: 1e4,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (r.error) throw new OrbitError("INTERNAL", `cannot run ps to search the process table: ${r.error.message}`, {}, { cause: r.error });
+  if (r.status !== 0 || typeof r.stdout !== "string") throw new OrbitError("INTERNAL", `ps failed searching the process table (exit ${String(r.status)})`, { stderr: String(r.stderr ?? "").slice(0, 500) });
+  const out = [];
+  for (const line3 of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line3);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (!isValidPid(pid) || pid === process.pid || pid === r.pid || m[2].startsWith("Z")) continue;
+    if (match(m[3].trimEnd())) out.push(pid);
+  }
+  return out;
+}
+function procSearch(procDir, file, match) {
+  let names;
+  try {
+    names = readdirSync2(procDir);
+  } catch (err) {
+    throw new OrbitError("INTERNAL", `cannot read ${procDir} to search the process table: ${errno(err) ?? String(err)}`, { procDir }, { cause: err });
+  }
+  const out = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const pid = Number(name);
+    if (!isValidPid(pid) || pid === process.pid) continue;
+    let raw;
+    try {
+      raw = readFileSync6(join7(procDir, name, file), "utf8");
+    } catch {
+      continue;
+    }
+    const entries = raw.split("\0");
+    if (entries.at(-1) === "") entries.pop();
+    if (entries.length === 0) continue;
+    if (match(entries)) out.push(pid);
+  }
+  return out;
+}
+function normalizeStart(raw) {
+  return raw.trim().replace(/\s+/g, " ");
+}
+function isValidPid(pid) {
+  return Number.isSafeInteger(pid) && pid > 0;
+}
+function assertSafePgid(pgid) {
+  if (!Number.isSafeInteger(pgid) || pgid <= 1 || pgid === process.pid || pgid === ownPgid()) {
+    throw new OrbitError("INTERNAL", `refusing to signal process group ${String(pgid)}`, { pgid });
+  }
+}
+function ownPgid() {
+  if (ownGroup !== void 0) return ownGroup;
+  ownGroup = null;
+  try {
+    if (process.platform === "linux") {
+      const stat = readFileSync6("/proc/self/stat", "utf8");
+      const n2 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
+      if (Number.isSafeInteger(n2) && n2 > 0) ownGroup = n2;
+    } else {
+      const r = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
+      const n2 = Number((r.stdout ?? "").trim());
+      if (r.status === 0 && Number.isSafeInteger(n2) && n2 > 0) ownGroup = n2;
+    }
+  } catch {
+    ownGroup = null;
+  }
+  return ownGroup;
+}
+function signalZero(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return errno(err) === "EPERM";
+  }
+}
+function errno(err) {
+  return err?.code;
+}
+function psInfo(pid) {
+  const r = spawnSync("ps", ["-o", "stat=", "-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+    timeout: 1e4,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (r.error) throw new OrbitError("INTERNAL", `cannot run ps to inspect pid ${pid}: ${r.error.message}`, { pid }, { cause: r.error });
+  const out = (r.stdout ?? "").trim();
+  if (r.status === 1 && out === "") return null;
+  if (r.status !== 0) throw new OrbitError("INTERNAL", `ps failed inspecting pid ${pid} (exit ${String(r.status)})`, { pid, stderr: (r.stderr ?? "").slice(0, 500) });
+  const m = /^(\S+)\s+(\S.*)$/.exec(out);
+  if (!m) throw new OrbitError("INTERNAL", `unexpected ps output for pid ${pid}`, { pid, output: out.slice(0, 200) });
+  return { pid, state: m[1], start: normalizeStart(m[2]) };
+}
+function linuxInfo(pid) {
+  let stat;
+  try {
+    stat = readFileSync6(`/proc/${pid}/stat`, "utf8");
+  } catch (err) {
+    if (errno(err) === "ENOENT" || errno(err) === "ESRCH") return null;
+    throw new OrbitError("INTERNAL", `cannot read /proc/${pid}/stat: ${errno(err) ?? String(err)}`, { pid }, { cause: err });
+  }
+  const close = stat.lastIndexOf(")");
+  const rest = stat.slice(close + 1).trim().split(/\s+/);
+  const state = rest[0];
+  const start = rest[19];
+  if (close === -1 || !state || !start) throw new OrbitError("INTERNAL", `unexpected /proc/${pid}/stat format`, { pid });
+  return { pid, state, start };
+}
+var PS_LOCALE, realClock, ownGroup;
+var init_proc = __esm({
+  "src/core/proc.ts"() {
+    "use strict";
+    init_errors();
+    PS_LOCALE = "en_US.UTF-8";
+    realClock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+  }
+});
+
+// src/core/exec.ts
+import { spawn } from "node:child_process";
+import { closeSync as closeSync3, mkdirSync as mkdirSync2, openSync as openSync3, statSync as statSync2 } from "node:fs";
+import { dirname as dirname4, resolve as resolve3 } from "node:path";
+import { performance } from "node:perf_hooks";
+import { StringDecoder } from "node:string_decoder";
+function execCapture(argv2, options = {}) {
+  const [command, ...args] = argv2;
+  if (!command) return Promise.reject(new OrbitError("INTERNAL", "execCapture needs a command"));
+  let cwd;
+  try {
+    cwd = checkCwd(options.cwd);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
+  const maxBytes = Math.max(0, options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES);
+  const graceMs = Math.max(0, options.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
+  return new Promise((resolvePromise, rejectPromise) => {
+    const started = performance.now();
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env: cleanEnv(options.env ?? process.env),
+        detached: true,
+        stdio: [options.input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
+        windowsHide: true
+      });
+    } catch (err) {
+      rejectPromise(spawnFailure(command, err));
+      return;
+    }
+    const stdout = new Capture(maxBytes);
+    const stderr = new Capture(maxBytes);
+    child.stdout?.on("data", (c) => stdout.push(c));
+    child.stderr?.on("data", (c) => stderr.push(c));
+    const pgid = child.pid;
+    let timeoutTimer;
+    let timedOut = false;
+    let cancelled = false;
+    let stopping = false;
+    let settled = false;
+    let exitCode = null;
+    let exitSignal = null;
+    const signalGroup = (signal) => {
+      if (pgid === void 0) return;
+      try {
+        killGroup(pgid, signal);
+      } catch {
+      }
+    };
+    const groupGone = () => {
+      if (pgid === void 0) return true;
+      try {
+        return !isGroupAlive(pgid);
+      } catch {
+        return true;
+      }
+    };
+    const stopGroup = () => {
+      if (stopping) return;
+      stopping = true;
+      signalGroup("SIGTERM");
+      const deadline = performance.now() + graceMs;
+      const poll = () => {
+        if (groupGone()) return;
+        const left = deadline - performance.now();
+        if (left <= 0) {
+          signalGroup("SIGKILL");
+          return;
+        }
+        setTimeout(poll, Math.min(KILL_POLL_MS, left)).unref();
+      };
+      setTimeout(poll, Math.min(KILL_POLL_MS, graceMs)).unref();
+    };
+    const onAbort = () => {
+      cancelled = true;
+      stopGroup();
+    };
+    if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        stopGroup();
+      }, timeoutMs);
+    }
+    if (options.abortSignal) {
+      if (options.abortSignal.aborted) onAbort();
+      else options.abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
+    const cleanup2 = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      options.abortSignal?.removeEventListener("abort", onAbort);
+    };
+    child.on("error", (err) => {
+      if (pgid !== void 0 || settled) return;
+      settled = true;
+      cleanup2();
+      rejectPromise(spawnFailure(command, err));
+    });
+    child.on("exit", (code2, signal) => {
+      exitCode = code2;
+      exitSignal = signal;
+      cleanup2();
+      if (pgid !== void 0 && options.killGroupOnExit !== false && !stopping) {
+        let alive = false;
+        try {
+          alive = isGroupAlive(pgid);
+        } catch {
+          alive = false;
+        }
+        if (alive) stopGroup();
+      }
+      setTimeout(() => {
+        if (settled) return;
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }, graceMs + 1e3).unref();
+    });
+    child.on("close", () => {
+      if (settled) return;
+      settled = true;
+      cleanup2();
+      resolvePromise({
+        exitCode,
+        signal: exitSignal,
+        stdout: stdout.text(),
+        stderr: stderr.text(),
+        timedOut,
+        cancelled,
+        durationMs: Math.round(performance.now() - started),
+        stdoutTruncated: stdout.dropped > 0,
+        stderrTruncated: stderr.dropped > 0,
+        pid: pgid ?? -1
+      });
+    });
+    if (options.input !== void 0 && child.stdin) {
+      child.stdin.on("error", () => {
+      });
+      child.stdin.end(options.input);
+    }
+  });
+}
+function spawnDetached(argv2, options) {
+  const [command, ...args] = argv2;
+  if (!command) throw new OrbitError("INTERNAL", "spawnDetached needs a command");
+  const cwd = checkCwd(options.cwd);
+  const outPath = resolve3(options.stdoutPath);
+  const errPath = resolve3(options.stderrPath);
+  const fds = [];
+  let child;
+  try {
+    mkdirSync2(dirname4(outPath), { recursive: true, mode: 448 });
+    mkdirSync2(dirname4(errPath), { recursive: true, mode: 448 });
+    const outFd = openSync3(outPath, "a", 384);
+    fds.push(outFd);
+    const errFd = errPath === outPath ? outFd : openSync3(errPath, "a", 384);
+    if (errFd !== outFd) fds.push(errFd);
+    child = spawn(command, args, {
+      cwd,
+      env: cleanEnv(options.env ?? process.env),
+      detached: true,
+      stdio: ["ignore", outFd, errFd],
+      windowsHide: true
+    });
+  } catch (err) {
+    throw spawnFailure(command, err);
+  } finally {
+    for (const fd of fds) {
+      try {
+        closeSync3(fd);
+      } catch {
+      }
+    }
+  }
+  child.on("error", () => {
+  });
+  if (child.pid === void 0) {
+    throw new OrbitError("NOT_FOUND", `could not start ${command}: not found or not executable`, { command });
+  }
+  child.unref();
+  return { pid: child.pid, pgid: child.pid };
+}
+function checkCwd(cwd) {
+  if (cwd === void 0) return void 0;
+  let ok = false;
+  try {
+    ok = statSync2(cwd).isDirectory();
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new OrbitError("NOT_FOUND", `working directory does not exist: ${cwd}`, { cwd });
+  return cwd;
+}
+function cleanEnv(env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
+  return out;
+}
+function spawnFailure(command, err) {
+  if (err instanceof OrbitError) return err;
+  const code2 = err?.code;
+  if (code2 === "ENOENT") return new OrbitError("NOT_FOUND", `command not found: ${command}`, { command, errno: code2 }, { cause: err });
+  return new OrbitError("INTERNAL", `could not start ${command}: ${code2 ?? String(err)}`, { command, errno: code2 }, { cause: err });
+}
+var DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_KILL_GRACE_MS, KILL_POLL_MS, TRUNCATION_MARKER, Capture;
+var init_exec = __esm({
+  "src/core/exec.ts"() {
+    "use strict";
+    init_errors();
+    init_proc();
+    DEFAULT_EXEC_TIMEOUT_MS = 12e4;
+    DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+    DEFAULT_KILL_GRACE_MS = 2e3;
+    KILL_POLL_MS = 50;
+    TRUNCATION_MARKER = "[orbit: output truncated:";
+    Capture = class {
+      chunks = [];
+      bytes = 0;
+      dropped = 0;
+      max;
+      constructor(max) {
+        this.max = max;
+      }
+      push(chunk) {
+        const room = this.max - this.bytes;
+        if (room <= 0) {
+          this.dropped += chunk.length;
+          return;
+        }
+        if (chunk.length <= room) {
+          this.chunks.push(chunk);
+          this.bytes += chunk.length;
+          return;
+        }
+        this.chunks.push(chunk.subarray(0, room));
+        this.bytes += room;
+        this.dropped += chunk.length - room;
+      }
+      text() {
+        const buf = Buffer.concat(this.chunks);
+        if (this.dropped === 0) return buf.toString("utf8");
+        const head = new StringDecoder("utf8").write(buf);
+        return `${head}
+${TRUNCATION_MARKER} ${this.dropped} bytes dropped after the first ${this.max}]
+`;
+      }
+    };
+  }
+});
+
+// src/adapters/shim.ts
+import { spawn as spawn2, spawnSync as spawnSync2 } from "node:child_process";
+import { closeSync as closeSync4, existsSync as existsSync6, fstatSync as fstatSync2, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync7, readSync, rmSync, statSync as statSync3, unlinkSync, writeSync as writeSync2 } from "node:fs";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { StringDecoder as StringDecoder2 } from "node:string_decoder";
+import { tmpdir as tmpdir3 } from "node:os";
+import { basename as basename3, dirname as dirname5, isAbsolute as isAbsolute4, join as join8, resolve as resolve4 } from "node:path";
+function argvHash(argv2) {
+  return `sha256:${sha256(JSON.stringify(argv2))}`;
+}
+function readPidRecord(workerDir) {
+  return readRecord(join8(workerDir, PID_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number");
+}
+function readRegistration(workerDir) {
+  return readRecord(join8(workerDir, REGISTRATION_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number" && typeof o.registeredAt === "number");
+}
+function readExitRecord(workerDir) {
+  return readRecord(join8(workerDir, EXIT_FILE), (o) => typeof o.timedOut === "boolean" && typeof o.endedAt === "number");
+}
+function readRecord(path, check) {
+  let text2;
+  try {
+    text2 = readFileSync7(path, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const o = JSON.parse(text2);
+    return o !== null && typeof o === "object" && !Array.isArray(o) && check(o) ? o : null;
+  } catch {
+    return null;
+  }
+}
+function runShim(options) {
+  const host = { ...DEFAULT_HOST, ...options.host };
+  const pgid = host.pgidOf(process.pid);
+  if (pgid !== process.pid) {
+    throw new OrbitError("INTERNAL", `the shim must lead its own process group (pid ${process.pid}, pgid ${String(pgid)}); start it detached`);
+  }
+  if (options.argv.length === 0 || !options.argv[0]) throw new OrbitError("INTERNAL", "the shim needs a provider command");
+  return new Shim(options, pgid, host).run();
+}
+function isJsonLine(line3) {
+  const t = line3.trimStart();
+  if (!t.startsWith("{") && !t.startsWith("[")) return false;
+  try {
+    JSON.parse(line3);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isRemovable(p) {
+  if (!isAbsolute4(p) || !existsSync6(p)) return false;
+  const name = basename3(p);
+  if (!name.startsWith("orbit-")) return false;
+  const parent = dirname5(p);
+  return parent === tmpdir3() || parent === resolve4(tmpdir3()) || parent === "/tmp" || parent === "/private/tmp";
+}
+function readFrom(path, offset, max = 4 * 1024 * 1024) {
+  let fd;
+  try {
+    fd = openSync4(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const size = fstatSync2(fd).size;
+    const len = Math.max(0, Math.min(size - offset, max));
+    const buf = Buffer.alloc(len);
+    let read2 = 0;
+    while (read2 < len) {
+      const n2 = readSync(fd, buf, read2, len - read2, offset + read2);
+      if (n2 === 0) break;
+      read2 += n2;
+    }
+    return buf.subarray(0, read2);
+  } catch {
+    return null;
+  } finally {
+    safeClose(fd);
+  }
+}
+function macProcesses() {
+  if (process.platform !== "darwin") return null;
+  let r;
+  try {
+    r = spawnSync2("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart="], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
+      timeout: 1e4,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+  } catch {
+    return null;
+  }
+  if (r.error || r.status !== 0 || typeof r.stdout !== "string") return null;
+  const entries = [];
+  for (const line3 of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line3);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    const pgid = Number(m[3]);
+    const start = m[4].trim().replace(/\s+/g, " ");
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isSafeInteger(pgid) || pgid <= 0 || start === "") continue;
+    entries.push({ pid, ppid, pgid, start });
+  }
+  return entries;
+}
+function validEntry(entry) {
+  return Number.isSafeInteger(entry.pid) && entry.pid > 0 && Number.isSafeInteger(entry.ppid) && entry.ppid >= 0 && Number.isSafeInteger(entry.pgid) && entry.pgid > 0 && typeof entry.start === "string" && entry.start !== "";
+}
+function groupMembers(pgid, opts = {}) {
+  if ((opts.platform ?? process.platform) === "linux") {
+    const procDir = opts.procDir ?? "/proc";
+    let names;
+    try {
+      names = readdirSync3(procDir);
+    } catch {
+      return null;
+    }
+    return names.filter((n2) => /^\d+$/.test(n2)).map(Number).filter((pid) => readPgid(pid, { platform: "linux", procDir }) === pgid);
+  }
+  const r = spawnSync2("ps", ["-A", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
+  if (r.status !== 0 || typeof r.stdout !== "string") return null;
+  const out = [];
+  for (const line3 of r.stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line3);
+    if (m && Number(m[2]) === pgid && Number(m[1]) !== r.pid) out.push(Number(m[1]));
+  }
+  return out;
+}
+function readPgid(pid, opts = {}) {
+  try {
+    if ((opts.platform ?? process.platform) === "linux") {
+      const stat = readFileSync7(join8(opts.procDir ?? "/proc", String(pid), "stat"), "utf8");
+      const n3 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
+      return Number.isSafeInteger(n3) && n3 > 0 ? n3 : null;
+    }
+    const r = spawnSync2("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
+    const n2 = Number((r.stdout ?? "").trim());
+    return r.status === 0 && Number.isSafeInteger(n2) && n2 > 0 ? n2 : null;
+  } catch {
+    return null;
+  }
+}
+function pgidOf(pid, opts = {}) {
+  return readPgid(pid, opts) ?? (pid === process.pid && groupExists(pid) ? pid : null);
+}
+function groupExists(pgid) {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function safeStart(pid) {
+  try {
+    return processStartTime(pid);
+  } catch {
+    return null;
+  }
+}
+function safeClose(fd) {
+  try {
+    closeSync4(fd);
+  } catch {
+  }
+}
+function cleanEnv2(env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
+  return out;
+}
+function describe2(err) {
+  const code2 = err?.code;
+  return code2 ?? (err instanceof Error ? err.message : String(err));
+}
+function shimArgs(opts) {
+  const out = ["--worker-dir", opts.workerDir, "--timeout-ms", String(opts.timeoutMs)];
+  if (opts.launchToken) out.push(LAUNCH_TOKEN_FLAG, opts.launchToken);
+  if (opts.graceMs !== void 0) out.push("--grace-ms", String(opts.graceMs));
+  if (opts.sessionId) out.push("--session-id", opts.sessionId);
+  if (opts.stdinPath) out.push("--stdin", opts.stdinPath);
+  if (opts.cwd) out.push("--cwd", opts.cwd);
+  for (const p of opts.abortOn ?? []) out.push("--abort-on", JSON.stringify(p));
+  for (const p of opts.cleanupPaths ?? []) out.push("--cleanup", p);
+  return [...out, "--", ...opts.argv];
+}
+function parseShimArgs(args) {
+  const sep18 = args.indexOf("--");
+  if (sep18 === -1 || sep18 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
+  const opts = args.slice(0, sep18);
+  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep18 + 1) };
+  for (let i = 0; i < opts.length; i += 2) {
+    const flag = opts[i];
+    const value = opts[i + 1];
+    if (value === void 0) throw new OrbitError("CONFIG_INVALID", `orbit shim: ${flag} needs a value`);
+    switch (flag) {
+      case "--worker-dir":
+        out.workerDir = value;
+        break;
+      case "--timeout-ms":
+        out.timeoutMs = nonNegativeInt(flag, value);
+        break;
+      case "--grace-ms":
+        out.graceMs = nonNegativeInt(flag, value);
+        break;
+      case "--session-id":
+        out.sessionId = value;
+        break;
+      case "--stdin":
+        out.stdinPath = value;
+        break;
+      case "--cwd":
+        out.cwd = value;
+        break;
+      case "--abort-on": {
+        const p = JSON.parse(value);
+        if (p === null || typeof p !== "object" || Array.isArray(p) || !Object.values(p).every((v) => typeof v === "string")) {
+          throw new OrbitError("CONFIG_INVALID", "orbit shim: --abort-on takes a JSON object of string fields");
+        }
+        out.abortOn.push(p);
+        break;
+      }
+      case "--cleanup":
+        out.cleanupPaths.push(value);
+        break;
+      case LAUNCH_TOKEN_FLAG:
+        out.launchToken = value;
+        break;
+      default:
+        throw new OrbitError("CONFIG_INVALID", `orbit shim: unknown option ${flag}`);
+    }
+  }
+  if (!out.workerDir || !isAbsolute4(out.workerDir)) throw new OrbitError("CONFIG_INVALID", "orbit shim: --worker-dir must be an absolute path");
+  return out;
+}
+function nonNegativeInt(flag, value) {
+  const n2 = Number(value);
+  if (!Number.isSafeInteger(n2) || n2 < 0) throw new OrbitError("CONFIG_INVALID", `orbit shim: ${flag} must be a non-negative integer`);
+  return n2;
+}
+async function shimMain(args, host) {
+  let parsed3;
+  try {
+    parsed3 = parseShimArgs(args);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}
+`);
+    return 2;
+  }
+  await runShim({
+    workerDir: parsed3.workerDir,
+    argv: parsed3.argv,
+    env: process.env,
+    cwd: parsed3.cwd ?? process.cwd(),
+    timeoutMs: parsed3.timeoutMs,
+    graceMs: parsed3.graceMs,
+    sessionId: parsed3.sessionId,
+    stdinPath: parsed3.stdinPath,
+    abortOn: parsed3.abortOn,
+    cleanupPaths: parsed3.cleanupPaths,
+    launchToken: parsed3.launchToken,
+    ...host ? { host } : {}
+  });
+  return 0;
+}
+var PID_FILE, REGISTRATION_FILE, EXIT_FILE, LAUNCH_TOKEN_FLAG, CANCEL_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
+var init_shim = __esm({
+  "src/adapters/shim.ts"() {
+    "use strict";
+    init_errors();
+    init_fsx();
+    init_hash();
+    init_proc();
+    init_redact();
+    PID_FILE = "pid.json";
+    REGISTRATION_FILE = "registration.json";
+    EXIT_FILE = "exit.json";
+    LAUNCH_TOKEN_FLAG = "--launch-token";
+    CANCEL_FILE = "cancel.json";
+    LOG_FILE = "log.jsonl";
+    STDERR_FILE = "stderr.log";
+    SHIM_LOG_FILE = "shim.log";
+    DEFAULT_GRACE_MS = 5e3;
+    ABORT_POLL_MS = 200;
+    FIRST_OUTPUT_POLL_MS = 25;
+    LEFTOVER_GRACE_MS = 1e3;
+    DESCENDANT_POLL_MS = 100;
+    OUTPUT_POLL_MS = 20;
+    OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
+    ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
+    MAX_TIMER_MS = 2147483647;
+    DEFAULT_HOST = {
+      pgidOf: (pid) => pgidOf(pid),
+      signalGroup: (pgid, signal) => {
+        process.kill(-pgid, signal);
+      },
+      signalProcess: (pid, signal) => {
+        process.kill(pid, signal);
+      },
+      groupMembers: (pgid) => groupMembers(pgid),
+      processes: () => macProcesses(),
+      onSignal: (signal, listener) => {
+        process.on(signal, listener);
+      }
+    };
+    Shim = class {
+      o;
+      pgid;
+      host;
+      clock;
+      graceMs;
+      workerDir;
+      startedAt;
+      child = null;
+      timedOut = false;
+      cancelled = false;
+      aborted = null;
+      escalation = [];
+      escalating = false;
+      // Signals the shim sent to its own group and will therefore receive itself;
+      // the handlers swallow that many before treating one as external.
+      selfSent = { SIGINT: 0, SIGTERM: 0 };
+      timers = /* @__PURE__ */ new Set();
+      finished = false;
+      childExited = false;
+      settle = null;
+      logOffset = 0;
+      /** Size of the log when the provider started; output beyond it is the provider's. */
+      logStartSize = 0;
+      firstOutputAt = null;
+      logCarry = "";
+      redactor;
+      spills = [];
+      /** macOS has no PID namespace, so remember descendants that leave the shim's group. */
+      descendants;
+      descendantSweep = null;
+      constructor(options, pgid, host) {
+        this.o = options;
+        this.pgid = pgid;
+        this.host = host;
+        this.clock = options.clock ?? { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+        this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
+        this.workerDir = resolve4(options.workerDir);
+        this.startedAt = this.clock.now();
+        this.redactor = createRedactor({ env: cleanEnv2(options.env) });
+        this.descendants = process.platform === "darwin" ? new DescendantTracker(this.host, this.pgid) : null;
+      }
+      run() {
+        return new Promise((resolvePromise) => {
+          this.settle = resolvePromise;
+          for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) this.host.onSignal(sig, () => this.onSignal(sig));
+          this.start();
+        });
+      }
+      start() {
+        try {
+          this.register();
+        } catch (err) {
+          this.finishWithoutChild(`could not register the shim before starting the provider: ${describe2(err)}`);
+          return;
+        }
+        const [command, ...args] = this.o.argv;
+        const fds = [];
+        let child;
+        try {
+          const log = openSync4(join8(this.workerDir, LOG_FILE), "a", 384);
+          fds.push(log);
+          const errLog = openSync4(join8(this.workerDir, STDERR_FILE), "a", 384);
+          fds.push(errLog);
+          let stdin = "ignore";
+          if (this.o.stdinPath) {
+            stdin = openSync4(this.o.stdinPath, "r");
+            fds.push(stdin);
+          }
+          try {
+            this.logOffset = statSync3(join8(this.workerDir, LOG_FILE)).size;
+          } catch {
+            this.logOffset = 0;
+          }
+          this.logStartSize = this.logOffset;
+          this.spills = [new Spill(this.openSpill("out"), this.sinkFor(log)), new Spill(this.openSpill("err"), this.sinkFor(errLog))];
+          child = spawn2(command, args, { cwd: this.o.cwd, env: cleanEnv2(this.o.env), stdio: [stdin, this.spills[0].fd, this.spills[1].fd], windowsHide: true });
+        } catch (err) {
+          this.closeOutput();
+          this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
+          return;
+        } finally {
+          for (const fd of fds) if (!this.spills.some((sp) => sp.sink.fd === fd)) safeClose(fd);
+        }
+        this.child = child;
+        this.pumpLater();
+        child.once("error", (err) => {
+          if (child.pid === void 0) {
+            this.closeOutput();
+            this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
+          }
+        });
+        if (child.pid === void 0) return;
+        child.once("exit", (code2, signal) => void this.onChildExit(code2, signal));
+        this.writePid(child);
+        this.descendants?.start(child.pid);
+        this.watchDescendants();
+        this.watchFirstOutput();
+        if (this.o.timeoutMs > 0) {
+          this.later(this.o.timeoutMs, () => {
+            this.timedOut = true;
+            void this.escalate(0, false);
+          });
+        }
+        if (this.o.abortOn && this.o.abortOn.length > 0) this.watchForAbort();
+      }
+      onSignal(sig) {
+        if (sig !== "SIGHUP" && this.selfSent[sig] > 0) {
+          this.selfSent[sig]--;
+          return;
+        }
+        if (this.finished) return;
+        this.cancelled = true;
+        const forward = sig === "SIGHUP" ? "SIGTERM" : sig;
+        try {
+          this.child?.kill(forward);
+        } catch {
+        }
+        void this.escalate(sig === "SIGINT" ? 1 : 2, true);
+      }
+      /**
+       * Signal the group from stage `from` on, waiting graceMs between stages,
+       * until the provider exits. With `waitFirst` the grace period runs before
+       * the first signal (a signal from outside already started the sequence).
+       */
+      async escalate(from, waitFirst) {
+        if (this.escalating || this.finished) return;
+        this.escalating = true;
+        this.descendants?.capture();
+        if (waitFirst) await this.clock.sleep(this.graceMs);
+        for (let i = from; i < ESCALATION.length; i++) {
+          if (this.finished || this.childExited) return;
+          const sig = ESCALATION[i];
+          if (sig === "SIGKILL") {
+            await this.killGroupAndFinish(null, "SIGKILL", true);
+            return;
+          }
+          this.signalGroup(sig);
+          await this.clock.sleep(this.graceMs);
+        }
+      }
+      signalGroup(sig) {
+        this.escalation.push(sig);
+        this.selfSent[sig]++;
+        try {
+          this.host.signalGroup(this.pgid, sig);
+        } catch {
+          this.selfSent[sig]--;
+        }
+      }
+      async onChildExit(code2, signal) {
+        if (this.finished) return;
+        this.childExited = true;
+        await this.sweepEscapedDescendants();
+        const leftovers = this.leftovers();
+        if (leftovers === null) {
+          this.closeOutput();
+          const rec2 = this.record(code2, signal, null);
+          this.persist(rec2);
+          try {
+            this.host.signalGroup(this.pgid, "SIGKILL");
+          } catch {
+          }
+          this.finish(rec2, false);
+          return;
+        }
+        if (leftovers) {
+          this.signalGroup("SIGTERM");
+          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
+          while (this.clock.now() < deadline && this.leftovers() !== false) await this.clock.sleep(50);
+          if (this.leftovers() !== false) {
+            await this.killGroupAndFinish(code2, signal);
+            return;
+          }
+        }
+        this.closeOutput();
+        this.finish(this.record(code2, signal, null));
+      }
+      /** An anonymous file the provider writes one stream to: created in the worker directory and unlinked at once, so it is no artifact. */
+      openSpill(name) {
+        const path = join8(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes2(4).toString("hex")}`);
+        const fd = openSync4(path, "a+", 384);
+        try {
+          unlinkSync(path);
+        } catch {
+        }
+        return fd;
+      }
+      sinkFor(fd) {
+        return new LineSink(fd, (line3) => this.redactLine(line3));
+      }
+      /** Move what the provider has written so far, redacted, into the artifacts; at most a bounded amount per call. */
+      pumpOutput(limit) {
+        for (const sp of this.spills) sp.pump(limit);
+      }
+      pumpLater() {
+        this.later(OUTPUT_POLL_MS, () => {
+          if (this.finished || this.spills.length === 0) return;
+          this.pumpOutput(OUTPUT_PUMP_BYTES);
+          this.pumpLater();
+        });
+      }
+      /**
+       * One line of provider output with every secret removed. A line that is a JSON document is redacted by value
+       * and written back as JSON, so a replacement can never break its quoting; any other line is redacted as text.
+       */
+      redactLine(line3) {
+        const t = line3.trimStart();
+        if (t.startsWith("{") || t.startsWith("[")) {
+          try {
+            const value = JSON.parse(line3);
+            const before = JSON.stringify(value);
+            const after = JSON.stringify(redactValue(value, this.redactor.redact));
+            if (after !== before) return after;
+            const text2 = this.redactor.redact(line3);
+            if (text2 === line3) return line3;
+            try {
+              JSON.parse(text2);
+              return text2;
+            } catch {
+              return JSON.stringify({ type: "orbit_redacted_line" });
+            }
+          } catch {
+          }
+        }
+        return this.redactor.redact(line3);
+      }
+      /** Write everything the provider produced, redacted, flush the unterminated tails and close the files. */
+      closeOutput() {
+        const spills = this.spills;
+        this.spills = [];
+        for (const sp of spills) {
+          sp.pump(Infinity);
+          sp.sink.flush();
+          safeClose(sp.fd);
+          safeClose(sp.sink.fd);
+        }
+      }
+      /**
+       * Write exit.json first: SIGKILL to the group ends the shim too. `code` and
+       * `signal` are the provider's own exit when it already ended and only
+       * leftovers are being killed; otherwise the provider dies by this SIGKILL.
+       */
+      async killGroupAndFinish(code2, signal, providerKilled = false) {
+        await this.sweepEscapedDescendants();
+        this.escalation.push("SIGKILL");
+        this.closeOutput();
+        const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
+        this.persist(rec2);
+        try {
+          this.host.signalGroup(this.pgid, "SIGKILL");
+        } catch {
+        }
+        this.finish(rec2, false);
+      }
+      /** Start a macOS-only descendant scan after the provider's pid is known. */
+      watchDescendants() {
+        const descendants = this.descendants;
+        if (!descendants) return;
+        this.later(DESCENDANT_POLL_MS, () => {
+          if (this.finished) return;
+          descendants.capture();
+          this.watchDescendants();
+        });
+      }
+      /**
+       * End process groups that a provider descendant moved out of the shim's
+       * group. The first pass is polite; a process that ignores it gets SIGKILL.
+       * A pid is used only while the process table proves its original start time,
+       * so a reused pid cannot make Orbit signal an unrelated process.
+       */
+      async sweepEscapedDescendants() {
+        if (!this.descendants) return;
+        if (this.descendantSweep) return this.descendantSweep;
+        const sweep = this.stopEscapedDescendants();
+        this.descendantSweep = sweep;
+        try {
+          await sweep;
+        } finally {
+          if (this.descendantSweep === sweep) this.descendantSweep = null;
+        }
+      }
+      async stopEscapedDescendants() {
+        this.descendants.capture();
+        for (const signal of ["SIGTERM", "SIGKILL"]) {
+          const { groups, pids } = this.descendants.escapedTargets();
+          if (groups.length === 0 && pids.length === 0) return;
+          for (const pgid of groups) {
+            try {
+              this.host.signalGroup(pgid, signal);
+            } catch {
+            }
+          }
+          for (const pid of pids) {
+            try {
+              this.host.signalProcess?.(pid, signal);
+            } catch {
+            }
+          }
+          if (signal === "SIGKILL") return;
+          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
+          while (this.clock.now() < deadline) {
+            await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
+            this.descendants.capture();
+            const left = this.descendants.escapedTargets();
+            if (left.groups.length === 0 && left.pids.length === 0) return;
+          }
+        }
+      }
+      /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
+      finishWithoutChild(error) {
+        if (!existsSync6(join8(this.workerDir, PID_FILE))) this.writePid(null);
+        this.finish(this.record(null, null, error));
+      }
+      register() {
+        const record = {
+          version: 1,
+          token: this.o.launchToken ?? null,
+          shimPid: process.pid,
+          shimStart: safeStart(process.pid),
+          pgid: this.pgid,
+          registeredAt: this.startedAt
+        };
+        atomicWriteJson(join8(this.workerDir, REGISTRATION_FILE), record, 384);
+      }
+      writePid(child) {
+        const pid = {
+          version: 1,
+          shimPid: process.pid,
+          shimStart: safeStart(process.pid),
+          pgid: this.pgid,
+          childPid: child?.pid ?? null,
+          childStart: child?.pid ? safeStart(child.pid) : null,
+          sessionId: this.o.sessionId ?? null,
+          argvHash: argvHash(this.o.argv),
+          startedAt: this.startedAt
+        };
+        atomicWriteJson(join8(this.workerDir, PID_FILE), pid, 384);
+      }
+      record(code2, signal, error) {
+        this.noteFirstOutput();
+        return {
+          version: 1,
+          code: code2,
+          signal,
+          timedOut: this.timedOut,
+          // cancelShim persists this intent before it signals the group. The
+          // provider's exit callback can run before Node dispatches SIGINT to the
+          // shim, so the durable intent closes that event-order race.
+          cancelled: this.cancelled || existsSync6(join8(this.workerDir, CANCEL_FILE)),
+          aborted: this.aborted,
+          escalation: [...this.escalation],
+          error,
+          startedAt: this.startedAt,
+          firstOutputAt: this.firstOutputAt,
+          endedAt: this.clock.now()
+        };
+      }
+      persist(rec2) {
+        atomicWriteJson(join8(this.workerDir, EXIT_FILE), rec2, 384);
+        this.cleanup();
+      }
+      finish(rec2, write2 = true) {
+        if (this.finished) return;
+        this.finished = true;
+        for (const t of this.timers) clearTimeout(t);
+        this.timers.clear();
+        if (write2) this.persist(rec2);
+        this.settle?.(rec2);
+      }
+      cleanup() {
+        for (const p of this.o.cleanupPaths ?? []) {
+          if (!isRemovable(p)) continue;
+          try {
+            rmSync(p, { recursive: true, force: true });
+          } catch {
+          }
+        }
+      }
+      /** Whether anything besides the shim is in its group; null when the members cannot be listed (ps refused). */
+      leftovers() {
+        const members = this.host.groupMembers(this.pgid);
+        return members === null ? null : members.some((p) => p !== process.pid);
+      }
+      later(ms, fn) {
+        if (ms > MAX_TIMER_MS) {
+          this.later(MAX_TIMER_MS, () => this.later(ms - MAX_TIMER_MS, fn));
+          return;
+        }
+        const t = setTimeout(() => {
+          this.timers.delete(t);
+          fn();
+        }, ms);
+        this.timers.add(t);
+      }
+      /** Note the moment the provider first wrote to the log, for the model's time-to-first-event latency. */
+      noteFirstOutput() {
+        if (this.firstOutputAt !== null) return;
+        try {
+          if (statSync3(join8(this.workerDir, LOG_FILE)).size > this.logStartSize) this.firstOutputAt = this.clock.now();
+        } catch {
+        }
+      }
+      watchFirstOutput() {
+        this.later(FIRST_OUTPUT_POLL_MS, () => {
+          if (this.finished) return;
+          this.noteFirstOutput();
+          if (this.firstOutputAt === null) this.watchFirstOutput();
+        });
+      }
+      watchForAbort() {
+        this.later(ABORT_POLL_MS, () => {
+          if (this.finished || this.escalating) return;
+          const hit = this.scanLog();
+          if (hit) {
+            this.aborted = hit;
+            void this.escalate(0, false);
+            return;
+          }
+          this.watchForAbort();
+        });
+      }
+      /** Read new complete lines of the provider's stdout and test them against the abort patterns. */
+      scanLog() {
+        const buf = readFrom(join8(this.workerDir, LOG_FILE), this.logOffset);
+        if (!buf) return null;
+        this.logOffset += buf.length;
+        const text2 = this.logCarry + buf.toString("utf8");
+        const lines = text2.split("\n");
+        this.logCarry = lines.pop() ?? "";
+        for (const line3 of lines) {
+          if (!line3.startsWith("{")) continue;
+          let o;
+          try {
+            o = JSON.parse(line3);
+          } catch {
+            continue;
+          }
+          if (o === null || typeof o !== "object") continue;
+          for (const pattern of this.o.abortOn ?? []) {
+            if (Object.entries(pattern).every(([k, v]) => o[k] === v)) return JSON.stringify(pattern);
+          }
+        }
+        return null;
+      }
+    };
+    MAX_PENDING_LINE = 64 * 1024 * 1024;
+    PENDING_OVERLAP = 8 * 1024;
+    MAX_KEY_BLOCK_LINES = 200;
+    KEY_MARKER = "[REDACTED:private-key]";
+    KEY_HEADER = /-----BEGIN([A-Z0-9 ]{0,40}) PRIVATE KEY( BLOCK)?-----/;
+    LineSink = class {
+      fd;
+      decoder = new StringDecoder2("utf8");
+      pending = "";
+      redact;
+      keyBlock = null;
+      constructor(fd, redact2) {
+        this.fd = fd;
+        this.redact = redact2;
+      }
+      write(chunk) {
+        this.pending += this.decoder.write(chunk);
+        let start = 0;
+        for (let nl = this.pending.indexOf("\n", start); nl !== -1; nl = this.pending.indexOf("\n", start)) {
+          this.emit(this.pending.slice(start, nl), true);
+          start = nl + 1;
+        }
+        this.pending = this.pending.slice(start);
+        if (this.pending.length > MAX_PENDING_LINE) {
+          this.emit(this.pending.slice(0, this.pending.length - PENDING_OVERLAP), false);
+          this.pending = this.pending.slice(this.pending.length - PENDING_OVERLAP);
+        }
+      }
+      flush() {
+        this.pending += this.decoder.end();
+        if (this.pending.length > 0) this.emit(this.pending, false);
+        this.pending = "";
+      }
+      emit(line3, terminated) {
+        const eol = terminated ? "\n" : "";
+        const block2 = this.keyBlock;
+        if (block2) {
+          this.dropFromKeyBlock(block2, line3, eol);
+          return;
+        }
+        const header2 = line3.includes("PRIVATE KEY") ? KEY_HEADER.exec(line3) : null;
+        if (header2 && !isJsonLine(line3)) {
+          const footer = `-----END${header2[1]} PRIVATE KEY${header2[2] ?? ""}-----`;
+          if (!line3.includes(footer, header2.index + header2[0].length)) {
+            this.keyBlock = { footer, dropped: 0, endless: false };
+            this.put(this.redact(line3.slice(0, header2.index)) + KEY_MARKER + eol);
+            return;
+          }
+        }
+        this.put(this.redact(line3) + eol);
+      }
+      dropFromKeyBlock(block2, line3, eol) {
+        if (block2.endless) return;
+        if (line3.includes(block2.footer)) {
+          this.keyBlock = null;
+          return;
+        }
+        block2.dropped++;
+        if (block2.dropped >= MAX_KEY_BLOCK_LINES) {
+          block2.endless = true;
+          this.put(`${KEY_MARKER} no END line within ${MAX_KEY_BLOCK_LINES} lines; the rest of this stream is suppressed${eol}`);
+        }
+      }
+      put(text2) {
+        try {
+          const buf = Buffer.from(text2, "utf8");
+          let off = 0;
+          while (off < buf.length) off += writeSync2(this.fd, buf, off, buf.length - off);
+        } catch {
+        }
+      }
+    };
+    Spill = class {
+      fd;
+      sink;
+      pos = 0;
+      constructor(fd, sink) {
+        this.fd = fd;
+        this.sink = sink;
+      }
+      pump(limit) {
+        let moved = 0;
+        const buf = Buffer.alloc(1024 * 1024);
+        while (moved < limit) {
+          let size;
+          try {
+            size = fstatSync2(this.fd).size;
+          } catch {
+            return;
+          }
+          if (this.pos >= size) return;
+          let n2 = 0;
+          try {
+            n2 = readSync(this.fd, buf, 0, Math.min(buf.length, size - this.pos), this.pos);
+          } catch {
+            return;
+          }
+          if (n2 <= 0) return;
+          this.pos += n2;
+          moved += n2;
+          this.sink.write(buf.subarray(0, n2));
+        }
+      }
+    };
+    DescendantTracker = class {
+      rootPid = null;
+      seen = /* @__PURE__ */ new Map();
+      live = /* @__PURE__ */ new Map();
+      host;
+      shimPgid;
+      constructor(host, shimPgid) {
+        this.host = host;
+        this.shimPgid = shimPgid;
+      }
+      start(pid) {
+        this.rootPid = pid;
+        this.capture();
+      }
+      /** Snapshot the live tree and add every descendant reachable from a remembered process. */
+      capture() {
+        const entries = this.host.processes?.();
+        if (!entries) return false;
+        this.live.clear();
+        const children = /* @__PURE__ */ new Map();
+        for (const entry of entries) {
+          if (!validEntry(entry)) continue;
+          this.live.set(entry.pid, entry);
+          const siblings = children.get(entry.ppid);
+          if (siblings) siblings.push(entry);
+          else children.set(entry.ppid, [entry]);
+        }
+        const queue = [];
+        const queued = /* @__PURE__ */ new Set();
+        const addKnown = (entry) => {
+          const known = this.seen.get(entry.pid);
+          if (known && known.start !== entry.start) return;
+          if (!known) this.seen.set(entry.pid, entry);
+          if (!queued.has(entry.pid)) {
+            queued.add(entry.pid);
+            queue.push(entry.pid);
+          }
+        };
+        if (this.rootPid !== null) {
+          const root = this.live.get(this.rootPid);
+          if (root) addKnown(root);
+        }
+        for (const [pid, known] of this.seen) {
+          const current = this.live.get(pid);
+          if (current && current.start === known.start) addKnown(current);
+        }
+        for (let at = 0; at < queue.length; at++) {
+          const pid = queue[at];
+          for (const child of children.get(pid) ?? []) addKnown(child);
+        }
+        return true;
+      }
+      /**
+       * What to signal for each remembered, live descendant outside the shim group.
+       * A group is signalled whole only when its leader is itself a remembered
+       * descendant; a descendant that joined a group someone else leads is
+       * signalled alone, so the sweep never reaches that group's other members.
+       */
+      escapedTargets() {
+        const alive = (pid) => {
+          const known = this.seen.get(pid);
+          const current = this.live.get(pid);
+          return known && current && current.start === known.start ? current : null;
+        };
+        const groups = /* @__PURE__ */ new Set();
+        const pids = /* @__PURE__ */ new Set();
+        for (const pid of this.seen.keys()) {
+          const current = alive(pid);
+          if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
+          if (alive(current.pgid)) groups.add(current.pgid);
+          else pids.add(current.pid);
+        }
+        const ascending = (a, b) => a - b;
+        return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
+      }
+    };
+  }
+});
+
+// src/adapters/supervise.ts
+import { createHash as createHash2, randomBytes as randomBytes3 } from "node:crypto";
+import { existsSync as existsSync7, mkdirSync as mkdirSync3, renameSync as renameSync2 } from "node:fs";
+import { join as join9 } from "node:path";
+async function launchShim(input) {
+  const clock = input.clock ?? systemClock;
+  mkdirSync3(input.workerDir, { recursive: true, mode: 448 });
+  if (existsSync7(join9(input.workerDir, LAUNCH_FILE))) return reattachLaunch(input.provider, input.workerDir, input.workerId, clock);
+  const launch = {
+    version: 1,
+    provider: input.provider,
+    workerId: input.workerId,
+    argvHash: argvHash(input.argv),
+    sessionId: input.sessionId ?? null,
+    requestedAt: clock.now(),
+    token: randomBytes3(16).toString("hex"),
+    ...input.meta ? { meta: input.meta } : {}
+  };
+  atomicWriteJson(join9(input.workerDir, LAUNCH_FILE), launch, 384);
+  const args = shimArgs({
+    workerDir: input.workerDir,
+    timeoutMs: input.timeoutMs,
+    graceMs: input.graceMs,
+    sessionId: input.sessionId,
+    stdinPath: input.stdinPath,
+    cwd: input.cwd,
+    abortOn: input.abortOn,
+    cleanupPaths: input.cleanupPaths,
+    launchToken: launch.token,
+    argv: input.argv
+  });
+  const shimLog = join9(input.workerDir, SHIM_LOG_FILE);
+  const { pid } = spawnDetached([...input.shimCommand, ...args], { cwd: input.cwd, env: input.env, stdoutPath: shimLog, stderrPath: shimLog });
+  const procStart = recordShimIdentity(input.workerDir, launch, pid);
+  const handle = await waitForHandle(input.provider, input.workerDir, pid, clock);
+  if (handle) return handle;
+  const stopped = await stopLaunchedShim(pid, procStart, input.graceMs ?? DEFAULT_STOP_GRACE_MS) !== "unknown";
+  throw new OrbitError("PROVIDER_UNAVAILABLE", `worker shim for ${input.workerId} did not start (see ${shimLog})${stopped ? "" : `; its process ${pid} could not be confirmed stopped`}`, { workerId: input.workerId, shimLog, ...stopped ? {} : { shimPid: pid } });
+}
+function recordShimIdentity(workerDir, launch, pid) {
+  let procStart = null;
+  try {
+    procStart = processStartTime(pid);
+  } catch {
+    procStart = null;
+  }
+  try {
+    atomicWriteJson(join9(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 384);
+  } catch {
+  }
+  return procStart;
+}
+function isShimCommandLine(commandLine, workerDir, token) {
+  const padded = ` ${commandLine} `;
+  return token !== null ? padded.includes(` ${LAUNCH_TOKEN_FLAG} ${token} `) : padded.includes(` --worker-dir ${workerDir} --timeout-ms `);
+}
+function launchedShimState(pid, procStart, unrecordedStart) {
+  let running;
+  try {
+    running = isAlive(pid);
+    if (running && procStart !== null) return isAlive(pid, procStart) ? "ours" : "gone";
+  } catch {
+    return "unknown";
+  }
+  if (running) {
+    const own = unrecordedStart?.(pid) ?? "unknown";
+    if (own === "ours" || own === "unknown") return own;
+    if (own === "foreign") return "gone";
+  }
+  try {
+    return isGroupAlive(pid) ? "ours" : "gone";
+  } catch {
+    return "unknown";
+  }
+}
+async function stopLaunchedShim(pid, procStart, graceMs, unrecordedStart) {
+  const first = launchedShimState(pid, procStart, unrecordedStart);
+  if (first !== "ours") return first;
+  try {
+    await terminateGroup(pid, graceMs);
+  } catch {
+    return "unknown";
+  }
+  return launchedShimState(pid, procStart, unrecordedStart) === "gone" ? "stopped" : "unknown";
+}
+async function reattachLaunch(provider, workerDir, workerId, clock = systemClock) {
+  const handle = await waitForHandle(provider, workerDir, null, clock);
+  if (handle && taskState(handle).state === "running") return handle;
+  throw new OrbitError("TRANSITION_INVALID", `worker ${workerId} was already launched in ${workerDir} and is no longer running; archive the attempt before starting another`, {
+    workerId,
+    workerDir
+  });
+}
+async function waitForHandle(provider, workerDir, shimPid, clock) {
+  const deadline = clock.now() + PID_WAIT_MS;
+  for (; ; ) {
+    const handle = handleFromWorkerDir(provider, workerDir);
+    if (handle) return handle;
+    if (shimPid !== null && !isAlive(shimPid) && !existsSync7(join9(workerDir, PID_FILE))) return null;
+    if (clock.now() >= deadline) return null;
+    await clock.sleep(25);
+  }
+}
+function handleFromWorkerDir(provider, workerDir) {
+  const pid = readPidRecord(workerDir);
+  if (!pid) return null;
+  return {
+    provider,
+    workerId: readJsonIfExists(join9(workerDir, LAUNCH_FILE))?.workerId ?? "",
+    workerDir,
+    pid: pid.shimPid,
+    pgid: pid.pgid,
+    procStart: pid.shimStart,
+    logPath: join9(workerDir, LOG_FILE),
+    exitPath: join9(workerDir, EXIT_FILE)
+  };
+}
+function timeToFirstEventMs(exit) {
+  if (!exit || typeof exit.firstOutputAt !== "number" || typeof exit.startedAt !== "number") return null;
+  return Math.max(0, exit.firstOutputAt - exit.startedAt);
+}
+function withWorkerTelemetry(usage, workerDir, finalAnswer) {
+  const meta = readJsonIfExists(join9(workerDir, LAUNCH_FILE))?.meta;
+  const budget = meta && typeof meta.outputBudgetTokens === "number" ? meta.outputBudgetTokens : null;
+  const final = finalOutputTokens(finalAnswer !== void 0 ? finalAnswer : readJsonIfExists(join9(workerDir, "result.json"))?.structured);
+  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget, finalOutputTokens: final };
+}
+function finalOutputTokens(finalAnswer) {
+  if (finalAnswer === void 0 || finalAnswer === null) return null;
+  const json3 = JSON.stringify(finalAnswer);
+  return json3 === void 0 ? null : Math.ceil(json3.length / 4);
+}
+function taskState(handle) {
+  const pid = readPidRecord(handle.workerDir);
+  const exit = readExitRecord(handle.workerDir);
+  if (exit) return { state: "exited", exit, pid };
+  if (shimAlive(handle)) return { state: "running", pid };
+  const late = readExitRecord(handle.workerDir);
+  if (late) return { state: "exited", exit: late, pid };
+  return { state: "lost", pid, orphans: childAlive(pid) || leftoverGroup(handle.pgid), cancelRequested: existsSync7(join9(handle.workerDir, CANCEL_FILE)) };
+}
+function leftoverGroup(pgid) {
+  try {
+    return !isAlive(pgid) && isGroupAlive(pgid);
+  } catch {
+    return true;
+  }
+}
+function shimAlive(handle) {
+  try {
+    return isAlive(handle.pid, handle.procStart);
+  } catch {
+    return true;
+  }
+}
+function childAlive(pid) {
+  if (!pid || pid.childPid === null) return false;
+  try {
+    return isAlive(pid.childPid, pid.childStart);
+  } catch {
+    return true;
+  }
+}
+async function cancelShim(handle, graceMs, clock = systemClock) {
+  if (!existsSync7(join9(handle.workerDir, CANCEL_FILE))) {
+    atomicWriteJson(join9(handle.workerDir, CANCEL_FILE), { version: 1, requestedAt: clock.now() }, 384);
+  }
+  const pid = readPidRecord(handle.workerDir);
+  if (!shimAliveStrict(handle) && !childAlive(pid) && !leftoverGroupStrict(handle.pgid)) return;
+  if (!isGroupAlive(handle.pgid)) return;
+  await terminateGroup(handle.pgid, graceMs, { clock });
+}
+function leftoverGroupStrict(pgid) {
+  try {
+    return !isAlive(pgid) && isGroupAlive(pgid);
+  } catch {
+    return false;
+  }
+}
+function shimAliveStrict(handle) {
+  if (handle.procStart === null) return false;
+  try {
+    return isAlive(handle.pid, handle.procStart);
+  } catch {
+    return false;
+  }
+}
+function readLogLines(path, maxBytes = 64 * 1024 * 1024) {
+  const buf = readFrom(path, 0, maxBytes);
+  return parseJsonLines(buf ? buf.toString("utf8") : "");
+}
+function parseJsonLines(text2) {
+  const out = { events: [], malformed: [], malformedTail: false };
+  for (const raw of text2.split("\n")) {
+    const line3 = raw.trim();
+    if (!line3) continue;
+    const o = tryParse(line3);
+    if (o) {
+      out.events.push(o);
+      out.malformedTail = false;
+    } else {
+      out.malformed.push(line3.length > 200 ? `${line3.slice(0, 200)}...` : line3);
+      out.malformedTail = true;
+    }
+  }
+  return out;
+}
+function readNewLines(path, offset) {
+  const buf = readFrom(path, offset);
+  if (!buf || buf.length === 0) return { lines: [], nextOffset: offset };
+  const end = buf.lastIndexOf(10);
+  if (end === -1) return { lines: [], nextOffset: offset };
+  const lines = [];
+  for (const raw of buf.subarray(0, end).toString("utf8").split("\n")) {
+    const o = tryParse(raw.trim());
+    if (o) lines.push(o);
+  }
+  return { lines, nextOffset: offset + end + 1 };
+}
+function tryParse(line3) {
+  if (!line3.startsWith("{")) return null;
+  try {
+    const o = JSON.parse(line3);
+    return o !== null && typeof o === "object" && !Array.isArray(o) ? o : null;
+  } catch {
+    return null;
+  }
+}
+function archiveAttempt(provider, workerDir) {
+  const handle = handleFromWorkerDir(provider, workerDir);
+  const st = handle ? taskState(handle) : null;
+  if (st?.state === "running") {
+    throw new OrbitError("TRANSITION_INVALID", `the attempt in ${workerDir} is still running; cancel it before archiving`, { workerDir });
+  }
+  if (st?.state === "lost" && st.orphans) {
+    throw new OrbitError("TRANSITION_INVALID", `the shim of the attempt in ${workerDir} is gone but its provider process is still running; cancel it before archiving`, { workerDir });
+  }
+  const files = ATTEMPT_FILES.filter((f) => existsSync7(join9(workerDir, f)));
+  if (files.length === 0) return null;
+  let n2 = 1;
+  while (existsSync7(join9(workerDir, "attempts", String(n2)))) n2++;
+  const dest = join9(workerDir, "attempts", String(n2));
+  mkdirSync3(dest, { recursive: true, mode: 448 });
+  for (const f of files) renameSync2(join9(workerDir, f), join9(dest, f));
+  return dest;
+}
+function archivedAttempts(workerDir) {
+  let n2 = 0;
+  while (existsSync7(join9(workerDir, "attempts", String(n2 + 1)))) n2++;
+  return n2;
+}
+function nextSessionId(workerId, workerDir) {
+  return sessionIdFor(workerId, archivedAttempts(workerDir));
+}
+function sessionIdFor(workerId, attempt = 0) {
+  const h = createHash2("sha256").update(`orbit-session:${workerId}:${attempt}`).digest();
+  h[6] = h[6] & 15 | 64;
+  h[8] = h[8] & 63 | 128;
+  const x = h.subarray(0, 16).toString("hex");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
+}
+var LAUNCH_FILE, PID_WAIT_MS, DEFAULT_STOP_GRACE_MS, ATTEMPT_FILES;
+var init_supervise = __esm({
+  "src/adapters/supervise.ts"() {
+    "use strict";
+    init_clock();
+    init_errors();
+    init_exec();
+    init_fsx();
+    init_proc();
+    init_shim();
+    LAUNCH_FILE = "launch.json";
+    PID_WAIT_MS = 15e3;
+    DEFAULT_STOP_GRACE_MS = 2e3;
+    ATTEMPT_FILES = [
+      LAUNCH_FILE,
+      REGISTRATION_FILE,
+      PID_FILE,
+      EXIT_FILE,
+      LOG_FILE,
+      STDERR_FILE,
+      SHIM_LOG_FILE,
+      CANCEL_FILE,
+      "result.json",
+      "prompt.md",
+      "system.md",
+      "settings.json",
+      "schema.json",
+      "last-message.json"
+    ];
+  }
+});
+
+// src/scheduling/turn-cap.ts
+function percentile(values, p) {
+  const xs = values.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const rank = Math.max(1, Math.ceil(p * xs.length));
+  return xs[Math.min(rank, xs.length) - 1];
+}
+function turnCapBounds(config) {
+  const hard = config.scheduler.hard_limits.worker_turns_per_session;
+  const tc = config.scheduler.turn_cap ?? { floor: DEFAULT_TURN_FLOOR, ceiling: hard, default: hard, reminder_fraction: DEFAULT_REMINDER_FRACTION };
+  const ceiling = Math.min(tc.ceiling, hard);
+  const floor = Math.min(tc.floor, ceiling);
+  return { floor, ceiling, default: Math.min(Math.max(tc.default, floor), ceiling), reminderFraction: tc.reminder_fraction };
+}
+function deriveTurnCap(history, bounds) {
+  const p = percentile(history, TURN_CAP_PERCENTILE);
+  if (p === null) return bounds.default;
+  return Math.min(bounds.ceiling, Math.max(bounds.floor, Math.ceil(p)));
+}
+function sessionsLike(db, runId, role) {
+  const rows = db.all(
+    `SELECT w.run_id = me.id AS mine, w.result_status AS status, json_extract(w.result_json, '$.modelRequests') AS turns,
+            json_extract(w.result_json, '$.structured.next_action.kind') AS next
+       FROM workers w
+       JOIN runs r ON r.id = w.run_id
+       JOIN runs me ON me.id = ?
+      WHERE w.role = ? AND w.result_status IN ('succeeded', 'max_turns')
+        AND r.repo_root = me.repo_root AND r.difficulty IS me.difficulty`,
+    runId,
+    role
+  );
+  return rows.map((r) => ({ mine: r.mine === 1, outgrew: r.status === "max_turns" || r.next === "continue-implementation", turns: r.turns }));
+}
+function turnHistory(db, runId, role, ceiling) {
+  return sessionsLike(db, runId, role).flatMap((s) => s.outgrew ? [ceiling] : typeof s.turns === "number" && Number.isSafeInteger(s.turns) && s.turns > 0 ? [s.turns] : []);
+}
+function turnCapFor(db, runId, role, config) {
+  const bounds = turnCapBounds(config);
+  if (sessionsLike(db, runId, role).some((s) => s.mine && s.outgrew)) return bounds.ceiling;
+  return deriveTurnCap(turnHistory(db, runId, role, bounds.ceiling), bounds);
+}
+function reminderThreshold(cap, fraction = DEFAULT_REMINDER_FRACTION) {
+  return Math.min(Math.max(1, Math.ceil(cap * fraction)), Math.max(1, cap - 1));
+}
+function turnReminder(turnsTaken, cap, remindAt) {
+  if (cap < 2 || turnsTaken >= cap || turnsTaken < remindAt) return null;
+  const left = cap - turnsTaken;
+  return `Orbit turn budget: ${left} turn${left === 1 ? "" : "s"} of ${cap} remain${left === 1 ? "s" : ""} in this session. Wrap up and return your structured output. If work remains, say exactly what remains in it; an implementer sets next_action.kind to continue-implementation with the remainder in next_action.detail, and its attempt gets one extension.`;
+}
+function decideTurnExtension(ask6) {
+  if (!ask6.remainder || ask6.remainder.trim() === "") return { granted: false, reason: "no remainder stated" };
+  if (ask6.granted > 0) return { granted: false, reason: "the attempt already had its one extension" };
+  if (ask6.remindAt === null || typeof ask6.turns !== "number" || ask6.turns < ask6.remindAt) return { granted: false, reason: "the session stopped before its turn reminder" };
+  return { granted: true, reason: "the session reached its turn reminder and stated what remains" };
+}
+var TURN_CAP_PERCENTILE, DEFAULT_TURN_FLOOR, DEFAULT_REMINDER_FRACTION, ENV_TURN_CAP, ENV_TURN_REMIND_AT;
+var init_turn_cap = __esm({
+  "src/scheduling/turn-cap.ts"() {
+    "use strict";
+    TURN_CAP_PERCENTILE = 0.75;
+    DEFAULT_TURN_FLOOR = 10;
+    DEFAULT_REMINDER_FRACTION = 0.8;
+    ENV_TURN_CAP = "ORBIT_TURN_CAP";
+    ENV_TURN_REMIND_AT = "ORBIT_TURN_REMIND_AT";
+  }
+});
+
 // src/policy/guard-hook.ts
 var guard_hook_exports = {};
 __export(guard_hook_exports, {
@@ -23160,10 +25448,10 @@ __export(guard_hook_exports, {
   runGuardHook: () => runGuardHook,
   runGuardHookProcess: () => runGuardHookProcess
 });
-import { isAbsolute as isAbsolute4 } from "node:path";
+import { isAbsolute as isAbsolute5 } from "node:path";
 function handlePreToolUse(inputJson, opts) {
   try {
-    if (!opts || typeof opts.worktreeRoot !== "string" || !isAbsolute4(opts.worktreeRoot)) {
+    if (!opts || typeof opts.worktreeRoot !== "string" || !isAbsolute5(opts.worktreeRoot)) {
       throw new GuardInputError("the worktree root is not configured");
     }
     const snapshot2 = verifySnapshot(opts.snapshotPath, opts.expectedHash);
@@ -23184,9 +25472,22 @@ function runGuardHook(stdin, env) {
     if (!expectedHash) throw new GuardInputError(`${ENV_POLICY_HASH} is not set`);
     if (!worktreeRoot) throw new GuardInputError(`${ENV_WORKTREE} is not set`);
     const workerTmpDir2 = env[ENV_WORKER_TMPDIR];
-    return handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...env.HOME ? { home: env.HOME } : {}, ...workerTmpDir2 ? { workerTmpDir: workerTmpDir2 } : {} });
+    const result2 = handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...env.HOME ? { home: env.HOME } : {}, ...workerTmpDir2 ? { workerTmpDir: workerTmpDir2 } : {} });
+    return result2.exitCode === 0 && result2.stdout === "" ? withTurnReminder(result2, stdin, env) : result2;
   } catch (err) {
     return failClosed(err);
+  }
+}
+function withTurnReminder(result2, stdin, env) {
+  try {
+    const cap = Number(env[ENV_TURN_CAP]);
+    const remindAt = Number(env[ENV_TURN_REMIND_AT]);
+    const path = JSON.parse(stdin).transcript_path;
+    if (!Number.isSafeInteger(cap) || !Number.isSafeInteger(remindAt) || typeof path !== "string" || !isAbsolute5(path)) return result2;
+    const text2 = turnReminder(claudeModelRequests(readLogLines(path).events) ?? 0, cap, remindAt);
+    return text2 ? { ...result2, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: text2 } }) } : result2;
+  } catch {
+    return result2;
   }
 }
 async function runGuardHookProcess() {
@@ -23234,7 +25535,7 @@ function parseInput(text2) {
   if (o.hook_event_name !== "PreToolUse") throw new GuardInputError(`expected a PreToolUse event, got ${JSON.stringify(o.hook_event_name)}`);
   if (typeof o.tool_name !== "string" || o.tool_name.length === 0) throw new GuardInputError("tool_name is missing");
   if (o.tool_input === null || typeof o.tool_input !== "object" || Array.isArray(o.tool_input)) throw new GuardInputError("tool_input is missing");
-  if (o.cwd !== void 0 && (typeof o.cwd !== "string" || !isAbsolute4(o.cwd))) throw new GuardInputError("cwd is not an absolute path");
+  if (o.cwd !== void 0 && (typeof o.cwd !== "string" || !isAbsolute5(o.cwd))) throw new GuardInputError("cwd is not an absolute path");
   return { tool_name: o.tool_name, tool_input: o.tool_input, cwd: o.cwd };
 }
 function decide(snapshot2, input, opts) {
@@ -23263,7 +25564,7 @@ function decide(snapshot2, input, opts) {
   }
 }
 function requireAbsolute(path) {
-  return isAbsolute4(path) ? null : { allowed: false, rule: "path.relative", reason: `${path} is not an absolute path` };
+  return isAbsolute5(path) ? null : { allowed: false, rule: "path.relative", reason: `${path} is not an absolute path` };
 }
 function requireString(v, field) {
   if (typeof v !== "string" || v.length === 0) throw new GuardInputError(`tool_input.${field} is missing`);
@@ -23289,6 +25590,9 @@ var init_guard_hook = __esm({
     "use strict";
     init_snapshot();
     init_authorize();
+    init_claude_transcript();
+    init_supervise();
+    init_turn_cap();
     ENV_POLICY_PATH = "ORBIT_POLICY_PATH";
     ENV_POLICY_HASH = "ORBIT_POLICY_HASH";
     ENV_WORKTREE = "ORBIT_WORKTREE";
@@ -23697,483 +26001,19 @@ var init_args = __esm({
   }
 });
 
-// src/core/clock.ts
-var systemClock;
-var init_clock = __esm({
-  "src/core/clock.ts"() {
-    "use strict";
-    systemClock = {
-      now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve32) => setTimeout(resolve32, ms))
-    };
-  }
-});
-
-// src/core/proc.ts
-import { spawnSync } from "node:child_process";
-import { readdirSync as readdirSync2, readFileSync as readFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
-function processStartTime(pid) {
-  return processInfo(pid)?.start ?? null;
-}
-function processInfo(pid) {
-  if (!isValidPid(pid)) return null;
-  if (process.platform === "linux") return linuxInfo(pid);
-  return psInfo(pid);
-}
-function isAlive(pid, expectedStart) {
-  if (!isValidPid(pid)) return false;
-  if (!signalZero(pid)) return false;
-  let info;
-  try {
-    info = processInfo(pid);
-  } catch (err) {
-    if (expectedStart == null) return true;
-    throw err;
-  }
-  if (!info) return false;
-  if (info.state.startsWith("Z")) return false;
-  if (expectedStart != null && normalizeStart(expectedStart) !== info.start) return false;
-  return true;
-}
-function isGroupAlive(pgid) {
-  assertSafePgid(pgid);
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (err) {
-    return errno(err) === "EPERM";
-  }
-}
-function killGroup(pgid, signal = "SIGTERM") {
-  assertSafePgid(pgid);
-  try {
-    process.kill(-pgid, signal);
-    return true;
-  } catch (err) {
-    if (errno(err) === "ESRCH") return false;
-    throw new OrbitError("INTERNAL", `cannot send ${signal} to process group ${pgid}: ${errno(err) ?? String(err)}`, { pgid, signal }, { cause: err });
-  }
-}
-async function terminateGroup(pgid, graceMs, options = {}) {
-  assertSafePgid(pgid);
-  const clock = options.clock ?? realClock;
-  const pollMs = Math.max(1, options.pollMs ?? 25);
-  let last = null;
-  for (const signal of ["SIGINT", "SIGTERM", "SIGKILL"]) {
-    if (!isGroupAlive(pgid)) return { exited: true, signal: last };
-    try {
-      if (!killGroup(pgid, signal)) return { exited: true, signal: last };
-      last = signal;
-    } catch (err) {
-      if (errno(err.cause) !== "EPERM") throw err;
-    }
-    const deadline = clock.now() + Math.max(0, graceMs);
-    while (clock.now() < deadline) {
-      await clock.sleep(Math.min(pollMs, Math.max(1, deadline - clock.now())));
-      if (!isGroupAlive(pgid)) return { exited: true, signal: last };
-    }
-  }
-  return { exited: !isGroupAlive(pgid), signal: last };
-}
-function findProcesses(match, opts = {}) {
-  if ((opts.platform ?? process.platform) === "linux") return procSearch(opts.procDir ?? "/proc", "cmdline", (args) => match(args.join(" ")));
-  return psSearch(false, match);
-}
-function findProcessesWithEnv(name, value, opts = {}) {
-  const entry = `${name}=${value}`;
-  if ((opts.platform ?? process.platform) === "linux") return procSearch(opts.procDir ?? "/proc", "environ", (env) => env.includes(entry));
-  return psSearch(true, (line3) => ` ${line3} `.includes(` ${entry} `));
-}
-function psSearch(withEnvironment, match) {
-  const r = spawnSync("ps", [...withEnvironment ? ["-E"] : [], "-A", "-ww", "-o", "pid=,stat=,args="], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: PS_LOCALE, LANG: PS_LOCALE },
-    timeout: 1e4,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (r.error) throw new OrbitError("INTERNAL", `cannot run ps to search the process table: ${r.error.message}`, {}, { cause: r.error });
-  if (r.status !== 0 || typeof r.stdout !== "string") throw new OrbitError("INTERNAL", `ps failed searching the process table (exit ${String(r.status)})`, { stderr: String(r.stderr ?? "").slice(0, 500) });
-  const out = [];
-  for (const line3 of r.stdout.split("\n")) {
-    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line3);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    if (!isValidPid(pid) || pid === process.pid || pid === r.pid || m[2].startsWith("Z")) continue;
-    if (match(m[3].trimEnd())) out.push(pid);
-  }
-  return out;
-}
-function procSearch(procDir, file, match) {
-  let names;
-  try {
-    names = readdirSync2(procDir);
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `cannot read ${procDir} to search the process table: ${errno(err) ?? String(err)}`, { procDir }, { cause: err });
-  }
-  const out = [];
-  for (const name of names) {
-    if (!/^\d+$/.test(name)) continue;
-    const pid = Number(name);
-    if (!isValidPid(pid) || pid === process.pid) continue;
-    let raw;
-    try {
-      raw = readFileSync5(join7(procDir, name, file), "utf8");
-    } catch {
-      continue;
-    }
-    const entries = raw.split("\0");
-    if (entries.at(-1) === "") entries.pop();
-    if (entries.length === 0) continue;
-    if (match(entries)) out.push(pid);
-  }
-  return out;
-}
-function normalizeStart(raw) {
-  return raw.trim().replace(/\s+/g, " ");
-}
-function isValidPid(pid) {
-  return Number.isSafeInteger(pid) && pid > 0;
-}
-function assertSafePgid(pgid) {
-  if (!Number.isSafeInteger(pgid) || pgid <= 1 || pgid === process.pid || pgid === ownPgid()) {
-    throw new OrbitError("INTERNAL", `refusing to signal process group ${String(pgid)}`, { pgid });
-  }
-}
-function ownPgid() {
-  if (ownGroup !== void 0) return ownGroup;
-  ownGroup = null;
-  try {
-    if (process.platform === "linux") {
-      const stat = readFileSync5("/proc/self/stat", "utf8");
-      const n2 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
-      if (Number.isSafeInteger(n2) && n2 > 0) ownGroup = n2;
-    } else {
-      const r = spawnSync("ps", ["-o", "pgid=", "-p", String(process.pid)], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
-      const n2 = Number((r.stdout ?? "").trim());
-      if (r.status === 0 && Number.isSafeInteger(n2) && n2 > 0) ownGroup = n2;
-    }
-  } catch {
-    ownGroup = null;
-  }
-  return ownGroup;
-}
-function signalZero(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return errno(err) === "EPERM";
-  }
-}
-function errno(err) {
-  return err?.code;
-}
-function psInfo(pid) {
-  const r = spawnSync("ps", ["-o", "stat=", "-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
-    timeout: 1e4,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (r.error) throw new OrbitError("INTERNAL", `cannot run ps to inspect pid ${pid}: ${r.error.message}`, { pid }, { cause: r.error });
-  const out = (r.stdout ?? "").trim();
-  if (r.status === 1 && out === "") return null;
-  if (r.status !== 0) throw new OrbitError("INTERNAL", `ps failed inspecting pid ${pid} (exit ${String(r.status)})`, { pid, stderr: (r.stderr ?? "").slice(0, 500) });
-  const m = /^(\S+)\s+(\S.*)$/.exec(out);
-  if (!m) throw new OrbitError("INTERNAL", `unexpected ps output for pid ${pid}`, { pid, output: out.slice(0, 200) });
-  return { pid, state: m[1], start: normalizeStart(m[2]) };
-}
-function linuxInfo(pid) {
-  let stat;
-  try {
-    stat = readFileSync5(`/proc/${pid}/stat`, "utf8");
-  } catch (err) {
-    if (errno(err) === "ENOENT" || errno(err) === "ESRCH") return null;
-    throw new OrbitError("INTERNAL", `cannot read /proc/${pid}/stat: ${errno(err) ?? String(err)}`, { pid }, { cause: err });
-  }
-  const close = stat.lastIndexOf(")");
-  const rest = stat.slice(close + 1).trim().split(/\s+/);
-  const state = rest[0];
-  const start = rest[19];
-  if (close === -1 || !state || !start) throw new OrbitError("INTERNAL", `unexpected /proc/${pid}/stat format`, { pid });
-  return { pid, state, start };
-}
-var PS_LOCALE, realClock, ownGroup;
-var init_proc = __esm({
-  "src/core/proc.ts"() {
-    "use strict";
-    init_errors();
-    PS_LOCALE = "en_US.UTF-8";
-    realClock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
-  }
-});
-
-// src/core/exec.ts
-import { spawn } from "node:child_process";
-import { closeSync as closeSync3, mkdirSync as mkdirSync2, openSync as openSync3, statSync } from "node:fs";
-import { dirname as dirname4, resolve as resolve2 } from "node:path";
-import { performance } from "node:perf_hooks";
-import { StringDecoder } from "node:string_decoder";
-function execCapture(argv2, options = {}) {
-  const [command, ...args] = argv2;
-  if (!command) return Promise.reject(new OrbitError("INTERNAL", "execCapture needs a command"));
-  let cwd;
-  try {
-    cwd = checkCwd(options.cwd);
-  } catch (err) {
-    return Promise.reject(err);
-  }
-  const timeoutMs = options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
-  const maxBytes = Math.max(0, options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES);
-  const graceMs = Math.max(0, options.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
-  return new Promise((resolvePromise, rejectPromise) => {
-    const started = performance.now();
-    let child;
-    try {
-      child = spawn(command, args, {
-        cwd,
-        env: cleanEnv(options.env ?? process.env),
-        detached: true,
-        stdio: [options.input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
-        windowsHide: true
-      });
-    } catch (err) {
-      rejectPromise(spawnFailure(command, err));
-      return;
-    }
-    const stdout = new Capture(maxBytes);
-    const stderr = new Capture(maxBytes);
-    child.stdout?.on("data", (c) => stdout.push(c));
-    child.stderr?.on("data", (c) => stderr.push(c));
-    const pgid = child.pid;
-    let timeoutTimer;
-    let timedOut = false;
-    let cancelled = false;
-    let stopping = false;
-    let settled = false;
-    let exitCode = null;
-    let exitSignal = null;
-    const signalGroup = (signal) => {
-      if (pgid === void 0) return;
-      try {
-        killGroup(pgid, signal);
-      } catch {
-      }
-    };
-    const groupGone = () => {
-      if (pgid === void 0) return true;
-      try {
-        return !isGroupAlive(pgid);
-      } catch {
-        return true;
-      }
-    };
-    const stopGroup = () => {
-      if (stopping) return;
-      stopping = true;
-      signalGroup("SIGTERM");
-      const deadline = performance.now() + graceMs;
-      const poll = () => {
-        if (groupGone()) return;
-        const left = deadline - performance.now();
-        if (left <= 0) {
-          signalGroup("SIGKILL");
-          return;
-        }
-        setTimeout(poll, Math.min(KILL_POLL_MS, left)).unref();
-      };
-      setTimeout(poll, Math.min(KILL_POLL_MS, graceMs)).unref();
-    };
-    const onAbort = () => {
-      cancelled = true;
-      stopGroup();
-    };
-    if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
-      timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        stopGroup();
-      }, timeoutMs);
-    }
-    if (options.abortSignal) {
-      if (options.abortSignal.aborted) onAbort();
-      else options.abortSignal.addEventListener("abort", onAbort, { once: true });
-    }
-    const cleanup2 = () => {
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      options.abortSignal?.removeEventListener("abort", onAbort);
-    };
-    child.on("error", (err) => {
-      if (pgid !== void 0 || settled) return;
-      settled = true;
-      cleanup2();
-      rejectPromise(spawnFailure(command, err));
-    });
-    child.on("exit", (code2, signal) => {
-      exitCode = code2;
-      exitSignal = signal;
-      cleanup2();
-      if (pgid !== void 0 && options.killGroupOnExit !== false && !stopping) {
-        let alive = false;
-        try {
-          alive = isGroupAlive(pgid);
-        } catch {
-          alive = false;
-        }
-        if (alive) stopGroup();
-      }
-      setTimeout(() => {
-        if (settled) return;
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-      }, graceMs + 1e3).unref();
-    });
-    child.on("close", () => {
-      if (settled) return;
-      settled = true;
-      cleanup2();
-      resolvePromise({
-        exitCode,
-        signal: exitSignal,
-        stdout: stdout.text(),
-        stderr: stderr.text(),
-        timedOut,
-        cancelled,
-        durationMs: Math.round(performance.now() - started),
-        stdoutTruncated: stdout.dropped > 0,
-        stderrTruncated: stderr.dropped > 0,
-        pid: pgid ?? -1
-      });
-    });
-    if (options.input !== void 0 && child.stdin) {
-      child.stdin.on("error", () => {
-      });
-      child.stdin.end(options.input);
-    }
-  });
-}
-function spawnDetached(argv2, options) {
-  const [command, ...args] = argv2;
-  if (!command) throw new OrbitError("INTERNAL", "spawnDetached needs a command");
-  const cwd = checkCwd(options.cwd);
-  const outPath = resolve2(options.stdoutPath);
-  const errPath = resolve2(options.stderrPath);
-  const fds = [];
-  let child;
-  try {
-    mkdirSync2(dirname4(outPath), { recursive: true, mode: 448 });
-    mkdirSync2(dirname4(errPath), { recursive: true, mode: 448 });
-    const outFd = openSync3(outPath, "a", 384);
-    fds.push(outFd);
-    const errFd = errPath === outPath ? outFd : openSync3(errPath, "a", 384);
-    if (errFd !== outFd) fds.push(errFd);
-    child = spawn(command, args, {
-      cwd,
-      env: cleanEnv(options.env ?? process.env),
-      detached: true,
-      stdio: ["ignore", outFd, errFd],
-      windowsHide: true
-    });
-  } catch (err) {
-    throw spawnFailure(command, err);
-  } finally {
-    for (const fd of fds) {
-      try {
-        closeSync3(fd);
-      } catch {
-      }
-    }
-  }
-  child.on("error", () => {
-  });
-  if (child.pid === void 0) {
-    throw new OrbitError("NOT_FOUND", `could not start ${command}: not found or not executable`, { command });
-  }
-  child.unref();
-  return { pid: child.pid, pgid: child.pid };
-}
-function checkCwd(cwd) {
-  if (cwd === void 0) return void 0;
-  let ok = false;
-  try {
-    ok = statSync(cwd).isDirectory();
-  } catch {
-    ok = false;
-  }
-  if (!ok) throw new OrbitError("NOT_FOUND", `working directory does not exist: ${cwd}`, { cwd });
-  return cwd;
-}
-function cleanEnv(env) {
-  const out = {};
-  for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
-  return out;
-}
-function spawnFailure(command, err) {
-  if (err instanceof OrbitError) return err;
-  const code2 = err?.code;
-  if (code2 === "ENOENT") return new OrbitError("NOT_FOUND", `command not found: ${command}`, { command, errno: code2 }, { cause: err });
-  return new OrbitError("INTERNAL", `could not start ${command}: ${code2 ?? String(err)}`, { command, errno: code2 }, { cause: err });
-}
-var DEFAULT_EXEC_TIMEOUT_MS, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_KILL_GRACE_MS, KILL_POLL_MS, TRUNCATION_MARKER, Capture;
-var init_exec = __esm({
-  "src/core/exec.ts"() {
-    "use strict";
-    init_errors();
-    init_proc();
-    DEFAULT_EXEC_TIMEOUT_MS = 12e4;
-    DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-    DEFAULT_KILL_GRACE_MS = 2e3;
-    KILL_POLL_MS = 50;
-    TRUNCATION_MARKER = "[orbit: output truncated:";
-    Capture = class {
-      chunks = [];
-      bytes = 0;
-      dropped = 0;
-      max;
-      constructor(max) {
-        this.max = max;
-      }
-      push(chunk) {
-        const room = this.max - this.bytes;
-        if (room <= 0) {
-          this.dropped += chunk.length;
-          return;
-        }
-        if (chunk.length <= room) {
-          this.chunks.push(chunk);
-          this.bytes += chunk.length;
-          return;
-        }
-        this.chunks.push(chunk.subarray(0, room));
-        this.bytes += room;
-        this.dropped += chunk.length - room;
-      }
-      text() {
-        const buf = Buffer.concat(this.chunks);
-        if (this.dropped === 0) return buf.toString("utf8");
-        const head = new StringDecoder("utf8").write(buf);
-        return `${head}
-${TRUNCATION_MARKER} ${this.dropped} bytes dropped after the first ${this.max}]
-`;
-      }
-    };
-  }
-});
-
 // src/core/ids.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { hostname } from "node:os";
 function newRunId(now = Date.now()) {
   const d = new Date(now);
   const stamp2 = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
-  return `orb-${stamp2}-${randomBytes2(3).toString("hex")}`;
+  return `orb-${stamp2}-${randomBytes4(3).toString("hex")}`;
 }
 function newId(prefix) {
-  return `${prefix}-${randomBytes2(6).toString("hex")}`;
+  return `${prefix}-${randomBytes4(6).toString("hex")}`;
 }
 function newOwnerId() {
-  return `${hostname()}:${process.pid}:${randomBytes2(4).toString("hex")}`;
+  return `${hostname()}:${process.pid}:${randomBytes4(4).toString("hex")}`;
 }
 function pad(n2) {
   return String(n2).padStart(2, "0");
@@ -24258,7 +26098,7 @@ var init_controllers = __esm({
 
 // src/storage/schema.ts
 var MIGRATIONS;
-var init_schema4 = __esm({
+var init_schema5 = __esm({
   "src/storage/schema.ts"() {
     "use strict";
     MIGRATIONS = [
@@ -24714,12 +26554,12 @@ var init_schema4 = __esm({
 
 // src/storage/db.ts
 import { createRequire } from "node:module";
-import { mkdirSync as mkdirSync3 } from "node:fs";
-import { dirname as dirname5 } from "node:path";
+import { mkdirSync as mkdirSync4 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
 function openDb(path, options = {}) {
   suppressSqliteExperimentalWarning();
   const { DatabaseSync: Database } = require2("node:sqlite");
-  if (path !== ":memory:") mkdirSync3(dirname5(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync4(dirname6(path), { recursive: true });
   const db = new Database(path);
   db.exec(`PRAGMA busy_timeout = ${Math.trunc(options.busyTimeoutMs ?? 1e4)}`);
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
@@ -24812,7 +26652,7 @@ var init_db = __esm({
     "use strict";
     init_errors();
     init_warnings();
-    init_schema4();
+    init_schema5();
     require2 = createRequire(import.meta.url);
   }
 });
@@ -24994,10 +26834,10 @@ function markedCauses(outcome, data) {
   };
   const code2 = typeof data.code === "string" ? CODE_CLASS[data.code] : void 0;
   const counter2 = typeof data.counter === "string" ? data.counter : typeof outcome.limit === "string" ? outcome.limit : null;
-  const frozen = isRecord(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === "string" ? outcome.frozen_policy.setting : "";
-  const gate = isRecord(outcome.gate) && typeof outcome.gate.gate === "string" ? outcome.gate.gate : null;
+  const frozen = isRecord2(outcome.frozen_policy) && typeof outcome.frozen_policy.setting === "string" ? outcome.frozen_policy.setting : "";
+  const gate = isRecord2(outcome.gate) && typeof outcome.gate.gate === "string" ? outcome.gate.gate : null;
   const marked = (c) => classMarkers(c, outcome).length > 0;
-  add("credentials", isRecord(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || marked("credentials") || code2 === "credentials");
+  add("credentials", isRecord2(outcome.blocker) && outcome.blocker.kind === "authentication" || data.kind === "authentication" || marked("credentials") || code2 === "credentials");
   add("check-misconfigured", marked("check-misconfigured") || /^checks\./.test(frozen));
   add("environment", marked("environment") || gate === "environment" || gate === "baseline" || code2 === "environment" || counter2 !== null && INFRASTRUCTURE_COUNTERS.has(counter2));
   add("scope", marked("scope") || /^(scope\.|scheduler\.hard_limits\.changed_)/.test(frozen) || code2 === "scope");
@@ -25034,12 +26874,12 @@ function parseOutcome(json3) {
   if (!json3) return null;
   try {
     const o = JSON.parse(json3);
-    return isRecord(o) ? o : null;
+    return isRecord2(o) ? o : null;
   } catch {
     return null;
   }
 }
-var FAILURE_CLASSES, TURN_CAP_EVENT, CODE_CLASS, INFRASTRUCTURE_COUNTERS, isRecord, has, MARKER_KEYS;
+var FAILURE_CLASSES, TURN_CAP_EVENT, CODE_CLASS, INFRASTRUCTURE_COUNTERS, isRecord2, has, MARKER_KEYS;
 var init_failure_class = __esm({
   "src/controller/failure-class.ts"() {
     "use strict";
@@ -25059,7 +26899,7 @@ var init_failure_class = __esm({
       CONTRACT_INVALID: "environment"
     };
     INFRASTRUCTURE_COUNTERS = /* @__PURE__ */ new Set(["recovery_attempts", "infrastructure_retries"]);
-    isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isRecord2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     has = (o, key2) => {
       const v = o[key2];
       if (v === void 0 || v === null || v === false || v === "") return false;
@@ -25308,8 +27148,8 @@ var init_run_store = __esm({
 });
 
 // src/core/log.ts
-import { appendFileSync, mkdirSync as mkdirSync4 } from "node:fs";
-import { dirname as dirname6 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync5 } from "node:fs";
+import { dirname as dirname7 } from "node:path";
 function isLogLevel(value) {
   return typeof value === "string" && Object.hasOwn(LEVELS, value);
 }
@@ -25322,7 +27162,7 @@ function createLogger(options = {}) {
     if (options.file) {
       try {
         if (!dirReady) {
-          mkdirSync4(dirname6(options.file), { recursive: true, mode: 448 });
+          mkdirSync5(dirname7(options.file), { recursive: true, mode: 448 });
           dirReady = true;
         }
         appendFileSync(options.file, `${line3}
@@ -25637,8 +27477,8 @@ var init_strict_schema = __esm({
 });
 
 // src/isolation/toolchains.ts
-import { chmodSync as chmodSync2, existsSync as existsSync6, lstatSync as lstatSync3, mkdirSync as mkdirSync5, mkdtempSync, readdirSync as readdirSync3, renameSync as renameSync2, rmSync } from "node:fs";
-import { basename as basename3, dirname as dirname7, isAbsolute as isAbsolute5, join as join8, relative as relative2, sep as sep3 } from "node:path";
+import { chmodSync as chmodSync2, existsSync as existsSync8, lstatSync as lstatSync3, mkdirSync as mkdirSync6, mkdtempSync, readdirSync as readdirSync4, renameSync as renameSync3, rmSync as rmSync2 } from "node:fs";
+import { basename as basename4, dirname as dirname8, isAbsolute as isAbsolute6, join as join10, relative as relative2, sep as sep3 } from "node:path";
 import { pathToFileURL } from "node:url";
 function nugetAuditRuns(d) {
   return d.platform !== "darwin" && NUGET_HOSTS.every((h) => hostAllowed(h, d.networkHosts));
@@ -25651,7 +27491,7 @@ function nonNull(name, value) {
 }
 function toolchainCacheRoot(orbitHome, repoKey2) {
   if (!REPO_KEY.test(repoKey2)) throw new Error(`invalid repository key ${JSON.stringify(repoKey2)}`);
-  return join8(orbitHome, "toolchains", repoKey2);
+  return join10(orbitHome, "toolchains", repoKey2);
 }
 function toolchainRegistryHosts(ids) {
   return [...new Set(ordered(ids).flatMap((id2) => TOOLCHAIN_PROFILES[id2].registryHosts))];
@@ -25660,12 +27500,12 @@ function ordered(ids) {
   return TOOLCHAIN_IDS.filter((id2) => ids.includes(id2));
 }
 function commandWords(command) {
-  return command.flatMap((part) => part.split(/[\s;&|()<>`]+/)).filter((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)).map((w) => basename3(w));
+  return command.flatMap((part) => part.split(/[\s;&|()<>`]+/)).filter((w) => w !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)).map((w) => basename4(w));
 }
 function hasMarker(dir, markers) {
   let names;
   try {
-    names = readdirSync3(dir);
+    names = readdirSync4(dir);
   } catch {
     return false;
   }
@@ -25680,21 +27520,21 @@ function detectToolchains(input) {
 }
 function rustupHomeOf(input) {
   const configured = (input.hostEnv ?? process.env).RUSTUP_HOME;
-  if (configured && configured.trim() !== "") return isAbsolute5(configured) ? configured : null;
+  if (configured && configured.trim() !== "") return isAbsolute6(configured) ? configured : null;
   if (!input.hostHome) return null;
-  const dflt = join8(input.hostHome, ".rustup");
-  return existsSync6(dflt) ? dflt : null;
+  const dflt = join10(input.hostHome, ".rustup");
+  return existsSync8(dflt) ? dflt : null;
 }
 function javaHomeOf(input) {
   const configured = (input.hostEnv ?? process.env).JAVA_HOME;
-  return configured && configured.trim() !== "" && isAbsolute5(configured) ? configured : null;
+  return configured && configured.trim() !== "" && isAbsolute6(configured) ? configured : null;
 }
 function toolchainLayout(input) {
   const ids = ordered(input.toolchains);
   const shared = input.cacheRoot !== null;
-  const cachePath = (name) => input.cacheRoot !== null ? join8(input.cacheRoot, name) : join8(input.scratchRoot, "cache", name);
-  const ownPath = (name) => join8(input.scratchRoot, "cache", name);
-  const scratchPath = (name) => join8(input.scratchRoot, name);
+  const cachePath = (name) => input.cacheRoot !== null ? join10(input.cacheRoot, name) : join10(input.scratchRoot, "cache", name);
+  const ownPath = (name) => join10(input.scratchRoot, "cache", name);
+  const scratchPath = (name) => join10(input.scratchRoot, name);
   const modeOf = (id2) => input.installs?.includes(id2) ? "install" : input.mode;
   const rustupHome = ids.includes("rust") ? rustupHomeOf(input) : null;
   const javaHome = ids.includes("jvm") ? javaHomeOf(input) : null;
@@ -25752,13 +27592,13 @@ function commandToolchains(input) {
 function prepareToolchainLayout(layout, reused) {
   if (reused !== void 0 && layout.directories.some((d) => notDirectoryOnPath(reused, d))) removeScratch(reused);
   for (const d of layout.directories) {
-    mkdirSync5(d, { recursive: true, mode: 448 });
+    mkdirSync6(d, { recursive: true, mode: 448 });
     chmodSync2(d, 448);
   }
 }
 function freshWorkerScratch(tmpDir) {
-  const staging = mkdtempSync(join8(dirname7(tmpDir), "toolchains-"));
-  return { root: join8(tmpDir, basename3(staging)), staging };
+  const staging = mkdtempSync(join10(dirname8(tmpDir), "toolchains-"));
+  return { root: join10(tmpDir, basename4(staging)), staging };
 }
 function prepareWorkerScratch(layout, scratch, opts) {
   const inside2 = (d) => d.startsWith(`${scratch.root}${sep3}`);
@@ -25768,37 +27608,37 @@ function prepareWorkerScratch(layout, scratch, opts) {
     for (const d of layout.directories.filter(inside2)) {
       let p = scratch.staging;
       for (const part of relative2(scratch.root, d).split(sep3)) {
-        p = join8(p, part);
+        p = join10(p, part);
         if (made.has(p)) continue;
         try {
-          mkdirSync5(p, { mode: 448 });
+          mkdirSync6(p, { mode: 448 });
         } catch (err) {
           throw new OrbitError("ISOLATION_UNAVAILABLE", `${p} already exists where Orbit creates a worker's build state (${err.code ?? String(err)}); refusing to start the worker`, { path: p });
         }
         made.add(p);
       }
     }
-    renameSync2(scratch.staging, scratch.root);
+    renameSync3(scratch.staging, scratch.root);
   } catch (err) {
-    rmSync(scratch.staging, { recursive: true, force: true });
+    rmSync2(scratch.staging, { recursive: true, force: true });
     throw err;
   }
   if (!opts.removeEarlier) return;
-  const tmpDir = dirname7(scratch.root);
-  for (const name of readdirSync3(tmpDir)) {
-    if (name === basename3(scratch.root) || !(name === "toolchains" || name.startsWith("toolchains-"))) continue;
+  const tmpDir = dirname8(scratch.root);
+  for (const name of readdirSync4(tmpDir)) {
+    if (name === basename4(scratch.root) || !(name === "toolchains" || name.startsWith("toolchains-"))) continue;
     try {
-      rmSync(join8(tmpDir, name), { recursive: true, force: true });
+      rmSync2(join10(tmpDir, name), { recursive: true, force: true });
     } catch {
     }
   }
 }
 function notDirectoryOnPath(root, dir) {
   const rel = relative2(root, dir);
-  if (rel.startsWith("..") || isAbsolute5(rel)) return false;
+  if (rel.startsWith("..") || isAbsolute6(rel)) return false;
   let p = root;
   for (const part of ["", ...rel.split(sep3).filter(Boolean)]) {
-    p = join8(p, part);
+    p = join10(p, part);
     let st;
     try {
       st = lstatSync3(p);
@@ -25810,7 +27650,7 @@ function notDirectoryOnPath(root, dir) {
   return false;
 }
 function removeScratch(dir) {
-  const remove = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  const remove = () => rmSync2(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   try {
     remove();
     return;
@@ -25832,7 +27672,7 @@ function makeTreeWritable(dir) {
     const d = stack.pop();
     try {
       chmodSync2(d, 448);
-      for (const entry of readdirSync3(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join8(d, entry.name));
+      for (const entry of readdirSync4(d, { withFileTypes: true })) if (entry.isDirectory()) stack.push(join10(d, entry.name));
     } catch {
     }
   }
@@ -25921,7 +27761,7 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
             // The module cache's download directory is laid out as a module proxy (`go help goproxy`): Go copies a module
             // found there into its own cache and asks its default proxies for the others (a missing file is "not found",
             // which a comma passes over). A command that sets GOPROXY itself replaces the list.
-            ...beneath === null ? {} : { GOPROXY: `${goProxyUrl(join8(beneath, "cache", "download"))},${GO_DEFAULT_PROXY}` },
+            ...beneath === null ? {} : { GOPROXY: `${goProxyUrl(join10(beneath, "cache", "download"))},${GO_DEFAULT_PROXY}` },
             GOCACHE: d.scratch("gocache"),
             GOPATH: d.scratch("gopath")
           };
@@ -25942,7 +27782,7 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
           // which a command in `fetch` mode also downloads what they do not hold.
           ...d.mode === "install" ? { GRADLE_USER_HOME: d.cache("gradle"), MAVEN_OPTS: `-Dmaven.repo.local=${d.cache("maven")}` } : {
             GRADLE_USER_HOME: d.scratch("gradle-home"),
-            GRADLE_RO_DEP_CACHE: join8(d.cache("gradle"), "caches"),
+            GRADLE_RO_DEP_CACHE: join10(d.cache("gradle"), "caches"),
             MAVEN_OPTS: `-Dmaven.repo.local=${d.scratch("maven-repo")} -Dmaven.repo.local.tail=${d.cache("maven")}`
           },
           // The JVM ignores TMPDIR on macOS; srt sets JAVA_TOOL_OPTIONS for its own proxy agent, so this goes in the
@@ -25999,9 +27839,9 @@ ${refs.length ? `  <ItemGroup>${refs.map((r) => `<ProjectReference Include="../$
 });
 
 // src/isolation/util.ts
-import { spawn as spawn2 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync7, lstatSync as lstatSync4, readdirSync as readdirSync4, readFileSync as readFileSync6, realpathSync as realpathSync4, statSync as statSync2 } from "node:fs";
-import { basename as basename4, delimiter, dirname as dirname8, isAbsolute as isAbsolute6, join as join9, resolve as resolve3, sep as sep4 } from "node:path";
+import { spawn as spawn3 } from "node:child_process";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync9, lstatSync as lstatSync4, readdirSync as readdirSync5, readFileSync as readFileSync8, realpathSync as realpathSync4, statSync as statSync4 } from "node:fs";
+import { basename as basename5, delimiter, dirname as dirname9, isAbsolute as isAbsolute7, join as join11, resolve as resolve5, sep as sep4 } from "node:path";
 function readablePathsOf(profile) {
   const extra = profile.readablePaths;
   return Array.isArray(extra) ? extra : [];
@@ -26012,18 +27852,18 @@ function isWithin(child, parent) {
   return child.startsWith(prefix);
 }
 function canonicalPath(p) {
-  if (!isAbsolute6(p)) throw new OrbitError("INTERNAL", `isolation paths must be absolute, got ${JSON.stringify(p)}`);
-  const normalized = resolve3(p);
+  if (!isAbsolute7(p)) throw new OrbitError("INTERNAL", `isolation paths must be absolute, got ${JSON.stringify(p)}`);
+  const normalized = resolve5(p);
   const tail2 = [];
   let current = normalized;
   for (; ; ) {
     try {
       const real = realpathSync4.native(current);
-      return tail2.length ? join9(real, ...tail2.reverse()) : real;
+      return tail2.length ? join11(real, ...tail2.reverse()) : real;
     } catch {
-      const parent = dirname8(current);
+      const parent = dirname9(current);
       if (parent === current) return normalized;
-      tail2.push(basename4(current));
+      tail2.push(basename5(current));
       current = parent;
     }
   }
@@ -26037,7 +27877,7 @@ function withoutNested(paths) {
 }
 function isExecutableFile(p) {
   try {
-    if (!statSync2(p).isFile()) return false;
+    if (!statSync4(p).isFile()) return false;
     accessSync2(p, constants3.X_OK);
     return true;
   } catch {
@@ -26045,23 +27885,23 @@ function isExecutableFile(p) {
   }
 }
 function which(name, pathEnv) {
-  if (name.includes("/")) return isAbsolute6(name) && isExecutableFile(name) ? name : null;
+  if (name.includes("/")) return isAbsolute7(name) && isExecutableFile(name) ? name : null;
   for (const dir of (pathEnv ?? "").split(delimiter)) {
-    if (!dir || !isAbsolute6(dir)) continue;
-    const candidate = join9(dir, name);
+    if (!dir || !isAbsolute7(dir)) continue;
+    const candidate = join11(dir, name);
     if (isExecutableFile(candidate)) return candidate;
   }
   return null;
 }
 function gitCommonDir(worktree) {
-  const dotGit = join9(worktree, ".git");
+  const dotGit = join11(worktree, ".git");
   try {
-    if (!statSync2(dotGit).isFile()) return null;
-    const match = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync6(dotGit, "utf8"));
+    if (!statSync4(dotGit).isFile()) return null;
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync8(dotGit, "utf8"));
     if (!match?.[1]) return null;
-    const gitdir = resolve3(worktree, match[1]);
-    const commondirFile = join9(gitdir, "commondir");
-    const common = existsSync7(commondirFile) ? resolve3(gitdir, readFileSync6(commondirFile, "utf8").trim()) : gitdir;
+    const gitdir = resolve5(worktree, match[1]);
+    const commondirFile = join11(gitdir, "commondir");
+    const common = existsSync9(commondirFile) ? resolve5(gitdir, readFileSync8(commondirFile, "utf8").trim()) : gitdir;
     return canonicalPath(common);
   } catch {
     return null;
@@ -26092,7 +27932,7 @@ function runBounded(file, args, opts) {
     };
     let child;
     try {
-      child = spawn2(file, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+      child = spawn3(file, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     } catch (err) {
       resolvePromise({ code: null, signal: null, stdout, stderr, timedOut, spawnError: err.message });
       return;
@@ -26132,7 +27972,7 @@ function credentialFilesIn(worktree, globs = BUILTIN_CREDENTIAL_PATHS, opts = {}
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync4(dir, { withFileTypes: true });
+      entries = readdirSync5(dir, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -26144,7 +27984,7 @@ function credentialFilesIn(worktree, globs = BUILTIN_CREDENTIAL_PATHS, opts = {}
           { worktree: root, limit }
         );
       }
-      const abs = join9(dir, entry.name);
+      const abs = join11(dir, entry.name);
       const rel = abs.slice(root.length + 1);
       let isDir = entry.isDirectory();
       let isLink = entry.isSymbolicLink();
@@ -26187,9 +28027,9 @@ var init_util = __esm({
 });
 
 // src/isolation/profiles.ts
-import { chmodSync as chmodSync3, lstatSync as lstatSync5, mkdirSync as mkdirSync6, unlinkSync } from "node:fs";
-import { homedir as homedir4, tmpdir as tmpdir3 } from "node:os";
-import { dirname as dirname9, isAbsolute as isAbsolute7, join as join10 } from "node:path";
+import { chmodSync as chmodSync3, lstatSync as lstatSync5, mkdirSync as mkdirSync7, unlinkSync as unlinkSync2 } from "node:fs";
+import { homedir as homedir4, tmpdir as tmpdir4 } from "node:os";
+import { dirname as dirname10, isAbsolute as isAbsolute8, join as join12 } from "node:path";
 function walkLimit(input) {
   return input.credentialWalkLimit === void 0 ? {} : { credentialWalkLimit: input.credentialWalkLimit };
 }
@@ -26212,17 +28052,17 @@ function profileForWorker(input) {
   let others;
   if (input.provider === "claude") {
     own = dirs.claudeConfigDir;
-    ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join10(own, rel)), claudeGlobalConfig(home2, own)];
-    ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join10(own, rel));
+    ownReadOnly = [...CLAUDE_CONFIG_READ_ONLY.map((rel) => join12(own, rel)), claudeGlobalConfig(home2, own)];
+    ownDenied = CLAUDE_CONFIG_DENIED.map((rel) => join12(own, rel));
     others = [...otherClaudeLogins(home2, env, own).flatMap((l) => [l.configDir, l.globalConfig]), ...codexDirs, ...museDirs];
   } else if (input.provider === "muse") {
-    own = join10(workerDir, MUSE_PRIVATE_CONFIG_DIR);
+    own = join12(workerDir, MUSE_PRIVATE_CONFIG_DIR);
     ownReadOnly = [];
     ownDenied = [];
     others = [...claudeDirs.flatMap((d) => claudeState(home2, d)), ...codexDirs, ...museDirs];
   } else {
     own = dirs.codexHome;
-    ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join10(own, rel));
+    ownReadOnly = CODEX_HOME_READ_ONLY.map((rel) => join12(own, rel));
     ownDenied = [];
     others = [...claudeDirs.flatMap((d) => claudeState(home2, d)), ...codexDirs.filter((d) => d !== own), ...museDirs];
   }
@@ -26234,7 +28074,7 @@ function profileForWorker(input) {
     readablePaths: uniq([
       ...readableFor(worktree, input.readablePaths),
       ...input.policyPath ? [canonicalPath(input.policyPath)] : [],
-      ...WORKER_DIR_READ_ONLY.map((rel) => join10(workerDir, rel)),
+      ...WORKER_DIR_READ_ONLY.map((rel) => join12(workerDir, rel)),
       ...ownReadOnly
     ]),
     allowedHosts: workerAllowedHosts(input.provider, input.snapshot),
@@ -26256,12 +28096,12 @@ function codexReviewerProfile(profile, input) {
       throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let the reviewer write ${dir}: the ${what} overlaps the review checkout ${checkout}, which must stay read-only`, { path: dir });
     }
   }
-  const defaultCodexHome = join10(home2, ".codex");
+  const defaultCodexHome = join12(home2, ".codex");
   return {
     writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...defaultCodexHome === codexHome ? [] : [defaultCodexHome]]),
     // A writable worktree is not listed as readable too: srt would write-deny it as a read-only path.
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...input.writable ? [] : [checkout], ...CODEX_HOME_READ_ONLY.map((rel) => join10(codexHome, rel))]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...input.writable ? [] : [checkout], ...CODEX_HOME_READ_ONLY.map((rel) => join12(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits }
   };
@@ -26302,7 +28142,7 @@ function credentialDenyPaths(opts = {}) {
   const env = opts.env ?? process.env;
   const dirs = providerDirs({ homeDir: home2, env });
   return uniq([
-    ...HOME_DENY_READ.map((rel) => join10(home2, rel)),
+    ...HOME_DENY_READ.map((rel) => join12(home2, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
     ...orbitTmpRoots(),
     ...claudeLogins(home2, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home2, d)),
@@ -26311,10 +28151,10 @@ function credentialDenyPaths(opts = {}) {
   ]);
 }
 function workerTmpDir(workerDir, root = orbitTmpRoot()) {
-  return join10(root, sha256(canonicalPath(workerDir)).slice(0, 12));
+  return join12(root, sha256(canonicalPath(workerDir)).slice(0, 12));
 }
 function prepareWorkerTmpDir(workerDir, root = orbitTmpRoot()) {
-  mkdirSync6(root, { recursive: true, mode: 448 });
+  mkdirSync7(root, { recursive: true, mode: 448 });
   const problem = privateRootProblem(lstatSync5(root));
   if (problem !== null) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${root} is not a private directory owned by this user (${problem}); refusing to put worker temp files there`, { path: root });
@@ -26322,11 +28162,11 @@ function prepareWorkerTmpDir(workerDir, root = orbitTmpRoot()) {
   const uid = process.getuid?.();
   const dir = workerTmpDir(workerDir, root);
   const existing = lstatOrNull2(dir);
-  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync(dir);
+  if (existing !== null && (existing.isSymbolicLink() || !existing.isDirectory())) unlinkSync2(dir);
   else if (existing !== null && uid !== void 0 && existing.uid !== uid) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} is not owned by this user; refusing to put worker temp files there`, { path: dir });
   }
-  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync6(dir, { mode: 448 });
+  if (existing === null || existing.isSymbolicLink() || !existing.isDirectory()) mkdirSync7(dir, { mode: 448 });
   const made = lstatSync5(dir);
   if (made.isSymbolicLink() || !made.isDirectory()) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `${dir} changed while it was being prepared; refusing to put worker temp files there`, { path: dir });
@@ -26357,24 +28197,24 @@ function prepareFreshTmpDir(dir, root = orbitTmpRoot()) {
 function providerDirs(opts) {
   const env = opts.env ?? process.env;
   const home2 = canonicalPath(opts.homeDir);
-  const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join10(home2, ".claude");
-  const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join10(home2, ".codex");
+  const claude = opts.claudeConfigDir ?? nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join12(home2, ".claude");
+  const codex = opts.codexHome ?? nonEmpty(env.CODEX_HOME) ?? join12(home2, ".codex");
   return { claudeConfigDir: canonicalPath(claude), codexHome: canonicalPath(codex) };
 }
 function codexHomeFor(homeDir, env) {
   const configured = nonEmpty(env.CODEX_HOME);
-  if (configured !== void 0 && !isAbsolute7(configured)) {
+  if (configured !== void 0 && !isAbsolute8(configured)) {
     throw new OrbitError("CONFIG_INVALID", `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured)}`, { variable: "CODEX_HOME" });
   }
-  return canonicalPath(configured ?? join10(canonicalPath(homeDir), ".codex"));
+  return canonicalPath(configured ?? join12(canonicalPath(homeDir), ".codex"));
 }
 function repoParentDenial(repoRoot, homeDir) {
   const repo = canonicalPath(repoRoot);
-  const parent = dirname9(repo);
+  const parent = dirname10(repo);
   const home2 = canonicalPath(homeDir);
   if (parent === repo || parent === "/") return { path: null, reason: "the repository sits at the filesystem root" };
   if (isWithin(home2, parent)) return { path: null, reason: `${parent} contains the home directory` };
-  const shared = uniq(["/tmp", "/private/tmp", "/var/tmp", "/var/folders", tmpdir3()].map(canonicalPath));
+  const shared = uniq(["/tmp", "/private/tmp", "/var/tmp", "/var/folders", tmpdir4()].map(canonicalPath));
   if (shared.some((root) => isWithin(root, parent))) return { path: null, reason: `${parent} contains a shared temp directory` };
   return { path: parent, reason: "sibling projects are denied; the worktree and git directory are re-allowed" };
 }
@@ -26386,7 +28226,7 @@ function checkoutBelowDenied(opts) {
   const checkout = canonicalPath(opts.checkout);
   const repo = canonicalPath(opts.repoRoot);
   const parent = repoParentDenial(repo, opts.homeDir).path;
-  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...opts.env ? { env: opts.env } : {} }), join10(repo, ".orbit"), ...isWithin(repo, checkout) ? [] : [repo], ...parent ? [parent] : []];
+  const denied = [...credentialDenyPaths({ homeDir: opts.homeDir, ...opts.env ? { env: opts.env } : {} }), join12(repo, ".orbit"), ...isWithin(repo, checkout) ? [] : [repo], ...parent ? [parent] : []];
   return denied.some((d) => d !== checkout && isWithin(checkout, d));
 }
 function denyList(opts) {
@@ -26394,9 +28234,9 @@ function denyList(opts) {
   const repo = canonicalPath(opts.repoRoot);
   const parent = repoParentDenial(repo, opts.home).path;
   return uniq([
-    ...HOME_DENY_READ.map((rel) => join10(opts.home, rel)),
+    ...HOME_DENY_READ.map((rel) => join12(opts.home, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
-    join10(repo, ".orbit"),
+    join12(repo, ".orbit"),
     ...isWithin(repo, opts.worktree) ? [] : [repo],
     // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
     // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
@@ -26412,18 +28252,18 @@ function otherClaudeLogins(homeDir, env, own) {
 }
 function claudeLogins(home2, env, configured) {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
-  return uniq([configured, ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : [], join10(home2, ".claude")]);
+  return uniq([configured, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".claude")]);
 }
 function museConfigDirs(home2, env) {
   const xdg = nonEmpty(env.XDG_CONFIG_HOME);
-  return uniq([...xdg && isAbsolute7(xdg) ? [join10(canonicalPath(xdg), "muse")] : [], join10(home2, ".config", "muse")]);
+  return uniq([...xdg && isAbsolute8(xdg) ? [join12(canonicalPath(xdg), "muse")] : [], join12(home2, ".config", "muse")]);
 }
 function codexHomes(home2, env, configured) {
   const fromEnv = nonEmpty(env.CODEX_HOME);
-  return uniq([configured, ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : [], join10(home2, ".codex")]);
+  return uniq([configured, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".codex")]);
 }
 function claudeGlobalConfig(home2, configDir) {
-  return configDir === join10(home2, ".claude") ? join10(home2, ".claude.json") : join10(configDir, ".claude.json");
+  return configDir === join12(home2, ".claude") ? join12(home2, ".claude.json") : join12(configDir, ".claude.json");
 }
 function claudeState(home2, configDir) {
   return uniq([configDir, claudeGlobalConfig(home2, configDir)]);
@@ -26433,7 +28273,7 @@ function assertProviderDirConfinable(dir, home2, env) {
     throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let a worker write ${dir}: a provider config directory must not be the home directory or contain it`, { path: dir });
   }
   const fromEnv = nonEmpty(env.ORBIT_HOME);
-  for (const orbitHome of uniq([join10(home2, ".orbit"), ...fromEnv && isAbsolute7(fromEnv) ? [canonicalPath(fromEnv)] : []])) {
+  for (const orbitHome of uniq([join12(home2, ".orbit"), ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : []])) {
     if (isWithin(dir, orbitHome) || isWithin(orbitHome, dir)) {
       throw new OrbitError("ISOLATION_UNAVAILABLE", `refusing to let a worker write ${dir}: a provider config directory must not be, contain or sit inside the Orbit home ${orbitHome}`, { path: dir });
     }
@@ -26534,152 +28374,9 @@ var init_role_grants = __esm({
   }
 });
 
-// src/core/schema.ts
-import { readFileSync as readFileSync7, statSync as statSync3 } from "node:fs";
-import { resolve as resolve4 } from "node:path";
-function instance() {
-  if (!ajv) {
-    ajv = new Ajv2020Ctor({ strict: true, allErrors: true, allowUnionTypes: true });
-    addFormats2(ajv);
-  }
-  return ajv;
-}
-function compileSchema(source) {
-  if (typeof source === "string") return compilePath(source);
-  if (source === null || typeof source !== "object" || Array.isArray(source)) {
-    throw new OrbitError("INTERNAL", "a JSON Schema must be an object or a file path");
-  }
-  const cached = byObject.get(source);
-  if (cached) return cached;
-  const fn = compileObject(source, labelOf(source, null));
-  byObject.set(source, fn);
-  return fn;
-}
-function validate(schema4, value, label) {
-  const fn = typeof schema4 === "function" ? assertSync(schema4) : compileSchema(schema4);
-  if (fn(value)) return value;
-  const errors = formatSchemaErrors(fn.errors);
-  const name = label ?? labels.get(fn) ?? "value";
-  const shown3 = errors.slice(0, 10).join("; ");
-  const more = errors.length > 10 ? ` (and ${errors.length - 10} more)` : "";
-  throw new OrbitError("SCHEMA_INVALID", `${name} does not match its schema: ${shown3}${more}`, {
-    schema: labels.get(fn) ?? null,
-    errors: errors.slice(0, MAX_REPORTED_ERRORS)
-  });
-}
-function schemaErrors(schema4, value) {
-  const fn = typeof schema4 === "function" ? assertSync(schema4) : compileSchema(schema4);
-  return fn(value) ? [] : formatSchemaErrors(fn.errors);
-}
-function formatSchemaErrors(errors) {
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const e of errors ?? []) {
-    const line3 = `${e.instancePath || "(root)"}: ${describe(e)}`;
-    if (seen.has(line3)) continue;
-    seen.add(line3);
-    out.push(line3);
-  }
-  return out;
-}
-function compilePath(path) {
-  const abs = resolve4(path);
-  let stat;
-  try {
-    stat = statSync3(abs);
-  } catch (err) {
-    throw new OrbitError("NOT_FOUND", `schema file not found: ${abs}`, { path: abs }, { cause: err });
-  }
-  const hit = byPath.get(abs);
-  if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.fn;
-  let parsed3;
-  try {
-    parsed3 = JSON.parse(readFileSync7(abs, "utf8"));
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `schema file ${abs} is not valid JSON: ${err.message}`, { path: abs }, { cause: err });
-  }
-  if (parsed3 === null || typeof parsed3 !== "object" || Array.isArray(parsed3)) {
-    throw new OrbitError("INTERNAL", `schema file ${abs} does not contain a JSON object`, { path: abs });
-  }
-  const fn = compileObject(parsed3, labelOf(parsed3, abs));
-  byPath.set(abs, { mtimeMs: stat.mtimeMs, size: stat.size, fn });
-  return fn;
-}
-function compileObject(schema4, label) {
-  const key2 = hashObject(schema4);
-  const cached = byHash.get(key2);
-  if (cached) return cached;
-  const a = instance();
-  const id2 = schema4.$id;
-  if (typeof id2 === "string") a.removeSchema(id2);
-  let fn;
-  try {
-    fn = a.compile(schema4);
-  } catch (err) {
-    throw new OrbitError("INTERNAL", `schema ${label} does not compile: ${err.message}`, { schema: label }, { cause: err });
-  }
-  assertSync(fn, label);
-  labels.set(fn, label);
-  byHash.set(key2, fn);
-  return fn;
-}
-function assertSync(fn, label) {
-  if (fn.$async === true) {
-    const name = label ?? labels.get(fn) ?? "validator";
-    throw new OrbitError("INTERNAL", `schema ${name} is asynchronous ($async); Orbit validates synchronously`, { schema: name });
-  }
-  return fn;
-}
-function labelOf(schema4, path) {
-  const s = schema4;
-  if (typeof s.$id === "string") return s.$id;
-  if (path) return path;
-  if (typeof s.title === "string") return s.title;
-  return "schema";
-}
-function describe(e) {
-  const p = e.params;
-  switch (e.keyword) {
-    case "required":
-      return `missing required property '${String(p.missingProperty)}'`;
-    case "additionalProperties":
-      return `unexpected property '${String(p.additionalProperty)}'`;
-    case "unevaluatedProperties":
-      return `unexpected property '${String(p.unevaluatedProperty)}'`;
-    case "enum":
-      return `must be one of ${p.allowedValues?.map((v) => JSON.stringify(v)).join(", ") ?? "the allowed values"}`;
-    case "const":
-      return `must equal ${JSON.stringify(p.allowedValue)}`;
-    case "type":
-      return `must be ${Array.isArray(p.type) ? p.type.join(" or ") : String(p.type)}`;
-    case "format":
-      return `must be a valid ${String(p.format)}`;
-    default:
-      return e.message ?? e.keyword;
-  }
-}
-var import__2, import_ajv_formats2, Ajv2020Ctor, addFormats2, MAX_REPORTED_ERRORS, ajv, byObject, byHash, byPath, labels;
-var init_schema5 = __esm({
-  "src/core/schema.ts"() {
-    "use strict";
-    import__2 = __toESM(require__(), 1);
-    import_ajv_formats2 = __toESM(require_dist(), 1);
-    init_errors();
-    init_hash();
-    Ajv2020Ctor = import__2.default.default ?? import__2.default;
-    addFormats2 = import_ajv_formats2.default.default ?? import_ajv_formats2.default;
-    MAX_REPORTED_ERRORS = 50;
-    ajv = null;
-    byObject = /* @__PURE__ */ new WeakMap();
-    byHash = /* @__PURE__ */ new Map();
-    byPath = /* @__PURE__ */ new Map();
-    labels = /* @__PURE__ */ new WeakMap();
-  }
-});
-
 // src/adapters/claude-settings.ts
-import { existsSync as existsSync8, statSync as statSync4 } from "node:fs";
-import { isAbsolute as isAbsolute8 } from "node:path";
+import { existsSync as existsSync10, statSync as statSync5 } from "node:fs";
+import { isAbsolute as isAbsolute9 } from "node:path";
 function absRule(tool, absPath, glob) {
   const base = absPath.endsWith("/") ? absPath.slice(0, -1) : absPath;
   return `${tool}(/${base}${glob ? `/${glob}` : ""})`;
@@ -26753,7 +28450,7 @@ function claudeSettingsProblems(settings) {
     for (const hook of matcher.hooks) {
       if (!isExecutable(hook.command)) problems.push(`hook command ${hook.command} is not an executable file`);
       for (const arg of hook.args) {
-        if (isAbsolute8(arg) && !existsSync8(arg)) problems.push(`hook script ${arg} does not exist`);
+        if (isAbsolute9(arg) && !existsSync10(arg)) problems.push(`hook script ${arg} does not exist`);
       }
     }
   }
@@ -26767,7 +28464,7 @@ function assertClaudeSettings(settings) {
 }
 function isExecutable(path) {
   try {
-    const st = statSync4(path);
+    const st = statSync5(path);
     return st.isFile() && (st.mode & 73) !== 0;
   } catch {
     return false;
@@ -26781,7 +28478,7 @@ var init_claude_settings = __esm({
   "src/adapters/claude-settings.ts"() {
     "use strict";
     init_errors();
-    init_schema5();
+    init_schema4();
     init_profiles();
     init_util();
     init_role_grants();
@@ -26872,384 +28569,19 @@ var init_claude_settings = __esm({
   }
 });
 
-// src/adapters/claude-plugins.ts
-function pluginPolicyOf(config) {
-  const a = config.agents;
-  return { allowed: [...a.allowed_plugins ?? []], allowManaged: a.allow_managed_plugins === true };
-}
-function parsePluginList(stdout) {
-  let parsed3;
-  try {
-    parsed3 = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed3)) return null;
-  const out = [];
-  for (const e of parsed3) {
-    if (!isRecord2(e) || typeof e.id !== "string") continue;
-    out.push({ id: e.id, scope: typeof e.scope === "string" ? e.scope : null, enabled: e.enabled !== false });
-  }
-  return out;
-}
-function isBuiltinPlugin(entry) {
-  return isRecord2(entry) && typeof entry.source === "string" && entry.source.endsWith("@builtin");
-}
-function workerPlugins(initPlugins, check) {
-  if (initPlugins === void 0) return [];
-  const entries = Array.isArray(initPlugins) ? initPlugins : [null];
-  const out = [];
-  for (const e of entries) {
-    if (isBuiltinPlugin(e)) continue;
-    const r = isRecord2(e) ? e : {};
-    const id2 = typeof r.source === "string" && r.source.includes("@") ? r.source : null;
-    const name = typeof r.name === "string" ? r.name : null;
-    const scope = typeof r.scope === "string" ? r.scope : id2 === null ? null : check.installed?.find((p) => p.id === id2)?.scope ?? null;
-    out.push({ id: id2, name, scope, allowed_by: allowance(id2, scope, check.policy) });
-  }
-  return out;
-}
-function allowance(id2, scope, policy) {
-  if (id2 === null) return null;
-  if (policy.allowed.includes(id2)) return "agents.allowed_plugins";
-  if (scope === "managed" && policy.allowManaged) return "agents.allow_managed_plugins";
-  return null;
-}
-function pluginAllowLines(p) {
-  if (p.id === null) return [];
-  const lines = [`agents.allowed_plugins: ${JSON.stringify([p.id])}`];
-  if (p.scope === "managed") lines.push("agents.allow_managed_plugins: true");
-  return lines;
-}
-function describeRefusedPlugin(p) {
-  if (p.id === null) return p.name === null ? "an entry with no name@marketplace source (no config line can allow it)" : `${p.name} (no name@marketplace source; no config line can allow it)`;
-  return `${p.id} (scope ${p.scope ?? "unknown"}; allow it with ${pluginAllowLines(p).join(" or ")})`;
-}
-function pluginRefusal(plugins) {
-  const refused = plugins.filter((p) => p.allowed_by === null);
-  if (refused.length === 0) return null;
-  return `the session loaded ${refused.length} plugin(s) that are not Claude Code built-ins and that the policy does not allow: ${refused.map(describeRefusedPlugin).join("; ")}`;
-}
-function needsPluginList(initPlugins) {
-  if (!Array.isArray(initPlugins)) return false;
-  return initPlugins.some((e) => !isBuiltinPlugin(e) && isRecord2(e) && typeof e.source === "string" && typeof e.scope !== "string");
-}
-function isRecord2(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-var STRICT_PLUGIN_POLICY, WORKER_EXCLUDED_SCOPES;
-var init_claude_plugins = __esm({
-  "src/adapters/claude-plugins.ts"() {
-    "use strict";
-    STRICT_PLUGIN_POLICY = Object.freeze({ allowed: Object.freeze([]), allowManaged: false });
-    WORKER_EXCLUDED_SCOPES = ["user", "project", "local"];
-  }
-});
-
-// src/adapters/claude-transcript.ts
-function classifyClaudeTranscript(input) {
-  const { events, exit } = input;
-  const result2 = lastOf(events, (e) => e.type === "result");
-  const init = events.find((e) => e.type === "system" && e.subtype === "init");
-  const sessionId = claudeSessionId(events);
-  const usage = claudeUsage(events);
-  const plugins = workerPlugins(init?.plugins, input.plugins ?? NO_PLUGINS);
-  const base = {
-    structured: null,
-    text: result2 ? str(result2.result) : null,
-    exitCode: exit.code,
-    usage,
-    durationMs: num(result2?.duration_ms) ?? Math.max(0, exit.endedAt - exit.startedAt),
-    sessionId,
-    models: modelUsageKeys(result2),
-    permissionDenials: denials(result2),
-    numTurns: num(result2?.num_turns),
-    modelRequests: claudeModelRequests(events),
-    terminalReason: str(result2?.terminal_reason),
-    ...plugins.length > 0 ? { plugins } : {}
-  };
-  const end = (status2, reason, error, structured = null) => ({
-    ...base,
-    status: status2,
-    reason,
-    error,
-    structured
-  });
-  if (exit.error) return end("failed", "spawn_failed", exit.error);
-  const auth = authEvidence(events, result2);
-  if (auth) return end("auth_failed", "auth", auth);
-  if (exit.timedOut) return end("timeout", "timeout", `timed out; the shim sent ${exit.escalation.join(", ") || "no signal"}`);
-  if (exit.cancelled) return end("cancelled", "interrupted", "cancelled by a signal to the worker");
-  if (!result2) {
-    if (exit.escalation.length > 0) {
-      return end("cancelled", "interrupted", `no result line (exit ${exit.code ?? exit.signal}) after ${exit.escalation.join(", ")}; the run was interrupted`);
-    }
-    if (exit.signal !== null) return end("failed", "crashed", `killed by ${exit.signal} without a result line`);
-    if (input.malformedTail) return end("malformed_output", "malformed_transcript", `transcript ends in a line that is not JSON (exit ${exit.code})`);
-    return end("failed", "crashed", `exited ${exit.code} without a result line`);
-  }
-  const subtype = str(result2.subtype);
-  const isError = result2.is_error === true;
-  const errors = Array.isArray(result2.errors) ? result2.errors.filter((e) => typeof e === "string") : [];
-  const detail = errors[0] ?? str(result2.result) ?? null;
-  switch (subtype) {
-    case "error_max_turns":
-      return end("max_turns", "max_turns", detail ?? "reached the maximum number of turns");
-    case "error_max_budget_usd":
-      return end("failed", "max_budget", detail ?? "reached the maximum budget");
-    case "error_max_structured_output_retries":
-      return end("malformed_output", "structured_output_retries", detail ?? "structured output retries exhausted");
-    case "error_during_execution":
-      return end("failed", "execution_error", detail ?? "error during execution");
-    default:
-      break;
-  }
-  if (isError || exit.code !== 0 || subtype !== "success") {
-    const status2 = num(result2.api_error_status);
-    const retryErrors = apiErrors(events);
-    if (status2 !== null && (status2 === 429 || status2 >= 500) || retryErrors.some((e) => CLAUDE_TRANSIENT_ERRORS.includes(e))) {
-      return end("transient_error", "transient_api_error", detail ?? `API error ${status2 ?? ""}`.trim());
-    }
-    if (str(result2.terminal_reason) === "api_error" || status2 !== null) return end("failed", "api_error", detail ?? "API error");
-    return end("failed", "execution_error", detail ?? `exit ${exit.code}, subtype ${subtype ?? "missing"}`);
-  }
-  const unsafe = sessionProblems(init, input.expectedSessionId ?? null, input.plugins);
-  if (unsafe) return end("failed", "unsafe_session", unsafe);
-  if (!("structured_output" in result2) || result2.structured_output === void 0) {
-    return end("malformed_output", "structured_output_missing", "the result has no structured_output");
-  }
-  const problems = schemaErrors(input.outputSchema, result2.structured_output);
-  if (problems.length > 0) {
-    return end("malformed_output", "structured_output_invalid", `structured output does not match the role schema: ${problems.slice(0, 5).join("; ")}`);
-  }
-  return end("succeeded", "success", null, result2.structured_output);
-}
-function claudeRawFinalAnswer(events) {
-  const result2 = lastOf(events, (e) => e.type === "result");
-  if (result2 && "structured_output" in result2 && result2.structured_output !== void 0) return result2.structured_output;
-  const text2 = result2 && result2.is_error !== true ? str(result2.result) : null;
-  if (text2 !== null && text2.trim() !== "") return parsedOrText(text2);
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type !== "assistant" || !isObject(e.message)) continue;
-    const content = e.message.content;
-    if (!Array.isArray(content)) continue;
-    for (let j = content.length - 1; j >= 0; j--) {
-      const block2 = content[j];
-      if (!isObject(block2)) continue;
-      const b = block2;
-      if (b.type === "tool_use" && b.name === STRUCTURED_OUTPUT_TOOL && b.input !== void 0) return b.input;
-    }
-  }
-  return void 0;
-}
-function sessionProblems(init, expectedSessionId = null, plugins = NO_PLUGINS) {
-  if (!init) return "the transcript has no system/init line, so the permission mode and loaded servers cannot be checked";
-  if (init.permissionMode !== "dontAsk") return `the session ran in permission mode ${String(init.permissionMode)}, not dontAsk`;
-  if (!Array.isArray(init.mcp_servers) || init.mcp_servers.length > 0) {
-    return Array.isArray(init.mcp_servers) ? `the session loaded ${init.mcp_servers.length} MCP server(s)` : "system/init does not list its MCP servers";
-  }
-  const refusal2 = pluginRefusal(workerPlugins(init.plugins, plugins));
-  if (refusal2) return refusal2;
-  if (expectedSessionId !== null && init.session_id !== expectedSessionId) {
-    return `the transcript is of session ${String(init.session_id)}, not ${expectedSessionId}`;
-  }
-  return null;
-}
-function authEvidence(events, result2) {
-  for (const e of events) {
-    if (e.type === "system" && e.subtype === "api_retry" && typeof e.error === "string" && CLAUDE_AUTH_ERRORS.includes(e.error)) {
-      return `authentication failed (${e.error}, HTTP ${String(e.error_status ?? "unknown")}); not retried`;
-    }
-    if (e.type === "assistant" && typeof e.error === "string" && CLAUDE_AUTH_ERRORS.includes(e.error)) {
-      return `authentication failed (${e.error}); not retried`;
-    }
-  }
-  if (result2) {
-    const status2 = num(result2.api_error_status);
-    if (status2 === 401 || status2 === 403) return `authentication failed (HTTP ${status2}); not retried`;
-    const text2 = str(result2.result);
-    if (result2.is_error === true && text2 !== null && text2.startsWith("Not logged in")) return "not logged in; not retried";
-  }
-  return null;
-}
-function apiErrors(events) {
-  const out = [];
-  for (const e of events) {
-    if (e.type === "system" && e.subtype === "api_retry" && typeof e.error === "string") out.push(e.error);
-    if (e.type === "assistant" && typeof e.error === "string") out.push(e.error);
-  }
-  return out;
-}
-function claudeUsage(events) {
-  const result2 = lastOf(events, (e) => e.type === "result");
-  const mu = result2 && isObject(result2.modelUsage) ? result2.modelUsage : null;
-  if (mu && Object.keys(mu).length > 0) {
-    let input2 = 0;
-    let output2 = 0;
-    let cacheRead2 = 0;
-    let cacheWrite2 = 0;
-    let cost = 0;
-    let costKnown = true;
-    let main2 = null;
-    for (const [model, raw] of Object.entries(mu)) {
-      if (!isObject(raw)) continue;
-      const u = raw;
-      const out = num(u.outputTokens) ?? 0;
-      input2 += num(u.inputTokens) ?? 0;
-      output2 += out;
-      cacheRead2 += num(u.cacheReadInputTokens) ?? 0;
-      cacheWrite2 += num(u.cacheCreationInputTokens) ?? 0;
-      const c = num(u.costUSD);
-      if (c === null) costKnown = false;
-      else cost += c;
-      const weight = c ?? out;
-      if (!main2 || weight > main2.weight) main2 = { model, weight };
-    }
-    return {
-      provider: "claude",
-      model: main2?.model ?? null,
-      inputTokens: input2,
-      outputTokens: output2,
-      cacheReadTokens: cacheRead2,
-      cacheWriteTokens: cacheWrite2,
-      costUsd: costKnown ? cost : num(result2?.total_cost_usd) ?? null,
-      costSource: costKnown || num(result2?.total_cost_usd) !== null ? "reported" : "unavailable"
-    };
-  }
-  if (result2 && num(result2.total_cost_usd) !== null && num(result2.total_cost_usd) > 0) {
-    return { ...emptyUsage(), model: assistantModel(events), costUsd: num(result2.total_cost_usd), costSource: "reported" };
-  }
-  const seen = /* @__PURE__ */ new Map();
-  for (const e of events) {
-    if (e.type !== "assistant" || !isObject(e.message)) continue;
-    const m = e.message;
-    if (!isObject(m.usage)) continue;
-    seen.set(str(m.id) ?? `#${seen.size}`, m.usage);
-  }
-  if (seen.size === 0) return { ...emptyUsage(), model: assistantModel(events) };
-  let input = 0;
-  let output = 0;
-  let cacheRead = 0;
-  let cacheWrite = 0;
-  for (const u of seen.values()) {
-    input += num(u.input_tokens) ?? 0;
-    output += num(u.output_tokens) ?? 0;
-    cacheRead += num(u.cache_read_input_tokens) ?? 0;
-    cacheWrite += num(u.cache_creation_input_tokens) ?? 0;
-  }
-  return { provider: "claude", model: assistantModel(events), inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, costUsd: null, costSource: "unavailable" };
-}
-function claudeModelRequests(events) {
-  const ids = /* @__PURE__ */ new Set();
-  let messages = 0;
-  for (const e of events) {
-    if (e.type !== "assistant") continue;
-    messages++;
-    if (e.error !== void 0 || e.is_api_error_message === true || typeof e.parent_tool_use_id === "string" && e.parent_tool_use_id.length > 0) continue;
-    const m = isObject(e.message) ? e.message : {};
-    ids.add(str(m.id) ?? `#${messages}`);
-  }
-  return messages === 0 ? null : ids.size;
-}
-function claudeSessionId(events) {
-  const result2 = lastOf(events, (e) => e.type === "result");
-  const init = events.find((e) => e.type === "system" && e.subtype === "init");
-  return str(result2?.session_id) ?? str(init?.session_id) ?? null;
-}
-function emptyUsage(provider = "claude") {
-  return { provider, model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: "unavailable" };
-}
-function claudeEvents(lines, now) {
-  const out = [];
-  for (const e of lines) {
-    const at = Date.parse(str(e.timestamp) ?? "") || now;
-    if (e.type === "system" && e.subtype === "init") out.push({ type: "started", at });
-    else if (e.type === "system" && e.subtype === "api_retry") out.push({ type: "error", at, message: `API retry ${String(e.attempt ?? "?")}/${String(e.max_retries ?? "?")}: ${String(e.error ?? "unknown")}` });
-    else if (e.type === "assistant" && isObject(e.message)) {
-      const content = e.message.content;
-      for (const block2 of Array.isArray(content) ? content : []) {
-        if (!isObject(block2)) continue;
-        const b = block2;
-        if (b.type === "text" && typeof b.text === "string") out.push({ type: "message", at, text: clip(b.text, 2e3) });
-        if (b.type === "tool_use" && typeof b.name === "string") out.push({ type: "tool", at, tool: b.name, summary: toolSummary(b.input) });
-      }
-      if (typeof e.error === "string") out.push({ type: "error", at, message: e.error });
-    } else if (e.type === "result") {
-      out.push({ type: "usage", at, usage: claudeUsage([e]) });
-      out.push({ type: "finished", at });
-    }
-  }
-  return out;
-}
-function toolSummary(input) {
-  if (!isObject(input)) return "";
-  const i = input;
-  const pick2 = i.file_path ?? i.notebook_path ?? i.command ?? i.pattern ?? i.path;
-  return typeof pick2 === "string" ? clip(pick2, 200) : "";
-}
-function assistantModel(events) {
-  const a = lastOf(events, (e) => e.type === "assistant" && isObject(e.message) && typeof e.message.model === "string");
-  if (a) return a.message.model;
-  const init = events.find((e) => e.type === "system" && e.subtype === "init");
-  return str(init?.model);
-}
-function modelUsageKeys(result2) {
-  return result2 && isObject(result2.modelUsage) ? Object.keys(result2.modelUsage) : [];
-}
-function denials(result2) {
-  const list3 = result2 && Array.isArray(result2.permission_denials) ? result2.permission_denials : [];
-  return list3.filter(isObject).map((d) => ({ tool_name: String(d.tool_name ?? ""), tool_use_id: String(d.tool_use_id ?? "") }));
-}
-function lastOf(items, pred) {
-  for (let i = items.length - 1; i >= 0; i--) if (pred(items[i])) return items[i];
-  return void 0;
-}
-function isObject(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-function str(v) {
-  return typeof v === "string" ? v : null;
-}
-function num(v) {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-function clip(s, n2) {
-  return s.length > n2 ? `${s.slice(0, n2)}...` : s;
-}
-function parsedOrText(text2) {
-  try {
-    return JSON.parse(text2);
-  } catch {
-    return text2;
-  }
-}
-var CLAUDE_AUTH_ERRORS, CLAUDE_TRANSIENT_ERRORS, STRUCTURED_OUTPUT_TOOL, NO_PLUGINS;
-var init_claude_transcript = __esm({
-  "src/adapters/claude-transcript.ts"() {
-    "use strict";
-    init_schema5();
-    init_claude_plugins();
-    CLAUDE_AUTH_ERRORS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold"];
-    CLAUDE_TRANSIENT_ERRORS = ["rate_limit", "overloaded", "server_error"];
-    STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
-    NO_PLUGINS = { policy: STRICT_PLUGIN_POLICY, installed: null };
-  }
-});
-
 // src/adapters/commands.ts
-import { existsSync as existsSync9 } from "node:fs";
-import { dirname as dirname10, join as join11 } from "node:path";
+import { existsSync as existsSync11 } from "node:fs";
+import { dirname as dirname11, join as join13 } from "node:path";
 import { fileURLToPath } from "node:url";
 function orbitCommands(entry, node = process.execPath) {
   return { shim: [node, entry, "shim"], hook: [node, entry, "hook", "pre-tool-use"], cli: [node, entry] };
 }
 function sourceCommands(node = process.execPath) {
-  const here = dirname10(fileURLToPath(import.meta.url));
-  return { shim: [node, "--no-warnings", join11(here, "shim-main.ts")], hook: [node, "--no-warnings", join11(here, "hook-main.ts")], cli: [node, "--no-warnings", join11(here, "..", "cli", "main.ts")] };
+  const here = dirname11(fileURLToPath(import.meta.url));
+  return { shim: [node, "--no-warnings", join13(here, "shim-main.ts")], hook: [node, "--no-warnings", join13(here, "hook-main.ts")], cli: [node, "--no-warnings", join13(here, "..", "cli", "main.ts")] };
 }
 function defaultOrbitCommands(self = fileURLToPath(import.meta.url)) {
-  if (self.endsWith(".mjs") && existsSync9(self)) return orbitCommands(self);
+  if (self.endsWith(".mjs") && existsSync11(self)) return orbitCommands(self);
   return sourceCommands();
 }
 var init_commands = __esm({
@@ -28029,8 +29361,8 @@ var init_overlays = __esm({
 });
 
 // src/adapters/prompt.ts
-import { existsSync as existsSync10, readFileSync as readFileSync8 } from "node:fs";
-import { dirname as dirname11, join as join12 } from "node:path";
+import { existsSync as existsSync12, readFileSync as readFileSync9 } from "node:fs";
+import { dirname as dirname12, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function outputBudgetFor(role, opts = {}) {
   if (opts.explicit !== void 0) {
@@ -28050,9 +29382,9 @@ function renderWorkerPrompt(input) {
   const untrusted = (label, content, ref3) => fence(label, redactForProvider(content, input.secrets), { maxChars: blockChars, ref: ref3 });
   const parts = [OPERATING_PROMPT, `## Role
 
-${input.role}`, `## Work unit
+${input.role}`, `## Policy summary
 
-${input.task.trim()}`];
+${input.policySummary.trim()}`];
   if (input.contract) parts.push(`## Contract
 
 Validated by the controller. Criteria ids are the ones to cite.
@@ -28060,9 +29392,6 @@ Validated by the controller. Criteria ids are the ones to cite.
 \`\`\`json
 ${compactJson(input.contract)}
 \`\`\``);
-  parts.push(`## Policy summary
-
-${input.policySummary.trim()}`);
   const docs = input.repoInstructions ?? [];
   let instructionChars = 0;
   if (docs.length > 0) {
@@ -28075,6 +29404,9 @@ ${blocks.join("\n\n")}`;
     instructionChars = section.length + 2;
     parts.push(section);
   }
+  parts.push(`## Work unit
+
+${input.task.trim()}`);
   if (input.candidate) {
     const c = input.candidate;
     parts.push(`## Candidate
@@ -28139,9 +29471,9 @@ function stripFrontmatter(text2) {
 function readRolePrompt(role, agentsDir) {
   if (!AGENT_ROLES.includes(role)) throw new OrbitError("CONFIG_INVALID", `unknown role ${String(role)}`);
   const dir = agentsDir ?? findAgentsDir();
-  const path = join12(dir, `${role}.md`);
-  if (!existsSync10(path)) throw new OrbitError("NOT_FOUND", `role prompt not found: ${path}`, { path });
-  return stripFrontmatter(readFileSync8(path, "utf8"));
+  const path = join14(dir, `${role}.md`);
+  if (!existsSync12(path)) throw new OrbitError("NOT_FOUND", `role prompt not found: ${path}`, { path });
+  return stripFrontmatter(readFileSync9(path, "utf8"));
 }
 function renderSystemPrompt(role, opts = {}) {
   const body = readRolePrompt(role, opts.agentsDir);
@@ -28154,11 +29486,11 @@ ${opts.overlay.trim()}
 `;
 }
 function findAgentsDir() {
-  let dir = dirname11(fileURLToPath2(import.meta.url));
+  let dir = dirname12(fileURLToPath2(import.meta.url));
   for (let i = 0; i < 5; i++) {
-    if (existsSync10(join12(dir, "agents", "implementer.md"))) return join12(dir, "agents");
-    if (existsSync10(join12(dir, "plugin", "agents", "implementer.md"))) return join12(dir, "plugin", "agents");
-    dir = dirname11(dir);
+    if (existsSync12(join14(dir, "agents", "implementer.md"))) return join14(dir, "agents");
+    if (existsSync12(join14(dir, "plugin", "agents", "implementer.md"))) return join14(dir, "plugin", "agents");
+    dir = dirname12(dir);
   }
   throw new OrbitError("NOT_FOUND", "cannot find the agents/ directory of the Orbit installation");
 }
@@ -28213,1238 +29545,6 @@ complete; the controller determines completion from independent gates.`;
     DEFAULT_BLOCK_CHARS = 4e3;
     DEFAULT_PROMPT_CHARS = 48e3;
     REPO_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"];
-  }
-});
-
-// src/adapters/shim.ts
-import { spawn as spawn3, spawnSync as spawnSync2 } from "node:child_process";
-import { closeSync as closeSync4, existsSync as existsSync11, fstatSync as fstatSync2, openSync as openSync4, readdirSync as readdirSync5, readFileSync as readFileSync9, readSync, rmSync as rmSync2, statSync as statSync5, unlinkSync as unlinkSync2, writeSync as writeSync2 } from "node:fs";
-import { randomBytes as randomBytes3 } from "node:crypto";
-import { StringDecoder as StringDecoder2 } from "node:string_decoder";
-import { tmpdir as tmpdir4 } from "node:os";
-import { basename as basename5, dirname as dirname12, isAbsolute as isAbsolute9, join as join13, resolve as resolve5 } from "node:path";
-function argvHash(argv2) {
-  return `sha256:${sha256(JSON.stringify(argv2))}`;
-}
-function readPidRecord(workerDir) {
-  return readRecord(join13(workerDir, PID_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number");
-}
-function readRegistration(workerDir) {
-  return readRecord(join13(workerDir, REGISTRATION_FILE), (o) => typeof o.shimPid === "number" && typeof o.pgid === "number" && typeof o.registeredAt === "number");
-}
-function readExitRecord(workerDir) {
-  return readRecord(join13(workerDir, EXIT_FILE), (o) => typeof o.timedOut === "boolean" && typeof o.endedAt === "number");
-}
-function readRecord(path, check) {
-  let text2;
-  try {
-    text2 = readFileSync9(path, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const o = JSON.parse(text2);
-    return o !== null && typeof o === "object" && !Array.isArray(o) && check(o) ? o : null;
-  } catch {
-    return null;
-  }
-}
-function runShim(options) {
-  const host = { ...DEFAULT_HOST, ...options.host };
-  const pgid = host.pgidOf(process.pid);
-  if (pgid !== process.pid) {
-    throw new OrbitError("INTERNAL", `the shim must lead its own process group (pid ${process.pid}, pgid ${String(pgid)}); start it detached`);
-  }
-  if (options.argv.length === 0 || !options.argv[0]) throw new OrbitError("INTERNAL", "the shim needs a provider command");
-  return new Shim(options, pgid, host).run();
-}
-function isJsonLine(line3) {
-  const t = line3.trimStart();
-  if (!t.startsWith("{") && !t.startsWith("[")) return false;
-  try {
-    JSON.parse(line3);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function isRemovable(p) {
-  if (!isAbsolute9(p) || !existsSync11(p)) return false;
-  const name = basename5(p);
-  if (!name.startsWith("orbit-")) return false;
-  const parent = dirname12(p);
-  return parent === tmpdir4() || parent === resolve5(tmpdir4()) || parent === "/tmp" || parent === "/private/tmp";
-}
-function readFrom(path, offset, max = 4 * 1024 * 1024) {
-  let fd;
-  try {
-    fd = openSync4(path, "r");
-  } catch {
-    return null;
-  }
-  try {
-    const size = fstatSync2(fd).size;
-    const len = Math.max(0, Math.min(size - offset, max));
-    const buf = Buffer.alloc(len);
-    let read2 = 0;
-    while (read2 < len) {
-      const n2 = readSync(fd, buf, read2, len - read2, offset + read2);
-      if (n2 === 0) break;
-      read2 += n2;
-    }
-    return buf.subarray(0, read2);
-  } catch {
-    return null;
-  } finally {
-    safeClose(fd);
-  }
-}
-function macProcesses() {
-  if (process.platform !== "darwin") return null;
-  let r;
-  try {
-    r = spawnSync2("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "lstart="], {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" },
-      timeout: 1e4,
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-  } catch {
-    return null;
-  }
-  if (r.error || r.status !== 0 || typeof r.stdout !== "string") return null;
-  const entries = [];
-  for (const line3 of r.stdout.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line3);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    const ppid = Number(m[2]);
-    const pgid = Number(m[3]);
-    const start = m[4].trim().replace(/\s+/g, " ");
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(ppid) || ppid < 0 || !Number.isSafeInteger(pgid) || pgid <= 0 || start === "") continue;
-    entries.push({ pid, ppid, pgid, start });
-  }
-  return entries;
-}
-function validEntry(entry) {
-  return Number.isSafeInteger(entry.pid) && entry.pid > 0 && Number.isSafeInteger(entry.ppid) && entry.ppid >= 0 && Number.isSafeInteger(entry.pgid) && entry.pgid > 0 && typeof entry.start === "string" && entry.start !== "";
-}
-function groupMembers(pgid, opts = {}) {
-  if ((opts.platform ?? process.platform) === "linux") {
-    const procDir = opts.procDir ?? "/proc";
-    let names;
-    try {
-      names = readdirSync5(procDir);
-    } catch {
-      return null;
-    }
-    return names.filter((n2) => /^\d+$/.test(n2)).map(Number).filter((pid) => readPgid(pid, { platform: "linux", procDir }) === pgid);
-  }
-  const r = spawnSync2("ps", ["-A", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
-  if (r.status !== 0 || typeof r.stdout !== "string") return null;
-  const out = [];
-  for (const line3 of r.stdout.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line3);
-    if (m && Number(m[2]) === pgid && Number(m[1]) !== r.pid) out.push(Number(m[1]));
-  }
-  return out;
-}
-function readPgid(pid, opts = {}) {
-  try {
-    if ((opts.platform ?? process.platform) === "linux") {
-      const stat = readFileSync9(join13(opts.procDir ?? "/proc", String(pid), "stat"), "utf8");
-      const n3 = Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[2]);
-      return Number.isSafeInteger(n3) && n3 > 0 ? n3 : null;
-    }
-    const r = spawnSync2("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8", timeout: 1e4, stdio: ["ignore", "pipe", "ignore"] });
-    const n2 = Number((r.stdout ?? "").trim());
-    return r.status === 0 && Number.isSafeInteger(n2) && n2 > 0 ? n2 : null;
-  } catch {
-    return null;
-  }
-}
-function pgidOf(pid, opts = {}) {
-  return readPgid(pid, opts) ?? (pid === process.pid && groupExists(pid) ? pid : null);
-}
-function groupExists(pgid) {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function safeStart(pid) {
-  try {
-    return processStartTime(pid);
-  } catch {
-    return null;
-  }
-}
-function safeClose(fd) {
-  try {
-    closeSync4(fd);
-  } catch {
-  }
-}
-function cleanEnv2(env) {
-  const out = {};
-  for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
-  return out;
-}
-function describe2(err) {
-  const code2 = err?.code;
-  return code2 ?? (err instanceof Error ? err.message : String(err));
-}
-function shimArgs(opts) {
-  const out = ["--worker-dir", opts.workerDir, "--timeout-ms", String(opts.timeoutMs)];
-  if (opts.launchToken) out.push(LAUNCH_TOKEN_FLAG, opts.launchToken);
-  if (opts.graceMs !== void 0) out.push("--grace-ms", String(opts.graceMs));
-  if (opts.sessionId) out.push("--session-id", opts.sessionId);
-  if (opts.stdinPath) out.push("--stdin", opts.stdinPath);
-  if (opts.cwd) out.push("--cwd", opts.cwd);
-  for (const p of opts.abortOn ?? []) out.push("--abort-on", JSON.stringify(p));
-  for (const p of opts.cleanupPaths ?? []) out.push("--cleanup", p);
-  return [...out, "--", ...opts.argv];
-}
-function parseShimArgs(args) {
-  const sep18 = args.indexOf("--");
-  if (sep18 === -1 || sep18 === args.length - 1) throw new OrbitError("CONFIG_INVALID", "orbit shim: expected -- followed by the provider command");
-  const opts = args.slice(0, sep18);
-  const out = { workerDir: "", timeoutMs: 0, graceMs: DEFAULT_GRACE_MS, sessionId: null, stdinPath: null, cwd: null, abortOn: [], cleanupPaths: [], launchToken: null, argv: args.slice(sep18 + 1) };
-  for (let i = 0; i < opts.length; i += 2) {
-    const flag = opts[i];
-    const value = opts[i + 1];
-    if (value === void 0) throw new OrbitError("CONFIG_INVALID", `orbit shim: ${flag} needs a value`);
-    switch (flag) {
-      case "--worker-dir":
-        out.workerDir = value;
-        break;
-      case "--timeout-ms":
-        out.timeoutMs = nonNegativeInt(flag, value);
-        break;
-      case "--grace-ms":
-        out.graceMs = nonNegativeInt(flag, value);
-        break;
-      case "--session-id":
-        out.sessionId = value;
-        break;
-      case "--stdin":
-        out.stdinPath = value;
-        break;
-      case "--cwd":
-        out.cwd = value;
-        break;
-      case "--abort-on": {
-        const p = JSON.parse(value);
-        if (p === null || typeof p !== "object" || Array.isArray(p) || !Object.values(p).every((v) => typeof v === "string")) {
-          throw new OrbitError("CONFIG_INVALID", "orbit shim: --abort-on takes a JSON object of string fields");
-        }
-        out.abortOn.push(p);
-        break;
-      }
-      case "--cleanup":
-        out.cleanupPaths.push(value);
-        break;
-      case LAUNCH_TOKEN_FLAG:
-        out.launchToken = value;
-        break;
-      default:
-        throw new OrbitError("CONFIG_INVALID", `orbit shim: unknown option ${flag}`);
-    }
-  }
-  if (!out.workerDir || !isAbsolute9(out.workerDir)) throw new OrbitError("CONFIG_INVALID", "orbit shim: --worker-dir must be an absolute path");
-  return out;
-}
-function nonNegativeInt(flag, value) {
-  const n2 = Number(value);
-  if (!Number.isSafeInteger(n2) || n2 < 0) throw new OrbitError("CONFIG_INVALID", `orbit shim: ${flag} must be a non-negative integer`);
-  return n2;
-}
-async function shimMain(args, host) {
-  let parsed3;
-  try {
-    parsed3 = parseShimArgs(args);
-  } catch (err) {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}
-`);
-    return 2;
-  }
-  await runShim({
-    workerDir: parsed3.workerDir,
-    argv: parsed3.argv,
-    env: process.env,
-    cwd: parsed3.cwd ?? process.cwd(),
-    timeoutMs: parsed3.timeoutMs,
-    graceMs: parsed3.graceMs,
-    sessionId: parsed3.sessionId,
-    stdinPath: parsed3.stdinPath,
-    abortOn: parsed3.abortOn,
-    cleanupPaths: parsed3.cleanupPaths,
-    launchToken: parsed3.launchToken,
-    ...host ? { host } : {}
-  });
-  return 0;
-}
-var PID_FILE, REGISTRATION_FILE, EXIT_FILE, LAUNCH_TOKEN_FLAG, CANCEL_FILE, LOG_FILE, STDERR_FILE, SHIM_LOG_FILE, DEFAULT_GRACE_MS, ABORT_POLL_MS, FIRST_OUTPUT_POLL_MS, LEFTOVER_GRACE_MS, DESCENDANT_POLL_MS, OUTPUT_POLL_MS, OUTPUT_PUMP_BYTES, ESCALATION, MAX_TIMER_MS, DEFAULT_HOST, Shim, MAX_PENDING_LINE, PENDING_OVERLAP, MAX_KEY_BLOCK_LINES, KEY_MARKER, KEY_HEADER, LineSink, Spill, DescendantTracker;
-var init_shim = __esm({
-  "src/adapters/shim.ts"() {
-    "use strict";
-    init_errors();
-    init_fsx();
-    init_hash();
-    init_proc();
-    init_redact();
-    PID_FILE = "pid.json";
-    REGISTRATION_FILE = "registration.json";
-    EXIT_FILE = "exit.json";
-    LAUNCH_TOKEN_FLAG = "--launch-token";
-    CANCEL_FILE = "cancel.json";
-    LOG_FILE = "log.jsonl";
-    STDERR_FILE = "stderr.log";
-    SHIM_LOG_FILE = "shim.log";
-    DEFAULT_GRACE_MS = 5e3;
-    ABORT_POLL_MS = 200;
-    FIRST_OUTPUT_POLL_MS = 25;
-    LEFTOVER_GRACE_MS = 1e3;
-    DESCENDANT_POLL_MS = 100;
-    OUTPUT_POLL_MS = 20;
-    OUTPUT_PUMP_BYTES = 8 * 1024 * 1024;
-    ESCALATION = ["SIGINT", "SIGTERM", "SIGKILL"];
-    MAX_TIMER_MS = 2147483647;
-    DEFAULT_HOST = {
-      pgidOf: (pid) => pgidOf(pid),
-      signalGroup: (pgid, signal) => {
-        process.kill(-pgid, signal);
-      },
-      signalProcess: (pid, signal) => {
-        process.kill(pid, signal);
-      },
-      groupMembers: (pgid) => groupMembers(pgid),
-      processes: () => macProcesses(),
-      onSignal: (signal, listener) => {
-        process.on(signal, listener);
-      }
-    };
-    Shim = class {
-      o;
-      pgid;
-      host;
-      clock;
-      graceMs;
-      workerDir;
-      startedAt;
-      child = null;
-      timedOut = false;
-      cancelled = false;
-      aborted = null;
-      escalation = [];
-      escalating = false;
-      // Signals the shim sent to its own group and will therefore receive itself;
-      // the handlers swallow that many before treating one as external.
-      selfSent = { SIGINT: 0, SIGTERM: 0 };
-      timers = /* @__PURE__ */ new Set();
-      finished = false;
-      childExited = false;
-      settle = null;
-      logOffset = 0;
-      /** Size of the log when the provider started; output beyond it is the provider's. */
-      logStartSize = 0;
-      firstOutputAt = null;
-      logCarry = "";
-      redactor;
-      spills = [];
-      /** macOS has no PID namespace, so remember descendants that leave the shim's group. */
-      descendants;
-      descendantSweep = null;
-      constructor(options, pgid, host) {
-        this.o = options;
-        this.pgid = pgid;
-        this.host = host;
-        this.clock = options.clock ?? { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
-        this.graceMs = Math.max(0, options.graceMs ?? DEFAULT_GRACE_MS);
-        this.workerDir = resolve5(options.workerDir);
-        this.startedAt = this.clock.now();
-        this.redactor = createRedactor({ env: cleanEnv2(options.env) });
-        this.descendants = process.platform === "darwin" ? new DescendantTracker(this.host, this.pgid) : null;
-      }
-      run() {
-        return new Promise((resolvePromise) => {
-          this.settle = resolvePromise;
-          for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) this.host.onSignal(sig, () => this.onSignal(sig));
-          this.start();
-        });
-      }
-      start() {
-        try {
-          this.register();
-        } catch (err) {
-          this.finishWithoutChild(`could not register the shim before starting the provider: ${describe2(err)}`);
-          return;
-        }
-        const [command, ...args] = this.o.argv;
-        const fds = [];
-        let child;
-        try {
-          const log = openSync4(join13(this.workerDir, LOG_FILE), "a", 384);
-          fds.push(log);
-          const errLog = openSync4(join13(this.workerDir, STDERR_FILE), "a", 384);
-          fds.push(errLog);
-          let stdin = "ignore";
-          if (this.o.stdinPath) {
-            stdin = openSync4(this.o.stdinPath, "r");
-            fds.push(stdin);
-          }
-          try {
-            this.logOffset = statSync5(join13(this.workerDir, LOG_FILE)).size;
-          } catch {
-            this.logOffset = 0;
-          }
-          this.logStartSize = this.logOffset;
-          this.spills = [new Spill(this.openSpill("out"), this.sinkFor(log)), new Spill(this.openSpill("err"), this.sinkFor(errLog))];
-          child = spawn3(command, args, { cwd: this.o.cwd, env: cleanEnv2(this.o.env), stdio: [stdin, this.spills[0].fd, this.spills[1].fd], windowsHide: true });
-        } catch (err) {
-          this.closeOutput();
-          this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
-          return;
-        } finally {
-          for (const fd of fds) if (!this.spills.some((sp) => sp.sink.fd === fd)) safeClose(fd);
-        }
-        this.child = child;
-        this.pumpLater();
-        child.once("error", (err) => {
-          if (child.pid === void 0) {
-            this.closeOutput();
-            this.finishWithoutChild(`could not start ${command}: ${describe2(err)}`);
-          }
-        });
-        if (child.pid === void 0) return;
-        child.once("exit", (code2, signal) => void this.onChildExit(code2, signal));
-        this.writePid(child);
-        this.descendants?.start(child.pid);
-        this.watchDescendants();
-        this.watchFirstOutput();
-        if (this.o.timeoutMs > 0) {
-          this.later(this.o.timeoutMs, () => {
-            this.timedOut = true;
-            void this.escalate(0, false);
-          });
-        }
-        if (this.o.abortOn && this.o.abortOn.length > 0) this.watchForAbort();
-      }
-      onSignal(sig) {
-        if (sig !== "SIGHUP" && this.selfSent[sig] > 0) {
-          this.selfSent[sig]--;
-          return;
-        }
-        if (this.finished) return;
-        this.cancelled = true;
-        const forward = sig === "SIGHUP" ? "SIGTERM" : sig;
-        try {
-          this.child?.kill(forward);
-        } catch {
-        }
-        void this.escalate(sig === "SIGINT" ? 1 : 2, true);
-      }
-      /**
-       * Signal the group from stage `from` on, waiting graceMs between stages,
-       * until the provider exits. With `waitFirst` the grace period runs before
-       * the first signal (a signal from outside already started the sequence).
-       */
-      async escalate(from, waitFirst) {
-        if (this.escalating || this.finished) return;
-        this.escalating = true;
-        this.descendants?.capture();
-        if (waitFirst) await this.clock.sleep(this.graceMs);
-        for (let i = from; i < ESCALATION.length; i++) {
-          if (this.finished || this.childExited) return;
-          const sig = ESCALATION[i];
-          if (sig === "SIGKILL") {
-            await this.killGroupAndFinish(null, "SIGKILL", true);
-            return;
-          }
-          this.signalGroup(sig);
-          await this.clock.sleep(this.graceMs);
-        }
-      }
-      signalGroup(sig) {
-        this.escalation.push(sig);
-        this.selfSent[sig]++;
-        try {
-          this.host.signalGroup(this.pgid, sig);
-        } catch {
-          this.selfSent[sig]--;
-        }
-      }
-      async onChildExit(code2, signal) {
-        if (this.finished) return;
-        this.childExited = true;
-        await this.sweepEscapedDescendants();
-        const leftovers = this.leftovers();
-        if (leftovers === null) {
-          this.closeOutput();
-          const rec2 = this.record(code2, signal, null);
-          this.persist(rec2);
-          try {
-            this.host.signalGroup(this.pgid, "SIGKILL");
-          } catch {
-          }
-          this.finish(rec2, false);
-          return;
-        }
-        if (leftovers) {
-          this.signalGroup("SIGTERM");
-          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
-          while (this.clock.now() < deadline && this.leftovers() !== false) await this.clock.sleep(50);
-          if (this.leftovers() !== false) {
-            await this.killGroupAndFinish(code2, signal);
-            return;
-          }
-        }
-        this.closeOutput();
-        this.finish(this.record(code2, signal, null));
-      }
-      /** An anonymous file the provider writes one stream to: created in the worker directory and unlinked at once, so it is no artifact. */
-      openSpill(name) {
-        const path = join13(this.workerDir, `.spill-${name}-${process.pid}-${randomBytes3(4).toString("hex")}`);
-        const fd = openSync4(path, "a+", 384);
-        try {
-          unlinkSync2(path);
-        } catch {
-        }
-        return fd;
-      }
-      sinkFor(fd) {
-        return new LineSink(fd, (line3) => this.redactLine(line3));
-      }
-      /** Move what the provider has written so far, redacted, into the artifacts; at most a bounded amount per call. */
-      pumpOutput(limit) {
-        for (const sp of this.spills) sp.pump(limit);
-      }
-      pumpLater() {
-        this.later(OUTPUT_POLL_MS, () => {
-          if (this.finished || this.spills.length === 0) return;
-          this.pumpOutput(OUTPUT_PUMP_BYTES);
-          this.pumpLater();
-        });
-      }
-      /**
-       * One line of provider output with every secret removed. A line that is a JSON document is redacted by value
-       * and written back as JSON, so a replacement can never break its quoting; any other line is redacted as text.
-       */
-      redactLine(line3) {
-        const t = line3.trimStart();
-        if (t.startsWith("{") || t.startsWith("[")) {
-          try {
-            const value = JSON.parse(line3);
-            const before = JSON.stringify(value);
-            const after = JSON.stringify(redactValue(value, this.redactor.redact));
-            if (after !== before) return after;
-            const text2 = this.redactor.redact(line3);
-            if (text2 === line3) return line3;
-            try {
-              JSON.parse(text2);
-              return text2;
-            } catch {
-              return JSON.stringify({ type: "orbit_redacted_line" });
-            }
-          } catch {
-          }
-        }
-        return this.redactor.redact(line3);
-      }
-      /** Write everything the provider produced, redacted, flush the unterminated tails and close the files. */
-      closeOutput() {
-        const spills = this.spills;
-        this.spills = [];
-        for (const sp of spills) {
-          sp.pump(Infinity);
-          sp.sink.flush();
-          safeClose(sp.fd);
-          safeClose(sp.sink.fd);
-        }
-      }
-      /**
-       * Write exit.json first: SIGKILL to the group ends the shim too. `code` and
-       * `signal` are the provider's own exit when it already ended and only
-       * leftovers are being killed; otherwise the provider dies by this SIGKILL.
-       */
-      async killGroupAndFinish(code2, signal, providerKilled = false) {
-        await this.sweepEscapedDescendants();
-        this.escalation.push("SIGKILL");
-        this.closeOutput();
-        const rec2 = this.record(code2, providerKilled ? "SIGKILL" : signal, null);
-        this.persist(rec2);
-        try {
-          this.host.signalGroup(this.pgid, "SIGKILL");
-        } catch {
-        }
-        this.finish(rec2, false);
-      }
-      /** Start a macOS-only descendant scan after the provider's pid is known. */
-      watchDescendants() {
-        const descendants = this.descendants;
-        if (!descendants) return;
-        this.later(DESCENDANT_POLL_MS, () => {
-          if (this.finished) return;
-          descendants.capture();
-          this.watchDescendants();
-        });
-      }
-      /**
-       * End process groups that a provider descendant moved out of the shim's
-       * group. The first pass is polite; a process that ignores it gets SIGKILL.
-       * A pid is used only while the process table proves its original start time,
-       * so a reused pid cannot make Orbit signal an unrelated process.
-       */
-      async sweepEscapedDescendants() {
-        if (!this.descendants) return;
-        if (this.descendantSweep) return this.descendantSweep;
-        const sweep = this.stopEscapedDescendants();
-        this.descendantSweep = sweep;
-        try {
-          await sweep;
-        } finally {
-          if (this.descendantSweep === sweep) this.descendantSweep = null;
-        }
-      }
-      async stopEscapedDescendants() {
-        this.descendants.capture();
-        for (const signal of ["SIGTERM", "SIGKILL"]) {
-          const { groups, pids } = this.descendants.escapedTargets();
-          if (groups.length === 0 && pids.length === 0) return;
-          for (const pgid of groups) {
-            try {
-              this.host.signalGroup(pgid, signal);
-            } catch {
-            }
-          }
-          for (const pid of pids) {
-            try {
-              this.host.signalProcess?.(pid, signal);
-            } catch {
-            }
-          }
-          if (signal === "SIGKILL") return;
-          const deadline = this.clock.now() + Math.min(this.graceMs, LEFTOVER_GRACE_MS);
-          while (this.clock.now() < deadline) {
-            await this.clock.sleep(Math.min(50, Math.max(1, deadline - this.clock.now())));
-            this.descendants.capture();
-            const left = this.descendants.escapedTargets();
-            if (left.groups.length === 0 && left.pids.length === 0) return;
-          }
-        }
-      }
-      /** The provider never started. pid.json is still written, so every reader finds the shim the same way. */
-      finishWithoutChild(error) {
-        if (!existsSync11(join13(this.workerDir, PID_FILE))) this.writePid(null);
-        this.finish(this.record(null, null, error));
-      }
-      register() {
-        const record = {
-          version: 1,
-          token: this.o.launchToken ?? null,
-          shimPid: process.pid,
-          shimStart: safeStart(process.pid),
-          pgid: this.pgid,
-          registeredAt: this.startedAt
-        };
-        atomicWriteJson(join13(this.workerDir, REGISTRATION_FILE), record, 384);
-      }
-      writePid(child) {
-        const pid = {
-          version: 1,
-          shimPid: process.pid,
-          shimStart: safeStart(process.pid),
-          pgid: this.pgid,
-          childPid: child?.pid ?? null,
-          childStart: child?.pid ? safeStart(child.pid) : null,
-          sessionId: this.o.sessionId ?? null,
-          argvHash: argvHash(this.o.argv),
-          startedAt: this.startedAt
-        };
-        atomicWriteJson(join13(this.workerDir, PID_FILE), pid, 384);
-      }
-      record(code2, signal, error) {
-        this.noteFirstOutput();
-        return {
-          version: 1,
-          code: code2,
-          signal,
-          timedOut: this.timedOut,
-          // cancelShim persists this intent before it signals the group. The
-          // provider's exit callback can run before Node dispatches SIGINT to the
-          // shim, so the durable intent closes that event-order race.
-          cancelled: this.cancelled || existsSync11(join13(this.workerDir, CANCEL_FILE)),
-          aborted: this.aborted,
-          escalation: [...this.escalation],
-          error,
-          startedAt: this.startedAt,
-          firstOutputAt: this.firstOutputAt,
-          endedAt: this.clock.now()
-        };
-      }
-      persist(rec2) {
-        atomicWriteJson(join13(this.workerDir, EXIT_FILE), rec2, 384);
-        this.cleanup();
-      }
-      finish(rec2, write2 = true) {
-        if (this.finished) return;
-        this.finished = true;
-        for (const t of this.timers) clearTimeout(t);
-        this.timers.clear();
-        if (write2) this.persist(rec2);
-        this.settle?.(rec2);
-      }
-      cleanup() {
-        for (const p of this.o.cleanupPaths ?? []) {
-          if (!isRemovable(p)) continue;
-          try {
-            rmSync2(p, { recursive: true, force: true });
-          } catch {
-          }
-        }
-      }
-      /** Whether anything besides the shim is in its group; null when the members cannot be listed (ps refused). */
-      leftovers() {
-        const members = this.host.groupMembers(this.pgid);
-        return members === null ? null : members.some((p) => p !== process.pid);
-      }
-      later(ms, fn) {
-        if (ms > MAX_TIMER_MS) {
-          this.later(MAX_TIMER_MS, () => this.later(ms - MAX_TIMER_MS, fn));
-          return;
-        }
-        const t = setTimeout(() => {
-          this.timers.delete(t);
-          fn();
-        }, ms);
-        this.timers.add(t);
-      }
-      /** Note the moment the provider first wrote to the log, for the model's time-to-first-event latency. */
-      noteFirstOutput() {
-        if (this.firstOutputAt !== null) return;
-        try {
-          if (statSync5(join13(this.workerDir, LOG_FILE)).size > this.logStartSize) this.firstOutputAt = this.clock.now();
-        } catch {
-        }
-      }
-      watchFirstOutput() {
-        this.later(FIRST_OUTPUT_POLL_MS, () => {
-          if (this.finished) return;
-          this.noteFirstOutput();
-          if (this.firstOutputAt === null) this.watchFirstOutput();
-        });
-      }
-      watchForAbort() {
-        this.later(ABORT_POLL_MS, () => {
-          if (this.finished || this.escalating) return;
-          const hit = this.scanLog();
-          if (hit) {
-            this.aborted = hit;
-            void this.escalate(0, false);
-            return;
-          }
-          this.watchForAbort();
-        });
-      }
-      /** Read new complete lines of the provider's stdout and test them against the abort patterns. */
-      scanLog() {
-        const buf = readFrom(join13(this.workerDir, LOG_FILE), this.logOffset);
-        if (!buf) return null;
-        this.logOffset += buf.length;
-        const text2 = this.logCarry + buf.toString("utf8");
-        const lines = text2.split("\n");
-        this.logCarry = lines.pop() ?? "";
-        for (const line3 of lines) {
-          if (!line3.startsWith("{")) continue;
-          let o;
-          try {
-            o = JSON.parse(line3);
-          } catch {
-            continue;
-          }
-          if (o === null || typeof o !== "object") continue;
-          for (const pattern of this.o.abortOn ?? []) {
-            if (Object.entries(pattern).every(([k, v]) => o[k] === v)) return JSON.stringify(pattern);
-          }
-        }
-        return null;
-      }
-    };
-    MAX_PENDING_LINE = 64 * 1024 * 1024;
-    PENDING_OVERLAP = 8 * 1024;
-    MAX_KEY_BLOCK_LINES = 200;
-    KEY_MARKER = "[REDACTED:private-key]";
-    KEY_HEADER = /-----BEGIN([A-Z0-9 ]{0,40}) PRIVATE KEY( BLOCK)?-----/;
-    LineSink = class {
-      fd;
-      decoder = new StringDecoder2("utf8");
-      pending = "";
-      redact;
-      keyBlock = null;
-      constructor(fd, redact2) {
-        this.fd = fd;
-        this.redact = redact2;
-      }
-      write(chunk) {
-        this.pending += this.decoder.write(chunk);
-        let start = 0;
-        for (let nl = this.pending.indexOf("\n", start); nl !== -1; nl = this.pending.indexOf("\n", start)) {
-          this.emit(this.pending.slice(start, nl), true);
-          start = nl + 1;
-        }
-        this.pending = this.pending.slice(start);
-        if (this.pending.length > MAX_PENDING_LINE) {
-          this.emit(this.pending.slice(0, this.pending.length - PENDING_OVERLAP), false);
-          this.pending = this.pending.slice(this.pending.length - PENDING_OVERLAP);
-        }
-      }
-      flush() {
-        this.pending += this.decoder.end();
-        if (this.pending.length > 0) this.emit(this.pending, false);
-        this.pending = "";
-      }
-      emit(line3, terminated) {
-        const eol = terminated ? "\n" : "";
-        const block2 = this.keyBlock;
-        if (block2) {
-          this.dropFromKeyBlock(block2, line3, eol);
-          return;
-        }
-        const header2 = line3.includes("PRIVATE KEY") ? KEY_HEADER.exec(line3) : null;
-        if (header2 && !isJsonLine(line3)) {
-          const footer = `-----END${header2[1]} PRIVATE KEY${header2[2] ?? ""}-----`;
-          if (!line3.includes(footer, header2.index + header2[0].length)) {
-            this.keyBlock = { footer, dropped: 0, endless: false };
-            this.put(this.redact(line3.slice(0, header2.index)) + KEY_MARKER + eol);
-            return;
-          }
-        }
-        this.put(this.redact(line3) + eol);
-      }
-      dropFromKeyBlock(block2, line3, eol) {
-        if (block2.endless) return;
-        if (line3.includes(block2.footer)) {
-          this.keyBlock = null;
-          return;
-        }
-        block2.dropped++;
-        if (block2.dropped >= MAX_KEY_BLOCK_LINES) {
-          block2.endless = true;
-          this.put(`${KEY_MARKER} no END line within ${MAX_KEY_BLOCK_LINES} lines; the rest of this stream is suppressed${eol}`);
-        }
-      }
-      put(text2) {
-        try {
-          const buf = Buffer.from(text2, "utf8");
-          let off = 0;
-          while (off < buf.length) off += writeSync2(this.fd, buf, off, buf.length - off);
-        } catch {
-        }
-      }
-    };
-    Spill = class {
-      fd;
-      sink;
-      pos = 0;
-      constructor(fd, sink) {
-        this.fd = fd;
-        this.sink = sink;
-      }
-      pump(limit) {
-        let moved = 0;
-        const buf = Buffer.alloc(1024 * 1024);
-        while (moved < limit) {
-          let size;
-          try {
-            size = fstatSync2(this.fd).size;
-          } catch {
-            return;
-          }
-          if (this.pos >= size) return;
-          let n2 = 0;
-          try {
-            n2 = readSync(this.fd, buf, 0, Math.min(buf.length, size - this.pos), this.pos);
-          } catch {
-            return;
-          }
-          if (n2 <= 0) return;
-          this.pos += n2;
-          moved += n2;
-          this.sink.write(buf.subarray(0, n2));
-        }
-      }
-    };
-    DescendantTracker = class {
-      rootPid = null;
-      seen = /* @__PURE__ */ new Map();
-      live = /* @__PURE__ */ new Map();
-      host;
-      shimPgid;
-      constructor(host, shimPgid) {
-        this.host = host;
-        this.shimPgid = shimPgid;
-      }
-      start(pid) {
-        this.rootPid = pid;
-        this.capture();
-      }
-      /** Snapshot the live tree and add every descendant reachable from a remembered process. */
-      capture() {
-        const entries = this.host.processes?.();
-        if (!entries) return false;
-        this.live.clear();
-        const children = /* @__PURE__ */ new Map();
-        for (const entry of entries) {
-          if (!validEntry(entry)) continue;
-          this.live.set(entry.pid, entry);
-          const siblings = children.get(entry.ppid);
-          if (siblings) siblings.push(entry);
-          else children.set(entry.ppid, [entry]);
-        }
-        const queue = [];
-        const queued = /* @__PURE__ */ new Set();
-        const addKnown = (entry) => {
-          const known = this.seen.get(entry.pid);
-          if (known && known.start !== entry.start) return;
-          if (!known) this.seen.set(entry.pid, entry);
-          if (!queued.has(entry.pid)) {
-            queued.add(entry.pid);
-            queue.push(entry.pid);
-          }
-        };
-        if (this.rootPid !== null) {
-          const root = this.live.get(this.rootPid);
-          if (root) addKnown(root);
-        }
-        for (const [pid, known] of this.seen) {
-          const current = this.live.get(pid);
-          if (current && current.start === known.start) addKnown(current);
-        }
-        for (let at = 0; at < queue.length; at++) {
-          const pid = queue[at];
-          for (const child of children.get(pid) ?? []) addKnown(child);
-        }
-        return true;
-      }
-      /**
-       * What to signal for each remembered, live descendant outside the shim group.
-       * A group is signalled whole only when its leader is itself a remembered
-       * descendant; a descendant that joined a group someone else leads is
-       * signalled alone, so the sweep never reaches that group's other members.
-       */
-      escapedTargets() {
-        const alive = (pid) => {
-          const known = this.seen.get(pid);
-          const current = this.live.get(pid);
-          return known && current && current.start === known.start ? current : null;
-        };
-        const groups = /* @__PURE__ */ new Set();
-        const pids = /* @__PURE__ */ new Set();
-        for (const pid of this.seen.keys()) {
-          const current = alive(pid);
-          if (!current || current.pid === process.pid || current.pgid <= 1 || current.pgid === this.shimPgid) continue;
-          if (alive(current.pgid)) groups.add(current.pgid);
-          else pids.add(current.pid);
-        }
-        const ascending = (a, b) => a - b;
-        return { groups: [...groups].sort(ascending), pids: [...pids].sort(ascending) };
-      }
-    };
-  }
-});
-
-// src/adapters/supervise.ts
-import { createHash as createHash2, randomBytes as randomBytes4 } from "node:crypto";
-import { existsSync as existsSync12, mkdirSync as mkdirSync7, renameSync as renameSync3 } from "node:fs";
-import { join as join14 } from "node:path";
-async function launchShim(input) {
-  const clock = input.clock ?? systemClock;
-  mkdirSync7(input.workerDir, { recursive: true, mode: 448 });
-  if (existsSync12(join14(input.workerDir, LAUNCH_FILE))) return reattachLaunch(input.provider, input.workerDir, input.workerId, clock);
-  const launch = {
-    version: 1,
-    provider: input.provider,
-    workerId: input.workerId,
-    argvHash: argvHash(input.argv),
-    sessionId: input.sessionId ?? null,
-    requestedAt: clock.now(),
-    token: randomBytes4(16).toString("hex"),
-    ...input.meta ? { meta: input.meta } : {}
-  };
-  atomicWriteJson(join14(input.workerDir, LAUNCH_FILE), launch, 384);
-  const args = shimArgs({
-    workerDir: input.workerDir,
-    timeoutMs: input.timeoutMs,
-    graceMs: input.graceMs,
-    sessionId: input.sessionId,
-    stdinPath: input.stdinPath,
-    cwd: input.cwd,
-    abortOn: input.abortOn,
-    cleanupPaths: input.cleanupPaths,
-    launchToken: launch.token,
-    argv: input.argv
-  });
-  const shimLog = join14(input.workerDir, SHIM_LOG_FILE);
-  const { pid } = spawnDetached([...input.shimCommand, ...args], { cwd: input.cwd, env: input.env, stdoutPath: shimLog, stderrPath: shimLog });
-  const procStart = recordShimIdentity(input.workerDir, launch, pid);
-  const handle = await waitForHandle(input.provider, input.workerDir, pid, clock);
-  if (handle) return handle;
-  const stopped = await stopLaunchedShim(pid, procStart, input.graceMs ?? DEFAULT_STOP_GRACE_MS) !== "unknown";
-  throw new OrbitError("PROVIDER_UNAVAILABLE", `worker shim for ${input.workerId} did not start (see ${shimLog})${stopped ? "" : `; its process ${pid} could not be confirmed stopped`}`, { workerId: input.workerId, shimLog, ...stopped ? {} : { shimPid: pid } });
-}
-function recordShimIdentity(workerDir, launch, pid) {
-  let procStart = null;
-  try {
-    procStart = processStartTime(pid);
-  } catch {
-    procStart = null;
-  }
-  try {
-    atomicWriteJson(join14(workerDir, LAUNCH_FILE), { ...launch, pid, procStart }, 384);
-  } catch {
-  }
-  return procStart;
-}
-function isShimCommandLine(commandLine, workerDir, token) {
-  const padded = ` ${commandLine} `;
-  return token !== null ? padded.includes(` ${LAUNCH_TOKEN_FLAG} ${token} `) : padded.includes(` --worker-dir ${workerDir} --timeout-ms `);
-}
-function launchedShimState(pid, procStart, unrecordedStart) {
-  let running;
-  try {
-    running = isAlive(pid);
-    if (running && procStart !== null) return isAlive(pid, procStart) ? "ours" : "gone";
-  } catch {
-    return "unknown";
-  }
-  if (running) {
-    const own = unrecordedStart?.(pid) ?? "unknown";
-    if (own === "ours" || own === "unknown") return own;
-    if (own === "foreign") return "gone";
-  }
-  try {
-    return isGroupAlive(pid) ? "ours" : "gone";
-  } catch {
-    return "unknown";
-  }
-}
-async function stopLaunchedShim(pid, procStart, graceMs, unrecordedStart) {
-  const first = launchedShimState(pid, procStart, unrecordedStart);
-  if (first !== "ours") return first;
-  try {
-    await terminateGroup(pid, graceMs);
-  } catch {
-    return "unknown";
-  }
-  return launchedShimState(pid, procStart, unrecordedStart) === "gone" ? "stopped" : "unknown";
-}
-async function reattachLaunch(provider, workerDir, workerId, clock = systemClock) {
-  const handle = await waitForHandle(provider, workerDir, null, clock);
-  if (handle && taskState(handle).state === "running") return handle;
-  throw new OrbitError("TRANSITION_INVALID", `worker ${workerId} was already launched in ${workerDir} and is no longer running; archive the attempt before starting another`, {
-    workerId,
-    workerDir
-  });
-}
-async function waitForHandle(provider, workerDir, shimPid, clock) {
-  const deadline = clock.now() + PID_WAIT_MS;
-  for (; ; ) {
-    const handle = handleFromWorkerDir(provider, workerDir);
-    if (handle) return handle;
-    if (shimPid !== null && !isAlive(shimPid) && !existsSync12(join14(workerDir, PID_FILE))) return null;
-    if (clock.now() >= deadline) return null;
-    await clock.sleep(25);
-  }
-}
-function handleFromWorkerDir(provider, workerDir) {
-  const pid = readPidRecord(workerDir);
-  if (!pid) return null;
-  return {
-    provider,
-    workerId: readJsonIfExists(join14(workerDir, LAUNCH_FILE))?.workerId ?? "",
-    workerDir,
-    pid: pid.shimPid,
-    pgid: pid.pgid,
-    procStart: pid.shimStart,
-    logPath: join14(workerDir, LOG_FILE),
-    exitPath: join14(workerDir, EXIT_FILE)
-  };
-}
-function timeToFirstEventMs(exit) {
-  if (!exit || typeof exit.firstOutputAt !== "number" || typeof exit.startedAt !== "number") return null;
-  return Math.max(0, exit.firstOutputAt - exit.startedAt);
-}
-function withWorkerTelemetry(usage, workerDir, finalAnswer) {
-  const meta = readJsonIfExists(join14(workerDir, LAUNCH_FILE))?.meta;
-  const budget = meta && typeof meta.outputBudgetTokens === "number" ? meta.outputBudgetTokens : null;
-  const final = finalOutputTokens(finalAnswer !== void 0 ? finalAnswer : readJsonIfExists(join14(workerDir, "result.json"))?.structured);
-  return { ...usage, timeToFirstEventMs: timeToFirstEventMs(readExitRecord(workerDir)), outputBudgetTokens: budget, finalOutputTokens: final };
-}
-function finalOutputTokens(finalAnswer) {
-  if (finalAnswer === void 0 || finalAnswer === null) return null;
-  const json3 = JSON.stringify(finalAnswer);
-  return json3 === void 0 ? null : Math.ceil(json3.length / 4);
-}
-function taskState(handle) {
-  const pid = readPidRecord(handle.workerDir);
-  const exit = readExitRecord(handle.workerDir);
-  if (exit) return { state: "exited", exit, pid };
-  if (shimAlive(handle)) return { state: "running", pid };
-  const late = readExitRecord(handle.workerDir);
-  if (late) return { state: "exited", exit: late, pid };
-  return { state: "lost", pid, orphans: childAlive(pid) || leftoverGroup(handle.pgid), cancelRequested: existsSync12(join14(handle.workerDir, CANCEL_FILE)) };
-}
-function leftoverGroup(pgid) {
-  try {
-    return !isAlive(pgid) && isGroupAlive(pgid);
-  } catch {
-    return true;
-  }
-}
-function shimAlive(handle) {
-  try {
-    return isAlive(handle.pid, handle.procStart);
-  } catch {
-    return true;
-  }
-}
-function childAlive(pid) {
-  if (!pid || pid.childPid === null) return false;
-  try {
-    return isAlive(pid.childPid, pid.childStart);
-  } catch {
-    return true;
-  }
-}
-async function cancelShim(handle, graceMs, clock = systemClock) {
-  if (!existsSync12(join14(handle.workerDir, CANCEL_FILE))) {
-    atomicWriteJson(join14(handle.workerDir, CANCEL_FILE), { version: 1, requestedAt: clock.now() }, 384);
-  }
-  const pid = readPidRecord(handle.workerDir);
-  if (!shimAliveStrict(handle) && !childAlive(pid) && !leftoverGroupStrict(handle.pgid)) return;
-  if (!isGroupAlive(handle.pgid)) return;
-  await terminateGroup(handle.pgid, graceMs, { clock });
-}
-function leftoverGroupStrict(pgid) {
-  try {
-    return !isAlive(pgid) && isGroupAlive(pgid);
-  } catch {
-    return false;
-  }
-}
-function shimAliveStrict(handle) {
-  if (handle.procStart === null) return false;
-  try {
-    return isAlive(handle.pid, handle.procStart);
-  } catch {
-    return false;
-  }
-}
-function readLogLines(path, maxBytes = 64 * 1024 * 1024) {
-  const buf = readFrom(path, 0, maxBytes);
-  return parseJsonLines(buf ? buf.toString("utf8") : "");
-}
-function parseJsonLines(text2) {
-  const out = { events: [], malformed: [], malformedTail: false };
-  for (const raw of text2.split("\n")) {
-    const line3 = raw.trim();
-    if (!line3) continue;
-    const o = tryParse(line3);
-    if (o) {
-      out.events.push(o);
-      out.malformedTail = false;
-    } else {
-      out.malformed.push(line3.length > 200 ? `${line3.slice(0, 200)}...` : line3);
-      out.malformedTail = true;
-    }
-  }
-  return out;
-}
-function readNewLines(path, offset) {
-  const buf = readFrom(path, offset);
-  if (!buf || buf.length === 0) return { lines: [], nextOffset: offset };
-  const end = buf.lastIndexOf(10);
-  if (end === -1) return { lines: [], nextOffset: offset };
-  const lines = [];
-  for (const raw of buf.subarray(0, end).toString("utf8").split("\n")) {
-    const o = tryParse(raw.trim());
-    if (o) lines.push(o);
-  }
-  return { lines, nextOffset: offset + end + 1 };
-}
-function tryParse(line3) {
-  if (!line3.startsWith("{")) return null;
-  try {
-    const o = JSON.parse(line3);
-    return o !== null && typeof o === "object" && !Array.isArray(o) ? o : null;
-  } catch {
-    return null;
-  }
-}
-function archiveAttempt(provider, workerDir) {
-  const handle = handleFromWorkerDir(provider, workerDir);
-  const st = handle ? taskState(handle) : null;
-  if (st?.state === "running") {
-    throw new OrbitError("TRANSITION_INVALID", `the attempt in ${workerDir} is still running; cancel it before archiving`, { workerDir });
-  }
-  if (st?.state === "lost" && st.orphans) {
-    throw new OrbitError("TRANSITION_INVALID", `the shim of the attempt in ${workerDir} is gone but its provider process is still running; cancel it before archiving`, { workerDir });
-  }
-  const files = ATTEMPT_FILES.filter((f) => existsSync12(join14(workerDir, f)));
-  if (files.length === 0) return null;
-  let n2 = 1;
-  while (existsSync12(join14(workerDir, "attempts", String(n2)))) n2++;
-  const dest = join14(workerDir, "attempts", String(n2));
-  mkdirSync7(dest, { recursive: true, mode: 448 });
-  for (const f of files) renameSync3(join14(workerDir, f), join14(dest, f));
-  return dest;
-}
-function archivedAttempts(workerDir) {
-  let n2 = 0;
-  while (existsSync12(join14(workerDir, "attempts", String(n2 + 1)))) n2++;
-  return n2;
-}
-function nextSessionId(workerId, workerDir) {
-  return sessionIdFor(workerId, archivedAttempts(workerDir));
-}
-function sessionIdFor(workerId, attempt = 0) {
-  const h = createHash2("sha256").update(`orbit-session:${workerId}:${attempt}`).digest();
-  h[6] = h[6] & 15 | 64;
-  h[8] = h[8] & 63 | 128;
-  const x = h.subarray(0, 16).toString("hex");
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
-}
-var LAUNCH_FILE, PID_WAIT_MS, DEFAULT_STOP_GRACE_MS, ATTEMPT_FILES;
-var init_supervise = __esm({
-  "src/adapters/supervise.ts"() {
-    "use strict";
-    init_clock();
-    init_errors();
-    init_exec();
-    init_fsx();
-    init_proc();
-    init_shim();
-    LAUNCH_FILE = "launch.json";
-    PID_WAIT_MS = 15e3;
-    DEFAULT_STOP_GRACE_MS = 2e3;
-    ATTEMPT_FILES = [
-      LAUNCH_FILE,
-      REGISTRATION_FILE,
-      PID_FILE,
-      EXIT_FILE,
-      LOG_FILE,
-      STDERR_FILE,
-      SHIM_LOG_FILE,
-      CANCEL_FILE,
-      "result.json",
-      "prompt.md",
-      "system.md",
-      "settings.json",
-      "schema.json",
-      "last-message.json"
-    ];
   }
 });
 
@@ -31046,7 +31146,7 @@ var AUTH_PATTERNS, QUOTA_PATTERNS, TRANSIENT_PATTERNS, CODEX_INSPECTION_ITEMS;
 var init_codex_events = __esm({
   "src/adapters/codex-events.ts"() {
     "use strict";
-    init_schema5();
+    init_schema4();
     AUTH_PATTERNS = [/\b401 Unauthorized\b/, /auth error: 401/, /auth error code: invalid_api_key/, /sign in again/i, /could not be refreshed/i];
     QUOTA_PATTERNS = [/usage limit/i, /insufficient_quota/, /exceeded your current quota/i, /quota (?:exceeded|exhausted)/i];
     TRANSIENT_PATTERNS = [/"status":\s*(429|5\d\d)\b/, /\bstatus (429|5\d\d)\b/, /\b(429|5\d\d) (Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\b/, /overloaded/i];
@@ -31589,7 +31689,7 @@ var MUSE_AUTH_PATTERNS, STEP_CAP, MUSE_QUOTA_PATTERNS;
 var init_muse_events = __esm({
   "src/adapters/muse-events.ts"() {
     "use strict";
-    init_schema5();
+    init_schema4();
     MUSE_AUTH_PATTERNS = [/missing meta credentials/i, /\b401\b/, /unauthori[sz]ed/i, /run `muse login`/i];
     STEP_CAP = /did not reach a terminal state within \d+ step/i;
     MUSE_QUOTA_PATTERNS = [/usage limit/i, /out of quota/i, /quota (?:exceeded|exhausted)/i, /exceeded your (?:current )?quota/i];
@@ -37248,6 +37348,25 @@ function summarizeUsage(db, runId) {
   const costComplete = unavailableCost.length === 0;
   const note3 = rows.length === 0 ? "no usage recorded" : costComplete ? totals.bySource.estimated > 0 ? `cost includes ${totals.bySource.estimated} estimated record(s) priced from tokens and registry pricing` : "cost reported by providers for every record" : `cost unavailable for ${unavailableCost.length} of ${rows.length} record(s); the total covers measured records only`;
   return { runId, totals, byProviderModel, unavailableCost, costComplete, note: note3 };
+}
+function usageByRole(db, runId) {
+  const rows = db.all("SELECT u.*, w.role AS role FROM usage u LEFT JOIN workers w ON w.id = u.worker_id WHERE u.run_id = ? ORDER BY u.id", runId);
+  const groups = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const role = r.role ?? "unattributed";
+    let g = groups.get(role);
+    if (!g) {
+      g = { role, ...emptyTotals(), promptTokens: 0, cachedTokens: 0 };
+      groups.set(role, g);
+    }
+    addRow(g, r);
+    const prompt = promptOf(r);
+    if (prompt !== null) {
+      g.promptTokens += prompt;
+      g.cachedTokens += r.cache_read_tokens ?? 0;
+    }
+  }
+  return [...groups.values()].map(({ promptTokens: p, cachedTokens: c, ...rest }) => ({ ...rest, cacheHitRatio: ratio(c, p) })).sort((a, b) => a.role.localeCompare(b.role));
 }
 function emptyTotals() {
   return {
@@ -47912,7 +48031,7 @@ var init_validate2 = __esm({
   "src/knowledge/validate.ts"() {
     "use strict";
     init_lesson_schema();
-    init_schema5();
+    init_schema4();
   }
 });
 
@@ -49922,6 +50041,7 @@ function taskSpec(ctx, w, req) {
     timeoutMs,
     env
   });
+  const turns = recordTurnCap(ctx, w);
   return {
     runId: ctx.run.id,
     workerId: w.id,
@@ -49935,15 +50055,30 @@ function taskSpec(ctx, w, req) {
     outputSchema: req.outputSchema ?? schemaFor2(w.role),
     readOnly: req.readOnly,
     ...req.experiments ? { experiments: true } : {},
-    maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
+    maxTurns: turns.cap,
     timeoutMs,
     sandbox,
     policyPath: policy.path,
     policyHash: policy.hash,
-    env: toolchains.env,
+    // The guard hook reads these to tell the session how many turns it has left (issue #177).
+    env: { ...toolchains.env, [ENV_TURN_CAP]: String(turns.cap), [ENV_TURN_REMIND_AT]: String(turns.remindAt) },
     ...outputCap === null ? {} : { outputTokens: outputCap },
     ...req.maxBudgetUsd === void 0 ? {} : { maxBudgetUsd: req.maxBudgetUsd }
   };
+}
+function sessionTurnCap(ctx, role) {
+  const hard = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  return Math.min(hard, turnCapFor(ctx.db, ctx.run.id, role, ctx.snapshot.config));
+}
+function recordTurnCap(ctx, w) {
+  const cap = sessionTurnCap(ctx, w.role);
+  const remindAt = reminderThreshold(cap, turnCapBounds(ctx.snapshot.config).reminderFraction);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, SESSION_TURN_CAP_EVENT, ctx.ownerId, { worker_id: w.id, role: w.role, purpose: w.purpose, cap, remind_at: remindAt }, ctx.clock.now()));
+  return { cap, remindAt };
+}
+function recordedTurnCap(db, runId, workerId) {
+  const row = db.get("SELECT json_extract(data_json, '$.cap') AS cap, json_extract(data_json, '$.remind_at') AS remind_at FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? ORDER BY id DESC LIMIT 1", runId, SESSION_TURN_CAP_EVENT, workerId);
+  return typeof row?.cap === "number" && typeof row.remind_at === "number" ? { cap: row.cap, remindAt: row.remind_at } : null;
 }
 function outputCapExceeded(error) {
   const m = typeof error === "string" ? OUTPUT_CAP_ERROR.exec(error) : null;
@@ -50526,7 +50661,7 @@ async function collectIfFinished(ctx, w, phase = "work") {
   settleSession(ctx, w, result2, phase, { finish: () => finishWorker(ctx.db, w.id, outcomeOf2(result2), ctx.clock, ctx.ownerId) });
   return false;
 }
-var OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES, IMPLEMENT_PURPOSE;
+var SESSION_TURN_CAP_EVENT, OUTPUT_CAP_DECISION_KIND, OUTPUT_CAP_CEILING, OUTPUT_CAP_ERROR, ZERO_COST_STATUSES, IMPLEMENT_PURPOSE;
 var init_workers2 = __esm({
   "src/controller/workers.ts"() {
     "use strict";
@@ -50551,12 +50686,14 @@ var init_workers2 = __esm({
     init_budget();
     init_accounting();
     init_pricing();
+    init_turn_cap();
     init_config();
     init_route_outcome();
     init_context2();
     init_run_store();
     init_knowledge_hooks();
     init_denials();
+    SESSION_TURN_CAP_EVENT = "worker.turn-cap";
     OUTPUT_CAP_DECISION_KIND = "worker.output-cap-raised";
     OUTPUT_CAP_CEILING = 32e3;
     OUTPUT_CAP_ERROR = /exceeded the (?:([\d,]+) )?output token maximum/i;
@@ -51791,7 +51928,7 @@ var init_curate = __esm({
     init_curator_output_schema();
     init_clock();
     init_errors();
-    init_schema5();
+    init_schema4();
     init_types6();
     init_authority();
     init_codefree();
@@ -56548,6 +56685,11 @@ var init_notify = __esm({
 import { existsSync as existsSync37, mkdirSync as mkdirSync17, readdirSync as readdirSync13, readFileSync as readFileSync28 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { join as join51 } from "node:path";
+function roleUsageReport(db, runId, acceptedCostUsd) {
+  const roles = usageByRole(db, runId).map((t) => ({ role: t.role, sessions: t.records, input_tokens: t.inputTokens, cached_input_tokens: t.cacheReadTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd, cache_hit_ratio: t.cacheHitRatio }));
+  const warnings = roles.filter((r) => r.cache_hit_ratio !== null && r.cache_hit_ratio < CACHE_HIT_WARNING_RATIO).map((r) => `${r.role}: cache hit ratio ${r.cache_hit_ratio} is under ${CACHE_HIT_WARNING_RATIO}; check that its prompt keeps a stable prefix and its model is not switched mid-session`);
+  return { roles, cache_hit_threshold: CACHE_HIT_WARNING_RATIO, warnings, cost_per_accepted_task: acceptedCostUsd };
+}
 function writeFinalReport(db, runId, opts) {
   const run = getRun(db, runId);
   const report2 = buildFinalReport(db, run, opts);
@@ -56599,6 +56741,7 @@ function assembleFinalReport(db, run, opts) {
     }
   }
   if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
+  budget = { ...budget, usage_by_role: roleUsageReport(db, run.id, run.state === "SUCCEEDED" ? usage.totals.costUsd : null) };
   const unverified = [...ev?.report.unverified ?? []];
   for (const c of criteria) if (c.mandatory && c.status !== "supported") unverified.push(`${c.id} is ${c.status}`);
   const risks = [];
@@ -56893,7 +57036,10 @@ function renderMarkdown(r) {
     const counters = b.counters.map((c) => c.counter === "worker_turns_per_session" ? `${c.counter}: ${c.used > 0 || (b.sessions?.length ?? 0) > 0 ? `${round2(c.used)} model requests at most in one session` : "usage unavailable"}; cap ${round2(c.hard_cap)} per session, enforced by the Claude CLI (--max-turns)` : `${c.counter}: ${round2(c.used)} used of ${round2(c.allowance)} allowed (hard cap ${round2(c.hard_cap)}${grantNote(c)})`);
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? "measured" : "incomplete: some usage has no cost"}); ${b.cost_measurement}`;
     const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
-    out.push("## Budget consumption", "", list3([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), "");
+    const byRole = (b.usage_by_role?.roles ?? []).map((u) => `role ${u.role}: ${u.input_tokens} in, ${u.cached_input_tokens} cached in, ${u.output_tokens} out, $${u.cost_usd.toFixed(4)}, cache hit ratio ${u.cache_hit_ratio ?? "unavailable"}`);
+    const perTask = b.usage_by_role ? [`cost per accepted task: ${b.usage_by_role.cost_per_accepted_task === null ? "none (no task accepted)" : `$${b.usage_by_role.cost_per_accepted_task.toFixed(4)}`}`] : [];
+    const cacheWarnings = (b.usage_by_role?.warnings ?? []).map((w) => `warning: ${w}`);
+    out.push("## Budget consumption", "", list3([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round2(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`, ...byRole, ...perTask, ...cacheWarnings]), "");
   }
   out.push("## Not verified", "", list3(r.unverified), "");
   out.push("## Residual risks", "", list3(r.residual_risks), "");
@@ -57156,7 +57302,7 @@ async function runCurator(host, task, model = curatorModelFor(host.deps.registry
   }
   return { output: result2.structured, model, workerId: ctx ? workerId : null };
 }
-var PRUNED, CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
+var CACHE_HIT_WARNING_RATIO, PRUNED, CURATOR_TIMEOUT_MS, CURATOR_MAX_TURNS;
 var init_report2 = __esm({
   "src/controller/report.ts"() {
     "use strict";
@@ -57201,6 +57347,7 @@ var init_report2 = __esm({
     init_proof();
     init_notify();
     init_knowledge_hooks();
+    CACHE_HIT_WARNING_RATIO = 0.5;
     PRUNED = "orbit gc removed this run's worktree, evidence and candidate refs after retention; only its record remains, so start a new run to continue.";
     CURATOR_TIMEOUT_MS = 5 * 6e4;
     CURATOR_MAX_TURNS = 6;
@@ -66670,9 +66817,29 @@ async function continueAttempt(ctx, n2, contract) {
       k++;
       continue;
     }
+    if (r.status === "succeeded" && turnExtension(ctx, n2, st.worker, r)) {
+      k++;
+      continue;
+    }
     if (r.status !== "succeeded") note2(ctx, WORKER_ENDED_EVENT, { attempt: n2, status: r.status, error: r.error?.slice(0, 300) ?? null, note: "its edits are verified like any other" });
     return snapshot(ctx, n2, st.worker.id);
   }
+}
+function turnExtensionsOf(ctx, n2) {
+  return listDecisions(ctx.db, ctx.run.id, { kind: TURN_EXTENSION_KIND }).map((d) => d.data).filter((d) => d.attempt === n2);
+}
+function turnExtension(ctx, n2, w, r) {
+  const granted = turnExtensionsOf(ctx, n2);
+  if (granted.some((g) => g.worker_id === w.id)) return true;
+  const next = r.structured?.next_action;
+  const remainder = next?.kind === "continue-implementation" ? next.detail : null;
+  const turns = r.modelRequests ?? null;
+  const recorded = recordedTurnCap(ctx.db, ctx.run.id, w.id);
+  const d = decideTurnExtension({ remainder, turns, remindAt: recorded?.remindAt ?? null, granted: granted.length });
+  if (!d.granted || !remainder || !recorded) return false;
+  const data = { attempt: n2, worker_id: w.id, turns, cap: recorded.cap, remainder: remainder.slice(0, 2e3) };
+  decide2(ctx, { id: `dec-${ctx.run.id}-turn-extension-${n2}`, kind: TURN_EXTENSION_KIND, summary: `attempt ${n2}: ${d.reason} (${turns} of ${recorded.cap} turns); one more session continues it in the same worktree`, data });
+  return true;
 }
 function authorizationRetries(ctx, n2) {
   return ctx.db.all("SELECT data_json FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id", ctx.run.id, AUTHORIZATION_RETRY_EVENT, n2).map((r) => JSON.parse(r.data_json));
@@ -66827,6 +66994,8 @@ function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
   const blocked = blockingQuestions(ctx.db, ctx.run.id).criteria;
   const stored = readJsonIfExists(briefPath(ctx, n2));
   const briefs = stored ? [{ label: `${stored.source} repair brief`, content: stored.brief, ref: `briefs/attempt-${n2}.json` }] : [];
+  const extension = turnExtensionsOf(ctx, n2)[0] ?? null;
+  if (extension) briefs.push({ label: "what the earlier session said remains", content: extension.remainder });
   const refs = [];
   const cand = ctx.candidate;
   if (stored && cand) {
@@ -66847,6 +67016,7 @@ function implementerPrompt(ctx, n2, workerId, auth = null, parallel = null) {
     ...blocked.length > 0 ? [`Blocked, waiting for a person's decision (do not implement or guess them): ${blocked.join(", ")}. Implement the other criteria only.`] : [],
     ...authorizationLines(auth),
     ...parallelLines(ctx, n2, parallel),
+    ...extension ? [`An earlier session of this attempt reached its turn cap (${extension.turns} of ${extension.cap} turns) and asked to continue. Its edits are in this worktree: keep them and finish what it said remains, below. This is the attempt's one extension.`] : [],
     ...mapToolLines(ctx)
   ].join("\n");
   return renderWorkerPrompt({
@@ -66898,7 +67068,7 @@ function approvedOutcome(e) {
 function relative11(root, p) {
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
 }
-var ATTEMPT_EVENT, WORKER_ENDED_EVENT, READ_ONLY_ROLES, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
+var ATTEMPT_EVENT, WORKER_ENDED_EVENT, READ_ONLY_ROLES, TURN_EXTENSION_KIND, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT;
 var init_implementing = __esm({
   "src/controller/steps/implementing.ts"() {
     "use strict";
@@ -66914,6 +67084,8 @@ var init_implementing = __esm({
     init_config();
     init_runner2();
     init_types3();
+    init_decisions();
+    init_turn_cap();
     init_candidate();
     init_freshness();
     init_store();
@@ -66934,6 +67106,7 @@ var init_implementing = __esm({
     ATTEMPT_EVENT = "implementation.attempt";
     WORKER_ENDED_EVENT = "implementation.worker-ended";
     READ_ONLY_ROLES = /* @__PURE__ */ new Set(["planner", "verifier", "reviewer", "inquisitor", "curator", "explorer"]);
+    TURN_EXTENSION_KIND = "budget.turn-extension";
     AUTHORIZATION_RETRY_EVENT = "authorization.retry";
     LOST_RESTART_EVENT = "recovery.worker-restart";
   }
@@ -67486,7 +67659,8 @@ function sessionEndPromptLines(ctx) {
   const attempt = currentAttempt(ctx);
   const row = ctx.db.get("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
   if (row?.status !== "max_turns" && row?.status !== "timeout") return [];
-  const cap = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  const last = ctx.db.get("SELECT id FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, attempt);
+  const cap = (last && recordedTurnCap(ctx.db, ctx.run.id, last.id)?.cap) ?? ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
   return [
     `Session end: the implementer session of attempt ${attempt} ended at ${row.status === "max_turns" ? `its turn cap (${cap} model requests)` : "its timeout"} before it finished, so the candidate may be unfinished.`,
     "One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done."
@@ -75457,7 +75631,7 @@ var init_doctor = __esm({
     init_preflight();
     init_delivery_env();
     init_db();
-    init_schema4();
+    init_schema5();
     init_controller();
     init_context();
     init_exit();
@@ -76250,6 +76424,21 @@ scheduler:
   # Share of the cost and wall-time budget held back for final verification,
   # independent review and the report.
   final_reserve_fraction: 0.2
+  # A session's turn cap follows the task: the 75th percentile of the turns
+  # earlier successful sessions of the same role and difficulty took (a
+  # session the cap stopped, or that asked to continue, counts as the
+  # ceiling), kept within floor..ceiling (never above
+  # hard_limits.worker_turns_per_session). Once a session of a role outgrew
+  # its cap, the run's later sessions of that role get the ceiling.
+  # With no history, default applies. A session is told the turns it has left
+  # from reminder_fraction of its cap on, and an implementer that states what
+  # remains gets one extension per attempt. Without this section: floor 10,
+  # ceiling and default the hard cap, reminder_fraction 0.8.
+  # turn_cap:
+  #   floor: 10
+  #   ceiling: 30
+  #   default: 30
+  #   reminder_fraction: 0.8
 
 agents:
   default_parallelism: 1

@@ -24,7 +24,7 @@ import { listDecisions } from '../../storage/decisions.ts';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
-import { routeFor } from '../workers.ts';
+import { recordedTurnCap, routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
@@ -385,7 +385,9 @@ export function sessionEndPromptLines(ctx: RunContext): string[] {
   const attempt = currentAttempt(ctx);
   const row = ctx.db.get<{ status: string | null }>("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
   if (row?.status !== 'max_turns' && row?.status !== 'timeout') return [];
-  const cap = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  // The cap the session ran under (issue #177: derived per role and task class), else the hard cap.
+  const last = ctx.db.get<{ id: string }>("SELECT id FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, attempt);
+  const cap = (last && recordedTurnCap(ctx.db, ctx.run.id, last.id)?.cap) ?? ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
   return [
     `Session end: the implementer session of attempt ${attempt} ended at ${row.status === 'max_turns' ? `its turn cap (${cap} model requests)` : 'its timeout'} before it finished, so the candidate may be unfinished.`,
     'One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done.',

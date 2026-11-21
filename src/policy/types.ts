@@ -299,6 +299,12 @@ export interface OrbitConfig {
     repeated_failure_threshold: number;
     /** Share of cost and wall-time budgets held back for final verification, review and reporting. */
     final_reserve_fraction: number;
+    /**
+     * Bounds of the per-session turn cap, the 75th percentile of the turns successful sessions of the same role and
+     * difficulty took, a session the cap stopped or that asked to continue counting as the ceiling (issue #177); `default` applies without history. floor <= default <= ceiling <=
+     * hard_limits.worker_turns_per_session. When absent: floor 10, ceiling and default the hard cap, reminder 0.8.
+     */
+    turn_cap?: { floor: number; ceiling: number; default: number; reminder_fraction: number };
   };
   agents: {
     default_parallelism: number;
