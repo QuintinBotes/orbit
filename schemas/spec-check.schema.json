@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/QuintinBotes/orbit/schemas/spec-check.schema.json",
+  "title": "Orbit spec check result (orbit.spec-check/1)",
+  "description": "What `orbit spec check <file | issue> --json` prints: whether a Markdown body is a spec `orbit run --issue` takes (docs/decisions/0019-run-from-issue.md), with every problem and what was read. Exactly one of `file` and `issue` names what was checked. Removing or retyping a field is a new version (orbit.spec-check/2) and a new schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ok", "problems", "stories", "scenarios", "requirements", "success_criteria", "implementation_notes"],
+  "oneOf": [{ "properties": { "file": { "type": "string" } }, "required": ["file"] }, { "properties": { "issue": { "type": "object" } }, "required": ["issue"] }],
+  "properties": {
+    "schema": { "const": "orbit.spec-check/1" },
+    "ok": { "type": "boolean", "description": "True when there is no problem." },
+    "file": { "type": "string", "description": "The file as named on the command line." },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "number", "updated_at"],
+      "properties": {
+        "repo": { "type": "string", "description": "owner/name" },
+        "number": { "type": "integer", "minimum": 1 },
+        "updated_at": { "type": "string", "description": "When the issue was last updated, as GitHub reports it." }
+      }
+    },
+    "problems": { "type": "array", "items": { "type": "string" }, "description": "One line per problem, empty when ok." },
+    "stories": { "type": "integer", "minimum": 0, "description": "User stories found." },
+    "scenarios": { "type": "array", "items": { "type": "string" }, "description": "The keys of the acceptance scenarios (S<story>-<n>), in order." },
+    "requirements": { "type": "array", "items": { "type": "string" }, "description": "Requirement ids (FR-nnn)." },
+    "success_criteria": { "type": "array", "items": { "type": "string" }, "description": "Success criterion ids (SC-nnn)." },
+    "implementation_notes": { "type": "boolean", "description": "Whether the body has an implementation notes section (outside the spec)." }
+  }
+}

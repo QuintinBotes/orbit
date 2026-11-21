@@ -138,6 +138,44 @@ describe('runGuardHook', () => {
   });
 });
 
+// Issue #177 AC-2: from 80% of its turn cap on, the turn about to start is told how many turns are left.
+describe('runGuardHook turn reminder', () => {
+  const env = () => ({ ORBIT_POLICY_PATH: opts.snapshotPath, ORBIT_POLICY_HASH: opts.expectedHash, ORBIT_WORKTREE: wt, ORBIT_TURN_CAP: '30', ORBIT_TURN_REMIND_AT: '24' });
+  /** A session transcript with `n` model requests, one of them split over two lines as Claude Code writes them. */
+  function transcript(n: number): string {
+    const path = join(base, `transcript-${n}.jsonl`);
+    const lines = [{ type: 'user', message: { role: 'user', content: 'task' } }];
+    for (let i = 1; i <= n; i++) lines.push({ type: 'assistant', message: { id: `msg_${i}`, role: 'assistant', content: [{ type: 'tool_use' }] } } as never);
+    if (n > 0) lines.push({ type: 'assistant', message: { id: `msg_${n}`, role: 'assistant', content: [{ type: 'text' }] } } as never);
+    writeFileSync(path, lines.map((l) => JSON.stringify(l)).join('\n'));
+    return path;
+  }
+  const read = (path: string) => input('Read', { file_path: join(wt, 'README.md') }, { transcript_path: path });
+
+  it('says nothing before 80% of the cap', () => {
+    expect(runGuardHook(read(transcript(23)), env())).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('at and after 80% of the cap, allows the call and tells the session how many turns remain', () => {
+    for (const [taken, left] of [[24, '6 turns of 30 remain'], [29, '1 turn of 30 remains']] as const) {
+      const r = runGuardHook(read(transcript(taken)), env());
+      expect(r.exitCode).toBe(0);
+      const out = JSON.parse(r.stdout) as { hookSpecificOutput: Record<string, string> };
+      expect(out.hookSpecificOutput.hookEventName).toBe('PreToolUse');
+      expect(out.hookSpecificOutput.permissionDecision).toBeUndefined();
+      expect(out.hookSpecificOutput.additionalContext).toContain(left);
+    }
+  });
+
+  it('never weakens a denial, and leaves the allow alone without a cap or a readable transcript', () => {
+    expect(denial(runGuardHook(input('Bash', { command: 'gh pr merge 1' }, { transcript_path: transcript(25) }), env())).rule).toBe('bash.publish');
+    const { ORBIT_TURN_CAP: _cap, ...noCap } = env();
+    expect(runGuardHook(read(transcript(25)), noCap)).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(runGuardHook(read(join(base, 'missing.jsonl')), env())).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+    expect(runGuardHook(read('relative.jsonl'), env())).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+});
+
 // Review of #140: Claude Code's sandbox read-denies the temp root for Bash only, and the file tools' permissions allow
 // the worker's own directory there, so the hook keeps a worker's Read out of every other worker's directory.
 describe('reads in the workers\' temp root', () => {

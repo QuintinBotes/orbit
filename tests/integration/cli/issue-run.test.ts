@@ -17,7 +17,7 @@ import { stateDbPath } from '../../../src/controller/start.ts';
 import { FakeIssueReader, FAKE_ISSUES_FILE } from '../../../src/intake/github.ts';
 import { ISSUE_BODY_MAX_CHARS, readIssueGoal } from '../../../src/intake/issue.ts';
 import type { PolicySnapshot } from '../../../src/policy/types.ts';
-import { argvCalls, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
+import { argvCalls, baseScenario, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, PROOF_PASSES, seedRegistry, writeScenario, type Lab } from '../controller/harness.ts';
 
 const SPEC = readFileSync(fileURLToPath(new URL('../../fixtures/specs/calc-mul.md', import.meta.url)), 'utf8');
 const BUG = 'add returns the wrong sum.\n\n### Steps to reproduce\n\n1. Call `mul(2, 3)`.\n2. It throws, because mul does not exist.\n';
@@ -57,7 +57,7 @@ function issuePlanner(keys: string[]): object {
   return {
     structured: {
       ...PLANNER_OUTPUT,
-      criteria: keys.map((key) => ({ key, statement: `the planner's own wording for ${key}`, mandatory: false, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] })),
+      criteria: keys.map((key) => ({ key, statement: `the planner's own wording for ${key}`, mandatory: false, ui: false, proof: [`tests/mul.test.mjs covers ${key}`], check_ids: ['unit'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }], kind: 'change', tests: ['tests/mul.test.mjs'] })),
     },
   };
 }
@@ -211,6 +211,21 @@ describe('orbit run --issue', () => {
     expect(prompt).toContain('Return exactly one criterion for each of these keys, with that key, and state how it will be proven: S1-1, S1-2, S2-1.');
   });
 
+  it('#195: a plan that proves a scenario only with a check the policy does not define is regenerated, not BLOCKED (ADR 0019)', async () => {
+    const l = lab();
+    issues(l).put({ number: 42, body: SPEC });
+    const undefinedCheck = issuePlanner(['S1-1', 'S1-2', 'S2-1']) as { structured: { criteria: { key: string; check_ids: string[] }[] } };
+    undefinedCheck.structured.criteria[1]!.check_ids = ['e2e'];
+    writeScenario(l, baseScenario({ planner: [undefinedCheck, issuePlanner(['S1-1', 'S1-2', 'S2-1'])], implementer: [implementFor(['AC-1', 'AC-2', 'AC-3'])] }));
+    const r = await cli(l, ['run', '--issue', '42', '--foreground', '--policy', l.configPath]);
+    const id = /^run (orb-\S+) started/m.exec(r.out)?.[1];
+    expect(id, `${r.out}\n${r.err}`).toBeTruthy();
+    const run = listRuns(l.db(), {}).find((x) => x.id === id)!;
+    expect(run.state, run.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(argvCalls(l).filter((c) => c.role === 'planner')).toHaveLength(2);
+    expect((JSON.parse(run.contractJson!) as GoalContract).acceptance_criteria.map((c) => c.check_ids)).toEqual([['unit'], ['unit'], ['unit']]);
+  });
+
   it('story 2: an issue whose body fails the spec check is refused before any model is called, with the reason', async () => {
     const l = lab();
     issues(l).put({ number: 5, body: SPEC.replace('It is the feature.', 'It is the feature [NEEDS CLARIFICATION: for floats too?].') });
@@ -228,7 +243,8 @@ describe('orbit run --issue', () => {
   it('story 3, scenario 1: an issue labelled bug with a reproduction starts as a repair with the reproduction as its fail-before criterion', async () => {
     const l = lab();
     issues(l).put({ number: 7, title: 'mul is missing', body: BUG, labels: ['bug'] });
-    writeScenario(l, baseScenario({ planner: [issuePlanner(['REPRO'])], implementer: [implementFor(['AC-1'])] }));
+    // A bug runs under required, so its tree goes through the proof checks before it is done (issue #200).
+    writeScenario(l, baseScenario({ planner: [issuePlanner(['REPRO'])], implementer: [implementFor(['AC-1'])], ...PROOF_PASSES }));
     const r = await cli(l, ['run', '--issue', '#7', '--foreground', '--policy', l.configPath]);
     const id = /^run (orb-\S+) started/m.exec(r.out)?.[1];
     expect(id, `${r.out}\n${r.err}`).toBeTruthy();

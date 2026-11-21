@@ -212,13 +212,19 @@ export interface RouteSignals {
   evidence?: string[];
   /** For safety review: the provider that produced the candidate under review. */
   implementerProvider?: string;
+  /** An implementation attempt, a writer (issue #176): only such a route may go to a partner, never a planner, diagnosis or inquiry. */
+  implementation?: boolean;
+  /** Partner implementers (issue #176): how many of each one's candidates in this run failed verification or review. */
+  partnerFailures?: Record<string, number>;
+  /** Partner implementers skipped for the rest of this run (out of quota, a failed login, no writable tier), with why. */
+  partnersSkipped?: Record<string, string>;
   /** What a worker said about itself. Recorded and ignored: escalation follows observed difficulty only. */
   workerClaims?: { confidence?: string | number; requestedModel?: string; requestedEscalation?: boolean };
 }
 
 /** The subset of trusted configuration routing reads. OrbitConfig satisfies it. */
 export interface RoutingPolicy {
-  routing: { allowed_models: string[]; overrides: Record<string, string>; learning?: Partial<RoutingLearning> };
+  routing: { allowed_models: string[]; overrides: Record<string, string>; learning?: Partial<RoutingLearning>; implementers?: string[] };
   /** review.providers and review.when_unavailable, or the legacy keys of an older snapshot (policy/review.ts). */
   review: ReviewAvailabilitySettings;
   providers: Record<string, { model: string | null; data_policy_eligible: boolean; reasoning_effort?: string | null }>;

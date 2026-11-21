@@ -23,7 +23,7 @@ interface Out {
 
 function runNode(entry: string, args: string[], opts: { input?: string | Buffer; env?: Record<string, string> } = {}): Promise<Out> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', entry, ...args], { env: { PATH: process.env.PATH ?? '', ...(opts.env ?? {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', entry, ...args], { env: { PATH: process.env.PATH ?? '', ...(opts.env ?? {}) }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));

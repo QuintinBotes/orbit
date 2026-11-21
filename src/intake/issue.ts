@@ -287,15 +287,18 @@ export function alignPlanToIssue(plan: PlannerOutput, goal: IssueGoal): PlannerO
   const fromIssue: Criterion[] = wanted.map((w) => {
     const mine = plan.criteria.find((c) => c.key === w.key);
     const proof = (mine?.proof ?? []).filter((p) => p.trim() !== '');
-    return { key: w.key, statement: w.statement, mandatory: true, ui: mine?.ui ?? false, proof: proof.length > 0 ? proof : [w.proof], check_ids: mine?.check_ids ?? [], changes: mine?.changes ?? [] };
+    return { key: w.key, statement: w.statement, mandatory: true, ui: mine?.ui ?? false, proof: proof.length > 0 ? proof : [w.proof], check_ids: mine?.check_ids ?? [], changes: mine?.changes ?? [], kind: mine?.kind ?? 'change', tests: mine?.tests ?? [] };
   });
   return { ...plan, criteria: [...fromIssue, ...plan.criteria.filter((c) => !keys.has(c.key))] };
 }
 
-/** The keys of the issue's criteria the planner did not answer with a check: a contract needs a trusted check for each. */
-export function unansweredIssueCriteria(plan: PlannerOutput, goal: IssueGoal): string[] {
+/**
+ * The keys of the issue's criteria the planner did not answer with a check the policy defines (`checkIds`): a contract
+ * needs a trusted check for each, and the draft drops a check the policy does not define.
+ */
+export function unansweredIssueCriteria(plan: PlannerOutput, goal: IssueGoal, checkIds: readonly string[]): string[] {
   const wanted = goal.kind === 'bug' ? [REPRODUCTION_KEY] : goal.scenarios.map((s) => s.key);
-  return wanted.filter((key) => (plan.criteria.find((c) => c.key === key)?.check_ids ?? []).length === 0);
+  return wanted.filter((key) => !(plan.criteria.find((c) => c.key === key)?.check_ids ?? []).some((id) => checkIds.includes(id)));
 }
 
 /** The `source` a contract records for an issue goal. */

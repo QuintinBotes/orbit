@@ -46,5 +46,6 @@ export function makeLesson(input: LessonInput = {}): Lesson {
     scope: input.scope ?? 'repo',
     code_free: input.code_free ?? true,
     supersedes: input.supersedes ?? null,
+    ...(input.citation !== undefined ? { citation: input.citation } : {}),
   };
 }

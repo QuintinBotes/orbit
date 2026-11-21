@@ -1,6 +1,6 @@
 # 0017. Muse as an independent reviewer
 
-Status: accepted (2026-10-20). Issue #108.
+Status: replaced by [ADR 0022](0022-partner-implementers.md) (2026-11-20), which keeps these reviewer rules and lets Muse implement bounded work in a writable tier inside srt. Accepted 2026-10-20. Issue #108.
 
 ## Context
 

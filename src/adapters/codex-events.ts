@@ -20,6 +20,7 @@ import type { ProviderEvent, TaskResult, TaskStatus, UsageReport } from './types
 export const CODEX_END_REASONS = [
   'success',
   'auth',
+  'quota',
   'turn_failed',
   'transient_api_error',
   'invalid_json',
@@ -47,6 +48,11 @@ export interface CodexTaskResult extends TaskResult {
  * failures from its source ("... Please log out and sign in again").
  */
 const AUTH_PATTERNS = [/\b401 Unauthorized\b/, /auth error: 401/, /auth error code: invalid_api_key/, /sign in again/i, /could not be refreshed/i];
+/**
+ * The provider's allowance is used up (issue #176): a usage limit of a ChatGPT plan, or an API organization out of
+ * quota. Waiting minutes does not clear it, unlike a 429 rate limit, so it ends as a credential failure, never retried.
+ */
+export const QUOTA_PATTERNS: readonly RegExp[] = [/usage limit/i, /insufficient_quota/, /exceeded your current quota/i, /quota (?:exceeded|exhausted)/i];
 const TRANSIENT_PATTERNS = [/"status":\s*(429|5\d\d)\b/, /\bstatus (429|5\d\d)\b/, /\b(429|5\d\d) (Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\b/, /overloaded/i];
 
 export interface CodexClassifyInput {
@@ -84,6 +90,8 @@ export function classifyCodexTranscript(input: CodexClassifyInput): CodexTaskRes
   // they count only when the turn did not complete.
   const authText = terminal?.type === 'turn.completed' ? undefined : [failure, ...warnings].find((m) => m !== null && AUTH_PATTERNS.some((p) => p.test(m)));
   if (authText) return end('auth_failed', 'auth', `authentication failed: ${clip(authText, 300)}; not retried`);
+  const quotaText = terminal?.type === 'turn.completed' ? undefined : [failure, ...warnings].find((m) => m !== null && QUOTA_PATTERNS.some((p) => p.test(m)));
+  if (quotaText) return end('auth_failed', 'quota', `out of quota: ${clip(quotaText, 300)}; not retried`);
   if (exit.timedOut) return end('timeout', 'timeout', `timed out; the shim sent ${exit.escalation.join(', ') || 'no signal'}`);
   if (exit.cancelled) return end('cancelled', 'interrupted', 'cancelled by a signal to the worker');
 

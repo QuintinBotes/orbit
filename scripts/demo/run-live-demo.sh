@@ -104,7 +104,7 @@ if [ -z "$orbit_cmd" ]; then
   if [ -f "$root/plugin/dist/orbit.mjs" ]; then
     orbit_cmd="node $root/plugin/dist/orbit.mjs"
   else
-    orbit_cmd="node --experimental-transform-types --no-warnings $root/src/cli/main.ts"
+    orbit_cmd="node --experimental-strip-types --no-warnings $root/src/cli/main.ts"
   fi
 fi
 

@@ -120,6 +120,39 @@ describe('skill invocation policy (#2, ADR 0006 addendum)', () => {
     expect(lint(off).join('\n')).toMatch(/skills\/doctor\/SKILL\.md: .*model-invocable/);
   });
 
+  it('every skill validates against the Agent Skills format, and check-plugin names each violation (issue #178, FR-004)', async () => {
+    const { agentSkillsProblems, lint } = await import('../../../scripts/check-plugin.mjs');
+    expect(agentSkillsProblems(plugin)).toEqual([]);
+    const d = copySkills();
+    const skill = (dir: string, fm: string) => {
+      mkdirSync(join(d, 'skills', dir), { recursive: true });
+      writeFileSync(join(d, 'skills', dir, 'SKILL.md'), `---\n${fm}\ndisable-model-invocation: true\n---\nbody\n`);
+    };
+    skill('acme-one', 'name: acme-two\ndescription: acme');
+    skill('Acme', 'name: Acme\ndescription: acme');
+    skill('acme--x', 'name: acme--x\ndescription: acme');
+    skill(`a${'c'.repeat(64)}`, `name: a${'c'.repeat(64)}\ndescription: acme`);
+    skill('acme-long', `name: acme-long\ndescription: ${'x'.repeat(1025)}`);
+    skill('acme-bare', 'name: acme-bare');
+    skill('acme-meta', `name: acme-meta\ndescription: acme\nlicense: 3\nmetadata:\n  version: 1\ncompatibility: ${'y'.repeat(501)}\nallowed-tools: 7`);
+    const problems = agentSkillsProblems(d);
+    // In path order.
+    expect(problems).toEqual([
+      'skills/Acme/SKILL.md: name "Acme" must be 1 to 64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen (Agent Skills format)',
+      `skills/a${'c'.repeat(64)}/SKILL.md: name "a${'c'.repeat(64)}" must be 1 to 64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen (Agent Skills format)`,
+      'skills/acme--x/SKILL.md: name "acme--x" must be 1 to 64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen (Agent Skills format)',
+      'skills/acme-bare/SKILL.md: description must be 1 to 1024 characters (Agent Skills format)',
+      'skills/acme-long/SKILL.md: description must be 1 to 1024 characters (Agent Skills format)',
+      'skills/acme-meta/SKILL.md: license must be a string (Agent Skills format)',
+      'skills/acme-meta/SKILL.md: compatibility must be 1 to 500 characters (Agent Skills format)',
+      'skills/acme-meta/SKILL.md: metadata must map strings to strings (Agent Skills format)',
+      'skills/acme-meta/SKILL.md: allowed-tools must be a string or a list of strings (Agent Skills format; Claude Code also takes a list)',
+      'skills/acme-one/SKILL.md: name "acme-two" must match its folder acme-one (Agent Skills format)',
+    ]);
+    // `npm run validate:plugin` runs it with the rest of the lint.
+    for (const p of problems) expect(lint(d)).toContain(p);
+  });
+
   it('pre-approves only the read-only orbit commands that status and doctor run', () => {
     /** The commands a skill's bash fences run through the plugin's orbit, unquoted as a permission rule spells them. */
     const fenceCommands = (s: string) => bashFences(skillText(s)).flatMap((f) => [...f.matchAll(/^"\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/orbit" ([^\n]+)$/gm)].map((m) => `\${CLAUDE_PLUGIN_ROOT}/bin/orbit ${m[1]!.trim()}`));
@@ -158,6 +191,15 @@ describe('docs (#2, #5)', () => {
       // The old claim that install alone puts orbit on the PATH is gone.
       expect(flat, name).not.toMatch(/You get the skills [^.]*, and `orbit` on the PATH/);
     }
+  });
+
+  it("say what Orbit does that Claude Code's /goal, /loop and scheduled tasks do not, and when to use those instead (issue #178, FR-005)", () => {
+    const at = readme.indexOf('\n## Orbit, /goal, /loop and scheduled tasks\n');
+    expect(at).toBeGreaterThan(-1);
+    const section = readme.slice(at + 1, readme.indexOf('\n## ', at + 1)).replace(/\s+/g, ' ');
+    for (const feature of ['`/goal`', '`/loop`', 'scheduled tasks']) expect(section, feature).toContain(feature);
+    expect(section).toMatch(/What Orbit does that they do not/);
+    expect(section).toMatch(/When to use them instead/);
   });
 
   it('record who invokes which skill', () => {
