@@ -505,10 +505,12 @@ time to green for this repository, read-only. It also says why runs ended: a
 count per failure class (`failure_classes` in `--json`), and pass rate and
 spend per accepted task per Orbit version (`by_version`). Every run that ends
 stores one class from the list in `schemas/failure-class.schema.json`
-(`environment`, `check-misconfigured`, `gate-deadlock`, `scope`, `budget`,
-`turn-cap`, `model`, `review-dispute`, `credentials`, `cancelled`), a second
-one when it had two causes, and the Orbit version that started it; a run that
-succeeded has no class. Runs that stopped holding a verified candidate (see
+(`environment`, `check-misconfigured`, `gate-deadlock`, `awaiting-decision`,
+`scope`, `budget`, `turn-cap`, `model`, `review-dispute`, `credentials`,
+`cancelled`), a second one when it had two causes, and the Orbit version that
+started it; a run that succeeded has no class. A run that waits for a decision
+you give with `orbit decide` is `awaiting-decision`, apart from the gates
+nothing can open (`gate-deadlock`). Runs that stopped holding a verified candidate (see
 [Where a run's result goes](#where-a-runs-result-goes)) are also counted on
 their own, in the header and as `runs.verified_undelivered` in `--json`. The rules are in
 [decision 0018](decisions/0018-run-end-record.md). `orbit report` and `orbit

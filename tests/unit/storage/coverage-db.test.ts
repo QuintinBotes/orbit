@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OrbitError } from '../../../src/core/errors.ts';
-import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
+import { migrate, openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
 import { MIGRATIONS } from '../../../src/storage/schema.ts';
 
@@ -29,6 +29,27 @@ afterEach(() => {
 });
 
 const T1 = 'CREATE TABLE t1 (id INTEGER PRIMARY KEY, v TEXT); CREATE TABLE leases (run_id TEXT, owner_id TEXT, expires_at INTEGER)';
+
+/** `db`'s connection, with `other` run once just before its first BEGIN IMMEDIATE: a second opener that wins the race. */
+function racedBy(db: OrbitDb, other: () => void): { db: OrbitDb['raw']; raced: () => boolean } {
+  let raced = false;
+  const racing = new Proxy(db.raw, {
+    get(target, key) {
+      if (key === 'exec') {
+        return (sql: string) => {
+          if (sql === 'BEGIN IMMEDIATE' && !raced) {
+            raced = true;
+            other();
+          }
+          return target.exec(sql);
+        };
+      }
+      const v = Reflect.get(target, key, target) as unknown;
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  return { db: racing, raced: () => raced };
+}
 const T2 = 'CREATE TABLE t2 (id INTEGER PRIMARY KEY, v TEXT)';
 
 describe('openDb', () => {
@@ -141,6 +162,26 @@ describe('migrations', () => {
     const db = track(openDb(path));
     expect((db.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(MIGRATIONS.length);
     expect(db.get('SELECT environment FROM runs WHERE id = ?', 'r1')).toEqual({ environment: null });
+  });
+
+  it('issue #190: an opener that another migrated past between reading the version and taking the write lock does not migrate again', () => {
+    const path = join(dir, 'race.db');
+    const ADD = 'ALTER TABLE t1 ADD COLUMN extra TEXT';
+    // This opener read version 1; the other opener runs migration 2 just before this one's BEGIN IMMEDIATE.
+    const slow = track(openDb(path, { migrations: [T1] }));
+    const racing = racedBy(slow, () => openDb(path, { migrations: [T1, ADD] }).close());
+    expect(() => migrate(racing.db, [T1, ADD])).not.toThrow();
+    expect(racing.raced()).toBe(true);
+    expect((slow.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(2);
+    expect(slow.all<{ name: string }>('PRAGMA table_info(t1)').map((c) => c.name)).toEqual(['id', 'v', 'extra']);
+  });
+
+  it('issue #190: an opener that a newer Orbit migrated past in that moment refuses the database, as it would have before', () => {
+    const path = join(dir, 'race-newer.db');
+    const slow = track(openDb(path, { migrations: [T1] }));
+    const racing = racedBy(slow, () => openDb(path, { migrations: [T1, T2, 'CREATE TABLE t3 (id INTEGER PRIMARY KEY)'] }).close());
+    expect(() => migrate(racing.db, [T1, T2])).toThrow('database is at schema version 3, newer than this Orbit (2). Upgrade Orbit.');
+    expect((slow.get('PRAGMA user_version') as { user_version: number }).user_version).toBe(3);
   });
 
   it('refuses a database written by a newer Orbit and leaves it untouched', () => {

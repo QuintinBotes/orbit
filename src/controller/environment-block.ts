@@ -986,7 +986,7 @@ export function missingTargetAdvice(input: { runId: string; checks: readonly Pic
 }
 
 /** Check ids that must pass for this candidate: the contract's list plus every command check the policy marks mandatory. */
-function mandatoryCommandChecks(ctx: RunContext): Set<string> {
+export function mandatoryCommandChecks(ctx: RunContext): Set<string> {
   const ids = new Set(ctx.contract?.required_check_ids ?? []);
   for (const [id, def] of Object.entries(ctx.snapshot.config.checks)) if (def.mandatory && def.kind === 'command') ids.add(id);
   return ids;
