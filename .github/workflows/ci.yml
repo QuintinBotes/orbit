@@ -66,10 +66,11 @@ jobs:
 
       # The runner images of 11 November 2026 made .NET SDK 11.0.100 the default SDK (on macOS from macos-26-arm64
       # 20261112.0504), which builds through the MSBuild server unless a check's env turns it off (#180). The .NET tests
-      # run on it, and on the newest earlier SDK the image has on Ubuntu with Node 22, so both stay covered.
+      # run on it on Ubuntu with Node 24, and on the newest earlier SDK on Ubuntu with Node 22 and on macOS, where SDK 11's
+      # dotnet format no longer fails the folder form that dotnet-format.int.test.ts expects to fail.
       - name: .NET SDK
         env:
-          BEFORE_SDK_11: ${{ matrix.node == '22' }}
+          BEFORE_SDK_11: ${{ matrix.node == '22' || runner.os == 'macOS' }}
         run: |
           command -v dotnet >/dev/null || exit 0
           dotnet --list-sdks
