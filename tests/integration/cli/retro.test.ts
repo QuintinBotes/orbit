@@ -25,7 +25,7 @@ const sandbox = (): Sandbox => {
 };
 afterEach(() => boxes.splice(0).forEach((s) => s.close()));
 
-const KEY = 'issue-draft:gate-deadlock:blocked_criteria+questions';
+const KEY = 'issue-draft:gate-deadlock:ledger_declined+shallow_reviews';
 const SECRET = 'sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ';
 const draftDir = (s: Sandbox): string => join(s.repo, '.orbit', 'runs', 'retro-drafts');
 const drafts = (s: Sandbox): string[] => (existsSync(draftDir(s)) ? readdirSync(draftDir(s)) : []);
@@ -63,7 +63,7 @@ describe('orbit retro (CLI): a gate-deadlock run becomes a redacted draft and no
     expect(drafts(s)).toHaveLength(1);
 
     const text = readDraft(s);
-    for (const expected of ['orb-dead-1', 'gate-deadlock', 'BLOCKED', 'blocked_criteria (1)', 'questions (1)', 'PREFLIGHT > CONTRACTING > PLANNING > BLOCKED']) expect(text).toContain(expected);
+    for (const expected of ['orb-dead-1', 'gate-deadlock', 'BLOCKED', 'ledger_declined (1)', 'shallow_reviews (1)', 'PREFLIGHT > CONTRACTING > PLANNING > BLOCKED']) expect(text).toContain(expected);
     for (const forbidden of [s.base, s.repo, s.home, 'billing.ts', SECRET, 'sk-ant', 'Fix the rate', 'waiting for a decision']) {
       expect(text, forbidden).not.toContain(forbidden);
       expect(r.stdout, forbidden).not.toContain(forbidden);
@@ -80,7 +80,7 @@ describe('orbit retro (CLI): a gate-deadlock run becomes a redacted draft and no
     const first = await s.run(['retro', '--json']);
     const j = JSON.parse(first.stdout) as { proposals: { kind: string; failure_class: string; signature: string; runs: string[]; outcome: string; draft: string }[]; already_decided: number };
     expect(j.proposals).toHaveLength(1);
-    expect(j.proposals[0]).toMatchObject({ kind: 'issue-draft', failure_class: 'gate-deadlock', signature: 'blocked_criteria+questions', runs: ['orb-dead-1'], outcome: 'drafted' });
+    expect(j.proposals[0]).toMatchObject({ kind: 'issue-draft', failure_class: 'gate-deadlock', signature: 'ledger_declined+shallow_reviews', runs: ['orb-dead-1'], outcome: 'drafted' });
     expect(j.already_decided).toBe(0);
     expect(existsSync(join(s.repo, j.proposals[0]!.draft))).toBe(true);
 

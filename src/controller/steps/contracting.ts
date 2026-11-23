@@ -73,7 +73,9 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
     drafted = draftContract({ goal: ctx.run.goal, plannerOutput: plan, snapshot: ctx.snapshot, baselineRevision: ctx.run.baseRevision ?? '', taskId: ctx.run.id, policyHash: ctx.run.policyHash, environment: ctx.run.environment, source: issue ? contractSource(issue) : null });
   } catch (err) {
     if (!(err instanceof OrbitError) || err.code !== 'CONTRACT_INVALID') throw err;
-    return finishRun(ctx, 'BLOCKED', `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null } });
+    // A goal that needs paths the policy does not allow is scope: the draft says so in a marker, not only in words (issue #190).
+    const scope = err.details?.scope;
+    return finishRun(ctx, 'BLOCKED', `intake gate rejected the planner's contract: ${err.message}`, { outcome: { problems: err.details ?? null, ...(scope ? { scope } : {}) } });
   }
   for (const a of drafted.adjustments) {
     decide(ctx, { id: `dec-${ctx.run.id}-draft-${hashObject(a).slice(7, 23)}`, kind: `contract.${a.kind}`, summary: `${a.subject}: ${a.reason}`, data: a });

@@ -97,7 +97,7 @@ export interface IntakeInput {
 }
 
 /** Repository authorization, scope, budgets and measurable criteria. Failure: reject the contract. */
-export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] }> {
+export function intakeGate(input: IntakeInput): GateResult<{ problems: string[]; scope?: { allowed_paths: string[] } }> {
   const { snapshot, run } = input;
   const reasons: string[] = [];
   const evidence: string[] = [`policy ${run.policyHash}`];
@@ -113,7 +113,8 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
   if (snapshotHash(snapshot) !== run.policyHash) reasons.push('the policy snapshot does not match the hash recorded for the run');
   const limits = snapshot.config.scheduler.hard_limits;
   for (const [k, v] of Object.entries(limits)) if (!(typeof v === 'number' && v > 0)) reasons.push(`hard limit ${k} must be positive`);
-  if (snapshot.config.scope.allowed_paths.length === 0) reasons.push('the policy allows no paths, so no implementation is authorized');
+  const noPaths = snapshot.config.scope.allowed_paths.length === 0;
+  if (noPaths) reasons.push('the policy allows no paths, so no implementation is authorized');
   // A run that names its release environment (`orbit run --environment`) names one the policy defines.
   const environment = input.run.environment ?? null;
   if (environment !== null) {
@@ -140,7 +141,8 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
       reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? 'none'}) is not the release environment the run names (${environment ?? 'none'})`);
     }
   }
-  return result('intake', reasons, evidence, [], { problems });
+  // The run's failure class reads this marker, never the reason's wording (issue #190).
+  return result('intake', reasons, evidence, [], { problems, ...(noPaths ? { scope: { allowed_paths: [] } } : {}) });
 }
 
 // ---------------------------------------------------------------------------

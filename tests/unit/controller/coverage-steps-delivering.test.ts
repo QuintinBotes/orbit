@@ -239,6 +239,7 @@ describe('a delivery mode', () => {
     expect(state()).toBe('BLOCKED');
     // Nothing was delivered, so the block offers the verified candidate beside its own way forward (#169).
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^delivery failed: the remote rejected the push\. The run holds a verified candidate: candidate 1 /);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
     cleanup();
     await delivering();
     lab.deps.github = () => ({}) as never;
@@ -302,6 +303,7 @@ describe('releaseDelivered', () => {
     lab.db.run('DELETE FROM evidence_reports WHERE run_id = ?', lab.runId);
     await releaseDelivered(lab.ctx(), record(cand), {});
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('release refused: no live evidence');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('gate-deadlock');
     cleanup();
     const t = await release();
     lab.db.run('DELETE FROM reviews WHERE run_id = ?', lab.runId);

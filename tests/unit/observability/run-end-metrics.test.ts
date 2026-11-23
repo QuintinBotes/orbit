@@ -38,6 +38,7 @@ function oneRunPerClass(db: OrbitDb, clock: ManualClock, version = '0.4.0'): voi
   finish(db, clock, 'env', version, 'BLOCKED', { outcome: { environment_failures: [{ check_id: 'unit' }] } });
   finish(db, clock, 'misconfigured', version, 'BLOCKED', { outcome: { misconfigured_checks: [{ check_id: 'e2e' }] } });
   finish(db, clock, 'deadlock', version, 'BLOCKED', { outcome: { review_gate: ['no approving review'], open_findings: [] } });
+  finish(db, clock, 'waiting', version, 'BLOCKED', { outcome: { blocked_criteria: ['AC-1'], questions: ['q-1'] } });
   finish(db, clock, 'scope', version, 'BLOCKED', { outcome: { scope: { within_scope: false } } });
   finish(db, clock, 'budget', version, 'EXHAUSTED', { data: { counter: 'cost_usd' } });
   finish(db, clock, 'dispute', version, 'EXHAUSTED', { outcome: { open_findings: [{ id: 'f1' }] }, data: { counter: 'review_rounds' } });
@@ -61,6 +62,7 @@ describe('failure classes as counts (US1)', () => {
       environment: 1,
       'check-misconfigured': 1,
       'gate-deadlock': 1,
+      'awaiting-decision': 1,
       scope: 1,
       budget: 1,
       'turn-cap': 1,
@@ -70,14 +72,14 @@ describe('failure classes as counts (US1)', () => {
       cancelled: 1,
     });
     expect(m.failure_classes.secondary).toEqual({ budget: 2 });
-    expect(m.failure_classes).toMatchObject({ ended: 11, without_class: 1, unclassified: 0 });
+    expect(m.failure_classes).toMatchObject({ ended: 12, without_class: 1, unclassified: 0 });
   });
 
   it('lists every class of the fixed list, with zero for one no run ended in', () => {
     const db = openDb(':memory:');
     finish(db, new ManualClock(T0), 'env', '0.4.0', 'BLOCKED', { outcome: { environment_failures: [{ check_id: 'unit' }] } });
     const m = metricsFor(db);
-    expect(Object.keys(m.failure_classes.by_class)).toEqual(['environment', 'check-misconfigured', 'gate-deadlock', 'scope', 'budget', 'turn-cap', 'model', 'review-dispute', 'credentials', 'cancelled']);
+    expect(Object.keys(m.failure_classes.by_class)).toEqual(['environment', 'check-misconfigured', 'gate-deadlock', 'awaiting-decision', 'scope', 'budget', 'turn-cap', 'model', 'review-dispute', 'credentials', 'cancelled']);
     expect(m.failure_classes.by_class.environment).toBe(1);
     expect(m.failure_classes.by_class.model).toBe(0);
   });
@@ -152,6 +154,13 @@ describe('statistics by Orbit version (US2)', () => {
     expect(text).toMatch(/ORBIT VERSION\s+RUNS\s+PASS RATE\s+SPEND PER ACCEPTED/);
     expect(text).toMatch(/0\.3\.2\s+3\s+33\.3%\s+\$0\.9000/);
     expect(text).toMatch(/0\.4\.0\s+3\s+100\.0%\s+\$0\.2500/);
+  });
+
+  it('issue #190: a pre-release comes before its release, and pre-releases in numeric order', () => {
+    const db = openDb(':memory:');
+    const clock = new ManualClock(T0);
+    for (const v of ['0.10.0', '0.4.0', '0.4.0-rc.10', '0.4.0-rc.2', '0.3.2', '0.4.0-rc.1']) finish(db, clock, `r-${v}`, v, 'SUCCEEDED');
+    expect(metricsFor(db).by_version.map((v) => v.orbit_version)).toEqual(['0.3.2', '0.4.0-rc.1', '0.4.0-rc.2', '0.4.0-rc.10', '0.4.0', '0.10.0']);
   });
 
   it('a version with nothing accepted or finished has a null rate and spend, never zero', () => {

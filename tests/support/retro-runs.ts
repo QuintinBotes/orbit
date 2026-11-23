@@ -11,8 +11,8 @@ import { acquireLease, releaseLease, transition } from '../../src/controller/run
 import type { RunState } from '../../src/controller/states.ts';
 import { openDb } from '../../src/storage/db.ts';
 
-/** The markers of a run held at a gate nobody could open: open questions and the criteria they block. */
-export const DEADLOCK_OUTCOME = { questions: [{ id: 'q1' }], blocked_criteria: ['AC-1'] };
+/** The markers of a run held at a gate nobody could open: a declined ledger entry and a review too shallow to accept. */
+export const DEADLOCK_OUTCOME = { ledger_declined: [{ id: 'L1' }], shallow_reviews: ['AC-1'] };
 
 export interface SeedRun {
   id: string;

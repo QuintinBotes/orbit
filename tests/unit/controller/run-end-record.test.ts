@@ -168,7 +168,7 @@ describe('every way a run ends records why (FR-001, FR-002)', () => {
     expect(ended(db, 'r1')).toEqual({ state: 'BLOCKED', cls: 'environment', secondary: null });
   });
 
-  it('a run that waits on a question for a person is gate-deadlock', async () => {
+  it('a run that waits on a question for a person is awaiting-decision (issue #190)', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     insertQuestion(
       lab.db,
@@ -176,7 +176,7 @@ describe('every way a run ends records why (FR-001, FR-002)', () => {
       lab.clock,
     );
     expect(await blockOnOpenQuestions(lab.ctx(), 'delivery')).toEqual({ progressed: true, done: true });
-    expect(ended(lab.db, lab.runId)).toEqual({ state: 'BLOCKED', cls: 'gate-deadlock', secondary: null });
+    expect(ended(lab.db, lab.runId)).toEqual({ state: 'BLOCKED', cls: 'awaiting-decision', secondary: null });
   });
 
   it('missing credentials are credentials', () => {
@@ -230,7 +230,7 @@ describe('every way a run ends records why (FR-001, FR-002)', () => {
     open.push(db);
     makeRun(db, clock, 'r1', 'o', ['PREFLIGHT']);
     transition(db, { runId: 'r1', to: 'BLOCKED', ownerId: 'o', reason: 'env', patch: { outcomeReason: 'env', outcomeJson: JSON.stringify({ reviewer: { ok: false }, questions: ['q-1'] }) } }, clock);
-    expect(ended(db, 'r1')).toEqual({ state: 'BLOCKED', cls: 'environment', secondary: 'gate-deadlock' });
+    expect(ended(db, 'r1')).toEqual({ state: 'BLOCKED', cls: 'environment', secondary: 'awaiting-decision' });
     transition(db, { runId: 'r1', to: 'PREFLIGHT', ownerId: 'o', reason: 'resumed' }, clock);
     expect(ended(db, 'r1')).toEqual({ state: 'PREFLIGHT', cls: null, secondary: null });
     transition(db, { runId: 'r1', to: 'BLOCKED', ownerId: 'o', reason: 'again' }, clock);
@@ -336,9 +336,9 @@ describe('the report and the timeline show both (FR-004)', () => {
     const ctx = lab.ctx();
     await finishRun(ctx, 'BLOCKED', 'no reviewer', { outcome: { reviewer: { ok: false }, questions: ['q-1'] } });
     const saved = JSON.parse(readFileSync(join(ctx.runDir, 'final.json'), 'utf8')) as Record<string, unknown>;
-    expect(saved).toMatchObject({ failure_class: 'environment', failure_secondary: 'gate-deadlock', orbit_version: ORBIT_VERSION });
+    expect(saved).toMatchObject({ failure_class: 'environment', failure_secondary: 'awaiting-decision', orbit_version: ORBIT_VERSION });
     const md = readFileSync(join(ctx.runDir, 'final.md'), 'utf8');
-    expect(md).toContain('Failure class: environment (secondary: gate-deadlock)');
+    expect(md).toContain('Failure class: environment (secondary: awaiting-decision)');
     expect(md).toContain(`Orbit version: ${ORBIT_VERSION}`);
   });
 
@@ -354,15 +354,15 @@ describe('the report and the timeline show both (FR-004)', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     await finishRun(lab.ctx(), 'BLOCKED', 'no reviewer', { outcome: { reviewer: { ok: false }, questions: ['q-1'] } });
     const t = buildTimeline(lab.db, getRun(lab.db, lab.runId));
-    expect(t.run).toMatchObject({ failure_class: 'environment', failure_secondary: 'gate-deadlock', orbit_version: ORBIT_VERSION });
+    expect(t.run).toMatchObject({ failure_class: 'environment', failure_secondary: 'awaiting-decision', orbit_version: ORBIT_VERSION });
     const created = t.entries.find((e) => e.event === 'run.created')!;
     expect(created.data).toMatchObject({ orbit_version: ORBIT_VERSION });
     expect(created.text).toContain(`by Orbit ${ORBIT_VERSION}`);
     const last = t.entries.filter((e) => e.event === 'state.transition').at(-1)!;
-    expect(last.data).toMatchObject({ failure_class: 'environment', failure_secondary: 'gate-deadlock' });
-    expect(last.text).toContain('[environment, secondary gate-deadlock]');
+    expect(last.data).toMatchObject({ failure_class: 'environment', failure_secondary: 'awaiting-decision' });
+    expect(last.text).toContain('[environment, secondary awaiting-decision]');
     const header = renderHeader(t);
     expect(header).toContain(`orbit:     ${ORBIT_VERSION}`);
-    expect(header).toContain('class:     environment (secondary: gate-deadlock)');
+    expect(header).toContain('class:     environment (secondary: awaiting-decision)');
   });
 });
