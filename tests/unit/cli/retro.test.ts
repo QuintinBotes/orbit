@@ -587,7 +587,7 @@ describe('orbit retro: awaiting-decision runs are not failures (#237)', () => {
     const r = await retro(l, ['--json'], fake(null));
     const rep = JSON.parse(r.out) as { proposals: unknown[]; awaiting_decision: { run: string; questions: string[] }[] };
     expect(rep.proposals).toEqual([]);
-    expect(rep.awaiting_decision).toEqual([{ run: 'orb-wait-1', questions: [q] }]);
+    expect(rep.awaiting_decision).toEqual([{ run: 'orb-wait-1', questions: [q], waiting_on: [] }]);
     const text = await retro(l, [], fake(null));
     expect(text.out).toContain(q);
     expect(text.out).toContain('orbit decide orb-wait-1');
@@ -612,5 +612,68 @@ describe('orbit retro: awaiting-decision runs are not failures (#237)', () => {
     expect(ps[0]!.runs.map((r) => r.runId)).toEqual(['orb-wait-1', 'orb-wait-2', 'orb-wait-3']);
     expect(ps[0]!.body).toContain('Should mul round its result?');
     expect(ps[0]!.body).toContain('default');
+  });
+
+  it('the threshold: two runs on one question propose nothing, the third makes the proposal', () => {
+    const l = lab();
+    blocked(l, 'orb-wait-1');
+    blocked(l, 'orb-wait-2');
+    expect(retroProposals(l.db(), { since: null })).toEqual([]);
+    blocked(l, 'orb-wait-3');
+    expect(retroProposals(l.db(), { since: null })).toHaveLength(1);
+  });
+
+  it('the same question differing in case and punctuation counts as one', () => {
+    const l = lab();
+    blocked(l, 'orb-wait-1', 'Should mul round its result?');
+    blocked(l, 'orb-wait-2', 'should MUL round its result');
+    blocked(l, 'orb-wait-3', '  Should mul, round its result?? ');
+    const ps = retroProposals(l.db(), { since: null });
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.runs).toHaveLength(3);
+  });
+
+  it('quotes at most 300 characters of the question and redacts paths and secrets in it', () => {
+    const l = lab();
+    const text = `Read ${l.repo}/src/a.ts with ${SECRET}? ${'x'.repeat(400)}`;
+    for (const id of ['orb-wait-1', 'orb-wait-2', 'orb-wait-3']) blocked(l, id, text);
+    const body = retroProposals(l.db(), { since: null, roots: [l.repo] })[0]!.body;
+    expect(body).not.toContain(l.repo);
+    expect(body).not.toContain(SECRET);
+    expect(body).not.toContain('x'.repeat(301));
+    expect(body).toContain('x'.repeat(100));
+  });
+
+  it('runRetro writes the draft of a question proposal and asks to accept it', async () => {
+    const l = lab();
+    for (const id of ['orb-wait-1', 'orb-wait-2', 'orb-wait-3']) blocked(l, id);
+    const deps = fake(true);
+    const r = await retro(l, [], deps);
+    expect(r.code, r.err).toBe(0);
+    expect(draftFiles(l)).toHaveLength(1);
+    const text = readFileSync(join(l.repo, '.orbit', 'runs', 'retro-drafts', draftFiles(l)[0]!), 'utf8');
+    expect(text).toContain('Should mul round its result?');
+    expect(deps.asked[0]).toContain('policy change');
+    expect(listDecisions(l.db())[0]).toMatchObject({ kind: 'policy', failureClass: 'awaiting-decision', decision: 'accepted' });
+  });
+
+  it('a run with no open question prints no decide command, and says what it waits on', async () => {
+    const l = lab();
+    endRun(l, 'orb-wait-1', 'BLOCKED', { authorization: [{ id: 'a' }] });
+    const r = await retro(l, [], fake(null));
+    expect(r.out).toContain('orb-wait-1: no open question; waiting on authorization');
+    expect(r.out).not.toContain('orbit decide');
+  });
+
+  it('--since limits the awaiting list by creation time', async () => {
+    const l = lab();
+    const q = blocked(l, 'orb-wait-new');
+    blocked(l, 'orb-wait-old');
+    const clock = new ManualClock(Date.UTC(2026, 9, 5, 12, 0, 0));
+    l.db().run('UPDATE runs SET created_at = ? WHERE id = ?', clock.now() - 10 * 86_400_000, 'orb-wait-old');
+    l.db().run('UPDATE runs SET created_at = ? WHERE id = ?', clock.now() - 86_400_000, 'orb-wait-new');
+    const r = await retro(l, ['--since', '3d', '--json'], fake(null), { clock });
+    expect((JSON.parse(r.out) as { awaiting_decision: { run: string }[] }).awaiting_decision.map((a) => a.run)).toEqual(['orb-wait-new']);
+    expect(q).toMatch(/^q-/);
   });
 });

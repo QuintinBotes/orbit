@@ -69,8 +69,6 @@ export interface RetroProposal {
   body: string;
   /** The check to add, for kind `check`. */
   check: DeclaredCheck | null;
-  /** The question several runs waited on, for an `awaiting-decision` policy default; null otherwise. */
-  question: string | null;
 }
 
 export interface RetroDecisionRow {
@@ -293,7 +291,7 @@ export function retroProposals(db: OrbitDb, opts: { since: number | null; roots?
     .map(([key, g]) => {
       const check = g.kind === 'check' ? missingCheck : null;
       const { title, body } = render(g.kind, g.cls, g.signature, g.runs, check, null);
-      return { kind: g.kind, failureClass: g.cls, signature: g.signature, key, runs: g.runs, title: redact(redactPaths(title, opts.roots)), body: redact(redactPaths(body, opts.roots)), check, question: null };
+      return { kind: g.kind, failureClass: g.cls, signature: g.signature, key, runs: g.runs, title: redact(redactPaths(title, opts.roots)), body: redact(redactPaths(body, opts.roots)), check };
     });
   return [...proposals, ...recurringQuestions(db, rows, opts.roots)];
 }
@@ -302,6 +300,8 @@ export function retroProposals(db: OrbitDb, opts: { since: number | null; roots?
 export interface AwaitingDecision {
   runId: string;
   questionIds: string[];
+  /** The outcome markers the run waits on besides a question (an authorization, a ledger entry, a fail-before answer). */
+  waitingOn: string[];
 }
 
 interface WaitingRow {
@@ -318,6 +318,8 @@ function waitingQuestions(db: OrbitDb, rows: readonly RunRow[]): WaitingRow[] {
 }
 
 const MAX_QUESTION_CHARS = 300;
+/** Runs one question must hold up before a default for it is proposed. */
+export const REPEATED_QUESTION = 3;
 
 /** Issue #237: the runs waiting for a decision, listed apart from the failures; they propose nothing. */
 export function awaitingDecisions(db: OrbitDb, opts: { since: number | null }): AwaitingDecision[] {
@@ -328,13 +330,13 @@ export function awaitingDecisions(db: OrbitDb, opts: { since: number | null }): 
     ...TERMINAL,
     opts.since ?? 0,
   );
-  const by = new Map<string, string[]>();
-  for (const r of rows) by.set(r.id, []);
-  for (const q of waitingQuestions(db, rows)) by.get(q.run_id)?.push(q.id);
-  return [...by].map(([runId, questionIds]) => ({ runId, questionIds }));
+  const by = new Map<string, AwaitingDecision>();
+  for (const r of rows) by.set(r.id, { runId: r.id, questionIds: [], waitingOn: classMarkers('awaiting-decision', parseOutcome(r.outcome_json) ?? {}).filter((m) => m !== 'questions') });
+  for (const q of waitingQuestions(db, rows)) by.get(q.run_id)?.questionIds.push(q.id);
+  return [...by.values()];
 }
 
-/** Issue #237: one policy default for each question that two runs or more waited on, quoting it. */
+/** Issue #237: one policy default for each question that three runs or more waited on, quoting it. */
 function recurringQuestions(db: OrbitDb, rows: readonly RunRow[], roots?: readonly string[]): RetroProposal[] {
   const groups = new Map<string, { text: string; runs: Set<string> }>();
   for (const q of waitingQuestions(db, rows)) {
@@ -347,12 +349,12 @@ function recurringQuestions(db: OrbitDb, rows: readonly RunRow[], roots?: readon
   const byId = new Map(rows.map((r) => [r.id, r]));
   const out: RetroProposal[] = [];
   for (const [norm, g] of groups) {
-    if (g.runs.size < REPEATED) continue;
+    if (g.runs.size < REPEATED_QUESTION) continue;
     const runs = [...g.runs].map((id) => evidenceFor(db, byId.get(id)!, 'awaiting-decision'));
     const signature = `question:${createHash('sha256').update(norm).digest('hex').slice(0, 8)}`;
     const quoted = redact(redactPaths(g.text.replace(/\s+/g, ' ').trim().slice(0, MAX_QUESTION_CHARS), roots)).replace(/"/g, "'");
     const { title, body } = render('policy', 'awaiting-decision', signature, runs, null, quoted);
-    out.push({ kind: 'policy', failureClass: 'awaiting-decision', signature, key: proposalKey('policy', 'awaiting-decision', signature), runs, title: redact(redactPaths(title, roots)), body: redact(redactPaths(body, roots)), check: null, question: quoted });
+    out.push({ kind: 'policy', failureClass: 'awaiting-decision', signature, key: proposalKey('policy', 'awaiting-decision', signature), runs, title: redact(redactPaths(title, roots)), body: redact(redactPaths(body, roots)), check: null });
   }
   return out;
 }

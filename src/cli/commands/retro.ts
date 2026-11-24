@@ -196,7 +196,7 @@ export interface RetroReport {
   window: { since: string | null };
   proposals: RetroProposalReport[];
   /** Runs waiting for a person's answer (issue #237): not failures, so they make no proposal. */
-  awaiting_decision: { run: string; questions: string[] }[];
+  awaiting_decision: { run: string; questions: string[]; waiting_on: string[] }[];
   /** Proposals the runs support that were answered before and are not made again. */
   already_decided: number;
 }
@@ -234,7 +234,7 @@ export async function runRetro(args: Args, ctx: CliContext, deps: RetroDeps): Pr
   const declared = await missingCheck(ctx, repo);
 
   const report = await withState(repo, async (db) => {
-    const out: RetroReport = { window: { since: since === null ? null : new Date(since).toISOString() }, proposals: [], awaiting_decision: awaitingDecisions(db, { since }).map((a) => ({ run: a.runId, questions: a.questionIds })), already_decided: 0 };
+    const out: RetroReport = { window: { since: since === null ? null : new Date(since).toISOString() }, proposals: [], awaiting_decision: awaitingDecisions(db, { since }).map((a) => ({ run: a.runId, questions: a.questionIds, waiting_on: a.waitingOn })), already_decided: 0 };
     for (const p of retroProposals(db, { since, roots, missingCheck: declared?.check ?? null })) {
       const before = findDecision(db, p.key);
       if (before && before.decision !== 'drafted') {
@@ -295,7 +295,10 @@ function renderRetro(ctx: CliContext, report: RetroReport, issueRepo: string): v
     if (report.awaiting_decision.length === 0) return;
     line(ctx.io);
     line(ctx.io, `${report.awaiting_decision.length} run(s) wait for your decision, not a failure:`);
-    for (const a of report.awaiting_decision) line(ctx.io, `  ${a.run}: ${a.questions.length > 0 ? a.questions.join(', ') : 'no open question'}; answer with: orbit decide ${a.run} <question-id> <answer>`);
+    for (const a of report.awaiting_decision) {
+      if (a.questions.length > 0) line(ctx.io, `  ${a.run}: ${a.questions.join(', ')}; answer with: orbit decide ${a.run} <question-id> <answer>`);
+      else line(ctx.io, `  ${a.run}: no open question; waiting on ${a.waiting_on.length > 0 ? a.waiting_on.join(', ') : 'a decision already answered'}; see orbit status ${a.run}`);
+    }
   };
   if (report.proposals.length === 0) {
     line(ctx.io, `No proposals from ${window}: no repeated or Orbit-fault failure that is not already decided.${report.already_decided > 0 ? ` (${report.already_decided} proposal(s) were answered before and are not repeated.)` : ''}`);
