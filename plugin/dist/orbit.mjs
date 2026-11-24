@@ -42036,7 +42036,8 @@ var init_runner = __esm({
       DOTNET_GENERATE_ASPNET_CERTIFICATE: "false",
       DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: "false",
       DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: "1",
-      EnableSourceControlManagerQueries: "false"
+      EnableSourceControlManagerQueries: "false",
+      MSBUILDUSESERVER: "0"
     };
     NUGET_MIGRATIONS_DIR = join29(".local", "share", "NuGet", "Migrations");
     NUGET_LATEST_MIGRATION = "1";

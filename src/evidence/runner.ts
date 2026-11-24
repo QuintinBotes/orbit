@@ -554,6 +554,12 @@ function safeCwd(checkout: string, rel: string): string {
  * fails with EACCES and the build stops at "Error reading git repository information" (.NET SDK 9 and 10). Turning the
  * query off keeps that protection and every other rule of the sandbox; a check's own env can turn it back on.
  *
+ * MSBUILDUSESERVER=0 keeps the MSBuild server off (issue #180). From .NET SDK 11 every build goes through it by default:
+ * a process that outlives the build and binds a named pipe under /tmp, which the sandbox refuses as it refuses a worker
+ * node's. The server died recording that, the CLI built in process instead, and the runner failed the check on the
+ * record. The SDK reads DOTNET_CLI_USE_MSBUILD_SERVER only when MSBUILDUSESERVER is unset, and MSBuild reads this one
+ * itself, so it covers both. Earlier SDKs leave the server off already.
+ *
  * Orbit never changes a check's processor count (issue #10, reopened; evidence/msbuild.ts): DOTNET_PROCESSOR_COUNT
  * reaches the test host, where it changes how the repository's tests run (xunit before 2.8 deadlocks a test that blocks
  * on async code on one processor). MSBuild worker nodes, which the sandbox refuses their named pipe under /tmp, are kept
@@ -568,6 +574,7 @@ export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
   DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: 'false',
   DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: '1',
   EnableSourceControlManagerQueries: 'false',
+  MSBUILDUSESERVER: '0',
 };
 
 /** Where NuGet records the migrations it has run, under the home directory, and the newest one's marker file. */
