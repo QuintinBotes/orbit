@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The simplicity gate (#232). A check whose id is `simplicity` and whose command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` fails a candidate that adds a new high-severity finding (an import cycle, a hub) compared with its base, and names each finding with its kind, location and evidence; findings the base already has never fail it. Orbit now sets `ORBIT_BASE_REVISION` (the candidate's parent, `HEAD` on the base revision) in every check's environment. With the check configured, `orbit doctor` reports `checks.simplicity` unavailable, and `orbit run` refuses to start, when unknot is missing or older than 0.4.0; on a run from an issue labelled `simplify` the planner is also given unknot's findings for the allowed paths as untrusted advisory data. No model call. Off unless the policy defines the check; the starter config lists a commented example.
+
 ## [0.4.0] - 2026-11-24
 
 ### Off by default

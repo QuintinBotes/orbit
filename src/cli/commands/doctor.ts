@@ -45,10 +45,12 @@ import { compileGlobs } from '../../policy/globs.ts';
 import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
+import { probeUnknot } from '../../evidence/simplicity.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
 import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
+import { simplicityCheck } from './doctor-simplicity.ts';
 import { workerLoopbackCheck } from './doctor-workers.ts';
 import { loadCommandPolicy } from '../policy-file.ts';
 import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../../scheduling/budget.ts';
@@ -1121,6 +1123,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   await safely('checks.sandbox', 'checks', () =>
     checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) }),
   );
+  await safely('checks.simplicity', 'checks', () => (configLoaded ? simplicityCheck({ config, probe: () => probeUnknot(ctx.env, repo ?? ctx.cwd) }) : []));
   await safely('checks.dotnet-tests', 'checks', () => (repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []));
   await safely('workers.loopback', 'isolation', () => (repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []));
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;

@@ -691,6 +691,16 @@ If creating a commit changes only Git metadata, retain the tested tree identity 
 }
 ```
 
+### Simplicity gate
+
+A check whose id is `simplicity` (or starts `simplicity-`) is the model-free simplicity gate (issue #232). Its command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` run through a shell in the candidate's checkout. Orbit sets `ORBIT_BASE_REVISION` in every check's environment: the candidate's parent revision, or `HEAD` on the base revision itself, where nothing is new, so the baseline run passes at once.
+
+- **Fails on what the candidate adds.** Unknot exits 1 for a new finding at the severity (an import cycle or a hub is `high` by default). The check fails and its failure note names each new finding with its kind, location, title and evidence (at most eight, then a count), which is what the repair brief carries. A finding the base already has is never new, so a clean change passes on a base that has findings.
+- **Cannot compare, says so.** A base Unknot cannot map (exit 5) fails with that reason, not as a finding. A check over its `timeout_seconds` fails as a timeout and says the scope was too large to map in that time. An Unknot older than 0.4.0 ignores `--baseline`, prints no `schema_version` and exits 0, so a pass whose output is not a schema 1.x document is turned into a failure naming the version needed.
+- **Unavailable Unknot.** With the check configured, `orbit doctor` fails `checks.simplicity` when `unknot` is not installed or older than 0.4.0 and prints the install step, and `orbit run` refuses to start, as it does for other problems it can see before a run exists.
+- **Planner input.** On a run started from an issue labelled `simplify`, with the check configured, the planner's prompt carries the output of `unknot diagnose --json` for the repository, limited to findings in `scope.allowed_paths` (at most ten, in Unknot's rank order), as a marked untrusted block that is advisory: it grants nothing, and the contract and the checks decide. If Unknot gives nothing the prompt is unchanged.
+- **Off by default.** No simplicity check is defined unless the policy defines one (the starter lists a commented example); the planner input needs both that check and the label. No model is called by either.
+
 ### Completion proof
 
 Every mandatory criterion needs explicit evidence. Passing unit tests alone does not prove an entire user journey. Model review cannot replace reproducible checks. Missing execution evidence must be labeled unverified.

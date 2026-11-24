@@ -21,12 +21,13 @@ import type { Trigger } from '../../inquisition/types.ts';
 import type { RunContext } from '../context.ts';
 import { intakeGate } from '../gates.ts';
 import { routeFor } from '../workers.ts';
+import { isSimplicityCheck, isSimplifyGoal, simplifyFindingsBlock, unknotFindings } from '../../evidence/simplicity.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, type StepResult } from './common.ts';
 import { blockOnMissingTargets, missingTargetsNotExpectedToFlip, settleExpectedFlips } from './baseline-questions.ts';
 import { obtain } from './obtain.ts';
 import { recordGate } from './preflight.ts';
-import { alignPlanToIssue, contractSource, ISSUE_BODY_MAX_CHARS, issuePlannerTask, issuePromptBlocks, readIssueGoal, unansweredIssueCriteria } from '../../intake/issue.ts';
+import { alignPlanToIssue, contractSource, ISSUE_BODY_MAX_CHARS, issuePlannerTask, issuePromptBlocks, readIssueGoal, unansweredIssueCriteria, type IssueGoal } from '../../intake/issue.ts';
 
 export const PLANNER_FILE = 'planner.json';
 
@@ -40,6 +41,7 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
   const route = routeFor(ctx, 'plan', 'routine-code', { difficulty: 'medium', attempt: 1, repeatedFingerprints: 0 });
   const named = [ctx.run.goal, issue?.spec, issue?.hints].filter((t): t is string => typeof t === 'string').join('\n');
   const slice = ctx.run.baseRevision ? await goalSlice(ctx.run.repoRoot, ctx.run.baseRevision, named, ctx.snapshot.config) : null;
+  const findings = await simplifyFindings(ctx, issue);
   const got = await obtain<PlannerOutput>(ctx, {
     base: 'plan',
     maxAttempts: MAX_REGENERATIONS,
@@ -52,7 +54,7 @@ export async function contractingStep(ctx: RunContext): Promise<StepResult> {
       effort: route.effort,
       cwd: worktreeOf(ctx),
       readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId, slice),
+      prompt: (workerId) => plannerPrompt(ctx, workerId, slice, findings),
     }),
     accept: (r) => {
       const out = validateModelOutput('planner', r.structured);
@@ -125,7 +127,21 @@ function worktreeOf(ctx: RunContext): string {
   return ctx.run.worktreePath;
 }
 
-function plannerPrompt(ctx: RunContext, workerId: string, slice: string | null): string {
+/**
+ * Issue #232: on a goal labelled simplify, with the simplicity check configured (it is the switch: both are off by
+ * default), Unknot's ranked findings for the allowed paths, as advisory text for the planner. Unknot missing or silent
+ * leaves the planner as it was.
+ */
+async function simplifyFindings(ctx: RunContext, issue: IssueGoal | null): Promise<string | null> {
+  const gate = Object.values(ctx.snapshot.config.checks).find((c) => isSimplicityCheck(c.id));
+  if (!gate || !isSimplifyGoal(issue)) return null;
+  const out = await unknotFindings(ctx.run.repoRoot, ctx.deps.hostEnv ?? process.env, gate.timeout_seconds);
+  return out === null ? null : simplifyFindingsBlock(out, ctx.snapshot.config.scope.allowed_paths, SIMPLIFY_FINDINGS_LIMIT);
+}
+
+const SIMPLIFY_FINDINGS_LIMIT = 10;
+
+function plannerPrompt(ctx: RunContext, workerId: string, slice: string | null, findings: string | null): string {
   const issue = readIssueGoal(ctx.runDir);
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? ' (mandatory)' : ''}`);
   // P18 for a missing target rests on the contract naming the check (steps/baseline-questions.ts): the planner is told
@@ -153,7 +169,11 @@ function plannerPrompt(ctx: RunContext, workerId: string, slice: string | null):
     // An issue's text is never written into the task: it follows as marked, untrusted blocks.
     ...(issue ? issuePlannerTask(issue) : [`Goal (from the user): ${ctx.run.goal}`]),
   ].join('\n');
-  const blocks = [...(issue ? issuePromptBlocks(issue) : []), ...(slice ? [{ label: 'repository map', content: slice }] : [])];
+  const blocks = [
+    ...(issue ? issuePromptBlocks(issue) : []),
+    ...(slice ? [{ label: 'repository map', content: slice }] : []),
+    ...(findings ? [{ label: 'unknot findings for the goal scope advisory input', content: findings, ref: 'unknot diagnose' }] : []),
+  ];
   return renderWorkerPrompt({
     role: 'planner',
     task,
