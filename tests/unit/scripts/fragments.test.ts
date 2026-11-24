@@ -1,6 +1,7 @@
 // scripts/fragments.mjs and the workflows around it: changelog and traceability fragments, a bundle rebuilt after merge (#230).
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,8 +98,57 @@ describe('changelog and traceability fragments', () => {
     expect(existsSync(join(root, 'changes/changelog/bad.md'))).toBe(true);
   });
 
+  it('a release fails with a clear error when the named section has no table, instead of using the next section\'s', () => {
+    const trace = `${TRACE}\n## 3. Three\n\nProse only.\n\n## 4. Four\n\n| ID | R | I | T | S |\n|---|---|---|---|---|\n| S4.1 | a | b | c | done |\n`;
+    const root = repo({ 'docs/traceability.md': trace, 'changes/traceability/x.md': `section: 3\n${ROW('S3.1')}\n` });
+    expect(() => foldFragments(root, '0.5.0', '2026-12-01')).toThrow(/x\.md.*section "3".*no table/);
+    expect(file(root, 'docs/traceability.md')).toBe(trace);
+    expect(existsSync(join(root, 'changes/traceability/x.md'))).toBe(true);
+  });
+
   it('the repository itself has only well formed fragments', () => {
     expect(checkFragments(ROOT)).toEqual([]);
+  });
+});
+
+describe('fragments check --base against a real repository', () => {
+  const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const git = (cwd: string, ...args: string[]) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  };
+  // The script finds its repository from its own location, so the copy under test runs against the temporary repo.
+  function prRepo(edit: Record<string, string>): string {
+    const root = repo({ 'package.json': '{"version":"0.4.0"}\n', 'plugin/CHANGELOG.md': '# C\n' });
+    mkdirSync(join(root, 'scripts'));
+    copyFileSync(join(ROOT, 'scripts/fragments.mjs'), join(root, 'scripts/fragments.mjs'));
+    git(root, 'init', '-q', '-b', 'next');
+    git(root, 'add', '.');
+    git(root, 'commit', '-q', '-m', 'base');
+    git(root, 'checkout', '-q', '-b', 'pr');
+    for (const [name, text] of Object.entries(edit)) {
+      mkdirSync(dirname(join(root, name)), { recursive: true });
+      writeFileSync(join(root, name), text);
+    }
+    git(root, 'add', '.');
+    git(root, 'commit', '-q', '-m', 'pr');
+    return root;
+  }
+  const check = (root: string, base: string) => spawnSync('node', ['scripts/fragments.mjs', 'check', '--base', base], { cwd: root, encoding: 'utf8' });
+
+  it('scenario 1 and 2: passes a branch that only adds fragments, and fails one that edits a shared file, naming the fragment to write', () => {
+    const ok = check(prRepo({ 'changes/changelog/a.md': 'section: Changes\n- A.\n' }), 'next');
+    expect(ok.stderr).toBe('');
+    expect(ok.status).toBe(0);
+    const bad = check(prRepo({ 'CHANGELOG.md': `${CHANGELOG}\n- edited\n` }), 'next');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain('CHANGELOG.md is assembled at release');
+  });
+
+  it('fails when the base ref was never fetched, as in a shallow pull request checkout', () => {
+    const r = check(prRepo({ 'changes/changelog/a.md': 'section: Changes\n- A.\n' }), 'origin/next');
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('origin/next');
   });
 });
 
@@ -115,6 +165,9 @@ describe('bundle rebuilt after merge', () => {
     const frag = ciSteps.find((s) => s.run?.includes('scripts/fragments.mjs check'));
     expect(frag?.if).toContain("github.event_name == 'pull_request'");
     expect(frag?.run).toContain('--base');
+    // `cond && 0 || 1` is always 1 (0 is falsy), so the pull request checkout stayed shallow and origin/next was missing.
+    const checkout = ci.jobs.verify!.steps.find((s) => (s as { uses?: string }).uses?.startsWith('actions/checkout'));
+    expect((checkout as { with: Record<string, string> }).with['fetch-depth']).toBe("${{ github.event_name == 'pull_request' && '0' || '1' }}");
   });
 
   it('scenario 3: the rebuild runs once per merge into next, commits only when the bundle changed, and opens a pull request', () => {

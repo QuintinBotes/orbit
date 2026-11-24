@@ -38,8 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # A pull request needs the history to diff against its base (the fragments check below).
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          # A pull request needs the history to diff against its base (the fragments check below). The 0 is quoted: an
+          # unquoted 0 is falsy in an expression, so `cond && 0 || 1` always gave 1 and the base ref was never fetched.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

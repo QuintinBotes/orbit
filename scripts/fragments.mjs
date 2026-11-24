@@ -105,7 +105,13 @@ export function foldFragments(root, version, date) {
     const lines = readFileSync(path, 'utf8').split('\n');
     for (const f of rows) {
       let i = headingFor(lines, f.section);
-      while (i < lines.length && !lines[i].startsWith('|')) i++;
+      if (i === -1) throw new Error(`${f.file}: docs/traceability.md has no section "${f.section}"`);
+      // The table must belong to this section: stop at the next heading rather than fall into another section's table.
+      while (i < lines.length && !lines[i].startsWith('|')) {
+        i++;
+        if (lines[i]?.startsWith('## ')) throw new Error(`${f.file}: section "${f.section}" of docs/traceability.md has no table`);
+      }
+      if (i >= lines.length) throw new Error(`${f.file}: section "${f.section}" of docs/traceability.md has no table`);
       while (i < lines.length && lines[i].startsWith('|')) i++;
       lines.splice(i, 0, ...rowsOf(f.body));
     }
