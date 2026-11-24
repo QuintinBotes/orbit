@@ -18,6 +18,7 @@ import curatorSchema from '../../schemas/curator-output.schema.json' with { type
 import explorerSchema from '../../schemas/explorer-output.schema.json' with { type: 'json' };
 import { OrbitError } from '../core/errors.ts';
 import type { FindingCategory } from '../review/types.ts';
+import type { CriterionKind } from './types.ts';
 import { validateAgainst } from './json-schema.ts';
 import type { AmendmentProposal, AssumptionStatusValue } from './amendment-types.ts';
 import { practiceProblems, type PracticeSelection } from './practices.ts';
@@ -113,6 +114,8 @@ export interface PlannerCriterion {
   proof: string[];
   check_ids: string[];
   changes: { path: string; summary: string }[];
+  kind: CriterionKind;
+  tests: string[];
 }
 
 export interface PlannerOutput {

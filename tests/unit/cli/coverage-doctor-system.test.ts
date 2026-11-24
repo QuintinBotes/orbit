@@ -554,6 +554,20 @@ describe('isolation', () => {
     expect(container.isolation!.missing).toMatch(/Docker/i);
   });
 
+  it("names the AppArmor change when Ubuntu's bwrap-userns-restrict profile stops the sandbox (#181)", async () => {
+    const w = world();
+    hooks.isolation = () => fakeIsolation('sandbox-runtime', false, "srt 0.0.78 could not start a sandboxed command (exit 1: apply-seccomp: ...); AppArmor's bwrap-userns-restrict profile, the default on Ubuntu 26.04, leaves ...");
+    const c = await doctor(w, { config: cfg((x) => (x.isolation.provider = 'sandbox-runtime')) });
+    expect(c.isolation).toMatchObject({ status: 'fail', summary: expect.stringContaining('bwrap-userns-restrict') });
+    // The commands the CI job "sandbox (ubuntu-26.04, stock AppArmor)" applies before it runs the sandbox tests.
+    expect(c.isolation!.fix).toBe(
+      "give bubblewrap an AppArmor profile that grants it user namespaces in place of bwrap-userns-restrict (what bubblewrap starts gets capabilities in its user namespace again; other programs keep the restriction): " +
+        "sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/; " +
+        "printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\\n  userns,\\n}\\n' | sudo tee /etc/apparmor.d/bwrap; " +
+        'sudo apparmor_parser -r /etc/apparmor.d/bwrap; Orbit refuses to degrade to less isolation',
+    );
+  });
+
   it('explains what happens when the policy forbids the isolation it asks for', async () => {
     const w = world();
     hooks.isolation = () => new OrbitError('CONFIG_INVALID', 'isolation.provider none needs allow_unisolated for unattended runs');

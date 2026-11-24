@@ -96,3 +96,45 @@ that: it changes what a person can do next. No new class was added, so the
 published list is unchanged. `orbit stats` counts these runs on their own as
 well (`runs.verified_undelivered`), so they are not read as failures with
 nothing to show.
+
+## Addendum (2026-11-20): follow-ups from the review (issue #190)
+
+- **Waiting for a person is its own class.** A run that waits for a decision a
+  person gives with `orbit decide` and then resumes (an open question or the
+  criteria it blocks, a pending authorization, an undecided ledger entry, a
+  fail-before answer) is `awaiting-decision`, no longer `gate-deadlock`, so
+  `orbit stats` does not show it among the gates nothing can open.
+  `gate-deadlock` keeps a review gate that did not clear, the delivery and
+  completion gates, and a declined ledger entry (it needs a new run). The class
+  comes after `gate-deadlock` in the order of causes. The published list gains
+  the value; the pass rate still counts such a run as finished, as it does a
+  run that stopped holding a verified candidate.
+- **The turn cap comes after a broken harness.** Sessions that ended at their
+  turn cap still make a run that ran out `turn-cap`, but a credential, a
+  misconfigured check or an environment failure the records mark comes first:
+  a session in an environment that refuses its work runs into its cap as a
+  symptom. The turn cap still comes before scope, a review dispute, a gate, the
+  model and the budget. One capped session is still enough, as edge case 1
+  holds.
+- **No class reads a value found in wording.** `frozen_policy.setting` is
+  matched from a block's reason (`steps/common.ts` `frozenPolicyCause`), so no
+  rule reads it any more. A goal whose paths all lie outside the policy scope
+  is `scope` by a marker the draft records (`scope` in the outcome), and a
+  policy that allows no paths by one the intake gate records (`scope` in the
+  gate's details). A misconfigured check was already marked by
+  `misconfigured_checks`.
+- **A worker that ended at a session limit is not the model.** A planner (or
+  any unit without its own fallback) whose last attempt ended at the turn cap
+  names `turn-cap`, and one that timed out names `environment`, which is how
+  `recovery/backoff.ts` reads a timeout; a diagnosis that ran out the same way
+  does too. Failed or malformed output stays `model`.
+- **Mandatory verification that is unavailable names why.** When a mandatory
+  check or a journey has no result, verification could not run:
+  `environment`, as for issue #158. When every one of them ran, the gap is in
+  what the candidate proves (it added no test, say): `turn-cap` when
+  implementer sessions ended at their cap, else `model`. Run
+  `orb-20261119-081756-112901` (#172) was stored as `environment` although
+  both of its sessions had ended at the turn cap and its candidate added no
+  test; it would now be `turn-cap`. Stored classes are not rewritten.
+- The step tests now check the class each named cause gives, at every step
+  that names one.

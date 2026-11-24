@@ -70,7 +70,8 @@ function practices(ui: boolean): PracticeSelection[] {
 function plan(p: {
   objective: string;
   current: [string, string][];
-  criteria: { key: string; statement: string; ui: boolean; proof: string[]; changes: [string, string][] }[];
+  /** `tests`: the criterion's mapped test files, each run alone for its fail-before and read by its auditor (issue #200). */
+  criteria: { key: string; statement: string; ui: boolean; proof: string[]; changes: [string, string][]; tests: string[] }[];
   files: [string, 'add' | 'modify', string][];
   allowed: string[];
   nonGoals: string[];
@@ -87,6 +88,8 @@ function plan(p: {
       proof: c.proof,
       check_ids: c.ui ? ALL_CHECKS : COMMAND_CHECKS,
       changes: c.changes.map(([path, summary]) => ({ path, summary })),
+      kind: 'change',
+      tests: c.tests,
     })),
     expected_changed_files: p.files.map(([path, change, reason]) => ({ path, change, reason })),
     allowed_paths: p.allowed,
@@ -116,6 +119,14 @@ function implementer(summary: string, paths: [string, 'add' | 'modify', string][
 }
 
 const APPROVE = { structured: { verdict: 'APPROVE', candidate_revision: '$CANDIDATE', findings: [] } };
+/**
+ * The proof checks before delivery (issue #200), as a competent reviewer answers them on the demo's done trees: each
+ * criterion audit says its tests would fail if the criterion were false, and the pull request body and documents match.
+ */
+const PROOF = {
+  auditor: [{ structured: { verdict: 'APPROVE', candidate_revision: '$CANDIDATE', findings: [{ id: 'AUDIT-1', severity: 'info', category: 'criterion-audit', location: null, claim: 'Each mapped test asserts the criterion\'s observable result, so it fails for an implementation where the criterion does not hold.', evidence: 'the assertions on the response, the rows and the download', suggested_validation: null }] } }],
+  artifacts: [APPROVE],
+};
 
 function diagnosis(p: { evidence: string; hypothesis: string; alternative: string; experiment: string; expected: string; fix: string; preserved: string }): object {
   return {
@@ -181,6 +192,7 @@ function simple(): Scenario {
               statement: `A request for an unknown path answers 404 with the plain text body "${NOT_FOUND_TEXT}".`,
               ui: false,
               proof: ['A unit test asserts the 404 body text'],
+              tests: ['tests/unit/server.test.ts'],
               changes: [
                 ['src/server.ts', 'new body text'],
                 ['tests/unit/server.test.ts', 'assert the text'],
@@ -217,6 +229,7 @@ function simple(): Scenario {
       ),
     ],
     reviewer: [APPROVE],
+    ...PROOF,
   });
 }
 
@@ -329,6 +342,7 @@ function difficult(): Scenario {
               statement: 'The total amount equals the sum over all records matching the filters, on every page.',
               ui: true,
               proof: ['Unit test over a multi-page fixture', 'Journey compares the total on page 1 and page 2'],
+              tests: ['tests/unit/totals.test.ts', 'tests/e2e/totals.spec.ts'],
               changes: [['src/reports/query.ts', 'sum the filtered records, not the page rows']],
             },
             {
@@ -336,6 +350,7 @@ function difficult(): Scenario {
               statement: 'Every matching record is reachable by paging, including when the count is not a multiple of the page size.',
               ui: true,
               proof: ['Unit test with 25 and 47 records', 'Journey pages to the last page of 47 records'],
+              tests: ['tests/unit/totals.test.ts', 'tests/e2e/totals.spec.ts'],
               changes: [['src/reports/query.ts', 'round the page count up']],
             },
           ],
@@ -382,6 +397,7 @@ function difficult(): Scenario {
       }),
     ],
     reviewer: [APPROVE],
+    ...PROOF,
   });
 }
 
@@ -618,6 +634,7 @@ function ui(): Scenario {
               statement: 'Export every record matching the current filters, including records beyond the current page.',
               ui: true,
               proof: ['A multi-page filtered journey downloads every matching record'],
+              tests: ['tests/e2e/export.spec.ts'],
               changes: [
                 ['src/server.ts', 'GET /reports.csv over the filtered records'],
                 ['src/views/reports-page.ts', 'Export CSV link'],
@@ -628,6 +645,7 @@ function ui(): Scenario {
               statement: 'Preserve the visible column order and escape CSV values correctly.',
               ui: true,
               proof: ['Header ordering and escaping unit tests', 'Escaping journey with a comma and a quote'],
+              tests: ['tests/unit/csv.test.ts', 'tests/e2e/export.spec.ts'],
               changes: [['src/reports/csv.ts', 'serialise in table column order, quoting as needed']],
             },
             {
@@ -635,6 +653,7 @@ function ui(): Scenario {
               statement: "The file is named reports-YYYY-MM-DD.csv using the user's local date.",
               ui: true,
               proof: ['Journey in a non-UTC time zone near midnight UTC'],
+              tests: ['tests/e2e/export.spec.ts'],
               changes: [['src/public/export.js', 'build the download name from the local date']],
             },
             {
@@ -642,6 +661,7 @@ function ui(): Scenario {
               statement: 'An empty result downloads a file with only the header row.',
               ui: true,
               proof: ['Unit test and journey with a filter that matches nothing'],
+              tests: ['tests/unit/csv.test.ts', 'tests/e2e/export.spec.ts'],
               changes: [['src/reports/csv.ts', 'header row only']],
             },
           ],
@@ -683,6 +703,7 @@ function ui(): Scenario {
       }),
     ],
     reviewer: [APPROVE],
+    ...PROOF,
   });
 }
 

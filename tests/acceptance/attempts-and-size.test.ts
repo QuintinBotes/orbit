@@ -83,4 +83,27 @@ describe.skipIf(!READY)('acceptance: attempts are not spent on what no repair ca
     expect(transitions(db, run.id).at(-1)).toBe('BLOCKED');
     assertRunInvariants(l, run.id);
   }, 240_000);
+
+  it('issue #157: a committed generated bundle the policy names in scope.generated_paths is not counted in the size limit', async () => {
+    const l = lab({ tweak: (c) => void ((c.scheduler.hard_limits.changed_lines = 100), (c.scope.generated_paths = ['src/generated/**'])) });
+    const bundle = { op: 'write' as const, path: 'src/generated/bundle.js', content: Array.from({ length: 300 }, (_, i) => `export const line${i} = ${i};`).join('\n') + '\n' };
+    writeScenario(
+      l,
+      scenario({
+        planner: [planner({ allowed: ['src/server.ts', 'src/generated/**', 'tests/unit/**'], files: [['src/server.ts', 'modify', 'new not-found text'], ['tests/unit/server.test.ts', 'modify', 'assert the text'], ['src/generated/bundle.js', 'add', 'the generated bundle']] })],
+        implementer: [implementer([SRC_TEXT, TEST_TEXT, bundle])],
+      }),
+    );
+    const run = startLabRun(l, GOAL);
+    const done = await drive(l, run.id);
+    const db = l.db();
+
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(listDecisions(db, run.id).filter((d) => /over the size limits/.test(d.summary))).toEqual([]);
+    const [cand] = listCandidates(db, run.id);
+    expect(cand!.scope).toMatchObject({ within_size_limits: true, generated_lines: 300 });
+    expect(cand!.scope!.changed_lines).toBeLessThanOrEqual(100);
+    expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(1);
+    assertRunInvariants(l, run.id);
+  }, 240_000);
 });

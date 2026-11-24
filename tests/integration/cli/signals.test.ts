@@ -42,7 +42,7 @@ describe('orbit run --foreground in its own process', () => {
     writeFileSync(scenario, JSON.stringify({ auth: { loggedIn: true, authMethod: 'api_key', method: 'api_key', valid: true }, roles: { '*': [{ sleepMs: 30_000, structured: {} }] } }));
     const b = makeSandbox({ fakes: { claude: { ORBIT_FAKE_SCENARIO: scenario }, codex: { ORBIT_FAKE_SCENARIO: scenario } } });
     boxes.push(b);
-    const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CLI_ENTRY, 'run', '--goal', 'Add a mul function to the calculator.', '--foreground'], { cwd: b.repo, env: b.env(), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CLI_ENTRY, 'run', '--goal', 'Add a mul function to the calculator.', '--foreground'], { cwd: b.repo, env: b.env(), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (d: Buffer) => (out += d.toString()));
     child.stderr.on('data', (d: Buffer) => (out += d.toString()));

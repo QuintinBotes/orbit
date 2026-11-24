@@ -191,12 +191,13 @@ dependency is the sandbox runtime. The root is the development workspace.
 | `knowledge/` | lesson graph (repo + opt-in global), extraction, curation, retrieval, feedback, overlays + replay evals, JSON-LD export, ingest | `KnowledgeStore`, `retrieve`, `learnFromRun`, `evaluateOverlay` |
 | `guard/` | publication guard: private-term and identity checks before anything leaves its repository | `checkPublication` |
 | `controller/` | states, run store, gates, step functions per state, controller loop, service install | `Controller`, `step`, `installService` |
+| `bench/` | `orbit bench`: the lab tier (demo-app labs driving the real controller with the fake providers, one scenario per fixed issue), the live tier (pinned goal catalog, held-out checks, the plain-session baseline), the stages a comparison may turn off, and scorecards | `LAB_SCENARIOS`, `runLabTier`, `parseLiveCatalog`, `runLiveTier`, `BENCH_STAGES`, `buildScorecard` |
 | `cli/` | `orbit` commands | `main` |
 
 Dependency direction: `core` ← `storage` ← everything; `policy`, `isolation`,
 `evidence`, `routing`, `scheduling`, `inquisition`, `ui`, `delivery`,
 `knowledge`, `guard` do not import `controller`; `controller` composes them;
-`cli` composes `controller`.
+`bench` drives `controller` as a client would; `cli` composes `controller` and `bench`.
 
 ## Trust boundaries
 
@@ -263,9 +264,9 @@ See `src/knowledge/types.ts` and `docs/decisions/0002-learning-layer.md`.
 Lessons are extracted after each run from verified evidence only, curated into
 the standard lesson format, deduplicated, and stored as `candidate`. A lesson
 becomes `validated` after support from two distinct runs with no
-contradiction. Retrieval puts at most a fixed token budget of validated
-lessons (and clearly labelled candidates) into a worker's prompt as advisory
-data. Overlays are distilled per role, evaluated on a replay suite, adopted
+contradiction. With `knowledge.lessons_in_prompts` on (off by default),
+retrieval puts at most a fixed token budget of validated lessons into a
+worker's prompt as advisory data. Overlays are distilled per role, evaluated on a replay suite, adopted
 automatically only when the candidate improves verified pass rate or cost
 without any regression, and rolled back automatically when live metrics
 regress. Overlays live in `.orbit/knowledge/` or `~/.orbit/knowledge/`, never

@@ -71,9 +71,11 @@ export function renderIssueComment(input: IssueCommentInput): string {
   const criteria = (report?.criteria ?? []).filter((c) => plainId(c.id) && plainId(c.status));
   if (criteria.length > 0) {
     lines.push('', 'Acceptance criteria:');
-    // The contract keeps the issue's criteria first and in the issue's order, so the nth criterion is the nth scenario.
-    criteria.slice(0, 50).forEach((c, i) => {
-      const key = goal.kind === 'bug' ? (i === 0 ? 'reproduction' : null) : (goal.scenarios[i]?.key ?? null);
+    // The draft numbers the issue's criteria AC-1, AC-2, ... in the issue's order, and an amendment never renumbers or
+    // reuses an id, so AC-n is the nth scenario even after a criterion was removed.
+    criteria.slice(0, 50).forEach((c) => {
+      const n = Number(/^AC-(\d+)$/.exec(c.id)?.[1] ?? 0);
+      const key = goal.kind === 'bug' ? (n === 1 ? 'reproduction' : null) : (goal.scenarios[n - 1]?.key ?? null);
       lines.push(`- ${c.id}${key ? ` (${key})` : ''}: ${c.status}`);
     });
   }

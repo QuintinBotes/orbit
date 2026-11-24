@@ -223,6 +223,15 @@ export function remoteHost(address: string): string | null {
 }
 
 /**
+ * OWNER/REPO of a github.com remote URL in the https, ssh or scp form (`https://github.com/o/r.git`,
+ * `ssh://git@github.com/o/r`, `git@github.com:o/r.git`), else null. Anchored at the start, so it runs in linear time.
+ */
+export function githubRepoFromUrl(url: string): string | null {
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]*@)?(?:www\.)?github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/**
  * The URL a push to `remote` really goes to. A configured remote name is
  * resolved through git itself (`remote get-url --push --all` applies pushurl
  * and insteadOf rewrites and lists every push URL), so a name can never hide

@@ -35,7 +35,7 @@ function slowRunner(pidFile: string): string {
 }
 
 function orbitCli(lab: { repo: string; base: string; orbitHome: string }, args: string[]): { code: number | null; out: string } {
-  const r = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', join(ORBIT_ROOT, 'src', 'cli', 'main.ts'), ...args], {
+  const r = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', join(ORBIT_ROOT, 'src', 'cli', 'main.ts'), ...args], {
     cwd: lab.repo,
     encoding: 'utf8',
     env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: lab.base, ORBIT_HOME: lab.orbitHome, LANG: 'C' },

@@ -4,7 +4,13 @@
  * expectation, terminal outcomes that stop workers and always end in a
  * written report, and decisions recorded through storage/decisions.ts.
  */
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
+import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
+import { sha256 } from '../../core/hash.ts';
+import { REPO_INSTRUCTION_FILES, type RepoInstruction } from '../../adapters/prompt.ts';
+import { gitEnv } from '../../evidence/git.ts';
 import { clipAtWord } from '../../core/text.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { isSessionRefusal } from '../../adapters/types.ts';
@@ -315,6 +321,37 @@ export const DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads th
  */
 export const DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
 
+/** Where a run records the instruction files its workers were given, and the event that says so (issue #178, FR-001). */
+export const REPO_INSTRUCTIONS_FILE = 'repo-instructions.json';
+export const REPO_INSTRUCTIONS_EVENT = 'repo.instructions-read';
+
+/**
+ * The repository's AGENTS.md, then CLAUDE.md, as the run's base revision has them, for every worker prompt. The first
+ * call reads them from git and records which it read (with a hash of each) in the run directory and as one event; every
+ * later prompt of the run uses that record while the base revision is the one it was read at (a rebase onto a moved base
+ * reads and records them again), so a worker that edits either file in its worktree changes what no other
+ * worker is given, and the working tree's uncommitted copy is never read.
+ */
+export function repoInstructions(ctx: RunContext): RepoInstruction[] {
+  const file = join(ctx.runDir, REPO_INSTRUCTIONS_FILE);
+  const saved = readJsonIfExists<{ revision: string | null; files: (RepoInstruction & { sha256: string })[] }>(file);
+  // A rebase onto a moved base branch changes the base revision: read the files again there.
+  if (saved && saved.revision === ctx.run.baseRevision) return saved.files.map(({ path, content }) => ({ path, content }));
+  const base = ctx.run.baseRevision;
+  const files = base === null ? [] : REPO_INSTRUCTION_FILES.flatMap((path) => {
+    try {
+      const content = execFileSync('git', ['show', `${base}:${path}`], { cwd: ctx.run.repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+      return [{ path, content, sha256: sha256(content) }];
+    } catch {
+      return []; // not in the base revision (or unreadable): nothing to give
+    }
+  });
+  // The event first: a record file without its event would never be recorded again.
+  note(ctx, REPO_INSTRUCTIONS_EVENT, { files: files.map((f) => f.path), revision: base });
+  atomicWriteJson(file, { revision: base, files });
+  return files.map(({ path, content }) => ({ path, content }));
+}
+
 /** The controller-written summary of a worker's authority (spec section 21: "policy summary"). */
 export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): string {
   const c = ctx.snapshot.config;
@@ -449,6 +486,9 @@ export async function handleWorkerFailure(
   failed: { provider: string; status: string; error: string | null; reason?: string | null },
   opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
 ): Promise<FailureHandling> {
+  // A used-up allowance (issue #176) is not fixed by logging in: a caller that can do without this session (a reviewer
+  // fails over to the next one) takes it as given up; anything else blocks on credentials, as a rejected login does.
+  if (failed.status === 'auth_failed' && failed.reason === 'quota' && opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === 'cancelled') {
@@ -469,7 +509,16 @@ export async function handleWorkerFailure(
     return { retry: true };
   }
   if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
-  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
+  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`, { cause: workerLimitCause(failed.status) }) };
+}
+
+/**
+ * The class of a worker that ended at one of its session limits, for a step that names the cause of its end (issue
+ * #190): the turn cap, or the session's time limit, which recovery/backoff.ts reads as the host's or the provider's
+ * performance. Undefined for any other end: output that failed or was malformed is the model's.
+ */
+export function workerLimitCause(status: string): FailureClass | undefined {
+  return status === 'max_turns' ? 'turn-cap' : status === 'timeout' ? 'environment' : undefined;
 }
 
 /** The regeneration bound for malformed model output (spec section 14). */

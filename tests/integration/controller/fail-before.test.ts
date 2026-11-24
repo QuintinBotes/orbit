@@ -1,12 +1,13 @@
 // Fail-before evidence end to end through the controller (ADR 0014, issue #65), with the fake adapters and the lab's real
-// check (`node tests/run.mjs`, which imports every tests/*.test.mjs).
+// check (`node tests/run.mjs`, which imports every tests/*.test.mjs; its tests_command `node <file>` runs one alone).
 //
 // Issue #65: a Python goal asked for "unit tests that fail before the change and pass after". The run ended SUCCEEDED
 // with every criterion supported by the candidate's one check log, and nothing showed the new tests failing on the base
-// revision. Reproduced here with a new test that cannot fail (it never imports the code it claims to test): under the
-// default `advisory` the probe finds it passing on the base revision, the report says so, and the run succeeds as
-// before; under `required` it goes to repair. A test that imports the new function fails on the base revision, so it is
-// evidence. The probe's attempts live in their own table: check_runs and failures never see them.
+// revision. Reproduced here with a new test that cannot fail (it never imports the code it claims to test): under
+// `advisory` the probe finds it passing on the base revision, the report says so, and the run succeeds as before; under
+// `required`, the default since issue #200, the criterion's own mapped test runs alone on the base tree and on the
+// candidate, and it goes to repair. A test that imports the new function fails on the base revision, so it is evidence.
+// The probe's attempts live in their own table: check_runs and failures never see them.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,7 +24,11 @@ import { buildTimeline } from '../../../src/observability/timeline.ts';
 import type { FailBeforeMode, OrbitConfig } from '../../../src/policy/types.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
-import { baseScenario, git as labGit, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { unitIdFor } from '../../../src/evidence/criterion-tests.ts';
+import { baseScenario, git as labGit, IMPLEMENTER_OUTPUT, implementMul, labDeps, makeLab, PLANNER_OUTPUT, PROOF_PASSES, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+
+/** The id the criterion's one mapped test is probed under: tests/mul.test.mjs run alone by unit's tests_command. */
+const MUL_UNIT = unitIdFor('unit', 'tests/mul.test.mjs');
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 
@@ -71,7 +76,9 @@ function reportOf(l: Lab, runId: string, seq: number): EvidenceReport {
 function expectProbesApart(l: Lab, runId: string): void {
   const probes = listProbeAttempts(l.db(), runId);
   expect(probes.length).toBeGreaterThan(0);
-  const probeTrees = new Set(probes.map((p) => p.probeTree));
+  // A criterion's tests also run on the candidate's own tree (issue #200), where the candidate's checks ran too.
+  const candidateTrees = new Set(listCandidates(l.db(), runId).map((c) => c.treeHash));
+  const probeTrees = new Set(probes.map((p) => p.probeTree).filter((t) => !candidateTrees.has(t)));
   const ids = new Set(probes.map((p) => p.id));
   for (const row of listCheckRuns(l.db(), { runId })) {
     expect(probeTrees.has(row.treeHash), `check run ${row.id} ran on a probe tree`).toBe(false);
@@ -102,9 +109,8 @@ const PRODUCTION_ONLY = {
 };
 
 describe.skipIf(!canStripTypes)('fail-before evidence through the controller', () => {
-  it('issue #65 under the default advisory mode: a new test that passes on the base revision is reported, and the run succeeds as before', async () => {
-    const l = lab(null);
-    expect(l.config.verification.fail_before).toBe('advisory');
+  it('issue #65 under advisory: a new test that passes on the base revision is reported, and the run succeeds as before', async () => {
+    const l = lab('advisory');
     writeScenario(l, baseScenario({ implementer: [implementTautology()] }));
     const run = startLabRun(l);
     await drive(l, run.id);
@@ -131,7 +137,7 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
 
   it('a test that imports the new function fails on the base revision: the run succeeds under required, with the decision recorded', async () => {
     const l = lab('required');
-    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')], ...PROOF_PASSES }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
@@ -139,21 +145,24 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
     expect(transitions(l, run.id)).not.toContain('INQUISITION');
     const report = reportOf(l, run.id, 1);
-    expect(report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { mode: 'required', outcome: 'failed-before', reason: 'unit failed on the base revision with the new tests (exit 1, 2 attempts)' } });
-    expect(report.acceptance_evidence[0]!.fail_before!.checks).toEqual([{ id: 'unit', outcome: 'failed-before', attempts: [expect.objectContaining({ status: 'FAILED', exit_code: 1, log: 'evidence/1/fail-before/unit.log' }), expect.objectContaining({ status: 'FAILED', exit_code: 1, log: 'evidence/1/fail-before/unit~1.log' })] }]);
-    expect(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'evidence', '1', 'fail-before', 'unit.log'), 'utf8')).toMatch(/does not provide an export named 'mul'/);
-    const [decision] = listDecisions(l.db(), run.id, { kind: 'verification.fail-before' });
-    expect(decision?.summary).toBe('unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1');
-    expect(buildTimeline(l.db(), getRun(l.db(), run.id)).entries.map((e) => e.text)).toContainEqual('verification.fail-before: unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1');
+    // Issue #200: the criterion's own mapped test, run alone on the base tree with the new tests and on the candidate.
+    expect(report.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { mode: 'required', outcome: 'failed-before', reason: 'tests/mul.test.mjs fails on the base revision with the new tests and passes on the candidate', tests: [{ path: 'tests/mul.test.mjs', check_id: 'unit', base: 'failed', candidate: 'passed' }] } });
+    expect(report.acceptance_evidence[0]!.fail_before!.checks).toEqual([{ id: 'unit:tests/mul.test.mjs', outcome: 'failed-before', attempts: [expect.objectContaining({ status: 'FAILED', exit_code: 1, log: `evidence/1/criterion-probe/${MUL_UNIT}.log` }), expect.objectContaining({ status: 'FAILED', exit_code: 1, log: `evidence/1/criterion-probe/${MUL_UNIT}~1.log` })] }]);
+    expect(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'evidence', '1', 'criterion-probe', `${MUL_UNIT}.log`), 'utf8')).toMatch(/does not provide an export named 'mul'/);
+    const [decision] = listDecisions(l.db(), run.id, { kind: 'verification.criterion-probe' });
+    expect(decision?.summary).toBe(`${MUL_UNIT} failed on the base revision with the new tests (exit 1, 2 attempts): AC-1`);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.criterion-candidate' }).map((d) => d.summary)).toEqual([`${MUL_UNIT} passed on the candidate: AC-1`]);
+    expect(buildTimeline(l.db(), getRun(l.db(), run.id)).entries.map((e) => e.text)).toContainEqual(`verification.criterion-probe: ${MUL_UNIT} failed on the base revision with the new tests (exit 1, 2 attempts): AC-1`);
     // The expected failures on the probe tree are not the run's: the run itself never failed a check.
     expect(listProbeAttempts(l.db(), run.id).map((p) => [p.checkId, p.attempt, p.status])).toEqual([
-      ['unit', 1, 'FAILED'],
-      ['unit', 2, 'FAILED'],
+      [MUL_UNIT, 1, 'FAILED'],
+      [MUL_UNIT, 2, 'FAILED'],
+      [MUL_UNIT, 1, 'PASSED'],
     ]);
     // The probe's attempts are on the timeline, so a long quiet VERIFYING step shows what is running (issue #144).
     const tree = listProbeAttempts(l.db(), run.id)[0]!.probeTree.slice(0, 12);
     const probeLines = buildTimeline(l.db(), getRun(l.db(), run.id)).entries.filter((e) => e.kind.startsWith('check.fail-before-probe-')).map((e) => e.text);
-    expect(probeLines).toEqual([1, 2].flatMap((n) => [`fail-before probe of unit started on tree ${tree} (attempt ${n})`, `fail-before probe of unit FAILED (exit 1) on tree ${tree} (attempt ${n})`]));
+    expect(probeLines.slice(0, 4)).toEqual([1, 2].flatMap((n) => [`fail-before probe of ${MUL_UNIT} started on tree ${tree} (attempt ${n})`, `fail-before probe of ${MUL_UNIT} FAILED (exit 1) on tree ${tree} (attempt ${n})`]));
     expect(l.db().all('SELECT * FROM failures WHERE run_id = ?', run.id)).toEqual([]);
     expectProbesApart(l, run.id);
     // The review packet carries the probe log's failing lines, says an import failure of the new function counts, and
@@ -168,7 +177,7 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
 
   it('issue #65 under required: a new test that passes on the base revision goes to repair, with the probe log in the brief', async () => {
     const l = lab('required');
-    writeScenario(l, baseScenario({ implementer: [implementTautology(), implementMul('*')] }));
+    writeScenario(l, baseScenario({ implementer: [implementTautology(), implementMul('*')], ...PROOF_PASSES }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
@@ -179,34 +188,35 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(path.slice(first, first + 5)).toEqual(['VERIFYING', 'INQUISITION', 'DIAGNOSING', 'REPAIRING', 'VERIFYING']);
     const r1 = reportOf(l, run.id, 1);
     expect(r1.verdict).toBe('INCOMPLETE');
-    const base = done.baseRevision!.slice(0, 12);
-    expect(r1.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: `the new tests pass on the base revision: unit passed on ${base} with 1 test file overlaid (evidence/1/fail-before/unit.log), so they do not show the change, or unit does not run them` });
+    const notShown = 'the mapped tests do not show AC-1: tests/mul.test.mjs passes on the base revision with the new tests, so it does not show the change';
+    expect(r1.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: notShown });
     const brief = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'briefs', 'attempt-2.json'), 'utf8')) as { brief: { evidence: string[] } };
-    expect(brief.brief.evidence).toContain(`AC-1: the new tests pass on the base revision: unit passed on ${base} with 1 test file overlaid (evidence/1/fail-before/unit.log), so they do not show the change, or unit does not run them`);
+    expect(brief.brief.evidence).toContain(`AC-1: ${notShown}`);
     expect(reportOf(l, run.id, 2).acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'failed-before' } });
-    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before' }).map((d) => d.summary)).toEqual(['unit passed on the base revision with the new tests: AC-1', 'unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1']);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.criterion-probe' }).map((d) => d.summary)).toEqual([`${MUL_UNIT} passed on the base revision with the new tests: AC-1`, `${MUL_UNIT} failed on the base revision with the new tests (exit 1, 2 attempts): AC-1`]);
     expectProbesApart(l, run.id);
   }, 240_000);
 
   it('required: a production-only repair reuses the probe; when the attempts run out a person is asked, and an acceptance for the tree lets the run succeed', async () => {
     const l = lab('required');
-    writeScenario(l, baseScenario({ implementer: [implementTautology(), PRODUCTION_ONLY] }));
+    writeScenario(l, baseScenario({ implementer: [implementTautology(), PRODUCTION_ONLY], ...PROOF_PASSES }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const blocked = runState(l, run.id);
     expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
-    expect(blocked.outcomeReason).toMatch(/^AC-1: the new tests pass on the base revision: unit passed on [0-9a-f]{12} with 1 test file overlaid/);
+    expect(blocked.outcomeReason).toMatch(/^AC-1: the mapped tests do not show AC-1: tests\/mul\.test\.mjs passes on the base revision with the new tests, so it does not show the change/);
     expect(blocked.outcomeReason).toMatch(/; the repair attempts ran out \(implementation attempt allowance spent \(2 of 2\) and no extension\)\. /);
     expect(blocked.outcomeReason).toMatch(/Accept it without fail-before for tree [0-9a-f]{12} \(a refactor, or a characterization test\), or not\. Answer it with orbit decide \S+ <question-id> accept\|decline, then orbit resume \S+\. Questions: q-fail-before-[0-9a-f]+: Accept AC-1 without fail-before evidence for candidate 2 \(tree [0-9a-f]{12}\)\?$/);
     expect(blocked.outcomeReason).not.toMatch(/[–—]/);
-    // Two candidates, one probe: the repair changed production code only, so the probe tree is the same.
+    // Two candidates, one probe of the base tree: the repair changed production code only, so the probe tree is the same.
+    // Each candidate's own tree is a probe of its own.
     const cands = listCandidates(l.db(), run.id);
     expect(cands.length).toBeGreaterThanOrEqual(2);
     const tree1 = reportOf(l, run.id, 1).acceptance_evidence[0]!.fail_before!.probe_tree;
     expect(reportOf(l, run.id, 2).acceptance_evidence[0]!.fail_before).toMatchObject({ outcome: 'passed-before', probe_tree: tree1 });
-    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before' })).toHaveLength(1);
-    expect(new Set(listProbeAttempts(l.db(), run.id).map((p) => p.probeId)).size).toBe(1);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.criterion-probe' })).toHaveLength(1);
+    expect(new Set(listProbeAttempts(l.db(), run.id).filter((p) => p.probeTree === tree1).map((p) => p.probeId)).size).toBe(1);
     expect(listCheckRuns(l.db(), { runId: run.id, candidateId: cands[1]!.id, checkId: 'unit' }).length).toBeGreaterThan(0);
     expectProbesApart(l, run.id);
 
@@ -222,7 +232,7 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
     const last = listEvidenceReports(l.db(), run.id).at(-1)!.report;
     expect(last.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { outcome: 'passed-before', accepted: { question_id: question!.id, by: 'acme-dev' } } });
-    expect(last.unverified).toContain(`fail-before: AC-1 accepted without fail-before by acme-dev (question ${question!.id}): unit passed on the base revision with the new tests`);
+    expect(last.unverified).toContain(`fail-before: AC-1 accepted without fail-before by acme-dev (question ${question!.id}): the mapped tests do not show AC-1: tests/mul.test.mjs passes on the base revision with the new tests, so it does not show the change`);
     expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before-accepted' }).map((d) => d.summary)).toEqual([expect.stringMatching(/^acme-dev accepted AC-1 without fail-before for tree [0-9a-f]{12} only$/)]);
   }, 240_000);
 
@@ -238,13 +248,13 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
       '',
     ].join('\n');
     const l = lab('required', { files: { '.gitignore': '.orbit/\n.probe-flag\n' } });
-    writeScenario(l, baseScenario({ implementer: [implementMul('*', [{ op: 'write', path: 'tests/mul.test.mjs', content: flaky }])] }));
+    writeScenario(l, baseScenario({ implementer: [implementMul('*', [{ op: 'write', path: 'tests/mul.test.mjs', content: flaky }])], ...PROOF_PASSES }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const blocked = runState(l, run.id);
     expect(blocked.state, blocked.outcomeReason ?? '').toBe('BLOCKED');
-    expect(blocked.outcomeReason).toMatch(/^fail-before evidence is required \(verification\.fail_before: required\), and for candidate 1 \(tree [0-9a-f]{12}\) it was not established: AC-1: unit gave mixed results on the probe tree \(FAILED, then PASSED\)/);
+    expect(blocked.outcomeReason).toMatch(new RegExp(`^fail-before evidence is required \\(verification\\.fail_before: required\\), and for candidate 1 \\(tree [0-9a-f]{12}\\) it was not established: AC-1: ${MUL_UNIT.replace('.', '\\.')} gave mixed results on the probe tree \\(FAILED, then PASSED\\)`));
     expect(transitions(l, run.id)).not.toContain('INQUISITION');
     expect(reportOf(l, run.id, 1).acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { outcome: 'not-established', cause: 'mixed' } });
     const open = listQuestions(l.db(), run.id, { status: 'open' });
@@ -310,7 +320,7 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
         c.checks.legacy = { ...c.checks.unit!, id: 'legacy', command: [process.execPath, 'tools/legacy-denied.mjs'], mandatory: true };
       },
     });
-    writeScenario(l, baseScenario({ implementer: [implementMul('*')] }));
+    writeScenario(l, baseScenario({ implementer: [implementMul('*')], ...PROOF_PASSES }));
     const run = startLabRun(l);
     await drive(l, run.id);
     const blocked = runState(l, run.id);
@@ -326,7 +336,7 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     const last = listEvidenceReports(l.db(), run.id).at(-1)!.report;
     expect(last.unverified.join('\n')).toMatch(/check legacy: failing as recorded in the contract's baseline exception; accepted/);
     expect(last.acceptance_evidence[0]).toMatchObject({ status: 'supported', fail_before: { mode: 'required', outcome: 'failed-before' } });
-    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before' }).map((d) => d.summary)).toEqual(['unit failed on the base revision with the new tests (exit 1, 2 attempts): AC-1']);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.criterion-probe' }).map((d) => d.summary)).toEqual([`${MUL_UNIT} failed on the base revision with the new tests (exit 1, 2 attempts): AC-1`]);
   }, 240_000);
 
   // Adversarial review (finding 4): in supervised mode a person's approve-once for a dependency change clears the

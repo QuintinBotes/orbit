@@ -19,6 +19,9 @@ export interface Criterion {
   ui?: boolean;
   checks?: string[];
   changes?: [string, string][];
+  kind?: 'change' | 'keep' | 'person';
+  /** The criterion's mapped tests; the demo's server unit test by default. */
+  tests?: string[];
 }
 
 export interface Decision {
@@ -52,6 +55,8 @@ export function planner(opts: { criteria?: Criterion[]; decisions?: Decision[]; 
         proof: [`A unit test asserts: ${c.statement}`],
         check_ids: c.checks ?? CHECKS,
         changes: (c.changes ?? [['src/server.ts', c.key]]).map(([path, summary]) => ({ path, summary })),
+        kind: c.kind ?? 'change',
+        tests: c.tests ?? ['tests/unit/server.test.ts'],
       })),
       expected_changed_files: (
         opts.files ?? [

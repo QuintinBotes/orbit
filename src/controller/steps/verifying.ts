@@ -35,7 +35,8 @@ import type { ScopeReport } from '../../evidence/types.ts';
 import { detectTriggers, loadInquisitionSnapshot, PROOF_BLOCKING_TRIGGERS, thresholdsFromPolicy } from '../../inquisition/triggers.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
-import { checksNotExecutedFor, environmentBlockReason, environmentFailuresFor, type BlockedCheck } from '../environment-block.ts';
+import { checksNotExecutedFor, environmentBlockReason, environmentFailuresFor, mandatoryCommandChecks, type BlockedCheck } from '../environment-block.ts';
+import { turnCapSessions, type FailureClass } from '../failure-class.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { runWorktreeRoot, type RunContext } from '../context.ts';
 import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
@@ -204,7 +205,20 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
-  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id }, cause: 'environment' });
+  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id }, cause: unavailableCause(ctx, ev) });
+}
+
+/**
+ * Why mandatory verification is unavailable, from the report's check results (issue #190). A mandatory check or a
+ * journey with no result is verification that could not run: the environment (issue #158). With every one of them run,
+ * the gap is in what the candidate proves (no test of its own, say): the work stopped short, at the turn cap when
+ * implementer sessions ended there (run orb-20261119-081756-112901), and otherwise the model's.
+ */
+function unavailableCause(ctx: RunContext, ev: EvidenceReportRecord): FailureClass {
+  const ran = new Set(ev.report.checks.filter((c) => c.status !== 'ERROR' && c.status !== 'CANCELLED').map((c) => c.id));
+  const unrun = [...mandatoryCommandChecks(ctx)].some((id) => !ran.has(id)) || (ev.report.ui ?? []).some((u) => u.status === 'ERROR' || u.status === 'CANCELLED');
+  if (unrun) return 'environment';
+  return turnCapSessions(ctx.db, ctx.run.id) > 0 ? 'turn-cap' : 'model';
 }
 
 async function blockOnEnvironment(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord, failures: BlockedCheck[]): Promise<StepResult> {

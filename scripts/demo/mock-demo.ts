@@ -3,7 +3,7 @@
  * shim, adapters, evidence runner, UI runner, review and delivery code, with the
  * provider CLIs replaced by tests/fakes and GitHub by FakeGitHub. Used in CI.
  *
- *   node --experimental-transform-types scripts/demo/mock-demo.ts [--out DIR] [--goals simple,difficult,ui] [--keep] [--json]
+ *   node --experimental-strip-types scripts/demo/mock-demo.ts [--out DIR] [--goals simple,difficult,ui] [--keep] [--json]
  *
  * Exit 0 when every run ended as expected (see scenarios.ts), 1 when one did not,
  * 3 when the machine cannot run the browser journeys.
