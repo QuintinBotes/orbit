@@ -422,7 +422,7 @@ const TEST_ASSEMBLIES = new Set(['nunit.framework', 'xunit.core', 'microsoft.vis
  * not read: such a project is not counted until its project file says so (ADR 0011).
  */
 export function isDotnetTestProject(text: string): boolean {
-  const xml = text.replace(/<!--[\s\S]*?-->/g, '');
+  const xml = withoutXmlComments(text);
   if (/<IsTestProject\b[^>]*>\s*false\s*<\/IsTestProject>/i.test(xml)) return false;
   const plain = unconditional(xml);
   if (/<IsTestProject\b[^>]*>\s*true\s*<\/IsTestProject>/i.test(plain)) return true;
@@ -434,6 +434,23 @@ export function isDotnetTestProject(text: string): boolean {
     if (TEST_ASSEMBLIES.has(m[1]!.split(',')[0]!.trim().toLowerCase())) return true;
   }
   return /<ProjectTypeGuids\b[^>]*>[^<]*3AC096D0-A1C2-E12C-1390-A8335801FDAB/i.test(plain);
+}
+
+/**
+ * The text without its XML comments: each `<!--` up to the first `-->` after it, in one pass from the left, the way
+ * `text.replace(/<!--[\s\S]*?-->/g, '')` reads it. What removing a comment joins is not read again, and a `<!--`
+ * with no `-->` after it stays.
+ */
+export function withoutXmlComments(text: string): string {
+  let out = '';
+  let at = 0;
+  for (let open = text.indexOf('<!--'); open >= 0; open = text.indexOf('<!--', at)) {
+    const close = text.indexOf('-->', open + 4);
+    if (close < 0) break;
+    out += text.slice(at, open);
+    at = close + 3;
+  }
+  return out + text.slice(at);
 }
 
 /** A start, end or empty-element tag; attribute values are quoted, so a '>' inside one does not end the tag. */

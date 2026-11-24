@@ -129,8 +129,9 @@ describe.skipIf(!CLAUDE || !canStripTypes)('CLAUDE_CODE_MAX_OUTPUT_TOKENS reache
         } catch {
           /* not JSON */
         }
-        const target = new URL(req.url ?? '/', api.url);
-        const up = httpRequest(target, { method: req.method, headers: { ...req.headers, host: target.host } }, (r) => {
+        // The upstream host is always the fake API: req.url is only the path, even when it is an absolute URL.
+        const target = new URL(api.url);
+        const up = httpRequest({ hostname: target.hostname, port: target.port, path: req.url ?? '/', method: req.method, headers: { ...req.headers, host: target.host } }, (r) => {
           res.writeHead(r.statusCode ?? 502, r.headers);
           r.pipe(res);
         });
