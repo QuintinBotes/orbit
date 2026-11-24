@@ -1,0 +1,2 @@
+section: 15
+| S15.7 | Orbit's own pull requests record changelog entries and traceability rows as fragments; a release folds them; the bundle is rebuilt after merge (#230) | `scripts/fragments.mjs:checkFragments`, `directEdits`, `foldFragments`, `.github/workflows/rebuild-dist.yml`, `ci.yml` | U/scripts/fragments.test.ts "scenario 1 and 2...", "edge: an unknown section...", "scenario 4: a release folds...", "scenario 3: CI checks the bundle..." | done |

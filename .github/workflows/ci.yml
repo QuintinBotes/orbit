@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
   pull_request:
   workflow_dispatch:
 
@@ -38,6 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # A pull request needs the history to diff against its base (the fragments check below).
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -87,8 +89,17 @@ jobs:
 
       # Before any test: the plugin integration test rebuilds plugin/dist, so a check after the tests always passed and a
       # stale committed bundle reached main (0.3.1).
+      # Pull requests do not commit the bundle: rebuild-dist.yml rebuilds it after each merge into next (#230), so the
+      # check runs on the pushes that land there. A pull request instead checks its changelog and traceability fragments.
       - name: Committed bundle matches the sources
+        if: ${{ github.event_name != 'pull_request' }}
         run: npm run check:dist
+
+      - name: Fragments are well formed and no shared file is edited
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/fragments.mjs check --base "origin/$BASE_REF"
 
       - name: Typecheck
         run: npm run typecheck
