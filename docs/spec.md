@@ -864,7 +864,7 @@ Merge is opt-in and requires exact candidate, branch checks, review policy, and 
 
 ### Change fragments (Orbit's own repository)
 
-A pull request into `next` records its changelog entries and traceability rows as one file each under `changes/changelog/` and `changes/traceability/`, and does not edit `CHANGELOG.md`, `docs/traceability.md` or their `plugin/` copies; a malformed fragment fails the pull request check with its file named, as does a direct edit of those files outside a release. The release step folds the fragments into the shared files in a stable order (by file name) and deletes them. `plugin/dist` and the plugin copies of the documentation are rebuilt once after each merge into `next`, through one pull request opened only when they are stale, so a pull request need not commit them.
+A pull request into `next` records its changelog entries and traceability rows as one file each under `changes/changelog/` and `changes/traceability/`, and does not edit `CHANGELOG.md`, `docs/traceability.md` or their `plugin/` copies; a malformed fragment fails the pull request check with its file named, as does a direct edit of those files outside a release. The release step folds the fragments into the shared files in a stable order (by file name) and deletes them. `plugin/dist` and the plugin copies of the documentation are current on `main` and at every release tag: a pull request into `next` does not commit them, the release pull request rebuilds them (`npm run build`) together with the version bump and the fold, and CI runs `check:dist` on `main` and the release workflow on the tag. Between releases `next` may carry a stale bundle.
 
 ## 16. Observability
 

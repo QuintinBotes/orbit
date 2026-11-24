@@ -152,17 +152,20 @@ describe('fragments check --base against a real repository', () => {
   });
 });
 
-describe('bundle rebuilt after merge', () => {
+describe('bundle current where it ships', () => {
   interface Step { name?: string; run?: string; if?: string }
-  const ci = parse(readFileSync(`${ROOT}.github/workflows/ci.yml`, 'utf8')) as { on: { push: { branches: string[] } }; jobs: Record<string, { steps: Step[] }> };
-  const rebuild = parse(readFileSync(`${ROOT}.github/workflows/rebuild-dist.yml`, 'utf8')) as { on: { push: { branches: string[] } }; permissions: Record<string, string>; jobs: Record<string, { steps: Step[] }> };
-  const ciSteps = Object.values(ci.jobs).flatMap((j) => j.steps);
+  const load = (f: string) => parse(readFileSync(`${ROOT}.github/workflows/${f}`, 'utf8')) as { on: { push: { branches?: string[]; tags?: string[] } }; jobs: Record<string, { steps: Step[] }> };
+  const ci = load('ci.yml');
+  const release = load('release.yml');
+  const steps = (w: typeof ci) => Object.values(w.jobs).flatMap((j) => j.steps);
 
-  it('scenario 3: CI checks the bundle on pushes to next, not on pull requests, and checks fragments on pull requests', () => {
-    expect(ci.on.push.branches).toContain('next');
-    const dist = ciSteps.find((s) => s.run === 'npm run check:dist');
-    expect(dist?.if).toContain("github.event_name != 'pull_request'");
-    const frag = ciSteps.find((s) => s.run?.includes('scripts/fragments.mjs check'));
+  it('scenario 3: CI does not check the bundle on next, checks it on main (pushes and pull requests into it), and checks fragments on pull requests', () => {
+    expect(ci.on.push.branches).toEqual(['main']);
+    const dist = steps(ci).find((s) => s.run === 'npm run check:dist');
+    expect(dist?.if).toContain("github.event_name == 'push'");
+    expect(dist?.if).toContain("github.base_ref == 'main'");
+    expect(dist?.if).not.toContain('next');
+    const frag = steps(ci).find((s) => s.run?.includes('scripts/fragments.mjs check'));
     expect(frag?.if).toContain("github.event_name == 'pull_request'");
     expect(frag?.run).toContain('--base');
     // `cond && 0 || 1` is always 1 (0 is falsy), so the pull request checkout stayed shallow and origin/next was missing.
@@ -170,13 +173,9 @@ describe('bundle rebuilt after merge', () => {
     expect((checkout as { with: Record<string, string> }).with['fetch-depth']).toBe("${{ github.event_name == 'pull_request' && '0' || '1' }}");
   });
 
-  it('scenario 3: the rebuild runs once per merge into next, commits only when the bundle changed, and opens a pull request', () => {
-    expect(rebuild.on.push.branches).toEqual(['next']);
-    const runs = Object.values(rebuild.jobs).flatMap((j) => j.steps.map((s) => s.run ?? '')).join('\n');
-    expect(runs).toContain('npm run build');
-    expect(runs).toContain('git diff --quiet');
-    expect(runs).toContain('gh pr create');
-    expect(runs).not.toContain('--no-verify');
-    expect(rebuild.permissions).toEqual({});
+  it('scenario 3: a release tag runs check:dist, and no workflow pushes a rebuild of the bundle', () => {
+    expect(release.on.push.tags).toEqual(['v*']);
+    expect(steps(release).some((s) => s.run === 'npm run check:dist')).toBe(true);
+    expect(existsSync(`${ROOT}.github/workflows/rebuild-dist.yml`)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, next]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -90,10 +90,10 @@ jobs:
 
       # Before any test: the plugin integration test rebuilds plugin/dist, so a check after the tests always passed and a
       # stale committed bundle reached main (0.3.1).
-      # Pull requests do not commit the bundle: rebuild-dist.yml rebuilds it after each merge into next (#230), so the
-      # check runs on the pushes that land there. A pull request instead checks its changelog and traceability fragments.
+      # Pull requests into next do not commit the bundle (#230): next may carry a stale one between releases, so it is not
+      # checked there. It is checked where it ships: on main (pushes and pull requests into it) and on release tags.
       - name: Committed bundle matches the sources
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
         run: npm run check:dist
 
       - name: Fragments are well formed and no shared file is edited

@@ -44,11 +44,11 @@ npm run build
 npm run check:dist          # fails if the committed bundle is stale
 ```
 
-A pull request does not need to commit the bundle or the plugin copies of the
-documentation (`plugin/CHANGELOG.md`, `plugin/docs/`): after each merge into
-`next`, `.github/workflows/rebuild-dist.yml` rebuilds them once and, if they
-changed, opens one pull request with the result. CI runs `check:dist` on every
-push to `next`, not on pull requests.
+A pull request into `next` does not need to commit the bundle or the plugin
+copies of the documentation (`plugin/CHANGELOG.md`, `plugin/docs/`), so `next`
+may carry a stale bundle between releases. The release pull request rebuilds
+them (step 3 of Releasing), and `check:dist` runs on `main` (pushes and pull
+requests into it) and in `release.yml` on the tag.
 
 ## Changelog and traceability fragments
 
