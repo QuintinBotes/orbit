@@ -38026,7 +38026,7 @@ function scanRust(lines, item) {
   return false;
 }
 function isDotnetTestProject(text2) {
-  const xml2 = text2.replace(/<!--[\s\S]*?-->/g, "");
+  const xml2 = withoutXmlComments(text2);
   if (/<IsTestProject\b[^>]*>\s*false\s*<\/IsTestProject>/i.test(xml2)) return false;
   const plain2 = unconditional(xml2);
   if (/<IsTestProject\b[^>]*>\s*true\s*<\/IsTestProject>/i.test(plain2)) return true;
@@ -38038,6 +38038,17 @@ function isDotnetTestProject(text2) {
     if (TEST_ASSEMBLIES.has(m[1].split(",")[0].trim().toLowerCase())) return true;
   }
   return /<ProjectTypeGuids\b[^>]*>[^<]*3AC096D0-A1C2-E12C-1390-A8335801FDAB/i.test(plain2);
+}
+function withoutXmlComments(text2) {
+  let out = "";
+  let at = 0;
+  for (let open2 = text2.indexOf("<!--"); open2 >= 0; open2 = text2.indexOf("<!--", at)) {
+    const close = text2.indexOf("-->", open2 + 4);
+    if (close < 0) break;
+    out += text2.slice(at, open2);
+    at = close + 3;
+  }
+  return out + text2.slice(at);
 }
 function unconditional(xml2) {
   let out = "";
@@ -74199,7 +74210,7 @@ function lastMatch(text2, pattern) {
   return at;
 }
 function fileSettings(file, raw) {
-  const text2 = raw.replace(/<!--[\s\S]*?-->/g, "");
+  const text2 = withoutXmlComments(raw);
   const out = { on: [], errors: [], kept: false };
   for (const m of text2.matchAll(AUDIT_PROPERTY)) {
     const [, name, attrs, value] = m;
@@ -74318,6 +74329,7 @@ var init_doctor_dotnet = __esm({
     "use strict";
     init_msbuild();
     init_toolchains();
+    init_test_files();
     init_retention();
     PROJECT_FILE = /\.(?:cs|fs|vb)proj$/i;
     CENTRAL_FILE = "Directory.Packages.props";

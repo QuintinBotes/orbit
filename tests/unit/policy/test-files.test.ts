@@ -3,7 +3,7 @@
 // A file wrongly counted as a test lets a criterion pass on a green check that says nothing about the change, so every
 // rule here is tied to what the language's test runner runs, and each positive case has a negative one beside it.
 import { describe, expect, it, vi } from 'vitest';
-import { declaresCargoPackage, gitTreeReader, isDotnetTestProject, isTestPath, isTestPathOnEitherRevision, loadTestLayout, NO_LAYOUT, type TestLayout, type TreeReader } from '../../../src/policy/test-files.ts';
+import { declaresCargoPackage, gitTreeReader, isDotnetTestProject, isTestPath, isTestPathOnEitherRevision, loadTestLayout, NO_LAYOUT, withoutXmlComments, type TestLayout, type TreeReader } from '../../../src/policy/test-files.ts';
 
 const yes = (paths: string[], layout?: TestLayout) => {
   for (const p of paths) expect(isTestPath(p, layout), p).toBe(true);
@@ -203,6 +203,25 @@ describe('isDotnetTestProject: what makes a project file a test project', () => 
     expect(isDotnetTestProject(legacy('  <PropertyGroup>\n    <ProjectTypeGuids>{3AC096D0-A1C2-E12C-1390-A8335801FDAB};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>\n  </PropertyGroup>'))).toBe(true);
     for (const include of ['System.Data', 'xunit.assert, Version=2.4.2.0', 'xunit.abstractions', 'Moq, Version=4.18.0.0', 'nunit.framework.extensions']) expect(isDotnetTestProject(reference(include)), include).toBe(false);
     expect(isDotnetTestProject(legacy('  <PropertyGroup>\n    <ProjectTypeGuids>{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>\n  </PropertyGroup>'))).toBe(false);
+  });
+});
+
+// CodeQL js/incomplete-multi-character-sanitization: comments are removed in one pass, as the regex replace did, and
+// what a removal joins into a new `<!--` is not removed again.
+describe('withoutXmlComments', () => {
+  it('removes each comment up to the first --> after it, in one pass, and keeps an unterminated one', () => {
+    expect(withoutXmlComments('a<!-- x -->b<!--2-->c')).toBe('abc');
+    expect(withoutXmlComments('<!-->x-->y')).toBe('y');
+    expect(withoutXmlComments('<!--->')).toBe('<!--->');
+    expect(withoutXmlComments('a<!-- x')).toBe('a<!-- x');
+    expect(withoutXmlComments('a<!-- x -->b<!-- y')).toBe('ab<!-- y');
+    expect(withoutXmlComments('<<!-- x -->!-- y -->')).toBe('<!-- y -->');
+  });
+
+  it('isDotnetTestProject reads what a removed comment joins as text, not as another comment', () => {
+    const joined = '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup><<!-- x -->!-- <IsTestProject>true</IsTestProject> --></PropertyGroup>\n</Project>\n';
+    expect(isDotnetTestProject(joined)).toBe(true);
+    expect(isDotnetTestProject(joined.replace('<<!-- x -->!--', '<!--'))).toBe(false);
   });
 });
 
