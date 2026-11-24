@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `orbit retro` no longer treats a run that ended `awaiting-decision` as a failure (#237). Such a run makes no proposal; the report lists it apart (`awaiting_decision` in `--json`) with its open question ids and `orbit decide`. A question that two runs or more waited on gives one policy-default proposal that quotes it.
+
 ## [0.4.0] - 2026-11-24
 
 ### Off by default

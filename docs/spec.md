@@ -882,6 +882,7 @@ Use the open conventions other tools read. `orbit export <run-id> --otel` writes
   - an Orbit-fault class is a draft Orbit issue;
   - a `review-dispute` is a check when the repository declares one, as `orbit init` detects them, of a category its Orbit configuration does not run, and a reviewer standard otherwise;
   - every other class is a policy change.
+- A run that ended `awaiting-decision` waits for a person's `orbit decide`; it did not fail, so it is no failure input: it makes no check, standard, policy change or issue draft. The report lists such runs apart (`awaiting_decision` in `--json`) with their open question ids and the `orbit decide` command. Only a question that two runs or more waited on (the same wording, ignoring case and punctuation) is one proposal: a policy default that quotes the question, redacted and cut to 300 characters.
 - Each proposal is written to a draft file in `.orbit/runs/retro-drafts/`. The draft is built from run records only: run ids, states, classes, the names of markers and rules, and the states each run went through. Paths are redacted, and no goal, reason, finding text, source code or secret reaches it.
 - Each proposal is one question at a terminal, and only an explicit yes acts:
   - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`, once the publication guard clears it;

@@ -572,3 +572,45 @@ describe('draft file names', () => {
     expect(draftFileName('../../etc/passwd')).toMatch(/^etc-passwd-[0-9a-f]{8}\.md$/);
   });
 });
+
+describe('orbit retro: awaiting-decision runs are not failures (#237)', () => {
+  const WAITING = { questions: ['q'] };
+  const blocked = (l: Lab, id: string, text = 'Should mul round its result?'): string => {
+    endRun(l, id, 'BLOCKED', WAITING);
+    return l.ask(id, { question: text }).id;
+  };
+
+  it('one run proposes nothing and the report lists its open question ids and the orbit decide command', async () => {
+    const l = lab();
+    const q = blocked(l, 'orb-wait-1');
+    expect(retroProposals(l.db(), { since: null })).toEqual([]);
+    const r = await retro(l, ['--json'], fake(null));
+    const rep = JSON.parse(r.out) as { proposals: unknown[]; awaiting_decision: { run: string; questions: string[] }[] };
+    expect(rep.proposals).toEqual([]);
+    expect(rep.awaiting_decision).toEqual([{ run: 'orb-wait-1', questions: [q] }]);
+    const text = await retro(l, [], fake(null));
+    expect(text.out).toContain(q);
+    expect(text.out).toContain('orbit decide orb-wait-1');
+    expect(draftFiles(l)).toEqual([]);
+  });
+
+  it('two different questions across runs propose nothing', () => {
+    const l = lab();
+    blocked(l, 'orb-wait-1', 'Should mul round its result?');
+    blocked(l, 'orb-wait-2', 'Which rounding mode applies to division?');
+    blocked(l, 'orb-wait-3', 'May the change touch the build script?');
+    expect(retroProposals(l.db(), { since: null })).toEqual([]);
+  });
+
+  it('three runs blocked on the same question give one policy default quoting it', () => {
+    const l = lab();
+    for (const id of ['orb-wait-1', 'orb-wait-2', 'orb-wait-3']) blocked(l, id);
+    const ps = retroProposals(l.db(), { since: null });
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.kind).toBe('policy');
+    expect(ps[0]!.failureClass).toBe('awaiting-decision');
+    expect(ps[0]!.runs.map((r) => r.runId)).toEqual(['orb-wait-1', 'orb-wait-2', 'orb-wait-3']);
+    expect(ps[0]!.body).toContain('Should mul round its result?');
+    expect(ps[0]!.body).toContain('default');
+  });
+});

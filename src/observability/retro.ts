@@ -19,6 +19,7 @@ import { classMarkers, parseOutcome, failureClassOrNull, type FailureClass } fro
 import { isOrbitVersion } from '../controller/run-store.ts';
 import { TERMINAL_STATES, isRunState } from '../core/run-states.ts';
 import { redact } from '../core/redact.ts';
+import { wordTokens } from '../contract/wording.ts';
 
 /** Failure classes whose cause is in Orbit, not in the task: a person files them against Orbit, not the repository. */
 export const ORBIT_FAULT_CLASSES: readonly FailureClass[] = ['gate-deadlock'];
@@ -68,6 +69,8 @@ export interface RetroProposal {
   body: string;
   /** The check to add, for kind `check`. */
   check: DeclaredCheck | null;
+  /** The question several runs waited on, for an `awaiting-decision` policy default; null otherwise. */
+  question: string | null;
 }
 
 export interface RetroDecisionRow {
@@ -145,7 +148,8 @@ function signatureOf(ev: RetroRunEvidence, withDenials: boolean): string {
 /** FR-002: the kind of proposal a failure class makes; null for a class nothing should be learnt from. */
 function kindFor(cls: FailureClass, missingCheck: DeclaredCheck | null): ProposalKind | null {
   if (ORBIT_FAULT_CLASSES.includes(cls)) return 'issue-draft';
-  if (cls === 'cancelled') return null;
+  // A run waiting for a person's answer did not fail: only a question that recurs is a proposal (recurringQuestions).
+  if (cls === 'cancelled' || cls === 'awaiting-decision') return null;
   if (cls === 'review-dispute') return missingCheck ? 'check' : 'standard';
   return 'policy';
 }
@@ -194,7 +198,14 @@ export function redactPaths(text: string, roots: readonly string[] = []): string
 
 const iso = (ms: number | null): string => (ms === null ? '-' : new Date(ms).toISOString());
 
-function proposedChange(kind: ProposalKind, cls: FailureClass, signature: string, runs: readonly RetroRunEvidence[], check: DeclaredCheck | null): string[] {
+function proposedChange(kind: ProposalKind, cls: FailureClass, signature: string, runs: readonly RetroRunEvidence[], check: DeclaredCheck | null, question: string | null): string[] {
+  if (question !== null) {
+    return [
+      `These runs each waited for an answer to the same question: "${question}"`,
+      '',
+      `Answer it once with \`orbit decide\` and write the answer down as a default in the policy (.orbit/config.yaml) or the repository's instructions, so the next run does not stop to ask it.`,
+    ];
+  }
   if (kind === 'issue-draft') return [`Which gate held the run is named by the markers above (\`${signature}\`). Expected: a run at a gate either opens it, or ends naming the one decision a person must make.`];
   if (kind === 'check' && check) {
     return [
@@ -217,7 +228,7 @@ function proposedChange(kind: ProposalKind, cls: FailureClass, signature: string
 
 const TITLE: Record<ProposalKind, string> = { 'issue-draft': 'Orbit fault', check: 'Add a check', standard: 'Reviewer standard', policy: 'Policy change' };
 
-function render(kind: ProposalKind, failureClass: FailureClass, signature: string, runs: readonly RetroRunEvidence[], check: DeclaredCheck | null): { title: string; body: string } {
+function render(kind: ProposalKind, failureClass: FailureClass, signature: string, runs: readonly RetroRunEvidence[], check: DeclaredCheck | null, question: string | null): { title: string; body: string } {
   const title = `${TITLE[kind]}${check ? ` ${check.id}` : ''}: runs ended in ${failureClass} (${signature})`;
   const listed = runs.slice(0, MAX_RUNS_LISTED);
   const lines = [
@@ -240,11 +251,11 @@ function render(kind: ProposalKind, failureClass: FailureClass, signature: strin
     '',
     '## Proposed change',
     '',
-    ...proposedChange(kind, failureClass, signature, runs, check),
+    ...proposedChange(kind, failureClass, signature, runs, check, question),
     '',
     '## Privacy',
     '',
-    'Drafted by `orbit retro` from run records only: ids, states, the failure class and the names of markers and policy rules. Paths, source code, goals, reasons and credentials are not included. Review this before sending.',
+    `Drafted by \`orbit retro\` from run records only: ids, states, the failure class and the names of markers and policy rules${question === null ? '' : ', and the wording of the question the runs waited on'}. Paths, source code, goals, reasons and credentials are not included. Review this before sending.`,
     '',
   ];
   return { title, body: lines.join('\n') };
@@ -277,13 +288,73 @@ export function retroProposals(db: OrbitDb, opts: { since: number | null; roots?
     g.runs.push(ev);
     groups.set(key, g);
   }
-  return [...groups]
+  const proposals = [...groups]
     .filter(([, g]) => g.runs.length >= (g.kind === 'issue-draft' ? 1 : REPEATED))
     .map(([key, g]) => {
       const check = g.kind === 'check' ? missingCheck : null;
-      const { title, body } = render(g.kind, g.cls, g.signature, g.runs, check);
-      return { kind: g.kind, failureClass: g.cls, signature: g.signature, key, runs: g.runs, title: redact(redactPaths(title, opts.roots)), body: redact(redactPaths(body, opts.roots)), check };
+      const { title, body } = render(g.kind, g.cls, g.signature, g.runs, check, null);
+      return { kind: g.kind, failureClass: g.cls, signature: g.signature, key, runs: g.runs, title: redact(redactPaths(title, opts.roots)), body: redact(redactPaths(body, opts.roots)), check, question: null };
     });
+  return [...proposals, ...recurringQuestions(db, rows, opts.roots)];
+}
+
+/** A run that ended waiting for a person's answer, with the ids of its open questions. */
+export interface AwaitingDecision {
+  runId: string;
+  questionIds: string[];
+}
+
+interface WaitingRow {
+  run_id: string;
+  id: string;
+  question: string;
+}
+
+/** The open questions of the runs that ended `awaiting-decision`, in run order. */
+function waitingQuestions(db: OrbitDb, rows: readonly RunRow[]): WaitingRow[] {
+  const ids = rows.filter((r) => r.failure_class === 'awaiting-decision').map((r) => r.id);
+  if (ids.length === 0) return [];
+  return db.all<WaitingRow>(`SELECT run_id, id, question FROM questions WHERE status = 'open' AND run_id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at, id`, ...ids);
+}
+
+const MAX_QUESTION_CHARS = 300;
+
+/** Issue #237: the runs waiting for a decision, listed apart from the failures; they propose nothing. */
+export function awaitingDecisions(db: OrbitDb, opts: { since: number | null }): AwaitingDecision[] {
+  const marks = TERMINAL.map(() => '?').join(',');
+  const rows = db.all<RunRow>(
+    `SELECT id, state, failure_class, failure_secondary, orbit_version, ended_at, outcome_json FROM runs
+      WHERE state IN (${marks}) AND failure_class = 'awaiting-decision' AND created_at >= ? ORDER BY created_at, id`,
+    ...TERMINAL,
+    opts.since ?? 0,
+  );
+  const by = new Map<string, string[]>();
+  for (const r of rows) by.set(r.id, []);
+  for (const q of waitingQuestions(db, rows)) by.get(q.run_id)?.push(q.id);
+  return [...by].map(([runId, questionIds]) => ({ runId, questionIds }));
+}
+
+/** Issue #237: one policy default for each question that two runs or more waited on, quoting it. */
+function recurringQuestions(db: OrbitDb, rows: readonly RunRow[], roots?: readonly string[]): RetroProposal[] {
+  const groups = new Map<string, { text: string; runs: Set<string> }>();
+  for (const q of waitingQuestions(db, rows)) {
+    const norm = wordTokens(q.question).join(' ');
+    if (norm === '') continue;
+    const g = groups.get(norm) ?? { text: q.question, runs: new Set<string>() };
+    g.runs.add(q.run_id);
+    groups.set(norm, g);
+  }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const out: RetroProposal[] = [];
+  for (const [norm, g] of groups) {
+    if (g.runs.size < REPEATED) continue;
+    const runs = [...g.runs].map((id) => evidenceFor(db, byId.get(id)!, 'awaiting-decision'));
+    const signature = `question:${createHash('sha256').update(norm).digest('hex').slice(0, 8)}`;
+    const quoted = redact(redactPaths(g.text.replace(/\s+/g, ' ').trim().slice(0, MAX_QUESTION_CHARS), roots)).replace(/"/g, "'");
+    const { title, body } = render('policy', 'awaiting-decision', signature, runs, null, quoted);
+    out.push({ kind: 'policy', failureClass: 'awaiting-decision', signature, key: proposalKey('policy', 'awaiting-decision', signature), runs, title: redact(redactPaths(title, roots)), body: redact(redactPaths(body, roots)), check: null, question: quoted });
+  }
+  return out;
 }
 
 interface DecisionRow {
