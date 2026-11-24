@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## [0.4.0] - 2026-11-24
+
+### Off by default
+
+Three features in this release ship off. Each stays off until a full benchmark (#172) shows it helps; turn one on per repository in `.orbit/config.yaml`.
+
+- **Lessons in worker prompts (#173).** Set `knowledge.lessons_in_prompts: true`. Lessons are still curated, cited, re-checked and expired with it off; they just stay out of prompts.
+- **The repository map's prompt slice (#175).** Set `repo_map.prompt_slice: true` (1,500 tokens, none for repositories under 500 files; tune with `prompt_slice_tokens` and `prompt_slice_min_files`). The map itself and the gates that use it are on.
+- **Partner implementers, Codex and Muse (#176).** List them in `routing.implementers`, for example `[claude, codex]`, with the matching `providers.codex` or `providers.muse` block defined. The default is `[claude]`. The mixed-family review rules are on for every run.
+
+### Changes
+
 - .NET checks pass under the check sandbox with .NET SDK 11 (#180). SDK 11 builds through the MSBuild server by default, which binds a named pipe under `/tmp` that the sandbox refuses; the server died recording that, `dotnet` built in process instead, and the runner failed the check on the record as a refused worker node, telling it to add `-m:1`. Every check, `orbit doctor`'s probe, the dependency install, an approved command, a release command and the application under test now run with `MSBUILDUSESERVER=0`; a check's own `env` can still set it. CI runs the .NET tests on SDK 11 again on Ubuntu with Node 24, and on SDK 10 on Ubuntu with Node 22 and on macOS (SDK 11 on macOS is not covered yet: its `dotnet format --folder` no longer fails there).
 - `orbit doctor` names the cause and the fix when Ubuntu 26.04's AppArmor stops the sandbox (#181). As installed, its `bwrap-userns-restrict` profile leaves what bubblewrap starts no capabilities, so srt's seccomp helper (and Claude Code's sandbox, the `claude-sandbox` tier) fails with `apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted ...)`. The isolation check now says that this profile is the cause, and its fix replaces the profile with one that grants bubblewrap user namespaces, leaving Ubuntu's restriction on for every other program; a run is refused with the same cause, as before, and never runs with less isolation. Measured on GitHub's `ubuntu-26.04` image: the 24.04 sysctl alone, or unloading the profile alone, does not let the sandbox start; the fix does. A new CI job, `sandbox (ubuntu-26.04, stock AppArmor)`, checks doctor's report on that image as installed, then applies the fix and runs the sandbox tests (srt's and the real claude CLI's).
 - Tests: the `orbit timeline --follow --json` test sends its Ctrl-C once the follower has installed its handler, not after a fixed 60 ms (#201). On a loaded runner the command could take longer than that to start following (finding the repository spawns git), so the signal reached no handler and the test waited out its 60 s timeout. `orbit timeline` itself is unchanged.
