@@ -203,7 +203,7 @@ orbit bench --tier lab
 
 `orbit init` and every worker read the repository's own instructions, `AGENTS.md`, then `CLAUDE.md`, and record which were read. Init prefers a check command those files document over one derived from manifests and says in the proposal where it read it; workers get both files, as the base revision has them, as untrusted data in their prompt.
 
-`orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly.
+`orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly. When the OS sandbox cannot start because the host's AppArmor confines bubblewrap (Ubuntu 26.04's default `bwrap-userns-restrict` profile), doctor names that cause and the AppArmor change that lets the sandbox start; a run is refused with the same cause, never run with less isolation.
 
 ### Persistent execution
 

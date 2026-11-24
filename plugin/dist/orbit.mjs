@@ -32954,7 +32954,7 @@ function isWsl1() {
     return false;
   }
 }
-var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
+var DENIED_RESOLVED_ADDRESSES, LABEL2, HOST_PATTERN, IPV6_PATTERN, SRT_LIMITATIONS, SRT_VERIFIED_VERSION, SRT_PACKAGE, PRELOAD_REFUSAL_FILE, CHROMIUM_MACH_RENDEZVOUS, CHROMIUM_MACH_RENDEZVOUS_LIMITATION, NIS_DOMAINNAME_READ, NIS_DOMAINNAME_LIMITATION, NIS_DOMAINNAME_SKIPPED, DOTNET_IPV4_ENV, DOTNET_POLLING_WATCHER_ENV, LINUX_LIMITATION, BWRAP_APPARMOR, SECCOMP_ARCHES, SandboxRuntimeIsolation, DEVELOPMENT_PACKAGE, LOADER_ENV_NAMES, LOADER_ENV_PREFIXES;
 var init_sandbox_runtime = __esm({
   "src/isolation/sandbox-runtime.ts"() {
     "use strict";
@@ -32987,6 +32987,7 @@ var init_sandbox_runtime = __esm({
     DOTNET_IPV4_ENV = Object.freeze({ DOTNET_SYSTEM_NET_DISABLEIPV6: "1" });
     DOTNET_POLLING_WATCHER_ENV = Object.freeze({ DOTNET_USE_POLLING_FILE_WATCHER: "1" });
     LINUX_LIMITATION = "On Linux the mandatory write denies inside writable paths (.git/hooks, shell rc files...) are found by a scan at launch, so such files created later are not covered.";
+    BWRAP_APPARMOR = "AppArmor's bwrap-userns-restrict profile, the default on Ubuntu 26.04, leaves the processes bubblewrap starts no capabilities in their user namespace, and srt needs them to block Unix sockets";
     SECCOMP_ARCHES = { x64: "x64", arm64: "arm64" };
     SandboxRuntimeIsolation = class {
       kind = "sandbox-runtime";
@@ -33081,7 +33082,11 @@ var init_sandbox_runtime = __esm({
           mkdirSync10(canaryDir);
           const canary = join20(canaryDir, "orbit-canary");
           const probe2 = await runBounded(srt.path, ["--settings", file, "--", "/bin/sh", "-c", 'echo x > "$1" 2>/dev/null; exit 0', "sh", canary], { timeoutMs });
-          if (probe2.code !== 0) return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${probeFailure(probe2)})` };
+          if (probe2.code !== 0) {
+            const failure = probeFailure(probe2);
+            const apparmor = failure.includes("nested userns is capability-restricted") ? `; ${BWRAP_APPARMOR}` : "";
+            return { ok: false, detail: `srt ${version.stdout.trim()} could not start a sandboxed command (${failure})${apparmor}` };
+          }
           if (existsSync18(canary)) return { ok: false, detail: `srt at ${srt.path} ran a command without confining it: a write no rule allowed succeeded` };
         } finally {
           rmSync7(dir, { recursive: true, force: true });
@@ -75034,6 +75039,9 @@ function checkConfiguredChecks(p) {
 function isolationFix(kind, detail) {
   if (kind === "container") return 'start the Docker daemon (for example "open -a Docker" on macOS, or "sudo systemctl start docker" on Linux); Orbit refuses to degrade to less isolation';
   if (/not found|install @anthropic-ai\/sandbox-runtime/i.test(detail)) return `${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+  if (detail.includes("bwrap-userns-restrict")) {
+    return "give bubblewrap an AppArmor profile that grants it user namespaces in place of bwrap-userns-restrict (what bubblewrap starts gets capabilities in its user namespace again; other programs keep the restriction): sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/; printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\\n  userns,\\n}\\n' | sudo tee /etc/apparmor.d/bwrap; sudo apparmor_parser -r /etc/apparmor.d/bwrap; Orbit refuses to degrade to less isolation";
+  }
   return `fix the cause named above, or reinstall with: ${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
 }
 async function checkScope(p) {
