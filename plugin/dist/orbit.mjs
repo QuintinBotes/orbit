@@ -79288,7 +79288,7 @@ function signatureOf(ev, withDenials) {
 }
 function kindFor(cls, missingCheck2) {
   if (ORBIT_FAULT_CLASSES.includes(cls)) return "issue-draft";
-  if (cls === "cancelled") return null;
+  if (cls === "cancelled" || cls === "awaiting-decision") return null;
   if (cls === "review-dispute") return missingCheck2 ? "check" : "standard";
   return "policy";
 }
@@ -79310,7 +79310,14 @@ function redactPaths(text2, roots = []) {
   out = out.replace(/\b[A-Za-z]:\\[^\s)`'"|]+/g, "<path>");
   return out;
 }
-function proposedChange(kind, cls, signature, runs, check) {
+function proposedChange(kind, cls, signature, runs, check, question2) {
+  if (question2 !== null) {
+    return [
+      `These runs each waited for an answer to the same question: "${question2}"`,
+      "",
+      `Answer it once with \`orbit decide\` and write the answer down as a default in the policy (.orbit/config.yaml) or the repository's instructions, so the next run does not stop to ask it.`
+    ];
+  }
   if (kind === "issue-draft") return [`Which gate held the run is named by the markers above (\`${signature}\`). Expected: a run at a gate either opens it, or ends naming the one decision a person must make.`];
   if (kind === "check" && check) {
     return [
@@ -79330,7 +79337,7 @@ function proposedChange(kind, cls, signature, runs, check) {
     ...denied.length > 0 ? ["", `The rule(s) ${denied.map((r) => `\`${r}\``).join(", ")} denied calls in every one of these runs: allow what was denied in .orbit/config.yaml if it is safe, or file an issue against Orbit if the denial is wrong.`] : []
   ];
 }
-function render2(kind, failureClass2, signature, runs, check) {
+function render2(kind, failureClass2, signature, runs, check, question2) {
   const title3 = `${TITLE[kind]}${check ? ` ${check.id}` : ""}: runs ended in ${failureClass2} (${signature})`;
   const listed3 = runs.slice(0, MAX_RUNS_LISTED);
   const lines = [
@@ -79353,11 +79360,11 @@ function render2(kind, failureClass2, signature, runs, check) {
     "",
     "## Proposed change",
     "",
-    ...proposedChange(kind, failureClass2, signature, runs, check),
+    ...proposedChange(kind, failureClass2, signature, runs, check, question2),
     "",
     "## Privacy",
     "",
-    "Drafted by `orbit retro` from run records only: ids, states, the failure class and the names of markers and policy rules. Paths, source code, goals, reasons and credentials are not included. Review this before sending.",
+    `Drafted by \`orbit retro\` from run records only: ids, states, the failure class and the names of markers and policy rules${question2 === null ? "" : ", and the wording of the question the runs waited on"}. Paths, source code, goals, reasons and credentials are not included. Review this before sending.`,
     ""
   ];
   return { title: title3, body: lines.join("\n") };
@@ -79383,11 +79390,51 @@ function retroProposals(db, opts) {
     g.runs.push(ev);
     groups.set(key2, g);
   }
-  return [...groups].filter(([, g]) => g.runs.length >= (g.kind === "issue-draft" ? 1 : REPEATED)).map(([key2, g]) => {
+  const proposals = [...groups].filter(([, g]) => g.runs.length >= (g.kind === "issue-draft" ? 1 : REPEATED)).map(([key2, g]) => {
     const check = g.kind === "check" ? missingCheck2 : null;
-    const { title: title3, body } = render2(g.kind, g.cls, g.signature, g.runs, check);
+    const { title: title3, body } = render2(g.kind, g.cls, g.signature, g.runs, check, null);
     return { kind: g.kind, failureClass: g.cls, signature: g.signature, key: key2, runs: g.runs, title: redact(redactPaths(title3, opts.roots)), body: redact(redactPaths(body, opts.roots)), check };
   });
+  return [...proposals, ...recurringQuestions(db, rows, opts.roots)];
+}
+function waitingQuestions(db, rows) {
+  const ids = rows.filter((r) => r.failure_class === "awaiting-decision").map((r) => r.id);
+  if (ids.length === 0) return [];
+  return db.all(`SELECT run_id, id, question FROM questions WHERE status = 'open' AND run_id IN (${ids.map(() => "?").join(",")}) ORDER BY created_at, id`, ...ids);
+}
+function awaitingDecisions(db, opts) {
+  const marks = TERMINAL2.map(() => "?").join(",");
+  const rows = db.all(
+    `SELECT id, state, failure_class, failure_secondary, orbit_version, ended_at, outcome_json FROM runs
+      WHERE state IN (${marks}) AND failure_class = 'awaiting-decision' AND created_at >= ? ORDER BY created_at, id`,
+    ...TERMINAL2,
+    opts.since ?? 0
+  );
+  const by = /* @__PURE__ */ new Map();
+  for (const r of rows) by.set(r.id, { runId: r.id, questionIds: [], waitingOn: classMarkers("awaiting-decision", parseOutcome(r.outcome_json) ?? {}).filter((m) => m !== "questions") });
+  for (const q of waitingQuestions(db, rows)) by.get(q.run_id)?.questionIds.push(q.id);
+  return [...by.values()];
+}
+function recurringQuestions(db, rows, roots) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const q of waitingQuestions(db, rows)) {
+    const norm3 = wordTokens(q.question).join(" ");
+    if (norm3 === "") continue;
+    const g = groups.get(norm3) ?? { text: q.question, runs: /* @__PURE__ */ new Set() };
+    g.runs.add(q.run_id);
+    groups.set(norm3, g);
+  }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const out = [];
+  for (const [norm3, g] of groups) {
+    if (g.runs.size < REPEATED_QUESTION) continue;
+    const runs = [...g.runs].map((id2) => evidenceFor(db, byId.get(id2), "awaiting-decision"));
+    const signature = `question:${createHash4("sha256").update(norm3).digest("hex").slice(0, 8)}`;
+    const quoted3 = redact(redactPaths(g.text.replace(/\s+/g, " ").trim().slice(0, MAX_QUESTION_CHARS), roots)).replace(/"/g, "'");
+    const { title: title3, body } = render2("policy", "awaiting-decision", signature, runs, null, quoted3);
+    out.push({ kind: "policy", failureClass: "awaiting-decision", signature, key: proposalKey("policy", "awaiting-decision", signature), runs, title: redact(redactPaths(title3, roots)), body: redact(redactPaths(body, roots)), check: null });
+  }
+  return out;
 }
 function toDecision(r) {
   let ids = [];
@@ -79418,7 +79465,7 @@ function recordProposal(db, p, draftPath, now) {
 function recordAnswer2(db, key2, decision, by, now) {
   db.run("UPDATE retro_decisions SET decision = ?, decided_by = ?, decided_at = ? WHERE key = ?", decision, by, now, key2);
 }
-var ORBIT_FAULT_CLASSES, REPEATED, TERMINAL2, RUN_ID4, RULE2, MAX_STEPS2, MAX_RUNS_LISTED, WITHHELD, safeId, POLICY_HINT, escapeRegExp5, iso2, TITLE;
+var ORBIT_FAULT_CLASSES, REPEATED, TERMINAL2, RUN_ID4, RULE2, MAX_STEPS2, MAX_RUNS_LISTED, WITHHELD, safeId, POLICY_HINT, escapeRegExp5, iso2, TITLE, MAX_QUESTION_CHARS, REPEATED_QUESTION;
 var init_retro = __esm({
   "src/observability/retro.ts"() {
     "use strict";
@@ -79426,6 +79473,7 @@ var init_retro = __esm({
     init_run_store();
     init_run_states();
     init_redact();
+    init_wording();
     ORBIT_FAULT_CLASSES = ["gate-deadlock"];
     REPEATED = 2;
     TERMINAL2 = [...TERMINAL_STATES];
@@ -79447,6 +79495,8 @@ var init_retro = __esm({
     escapeRegExp5 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     iso2 = (ms) => ms === null ? "-" : new Date(ms).toISOString();
     TITLE = { "issue-draft": "Orbit fault", check: "Add a check", standard: "Reviewer standard", policy: "Policy change" };
+    MAX_QUESTION_CHARS = 300;
+    REPEATED_QUESTION = 3;
   }
 });
 
@@ -80082,7 +80132,7 @@ async function runRetro(args, ctx, deps) {
   const draftDir = join99(orbitDir(repo), ...DRAFT_DIR);
   const declared = await missingCheck(ctx, repo);
   const report2 = await withState(repo, async (db) => {
-    const out = { window: { since: since === null ? null : new Date(since).toISOString() }, proposals: [], already_decided: 0 };
+    const out = { window: { since: since === null ? null : new Date(since).toISOString() }, proposals: [], awaiting_decision: awaitingDecisions(db, { since }).map((a) => ({ run: a.runId, questions: a.questionIds, waiting_on: a.waitingOn })), already_decided: 0 };
     for (const p of retroProposals(db, { since, roots, missingCheck: declared?.check ?? null })) {
       const before = findDecision(db, p.key);
       if (before && before.decision !== "drafted") {
@@ -80132,8 +80182,18 @@ function bodyWithoutTitle(p) {
 }
 function renderRetro(ctx, report2, issueRepo) {
   const window = report2.window.since === null ? "all runs" : `runs created since ${report2.window.since}`;
+  const waiting = () => {
+    if (report2.awaiting_decision.length === 0) return;
+    line(ctx.io);
+    line(ctx.io, `${report2.awaiting_decision.length} run(s) wait for your decision, not a failure:`);
+    for (const a of report2.awaiting_decision) {
+      if (a.questions.length > 0) line(ctx.io, `  ${a.run}: ${a.questions.join(", ")}; answer with: orbit decide ${a.run} <question-id> <answer>`);
+      else line(ctx.io, `  ${a.run}: no open question; waiting on ${a.waiting_on.length > 0 ? a.waiting_on.join(", ") : "a decision already answered"}; see orbit status ${a.run}`);
+    }
+  };
   if (report2.proposals.length === 0) {
     line(ctx.io, `No proposals from ${window}: no repeated or Orbit-fault failure that is not already decided.${report2.already_decided > 0 ? ` (${report2.already_decided} proposal(s) were answered before and are not repeated.)` : ""}`);
+    waiting();
     return;
   }
   line(ctx.io, `${report2.proposals.length} proposal(s) from ${window}:`);
@@ -80156,6 +80216,7 @@ function renderRetro(ctx, report2, issueRepo) {
     line(ctx.io);
     line(ctx.io, `${report2.already_decided} proposal(s) were answered before and are not repeated.`);
   }
+  waiting();
 }
 var RETRO_USAGE, DEFAULT_ISSUE_REPO, RETRO_OPTIONS, DRAFT_DIR, checkBranch, ISSUE_REPO_SHAPE, KIND_LABEL;
 var init_retro2 = __esm({
