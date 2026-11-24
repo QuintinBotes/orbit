@@ -200,6 +200,8 @@ export function planner(overrides: Partial<PlannerOutput> = {}): PlannerOutput {
         proof: ['A multi-page filtered fixture produces every matching record.', 'A multi-page filtered fixture produces every matching record.'],
         check_ids: ['reports-tests', 'made-up-check'],
         changes: [{ path: 'apps/api/export.ts', summary: 'stream all pages' }],
+        kind: 'change',
+        tests: ['apps/api/export.test.ts'],
       },
       {
         key: 'escaping',
@@ -209,6 +211,8 @@ export function planner(overrides: Partial<PlannerOutput> = {}): PlannerOutput {
         proof: ['Escaping tests pass.'],
         check_ids: [],
         changes: [],
+        kind: 'change',
+        tests: [],
       },
     ],
     expected_changed_files: [{ path: 'apps/api/export.ts', change: 'add', reason: 'new endpoint' }],

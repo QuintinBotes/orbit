@@ -13,6 +13,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { execCapture } from '../core/exec.ts';
 import { which } from '../isolation/util.ts';
+import { REPO_INSTRUCTION_FILES } from '../adapters/prompt.ts';
+import { withOneMsbuildNode } from '../evidence/msbuild.ts';
 
 export type CheckCategory = 'test' | 'lint' | 'typecheck' | 'build';
 export type Ecosystem = 'node' | 'dotnet' | 'python' | 'go' | 'rust';
@@ -35,7 +37,19 @@ export interface NotProposed {
 export interface CheckProposal {
   proposed: ProposedCheck[];
   notProposed: NotProposed[];
+  /** The tracked root instruction files read for documented commands, in reading order (issue #178, FR-001). */
+  readDocs: string[];
 }
+
+/** A command an instruction file documents, as argv, with the check it would be and where it was read. */
+interface DocumentedCommand {
+  command: string[];
+  ecosystem: Ecosystem;
+  category: CheckCategory;
+  /** "AGENTS.md line 7". */
+  source: string;
+}
+
 
 export interface DetectInput {
   repo: string;
@@ -62,6 +76,70 @@ function read(path: string): string | null {
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x';
+}
+
+/** The program a documented command starts, for the ecosystem it belongs to; anything else is not read as a check. */
+const TOOL_ECOSYSTEM: Readonly<Record<string, Ecosystem>> = {
+  npm: 'node', pnpm: 'node', yarn: 'node', npx: 'node',
+  dotnet: 'dotnet',
+  pytest: 'python', python: 'python', python3: 'python', ruff: 'python', mypy: 'python', flake8: 'python', tox: 'python', uv: 'python', poetry: 'python',
+  go: 'go',
+  cargo: 'rust',
+};
+
+/** The words that make a command a check of a category, first match wins: `npm run test:unit` is a test, `cargo clippy` lint. */
+const CATEGORY_WORDS: readonly [CheckCategory, ReadonlySet<string>][] = [
+  ['typecheck', new Set(['typecheck', 'type-check', 'check-types', 'tsc', 'mypy', 'pyright'])],
+  ['lint', new Set(['lint', 'eslint', 'ruff', 'flake8', 'clippy', 'vet'])],
+  ['test', new Set(['test', 'tests', 'vitest', 'jest', 'mocha', 'pytest'])],
+  ['build', new Set(['build'])],
+];
+
+/** The tool whose bare name is a whole check, as pythonDrafts derives it (a bare `flake8` could replace a derived ruff). */
+const ONE_WORD_CHECKS: ReadonlySet<string> = new Set(['pytest']);
+
+/** Words that make a command set up dependencies, not check anything: `pnpm add -D vitest` is no test. */
+const SETUP_WORDS: ReadonlySet<string> = new Set(['install', 'i', 'add', 'ci', 'get', 'sync', 'remove', 'uninstall', 'update', 'upgrade']);
+
+const DRAFT_NAME: Readonly<Record<CheckCategory, string>> = { test: 'unit-tests', lint: 'lint', typecheck: 'typecheck', build: 'build' };
+const CATEGORY_TIMEOUT: Readonly<Record<CheckCategory, number>> = { test: TIMEOUT.nodeTest, lint: TIMEOUT.lint, typecheck: TIMEOUT.typecheck, build: TIMEOUT.nodeBuild };
+
+/**
+ * The commands the repository's tracked root AGENTS.md, then CLAUDE.md, document (issue #138): every line of a fenced
+ * code block and every inline code span, read as argv when it starts with a known tool, needs no shell (no operator,
+ * quote, variable or leading assignment) and names a check category. Prose is never parsed into a command.
+ */
+export function documentedCommands(repo: string, files: readonly string[]): { read: string[]; commands: DocumentedCommand[] } {
+  const readDocs: string[] = [];
+  const commands: DocumentedCommand[] = [];
+  for (const doc of REPO_INSTRUCTION_FILES) {
+    if (!files.includes(doc)) continue;
+    const text = read(join(repo, doc));
+    if (text === null) continue;
+    readDocs.push(doc);
+    let fenced = false;
+    text.split(/\r?\n/).forEach((lineText, i) => {
+      if (/^\s*(```|~~~)/.test(lineText)) {
+        fenced = !fenced;
+        return;
+      }
+      const candidates = fenced ? [lineText.replace(/\s+#.*$/, '')] : [...lineText.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!);
+      for (const raw of candidates) {
+        const cmd = raw.trim().replace(/^\$\s+/, '');
+        // No shell syntax, and no control or bidi character that could hide the real command in init's terminal output.
+        if (cmd === '' || /[|&;<>$`'"(){}\\*?\x00-\x08\x0b-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(cmd)) continue;
+        const argv = cmd.split(/\s+/);
+        // A bare tool name (`ruff`, `mypy`) is a mention, not a command; bare pytest is a whole check, as derived.
+        if ((argv.length < 2 && !ONE_WORD_CHECKS.has(argv[0]!)) || argv.some((a) => SETUP_WORDS.has(a))) continue;
+        const ecosystem = Object.hasOwn(TOOL_ECOSYSTEM, argv[0]!) ? TOOL_ECOSYSTEM[argv[0]!] : undefined;
+        if (ecosystem === undefined) continue;
+        const words = new Set(argv.flatMap((a) => a.toLowerCase().split(':')));
+        const category = CATEGORY_WORDS.find(([, set]) => [...set].some((w) => words.has(w)))?.[0];
+        if (category !== undefined) commands.push({ command: argv, ecosystem, category, source: `${doc} line ${i + 1}` });
+      }
+    });
+  }
+  return { read: readDocs, commands };
 }
 
 class Collector {
@@ -288,6 +366,8 @@ function goDrafts(input: DetectInput, out: Collector): Draft[] {
   ];
 }
 
+const NO_CLIPPY = 'cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed';
+
 async function rustDrafts(input: DetectInput, out: Collector): Promise<Draft[]> {
   const { repo, pathEnv } = input;
   const manifest = read(join(repo, 'Cargo.toml'));
@@ -305,7 +385,7 @@ async function rustDrafts(input: DetectInput, out: Collector): Promise<Draft[]> 
   ];
   const clippy = await (input.clippyAvailable ?? realClippyProbe)(cargo);
   if (clippy) drafts.push({ name: 'clippy', command: ['cargo', 'clippy', ...ws, '--all-targets', '--', '-D', 'warnings'], category: 'lint', timeout_seconds: TIMEOUT.rustLint, reason: `${reason}; cargo clippy is installed` });
-  else out.skip('rust', 'cargo clippy is not installed (rustup component add clippy), so no clippy check was proposed');
+  else out.skip('rust', NO_CLIPPY);
   return drafts;
 }
 
@@ -328,12 +408,48 @@ export async function detectChecks(input: DetectInput): Promise<CheckProposal> {
     ['go', goDrafts(input, out)],
     ['rust', await rustDrafts(input, out)],
   ];
+  // A command the repository documents wins over the one derived from its manifests (issue #138): the first one per
+  // ecosystem and category, in reading order, so AGENTS.md comes before CLAUDE.md. It is proposed only when its tool is on PATH.
+  const docs = documentedCommands(input.repo, input.files);
+  const taken = new Set<string>();
+  for (const d of docs.commands) {
+    const key = `${d.ecosystem}/${d.category}`;
+    if (taken.has(key)) continue;
+    const tool = d.command[0]!;
+    if (which(tool, input.pathEnv) === null) {
+      out.skip(d.ecosystem, `${d.source} documents ${d.command.join(' ')}, but ${tool} was not found on PATH`);
+      continue;
+    }
+    const drafts = groups.find(([e]) => e === d.ecosystem)![1];
+    // rustDrafts probed clippy and found it missing, and said so: a documented clippy command would fail the same way.
+    if (d.command.includes('clippy') && out.notProposed.some((n) => n.ecosystem === 'rust' && n.reason === NO_CLIPPY)) continue;
+    // The check sandbox needs one MSBuild node, as for the derived .NET commands; unchanged for every other tool.
+    const command = d.ecosystem === 'dotnet' ? withOneMsbuildNode(d.command) : d.command;
+    const same = drafts.flatMap((x, j) => (x.category === d.category ? [j] : []));
+    // Several drafts of one kind are per target (.NET without one solution): replace the one whose target it names.
+    const i = same.length === 1 ? same[0]! : (same.find((j) => drafts[j]!.command.every((w) => w.startsWith('-') || command.includes(w))) ?? -1);
+    const derived = i >= 0 ? drafts[i]! : null;
+    // The leading part of the derived command (`go test` of `go test ./...`) adds nothing and would drop its targets;
+    // compared as written, without the -m:1 both .NET commands get.
+    const unpinned = derived?.command.filter((w) => w !== ONE_MSBUILD_NODE) ?? [];
+    if (derived && d.command.length < unpinned.length && d.command.every((w, k) => unpinned[k] === w)) continue;
+    taken.add(key);
+    const draft: Draft = {
+      name: derived?.name ?? DRAFT_NAME[d.category],
+      command,
+      category: d.category,
+      timeout_seconds: derived?.timeout_seconds ?? CATEGORY_TIMEOUT[d.category],
+      reason: `documented in ${d.source}${derived ? `, in place of ${derived.command.join(' ')} from the manifests` : ''}${command.join(' ') !== d.command.join(' ') ? `; ${ONE_NODE_REASON}` : ''}`,
+    };
+    if (derived) drafts[i] = draft;
+    else drafts.push(draft);
+  }
   const active = groups.filter(([, d]) => d.length > 0);
   const mixed = active.length > 1;
   for (const [ecosystem, drafts] of active) {
     for (const { name, ...rest } of drafts) out.add({ id: mixed ? `${ecosystem}-${name}` : name, ecosystem, ...rest });
   }
-  return { proposed: out.proposed, notProposed: out.notProposed };
+  return { proposed: out.proposed, notProposed: out.notProposed, readDocs: docs.read };
 }
 
 /** The `checks:` entries for the written config, each under a comment saying init proposed it. Empty when nothing was proposed. */

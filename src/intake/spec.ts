@@ -6,6 +6,7 @@
  *  - the headings "User Scenarios & Testing", "Requirements" and "Success Criteria" exist;
  *  - every user story has a priority, a reason, an Independent Test and at least one Given/When/Then line, and every
  *    entry listed under its Acceptance Scenarios is such a line;
+ *  - there are at most 50 scenarios in all;
  *  - requirement and success-criterion ids have the forms FR-### and SC-###, with at least one of each;
  *  - no clarification marker (`[NEEDS CLARIFICATION: ...]`) remains.
  *
@@ -54,6 +55,8 @@ export interface SpecCheck {
 
 /** The longest statement a scenario contributes to a contract. */
 export const SCENARIO_MAX_CHARS = 600;
+/** The most scenarios a spec may have: one contract criterion each, and a plan and a contract hold at most 50 criteria (schemas/). */
+export const SCENARIOS_MAX = 50;
 const QUOTE_MAX = 160;
 
 interface Line {
@@ -87,7 +90,7 @@ function readLines(body: string): Line[] {
 /** Emphasis, inline code ticks and the template's "(mandatory)" note removed; one line. */
 function plain(text: string): string {
   return text
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ' ')
     .replace(/\*\*|__/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -167,8 +170,9 @@ const ID_LIKE = /^[A-Za-z]{1,6}-?\d[A-Za-z0-9-]*$/;
 /** The marker as the template writes it; a mention in inline code or a code block is not a marker. */
 const CLARIFICATION = /\[\s*NEEDS CLARIFICATION\b[^\]\n]*\]?/gi;
 
+/** A problem quotes the body; no control character of it (a terminal escape) reaches the terminal that prints the problem. */
 function quote(text: string): string {
-  const t = text.replace(/\s+/g, ' ').trim();
+  const t = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
   return t.length > QUOTE_MAX ? `${t.slice(0, QUOTE_MAX)}...` : t;
 }
 
@@ -209,6 +213,11 @@ export function checkSpec(body: string): SpecCheck {
       const number = Number(m[1]);
       const priority = PRIORITY.exec(m[2]!)?.[1]?.toUpperCase() ?? null;
       const title = m[2]!.replace(/\(\s*Priority\b[^()]*\)\s*$/i, '').trim() || `story ${number}`;
+      // The number is part of every scenario key (S<story>-<n>), which the planner must return as written.
+      if (!Number.isSafeInteger(number)) {
+        problems.push(`User Story ${quote(m[1]!)} (${quote(title)}): the story number is too large`);
+        continue;
+      }
       const [a, b] = sectionRange(headings, h, lines.length);
       const name = `User Story ${number} (${quote(title)})`;
       const why = labelled(lines, a, b, /^Why this priority\s*:?\s*(.*)$/i);
@@ -234,6 +243,8 @@ export function checkSpec(body: string): SpecCheck {
       stories.push({ number, title, priority, why: why || null, independentTest: independentTest || null, scenarios });
     }
     if (stories.length === 0) problems.push('"User Scenarios & Testing" has no user story (a heading such as "### User Story 1 - Title (Priority: P1)")');
+    const total = stories.reduce((n, s) => n + s.scenarios.length, 0);
+    if (total > SCENARIOS_MAX) problems.push(`the spec has ${total} acceptance scenarios; a run takes at most ${SCENARIOS_MAX}, one contract criterion each`);
   }
 
   // ---- requirement and criterion ids -----------------------------------------

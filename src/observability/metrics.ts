@@ -187,7 +187,8 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
   const accepted = runRows.filter((r) => r.state === 'SUCCEEDED');
   if (runRows.length === 0) missing.push('no runs were created in this window');
   const classes = failureClasses(runRows, missing);
-  const versions = byVersion(db, runRows);
+  // One query for the usage of every run in the window, not one per run (issue #190).
+  const versions = byVersion(runRows, db.all<UsageCost>(`SELECT run_id, cost_usd, cost_source FROM usage WHERE ${inWindow}`, ...params));
 
   const evidence = db.get<{ total: number; pass: number }>(`SELECT COUNT(*) AS total, COALESCE(SUM(verdict = 'PASS'), 0) AS pass FROM evidence_reports WHERE ${inWindow}`, ...params)!;
 
@@ -284,20 +285,40 @@ function failureClasses(runs: RunRow[], missing: string[]): Metrics['failure_cla
   return { ended, by_class: byClass, secondary, without_class: withoutClass, unclassified };
 }
 
-/** Versions in order (0.3.2 before 0.4.0 before 0.10.0), with `unknown` last. */
+/** Versions in order (0.3.2 before 0.4.0-rc.1 before 0.4.0 before 0.10.0), with `unknown` last. */
 function compareVersions(a: string, b: string): number {
   if (a === b) return 0;
   if (a === UNKNOWN_ORBIT_VERSION) return 1;
   if (b === UNKNOWN_ORBIT_VERSION) return -1;
-  return a.localeCompare(b, 'en', { numeric: true });
+  // A pre-release comes before its release, which a numeric collation of the whole string puts after it (issue #190).
+  const [coreA, preA] = splitPreRelease(a);
+  const [coreB, preB] = splitPreRelease(b);
+  const core = coreA.localeCompare(coreB, 'en', { numeric: true });
+  if (core !== 0 || preA === preB) return core;
+  if (preA === null) return 1;
+  if (preB === null) return -1;
+  return preA.localeCompare(preB, 'en', { numeric: true });
 }
 
-function byVersion(db: OrbitDb, runs: RunRow[]): VersionMetrics[] {
+function splitPreRelease(version: string): [string, string | null] {
+  const dash = version.indexOf('-');
+  return dash < 0 ? [version, null] : [version.slice(0, dash), version.slice(dash + 1)];
+}
+
+type UsageCost = { run_id: string; cost_usd: number | null; cost_source: string };
+
+function byVersion(runs: RunRow[], usage: UsageCost[]): VersionMetrics[] {
   const groups = new Map<string, RunRow[]>();
   for (const r of runs) {
     const g = groups.get(r.orbit_version);
     if (g) g.push(r);
     else groups.set(r.orbit_version, [r]);
+  }
+  const usageOf = new Map<string, UsageCost[]>();
+  for (const u of usage) {
+    const list = usageOf.get(u.run_id);
+    if (list) list.push(u);
+    else usageOf.set(u.run_id, [u]);
   }
   return [...groups.entries()]
     .sort(([a], [b]) => compareVersions(a, b))
@@ -308,7 +329,7 @@ function byVersion(db: OrbitDb, runs: RunRow[]): VersionMetrics[] {
       let spend = 0;
       let unmeasured = 0;
       for (const r of rows.filter(isEnded)) {
-        for (const u of db.all<{ cost_usd: number | null; cost_source: string }>('SELECT cost_usd, cost_source FROM usage WHERE run_id = ?', r.id)) {
+        for (const u of usageOf.get(r.id) ?? []) {
           if (u.cost_usd === null || u.cost_source === 'unavailable') unmeasured += 1;
           else spend += u.cost_usd;
         }

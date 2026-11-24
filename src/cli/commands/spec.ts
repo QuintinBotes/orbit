@@ -61,7 +61,8 @@ export async function specCheckCommand(args: Args, ctx: CliContext): Promise<num
   const check = checkSpec(body);
   const scenarios = scenariosOf(check.parsed);
   if (args.bool('json')) {
-    json(ctx.io, { ok: check.ok, ...source, problems: check.problems, stories: check.parsed.stories.length, scenarios: scenarios.map((s) => s.key), requirements: check.parsed.requirements.map((r) => r.id), success_criteria: check.parsed.successCriteria.map((c) => c.id), implementation_notes: check.parsed.hints !== null });
+    // A published, versioned shape (schemas/spec-check.schema.json, issue #178).
+    json(ctx.io, { schema: 'orbit.spec-check/1', ok: check.ok, ...source, problems: check.problems, stories: check.parsed.stories.length, scenarios: scenarios.map((s) => s.key), requirements: check.parsed.requirements.map((r) => r.id), success_criteria: check.parsed.successCriteria.map((c) => c.id), implementation_notes: check.parsed.hints !== null });
   } else if (check.ok) {
     line(ctx.io, `${prefix}spec check passed: ${count(check.parsed.stories.length, 'story', 'stories')}, ${count(scenarios.length, 'acceptance scenario')}, ${count(check.parsed.requirements.length, 'requirement')}, ${count(check.parsed.successCriteria.length, 'success criterion', 'success criteria')}`);
   } else {

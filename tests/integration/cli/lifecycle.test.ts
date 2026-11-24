@@ -76,7 +76,7 @@ async function waitFor<T>(fn: () => T | null | undefined | false, ms = 30_000): 
 }
 
 function startService(box: Sandbox): ChildProcess & { output: () => string } {
-  const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CLI_ENTRY, 'service', 'run', '--repo', box.repo], { cwd: box.repo, env: box.env({ ORBIT_HOME: box.orbitHome }), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CLI_ENTRY, 'service', 'run', '--repo', box.repo], { cwd: box.repo, env: box.env({ ORBIT_HOME: box.orbitHome }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
   child.stderr?.on('data', (d: Buffer) => (out += d.toString()));

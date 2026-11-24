@@ -135,7 +135,7 @@ function planner(fn: string): object {
     structured: {
       ...PLANNER_OUTPUT,
       objective: `Add ${fn} to the calculator.`,
-      criteria: [{ key: 'S1-1', statement: `${fn}(6, 3) works`, mandatory: true, ui: false, proof: [`tests/${fn}.test.mjs`], check_ids: ['unit'], changes: [{ path: `apps/${fn}.mjs`, summary: `add ${fn}` }] }],
+      criteria: [{ key: 'S1-1', statement: `${fn}(6, 3) works`, mandatory: true, ui: false, proof: [`tests/${fn}.test.mjs`], check_ids: ['unit'], changes: [{ path: `apps/${fn}.mjs`, summary: `add ${fn}` }], kind: 'change', tests: [`tests/${fn}.test.mjs`] }],
       expected_changed_files: [
         { path: `apps/${fn}.mjs`, change: 'add', reason: `add ${fn}` },
         { path: `tests/${fn}.test.mjs`, change: 'add', reason: 'behaviour test' },

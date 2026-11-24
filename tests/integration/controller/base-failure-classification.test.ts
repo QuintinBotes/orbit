@@ -353,7 +353,7 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     });
     const planner = {
       ...PLANNER_OUTPUT,
-      criteria: [...PLANNER_OUTPUT.criteria, { key: 'lint', statement: 'npm run lint passes.', mandatory: true, ui: false, proof: ['npm run lint exits 0'], check_ids: ['lint'], changes: [{ path: 'package.json', summary: 'add the lint script' }] }],
+      criteria: [...PLANNER_OUTPUT.criteria, { key: 'lint', statement: 'npm run lint passes.', mandatory: true, ui: false, proof: ['npm run lint exits 0'], check_ids: ['lint'], changes: [{ path: 'package.json', summary: 'add the lint script' }], kind: 'change', tests: [] }],
       expected_changed_files: [...PLANNER_OUTPUT.expected_changed_files, { path: 'package.json', change: 'modify', reason: 'the lint script' }],
       allowed_paths: [...PLANNER_OUTPUT.allowed_paths, 'package.json'],
       required_check_ids: ['unit', 'lint'],
@@ -401,7 +401,7 @@ describe.skipIf(!canStripTypes)('PREFLIGHT classifies a base-revision failure', 
     });
     const planner = {
       ...PLANNER_OUTPUT,
-      criteria: [...PLANNER_OUTPUT.criteria, { key: 'cov', statement: 'Coverage of at least 80% is enforced.', mandatory: true, ui: false, proof: ['pytest --cov=src --cov-fail-under=80 exits 0'], check_ids: ['cov'], changes: [{ path: 'requirements-dev.txt', summary: 'add pytest-cov' }] }],
+      criteria: [...PLANNER_OUTPUT.criteria, { key: 'cov', statement: 'Coverage of at least 80% is enforced.', mandatory: true, ui: false, proof: ['pytest --cov=src --cov-fail-under=80 exits 0'], check_ids: ['cov'], changes: [{ path: 'requirements-dev.txt', summary: 'add pytest-cov' }], kind: 'change', tests: [] }],
       expected_changed_files: [...PLANNER_OUTPUT.expected_changed_files, { path: 'requirements-dev.txt', change: 'add', reason: 'pytest-cov' }],
       allowed_paths: [...PLANNER_OUTPUT.allowed_paths, 'requirements-dev.txt'],
       required_check_ids: ['unit', 'cov'],

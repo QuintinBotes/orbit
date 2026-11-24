@@ -264,7 +264,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   let baseBranchNote: string | null = null;
   let baseBranchWarning: string | null = null;
   // Checks proposed from what the repository declares; only for a config init writes, never for an existing one.
-  let checkProposal: CheckProposal = { proposed: [], notProposed: [] };
+  let checkProposal: CheckProposal = { proposed: [], notProposed: [], readDocs: [] };
   let unreadDocs: string[] = [];
   if (existsSync(configPath)) config = 'exists';
   else {
@@ -307,7 +307,8 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       config = 'exists';
     }
-    if (config === 'created' && checkProposal.proposed.length > 0) unreadDocs = ['CLAUDE.md', 'AGENTS.md', 'AGENTS.override.md'].filter((f) => files.includes(f));
+    // Init reads AGENTS.md and CLAUDE.md (check-detect.ts); Codex's AGENTS.override.md is named, not read.
+    if (config === 'created' && checkProposal.proposed.length > 0) unreadDocs = ['AGENTS.override.md'].filter((f) => files.includes(f));
   }
 
   const excludePath = await excludeFile(ctx, repo);
@@ -343,7 +344,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   if (config === 'created') {
     if (noScopeWarning !== undefined) warnings.push(noScopeWarning);
     if (baseBranchWarning !== null) warnings.push(baseBranchWarning);
-    if (unreadDocs.length > 0) warnings.push(`the proposed checks come from manifests only; init did not read ${unreadDocs.join(', ')}: compare the commands documented there and edit .orbit/config.yaml`);
+    if (unreadDocs.length > 0) warnings.push(`init does not read ${unreadDocs.join(', ')}: compare the commands documented there with the proposed checks and edit .orbit/config.yaml`);
     if (checkProposal.proposed.length === 0 && checkProposal.notProposed.length === 0) warnings.push(NO_CHECKS_WARNING);
   }
 
@@ -363,7 +364,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   const reviewPolicy = reviewPolicyProposal(codexEligible);
 
   if (args.bool('json')) {
-    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(advice !== null ? { commit_advice: advice } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...(unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {}) }, checks_defined: defined, config_problems: problems, warnings, models });
+    json(ctx.io, { repo, review_policy: config === 'created' ? reviewPolicy : null, config: { path: configPath, status: config, ...(advice !== null ? { commit_advice: advice } : {}), ...(derivedPaths.length > 0 ? { allowed_paths: derivedPaths } : {}), ...(protectedAdded.length > 0 ? { protected_paths_added: protectedAdded } : {}), ...(excludedDirs.length > 0 ? { excluded_dirs: excludedDirs } : {}), ...(baseBranch !== null ? { base_branch: baseBranch } : {}) }, exclude: { path: excludePath, added: missing }, exclude_file: { path: excludePath, shared_across_worktrees: sharedAcrossWorktrees }, checks: { proposed: checkProposal.proposed, not_proposed: checkProposal.notProposed, ...(checkProposal.readDocs.length > 0 ? { read_docs: checkProposal.readDocs } : {}), ...(unreadDocs.length > 0 ? { unread_docs: unreadDocs } : {}) }, checks_defined: defined, config_problems: problems, warnings, models });
     return EXIT.OK;
   }
   line(ctx.io, config === 'created' ? `created ${configPath} from the starter template (review it: it is the authority every run works under)` : `${configPath} already exists; left unchanged`);
@@ -374,6 +375,7 @@ export async function initCommand(args: Args, ctx: CliContext): Promise<number> 
   if (config === 'created' && protectedAdded.length > 0) line(ctx.io, `scope.protected_paths gained ${protectedAdded.join(', ')} (CI pipeline and build-system definitions found in the repository)`);
   if (config === 'created' && derivedPaths.length > 0) line(ctx.io, 'Narrow scope.allowed_paths to the folders your goal needs: the proposal covers every source folder, and a smaller scope is safer and cheaper to review.');
   if (config === 'created') {
+    if (checkProposal.readDocs.length > 0) line(ctx.io, `read ${checkProposal.readDocs.join(', ')} for the commands the repository documents`);
     if (checkProposal.proposed.length > 0) {
       line(ctx.io, `checks proposed from what the repository declares (each is commented in the config; review them, they are the evidence every run is judged by):`);
       for (const c of checkProposal.proposed) line(ctx.io, `  ${c.id}: ${c.command.join(' ')} (${c.category}, ${c.timeout_seconds}s): ${c.reason}`);

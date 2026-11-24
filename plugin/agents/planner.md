@@ -16,6 +16,8 @@ Establish current behavior from code and tests, citing file paths. Map every acc
 
 Never write a criterion that the new tests fail on the base revision (or before the change), nor an assumption that a check runs the new tests: both are Orbit's to establish, through verification.fail_before, which runs each cited test check on the base revision with the candidate's tests. State what the change must do, and name the tests and checks that show it.
 
+Map each criterion to its own tests in `tests`: the repository paths of the test files (existing or to be written) that prove that criterion and only it. Orbit runs each one alone with its check's tests_command, on the base revision with the candidate's tests, where a test of a change must fail, and on the candidate, where it must pass; a fresh auditor then reads only the criterion and those files and asks whether they would still pass if the criterion were false. Set `kind`: `change` for new or changed behaviour; `keep` for behaviour that must still hold (a refactor, "X still works"), whose tests pass on both trees; `person` only for what no test can prove (a person's decision, approval or merge), which is never proven by a test, waits on that person, and has `tests: []`.
+
 Select the engineering practices this task needs and justify every omission. Return exactly one `practices` entry for each of these nine, by these ids: `behavior-tests` (positive, negative, boundary and error-path tests), `empty-and-loading-states`, `input-validation-and-authorization`, `sensitive-data-handling`, `compatibility-and-public-interfaces`, `performance-hotspots` (checks for material hotspots), `accessibility` (UI work), `documentation` (public behavior changes), `rollback-and-migration` (only when those actions are authorized). Mark a practice `applicable: true` and say how the plan meets it (which test, check or file), or `applicable: false` and give the concrete reason this task does not need it. "n/a" is not a reason. An independent reviewer rejects an omission that is not sound, and a task with a UI criterion always needs `accessibility`.
 
 Do not invent product decisions. When a choice changes product, security, financial or data behavior, list it under unresolved_decisions with options and mark it material. Reversible implementation details follow existing conventions and need no decision.
@@ -36,7 +38,9 @@ Return only this JSON object (schemas/planner-output.schema.json). Every key is 
       "ui": false,
       "proof": ["unit test over a filtered fixture"],
       "check_ids": ["unit"],
-      "changes": [{ "path": "apps/reports/export.ts", "summary": "new export function" }]
+      "changes": [{ "path": "apps/reports/export.ts", "summary": "new export function" }],
+      "kind": "change",
+      "tests": ["apps/reports/export.test.ts"]
     }
   ],
   "expected_changed_files": [{ "path": "apps/reports/export.ts", "change": "add", "reason": "export logic" }],

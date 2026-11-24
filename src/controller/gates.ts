@@ -34,6 +34,8 @@ import { isOrbitError } from '../core/errors.ts';
 import { criteriaBlockedByQuestions, openQuestions } from '../inquisition/questions.ts';
 import { listLedger, type QuestionRecord } from '../inquisition/store.ts';
 import type { RunRecord } from './run-store.ts';
+import { getDecision } from '../storage/decisions.ts';
+import { proofResultId, type ProofResult } from '../review/proof.ts';
 import type { SecretScanResult } from './security.ts';
 
 export const GATES = ['intake', 'environment', 'baseline', 'implementation', 'static_security', 'behaviour', 'ui', 'independent_review', 'delivery', 'completion'] as const;
@@ -95,7 +97,7 @@ export interface IntakeInput {
 }
 
 /** Repository authorization, scope, budgets and measurable criteria. Failure: reject the contract. */
-export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] }> {
+export function intakeGate(input: IntakeInput): GateResult<{ problems: string[]; scope?: { allowed_paths: string[] } }> {
   const { snapshot, run } = input;
   const reasons: string[] = [];
   const evidence: string[] = [`policy ${run.policyHash}`];
@@ -111,7 +113,8 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
   if (snapshotHash(snapshot) !== run.policyHash) reasons.push('the policy snapshot does not match the hash recorded for the run');
   const limits = snapshot.config.scheduler.hard_limits;
   for (const [k, v] of Object.entries(limits)) if (!(typeof v === 'number' && v > 0)) reasons.push(`hard limit ${k} must be positive`);
-  if (snapshot.config.scope.allowed_paths.length === 0) reasons.push('the policy allows no paths, so no implementation is authorized');
+  const noPaths = snapshot.config.scope.allowed_paths.length === 0;
+  if (noPaths) reasons.push('the policy allows no paths, so no implementation is authorized');
   // A run that names its release environment (`orbit run --environment`) names one the policy defines.
   const environment = input.run.environment ?? null;
   if (environment !== null) {
@@ -138,7 +141,8 @@ export function intakeGate(input: IntakeInput): GateResult<{ problems: string[] 
       reasons.push(`the contract's delivery.environment (${c.delivery.environment ?? 'none'}) is not the release environment the run names (${environment ?? 'none'})`);
     }
   }
-  return result('intake', reasons, evidence, [], { problems });
+  // The run's failure class reads this marker, never the reason's wording (issue #190).
+  return result('intake', reasons, evidence, [], { problems, ...(noPaths ? { scope: { allowed_paths: [] } } : {}) });
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +304,7 @@ export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnap
   if (!scope.within_size_limits) add(`the change is over the size limits (${scope.changed_files} files, ${scope.changed_lines} lines)${scope.largest_changes?.length ? `; the largest changes: ${describeLargestChanges(scope)}` : ''}`);
   if (scope.lockfile_changed && !deps.change_lockfile) add('a lockfile changed, which the policy does not allow');
   if (scope.dependency_manifest_changed.length > 0 && !deps.add_packages) add(`dependency manifests changed: ${scope.dependency_manifest_changed.join(', ')}`);
-  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed`];
+  const evidence = [`${scope.changed_files} file(s), ${scope.changed_lines} line(s) changed${scope.generated_lines ? `, and ${scope.generated_lines} generated line(s) not counted (scope.generated_paths)` : ''}`];
   const notes = scope.weakening_signals.map((w) => `possible oracle weakening in ${w.path}: ${w.signal} (${w.detail})`);
   return result('implementation', reasons, evidence, notes, { policyViolation, repairable });
 }
@@ -451,6 +455,8 @@ export interface CompletionInput {
   /** Delivery modes: the tree of the delivered commit; local modes: the tree the local branch points at. */
   deliveredTree: string | null;
   now: number;
+  /** The proof gate applies to the run (controller/proof.ts proofApplies): the tree's proof result must be closed. */
+  proofRequired?: boolean;
 }
 
 /** Criteria blocked by open material questions, with the questions that block them. */
@@ -489,6 +495,13 @@ export function completionGate(db: OrbitDb, input: CompletionInput): GateResult<
   // A choice only a person may make (a needs-decision ledger entry) is not made by succeeding (spec section 10 "Ledger").
   const undecided = listLedger(db, input.run.id, { status: 'needs-decision' }).map((e) => e.id);
   if (undecided.length > 0) reasons.push(`assumption ledger ${undecided.length === 1 ? 'entry' : 'entries'} ${undecided.join(', ')} ${undecided.length === 1 ? 'needs' : 'need'} a person's decision`);
+  // Done means proven (issue #200): no run succeeds while a criterion audit, a MUST or a document check is open.
+  if (input.proofRequired === true) {
+    const proof = getDecision(db, proofResultId(input.run.id, c.treeHash))?.data as ProofResult | undefined;
+    if (!proof) reasons.push(`tree ${c.treeHash} has no proof result: the criterion audits, the conformance checks and the artifact check have not all run on it`);
+    else if (proof.open.length > 0) reasons.push(clipAtWord(`tree ${c.treeHash} is not done: ${proof.open.join('; ')}`, 1000));
+    else evidence.push(`proof of tree ${c.treeHash}: ${proof.criteria.filter((x) => x.status === 'proven').length} criteria proven, ${proof.requirements.length} MUSTs met, no artifact finding`);
+  }
   if (input.deliveredTree === null) reasons.push('no delivered commit to compare with the reviewed tree');
   else if (input.deliveredTree !== c.treeHash) reasons.push(`the delivered tree ${input.deliveredTree} is not the reviewed tree ${c.treeHash}`);
   else evidence.push(`delivered tree ${input.deliveredTree}`);

@@ -25,7 +25,7 @@ import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
 import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
-import { resolveRemoteUrl } from '../../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../../delivery/git.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { completionGate, deliveryGate } from '../gates.ts';
 import { blockOnUndecidedLedger } from '../undecided-ledger.ts';
@@ -33,6 +33,7 @@ import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoin
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
 import { readIssueGoal } from '../../intake/issue.ts';
+import { proofApplies, proveDone } from '../proof.ts';
 
 export const DELIVERY_FILE = 'delivery.json';
 
@@ -53,6 +54,10 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
   if (waiting) return waiting;
   const undecided = await blockOnUndecidedLedger(ctx, 'delivery');
   if (undecided) return undecided;
+  // Done means proven (issue #200): each criterion audited and probed on its own, each MUST quoted, the documents and the
+  // pull request body checked against the candidate. An open result goes to repair; nothing is delivered before.
+  const proof = await proveDone(ctx, cand, DELIVERY_MODES.has(ctx.run.mode) ? deliverySummary(ctx) : null);
+  if (proof) return proof;
 
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -145,7 +150,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       // deployed ref; without one, every environment the release profile defines that the ref is allowed for, in profile order.
       environments: contract.delivery.environment ? [contract.delivery.environment] : 'all',
       readiness: () => {
-        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
+        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, contract) });
         return { ok: gate.passed, reasons: gate.reasons };
       },
       isolation: ctx.isolation(),
@@ -242,7 +247,7 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
   // DELIVERING asked already; a needs-decision entry recorded since (a CI repair's inquiry) is asked about here.
   const undecided = await blockOnUndecidedLedger(ctx, 'success');
   if (undecided) return undecided;
-  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now() });
+  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, assertContract(ctx)) });
   recordGate(ctx, gate);
   if (!gate.passed) return finishRun(ctx, 'BLOCKED', `completion gate: ${gate.reasons.join('; ')}`, { outcome: { ...outcome, gate: gate.reasons } });
   return finishRun(ctx, 'SUCCEEDED', `all mandatory requirements hold for tree ${deliveredTree}${notes.length ? ` (${notes.join('; ')})` : ''}`, { outcome: { ...outcome, tree: deliveredTree, evidence_id: gate.details.evidenceId, review_id: gate.details.reviewId, notes } });
@@ -303,7 +308,7 @@ export async function githubClientForConfig(repoRoot: string, config: Pick<Orbit
 /** A gh CLI client for the repository's remote (OWNER/REPO from its push URL). */
 export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const url = await resolveRemoteUrl(repoRoot, remote);
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-  if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
-  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
+  const repo = githubRepoFromUrl(url);
+  if (!repo) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
+  return new GhCliClient({ repo, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
 }

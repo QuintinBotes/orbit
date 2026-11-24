@@ -26,6 +26,8 @@ import type { IssueReader } from '../intake/github.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 import { createIo, type Io } from './io.ts';
 import type { AdmissionCheck } from './admission.ts';
+import type { LabScenario } from '../bench/scenarios.ts';
+import type { LiveExecutor } from '../bench/live.ts';
 
 /** The part of `process` the CLI uses for Ctrl-C and SIGTERM; an EventEmitter stands in for it in tests. */
 export interface SignalSource {
@@ -58,6 +60,8 @@ export interface CliSeams {
   issues?: (repoRoot: string, config: OrbitConfig) => Promise<IssueReader>;
   /** How `orbit queue run` waits between looks at pull requests it waits on to merge; tests merge them here instead of sleeping. */
   queueWait?: (ms: number) => Promise<void>;
+  /** What `orbit bench` scores: tests swap in their own lab scenarios and a live executor that calls no model. */
+  bench?: { root?: string; labScenarios?: readonly LabScenario[]; liveExecutor?: LiveExecutor };
 }
 
 export interface CliContext {

@@ -103,6 +103,42 @@ describe('preconditions and fresh evidence', () => {
     if (verdict === 'INCOMPLETE') expect(getRun(lab.db, lab.runId).outcomeReason).toContain('mandatory verification is unavailable for candidate 1: SAST is unverified; a; b; c; d');
   });
 
+  // Issue #190: the block's class says why verification could not prove the criteria, from the records alone.
+  describe('mandatory verification that is unavailable', () => {
+    const cls = () => getRun(lab.db, lab.runId).failureClass;
+    const noTest = 'criterion AC-1: unverified (no new evidence: unit already passed on the base revision and the candidate adds or changes no test)';
+    const capped = (attempt: number) => lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.worker-ended', 'x', ?)", lab.runId, JSON.stringify({ attempt, status: 'max_turns', error: 'Reached maximum number of turns (30)' }));
+
+    it('run orb-20261119-081756-112901 (#172): every check ran, the candidate added no test, and both implementer sessions ended at their turn cap: turn-cap', async () => {
+      const { cand } = setup();
+      capped(1);
+      capped(2);
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', unverified: [noTest] });
+      await runStep();
+      expect(state()).toBe('BLOCKED');
+      expect(cls()).toBe('turn-cap');
+    });
+
+    it('the same gap with no session cut short is the work: model', async () => {
+      const { cand } = setup();
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', unverified: [noTest] });
+      await runStep();
+      expect(cls()).toBe('model');
+    });
+
+    it.each([
+      ['not executed', []],
+      ['ended without a result', [{ id: 'unit', status: 'ERROR' as const, exit_code: null, flaky: false, log: 'evidence/1/unit.log' }]],
+    ])('a mandatory check that %s is verification that could not run (#158): environment, turn cap or not', async (_, checks) => {
+      const { cand } = setup();
+      capped(1);
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', checks, unverified: ['check unit: no result'] });
+      await runStep();
+      expect(state()).toBe('BLOCKED');
+      expect(cls()).toBe('environment');
+    });
+  });
+
   it('a green candidate that trips a proof-blocking trigger goes to inquiry, and an incomplete one with any trigger too', async () => {
     const { cand } = setup();
     addEvidence(lab, cand, { verdict: 'PASS' });

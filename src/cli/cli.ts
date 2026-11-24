@@ -11,6 +11,7 @@ import { EXIT, EXIT_CODE_DOCS, UsageError, exitCodeFor } from './exit.ts';
 import { ORBIT_VERSION } from './version.ts';
 import { setInvocationEnv } from '../core/invocation.ts';
 import { closest } from '../core/near-miss.ts';
+import { BENCH_OPTIONS, BENCH_USAGE, benchCommand } from './commands/bench.ts';
 import { cancelCommand, CANCEL_OPTIONS, pauseCommand, resumeCommand, RESUME_OPTIONS } from './commands/control.ts';
 import { DECIDE_OPTIONS, decideCommand, QUESTIONS_OPTIONS, QUESTIONS_USAGE, questionsCommand } from './commands/decide.ts';
 import { DOCTOR_OPTIONS, doctorCommand } from './commands/doctor.ts';
@@ -32,16 +33,19 @@ import {
   learnShowCommand,
 } from './commands/learn.ts';
 import { LOGS_OPTIONS, logsCommand } from './commands/logs.ts';
+import { MAP_BUILD_USAGE, MAP_OPTIONS, MAP_QUERY_USAGE, mapBuildCommand, mapQueryCommand } from './commands/map.ts';
 import { MODELS_REFRESH_OPTIONS, modelsListCommand, modelsRefreshCommand } from './commands/models.ts';
 import { NOTIFY_TEST_OPTIONS, NOTIFY_TEST_USAGE, notifyTestCommand } from './commands/notify.ts';
 import { policyShowCommand } from './commands/policy.ts';
 import { RELEASE_RESOLVE_OPTIONS, RELEASE_RESOLVE_USAGE, releaseResolveCommand } from './commands/release.ts';
+import { EXPORT_OPTIONS, EXPORT_USAGE, exportCommand } from './commands/export.ts';
 import { REPORT_OPTIONS, reportCommand } from './commands/report.ts';
 import { RUN_OPTIONS, RUN_USAGE, runCommand } from './commands/run.ts';
 import { SERVICE_INSTALL_OPTIONS, refreshServiceLauncher, serviceInstallCommand, serviceRunCommand, serviceStatusCommand, serviceUninstallCommand } from './commands/service.ts';
 import { REPAIR_OPTIONS, repairCommand } from './commands/repair.ts';
 import { SPEC_CHECK_OPTIONS, SPEC_CHECK_USAGE, specCheckCommand } from './commands/spec.ts';
 import { QUEUE_LIST_OPTIONS, QUEUE_LIST_USAGE, QUEUE_RUN_OPTIONS, QUEUE_RUN_USAGE, queueListCommand, queueRunCommand } from './commands/queue.ts';
+import { RETRO_OPTIONS, RETRO_USAGE, retroCommand } from './commands/retro.ts';
 import { STATS_OPTIONS, STATS_USAGE, statsCommand } from './commands/stats.ts';
 import { STATUS_OPTIONS, statusCommand } from './commands/status.ts';
 import { TIMELINE_OPTIONS, TIMELINE_USAGE, timelineCommand } from './commands/timeline.ts';
@@ -63,6 +67,8 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'spec check', summary: 'check that a Markdown file or an issue is a spec a run can start from (deterministic; no model call)', usage: SPEC_CHECK_USAGE, options: SPEC_CHECK_OPTIONS, run: specCheckCommand },
   { name: 'queue list', summary: 'the frontier of a backlog of GitHub issues (open, labelled ready-for-agent, unblocked) and what holds every other issue', usage: QUEUE_LIST_USAGE, options: QUEUE_LIST_OPTIONS, run: queueListCommand },
   { name: 'queue run', summary: 'work the frontier one issue at a time, each from the current base branch, until it is empty or a stop rule ends the queue', usage: QUEUE_RUN_USAGE, options: QUEUE_RUN_OPTIONS, run: queueRunCommand },
+  { name: 'map build', summary: 'build the repository map of a revision (files, generated files, tests, imports, check paths), cached by tree hash', usage: MAP_BUILD_USAGE, options: MAP_OPTIONS, run: mapBuildCommand },
+  { name: 'map query', summary: 'what the repository map says about a file or directory: its imports, what imports it, its tests and checks', usage: MAP_QUERY_USAGE, options: MAP_OPTIONS, run: mapQueryCommand },
   { name: 'status', summary: 'state, stage, attempts, budgets, workers, open questions and heartbeat of a run (or the recent runs)', usage: 'orbit status [run-id] [--all] [--json]', options: STATUS_OPTIONS, run: statusCommand },
   { name: 'timeline', summary: 'what happened in a run, one readable line per step: state changes, routing, attempts, checks, review, questions, delivery, cost', usage: TIMELINE_USAGE, options: TIMELINE_OPTIONS, run: timelineCommand },
   { name: 'logs', summary: 'raw controller and worker logs of a run, redacted (for a readable history use "orbit timeline")', usage: 'orbit logs <run-id> [--follow] [--lines n] [--controller | --workers | --worker id]', options: LOGS_OPTIONS, run: logsCommand },
@@ -70,6 +76,7 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'resume', summary: 'unpause a run, or resume a BLOCKED one after a decision or an environment repair', usage: 'orbit resume <run-id> [--foreground | --detach] [--force]', options: RESUME_OPTIONS, run: resumeCommand },
   { name: 'cancel', summary: 'cancel a run durably (works for blocked or ownerless runs too)', usage: 'orbit cancel <run-id> [--wait seconds]', options: CANCEL_OPTIONS, run: cancelCommand },
   { name: 'report', summary: 'the final report of a run, or a live interim report while it runs (--learning: improvement over time)', usage: 'orbit report <run-id> [--interim] [--json]   |   orbit report --learning', options: REPORT_OPTIONS, run: reportCommand },
+  { name: 'export', summary: 'a run as OpenTelemetry traces (--otel): a span per worker with model, tokens and cost, never prompt or source text', usage: EXPORT_USAGE, options: EXPORT_OPTIONS, run: exportCommand },
   { name: 'decide', summary: 'record your answer to a question the run persisted', usage: 'orbit decide <run-id> <question-id> <answer...> [--by name]', options: DECIDE_OPTIONS, run: decideCommand },
   { name: 'questions', summary: 'the questions a run is waiting on (--pending: those of every unfinished run)', usage: QUESTIONS_USAGE, options: QUESTIONS_OPTIONS, run: questionsCommand },
   { name: 'models list', summary: 'the model registry with availability and eligibility under the policy', usage: 'orbit models list [--json]', run: modelsListCommand },
@@ -86,7 +93,9 @@ export const COMMANDS: readonly CommandDef[] = [
   { name: 'service run', summary: 'run the persistent controller in this process (what the service definition starts)', usage: 'orbit service run', run: serviceRunCommand },
   { name: 'verify', summary: 'independent verification of a run\'s latest candidate: a verdict per criterion with its evidence (exit 14 FAIL, 15 INCOMPLETE)', usage: 'orbit verify [run-id] [--json]', run: verifyCommand },
   { name: 'repair', summary: 'repair a failed run (BLOCKED or paused with FAIL evidence) or start a run to repair a described failure', usage: 'orbit repair <run-id | failure description | -> [--foreground | --detach] [--mode <mode>] [--policy <path>]', options: REPAIR_OPTIONS, run: repairCommand },
+  { name: 'bench', summary: 'score this Orbit version: the lab tier replays fixed issues with fake providers (no model), the live tier runs pinned goals with real providers (owner approval and --budget required)', usage: BENCH_USAGE, options: BENCH_OPTIONS, run: benchCommand },
   { name: 'stats', summary: 'the spec section 16 metrics for this repository\'s runs (success, cost, repair loops, time to green), optionally in a time window', usage: STATS_USAGE, options: STATS_OPTIONS, run: statsCommand },
+  { name: 'retro', summary: 'group finished runs by failure class and signature and propose a check, a reviewer standard, a policy change or an Orbit issue draft for each repeated failure; nothing is applied or sent without your yes', usage: RETRO_USAGE, options: RETRO_OPTIONS, run: retroCommand },
   { name: 'release resolve', summary: 'settle a deploy whose outcome is unknown: run the environment\'s verify_command, or record --deployed / --not-deployed', usage: RELEASE_RESOLVE_USAGE, options: RELEASE_RESOLVE_OPTIONS, run: releaseResolveCommand },
   { name: 'gc', summary: 'apply artifact retention: delete the run directories and worktrees of finished runs older than retention.keep_runs_days', usage: GC_USAGE, options: GC_OPTIONS, run: gcCommand },
   { name: 'notify test', summary: 'send a test notification through the configured channels (desktop on Linux only, webhook, GitHub comment) and print each outcome', usage: NOTIFY_TEST_USAGE, options: NOTIFY_TEST_OPTIONS, run: notifyTestCommand },
@@ -180,7 +189,7 @@ function unknownCommand(words: readonly string[]): UsageError {
  * could run `orbit decide`, `resume --force` or `learn eval` from its shell
  * would be authorizing its own decisions.
  */
-const WORKER_SAFE = new Set(['status', 'timeline', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats']);
+const WORKER_SAFE = new Set(['status', 'timeline', 'logs', 'report', 'questions', 'policy show', 'models list', 'learn list', 'learn show', 'stats', 'map query']);
 
 function inWorker(env: Readonly<Record<string, string | undefined>>): boolean {
   return env.ORBIT_WORKER === '1' || Boolean(env.ORBIT_POLICY_HASH) || Boolean(env.ORBIT_POLICY_PATH);
