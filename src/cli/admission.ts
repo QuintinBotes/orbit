@@ -35,7 +35,6 @@ import type { RunRecord } from '../controller/run-store.ts';
 import type { CliContext } from './context.ts';
 import { reviewFix } from './review-fix.ts';
 import { simplicityRefusal } from './commands/doctor-simplicity.ts';
-import { probeUnknot } from '../evidence/simplicity.ts';
 import { orbitHint } from '../core/invocation.ts';
 import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../scheduling/budget.ts';
 
@@ -98,7 +97,7 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
     fixes.push('npm install -D @playwright/test, then npx playwright install (or remove the ui section and the playwright check from .orbit/config.yaml)');
   }
   // The simplicity gate runs unknot (issue #232): configured without a usable one, every candidate would fail or pass unchecked.
-  const simplicity = await simplicityRefusal({ config, probe: () => probeUnknot(ctx.env, repo) });
+  const simplicity = await simplicityRefusal({ config, env: ctx.env, cwd: repo, files: hasCommits ? (await git(repo, ['ls-files', '-z', '--', '.unknot'])).split('\0').filter(Boolean) : [] });
   if (simplicity !== null) {
     cheap.push(simplicity.reason);
     fixes.push(simplicity.fix);

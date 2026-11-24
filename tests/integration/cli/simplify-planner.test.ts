@@ -3,7 +3,7 @@
  * planner is given Unknot's ranked findings for the goal's scope as marked, untrusted advisory data. Off otherwise.
  * Unknot is faked at the process boundary: a script named `unknot` first on PATH.
  */
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,11 +28,14 @@ const CLEAN = `echo '{"schema_version":"1.0","baseline":{},"findings":[]}'`;
 
 const labs: Lab[] = [];
 let bin: string;
+let calls: string;
 let pathBefore: string | undefined;
 beforeEach(() => {
   bin = mkdtempSync(join(tmpdir(), 'orbit-fake-unknot-'));
   writeFileSync(join(bin, 'findings.json'), JSON.stringify(FINDINGS));
-  writeFileSync(join(bin, 'unknot'), `#!/bin/sh\ncase "$1" in --version) echo 0.4.0 ;; diagnose) cat '${join(bin, 'findings.json')}' ;; esac\n`);
+  calls = join(bin, 'calls.log');
+  // `map` and `diagnose` log where they ran and with what, then answer as unknot does.
+  writeFileSync(join(bin, 'unknot'), `#!/bin/sh\ncase "$1" in --version) echo 0.4.0 ;; map) echo "$PWD|$*" >> '${calls}' ;; diagnose) echo "$PWD|$*" >> '${calls}'; cat '${join(bin, 'findings.json')}' ;; esac\n`);
   chmodSync(join(bin, 'unknot'), 0o755);
   pathBefore = process.env.PATH;
   process.env.PATH = `${bin}:${pathBefore}`;
@@ -45,6 +48,8 @@ afterEach(() => {
 
 function lab(withGate: boolean): Lab {
   const l = makeLab({
+    // The repository commits its unknot project, which admission requires of a policy with the gate.
+    files: { '.unknot/.gitignore': 'state/\n', '.unknot/config.yaml': 'version: 1\n' },
     tweak: (c) => {
       c.delivery = { ...c.delivery, provider: 'fake' };
       if (withGate) c.checks = { ...c.checks, simplicity: { ...defaultCheck('simplicity'), command: [CLEAN], shell: true, category: 'other', timeout_seconds: 60 } };
@@ -95,6 +100,26 @@ describe('simplify goals: the planner is given unknot findings (issue #232, scen
     expect(prompt).toContain('1. [high] module.hub-module apps/calc.mjs: apps/calc.mjs is a hub: 14 modules import it');
     expect(prompt).toContain('smallest simplification: split the hub by caller');
     expect(prompt).not.toContain('vendor/x.mjs');
+    expect(prompt).toContain("From unknot's map of the base revision");
+  }, 120_000);
+
+  it('the map and the diagnosis run in the run\'s own worktree, never the user\'s checkout, scoped by the allowed paths', async () => {
+    const l = lab(true);
+    await plannerPrompt(l, ['simplify']);
+    const asked = readFileSync(calls, 'utf8').trim().split('\n').map((x) => x.split('|') as [string, string]);
+    const [map, diagnose] = [asked.find(([, a]) => a.startsWith('map')), asked.find(([, a]) => a.startsWith('diagnose'))];
+    expect(map, asked.join('\n')).toBeDefined();
+    expect(diagnose![0]).toBe(map![0]);
+    expect(diagnose![0]).not.toBe(l.repo);
+    expect(diagnose![0]).toContain(join(l.orbitHome, 'worktrees'));
+    const allowed = l.config.scope.allowed_paths;
+    expect(diagnose![1]).toBe(`diagnose --json --limit 500 ${allowed.join(' ')}`);
+  }, 120_000);
+
+  it('FR-004: without the label unknot is never run for the plan', async () => {
+    await plannerPrompt(lab(true), ['enhancement']);
+    // The gate's own check is a plain echo here, so any call at all would be the planner's.
+    expect(existsSync(calls)).toBe(false);
   }, 120_000);
 
   it('FR-004: off without the label, and off without the gate', async () => {

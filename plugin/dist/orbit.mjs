@@ -27533,15 +27533,15 @@ function detectToolchains(input) {
   });
 }
 function rustupHomeOf(input) {
-  const configured2 = (input.hostEnv ?? process.env).RUSTUP_HOME;
-  if (configured2 && configured2.trim() !== "") return isAbsolute6(configured2) ? configured2 : null;
+  const configured = (input.hostEnv ?? process.env).RUSTUP_HOME;
+  if (configured && configured.trim() !== "") return isAbsolute6(configured) ? configured : null;
   if (!input.hostHome) return null;
   const dflt = join10(input.hostHome, ".rustup");
   return existsSync8(dflt) ? dflt : null;
 }
 function javaHomeOf(input) {
-  const configured2 = (input.hostEnv ?? process.env).JAVA_HOME;
-  return configured2 && configured2.trim() !== "" && isAbsolute6(configured2) ? configured2 : null;
+  const configured = (input.hostEnv ?? process.env).JAVA_HOME;
+  return configured && configured.trim() !== "" && isAbsolute6(configured) ? configured : null;
 }
 function toolchainLayout(input) {
   const ids = ordered(input.toolchains);
@@ -28216,11 +28216,11 @@ function providerDirs(opts) {
   return { claudeConfigDir: canonicalPath(claude), codexHome: canonicalPath(codex) };
 }
 function codexHomeFor(homeDir, env) {
-  const configured2 = nonEmpty(env.CODEX_HOME);
-  if (configured2 !== void 0 && !isAbsolute8(configured2)) {
-    throw new OrbitError("CONFIG_INVALID", `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured2)}`, { variable: "CODEX_HOME" });
+  const configured = nonEmpty(env.CODEX_HOME);
+  if (configured !== void 0 && !isAbsolute8(configured)) {
+    throw new OrbitError("CONFIG_INVALID", `CODEX_HOME must be an absolute path, got ${JSON.stringify(configured)}`, { variable: "CODEX_HOME" });
   }
-  return canonicalPath(configured2 ?? join12(canonicalPath(homeDir), ".codex"));
+  return canonicalPath(configured ?? join12(canonicalPath(homeDir), ".codex"));
 }
 function repoParentDenial(repoRoot, homeDir) {
   const repo = canonicalPath(repoRoot);
@@ -28264,17 +28264,17 @@ function otherClaudeLogins(homeDir, env, own) {
   const home2 = canonicalPath(homeDir);
   return claudeLogins(home2, env, own).filter((d) => d !== own).map((d) => ({ configDir: d, globalConfig: claudeGlobalConfig(home2, d) }));
 }
-function claudeLogins(home2, env, configured2) {
+function claudeLogins(home2, env, configured) {
   const fromEnv = nonEmpty(env.CLAUDE_CONFIG_DIR);
-  return uniq([configured2, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".claude")]);
+  return uniq([configured, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".claude")]);
 }
 function museConfigDirs(home2, env) {
   const xdg = nonEmpty(env.XDG_CONFIG_HOME);
   return uniq([...xdg && isAbsolute8(xdg) ? [join12(canonicalPath(xdg), "muse")] : [], join12(home2, ".config", "muse")]);
 }
-function codexHomes(home2, env, configured2) {
+function codexHomes(home2, env, configured) {
   const fromEnv = nonEmpty(env.CODEX_HOME);
-  return uniq([configured2, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".codex")]);
+  return uniq([configured, ...fromEnv && isAbsolute8(fromEnv) ? [canonicalPath(fromEnv)] : [], join12(home2, ".codex")]);
 }
 function claudeGlobalConfig(home2, configDir) {
   return configDir === join12(home2, ".claude") ? join12(home2, ".claude.json") : join12(configDir, ".claude.json");
@@ -32266,12 +32266,12 @@ function hasMemoryLimit(limits) {
 }
 function unenforcedLimits(kind, limits, container) {
   if (!hasMemoryLimit(limits)) return [];
-  const configured2 = limits.memory_mb;
-  const none = (reason) => [{ limit: "memory_mb", configured: configured2, reason }];
+  const configured = limits.memory_mb;
+  const none = (reason) => [{ limit: "memory_mb", configured, reason }];
   if (kind === "sandbox-runtime") return none("sandbox-runtime has no hard memory cap: its watchdog only samples resident memory, so a fast allocation can overshoot the limit");
   if (kind === "none") return none("isolation provider none enforces no memory limit");
   if (container === null) return none("the container provider has no isolation.container section, so no memory cap is set");
-  if (container.memory_mb > configured2) return none(`the container provider ignores isolation.limits.memory_mb and enforces isolation.container.memory_mb (${container.memory_mb} MB), which is higher`);
+  if (container.memory_mb > configured) return none(`the container provider ignores isolation.limits.memory_mb and enforces isolation.container.memory_mb (${container.memory_mb} MB), which is higher`);
   return [];
 }
 function resourceLimitRefusals(isolation, kind) {
@@ -40620,10 +40620,24 @@ var init_active_checks = __esm({
 });
 
 // src/evidence/simplicity.ts
+function objectEnd(text2, start) {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text2.length; i++) {
+    const c = text2[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
 function documentIn(body) {
   const start = body.search(/^\{\s*"(?:schema_version|error|stats)"/m);
-  if (start < 0) return null;
-  const end = body.lastIndexOf("}");
+  const end = start < 0 ? -1 : objectEnd(body, start);
+  if (end < 0) return null;
   try {
     const v = JSON.parse(body.slice(start, end + 1));
     return v !== null && typeof v === "object" ? v : null;
@@ -40645,31 +40659,40 @@ function judgeSimplicity(input) {
   if (exitCode === 5 || doc?.error?.code === "UK_BASELINE_INVALID") return { note: `simplicity gate: the base could not be mapped: ${oneLine5(doc?.error?.message) || "unknot exited 5"}` };
   if (exitCode === 1 && doc?.schema_version?.startsWith("1.") && Array.isArray(doc.findings)) {
     const high = doc.findings.filter((f) => f.severity === "high");
-    const listed3 = high.length > 0 ? high : doc.findings;
-    const lines = listed3.slice(0, LISTED).map((f) => {
+    const ordered2 = [...high, ...doc.findings.filter((f) => f.severity !== "high")];
+    const total = Math.max(typeof doc.baseline?.new === "number" ? doc.baseline.new : 0, ordered2.length);
+    const lines = ordered2.slice(0, LISTED).map((f) => {
       const ev = evidenceOf(f);
       return `- [${oneLine5(f.severity, 10) || "?"}] ${oneLine5(f.kind, 60)} ${oneLine5(f.location, 100) || "?"}: ${oneLine5(f.title)}${ev ? ` (evidence: ${ev})` : ""}`;
     });
-    if (listed3.length > LISTED) lines.push(`(${listed3.length - LISTED} more)`);
-    return { note: [`simplicity gate: ${listed3.length} new high-severity finding${listed3.length === 1 ? "" : "s"} against the base`, ...lines].join("\n") };
+    if (ordered2.length > LISTED) lines.push(`(${ordered2.length - LISTED} more)`);
+    const showing = ordered2.length < total ? `, showing ${ordered2.length}` : "";
+    return { note: [`simplicity gate: ${total} new finding${total === 1 ? "" : "s"} against the base (${high.length} high-severity)${showing}`, ...lines].join("\n") };
   }
   if (exitCode === 127 || exitCode === 126 || exitCode === null) return null;
   return { note: `simplicity gate: unknot failed (exit ${exitCode ?? "none"}) with output that is unreadable as its schema 1.x document` };
 }
-function unknotVersionProblem(output) {
-  if (output === null) return "unknot is not installed";
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(output);
-  if (!m) return null;
+function unknotVersionProblem(probe2) {
+  if (probe2.state === "missing") return "unknot is not installed";
+  if (probe2.state === "failed") return `unknot is installed but broken: --version exited ${probe2.exitCode === null ? "by signal" : `with exit ${probe2.exitCode}`}`;
+  const m = /(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?/.exec(probe2.output);
+  if (!m) return `cannot tell the version of unknot (--version printed ${JSON.stringify(oneLine5(probe2.output, 60))})`;
   const got = [Number(m[1]), Number(m[2]), Number(m[3])];
   const at = MIN_UNKNOT.findIndex((n2, i) => got[i] !== n2);
-  return at !== -1 && got[at] < MIN_UNKNOT[at] ? `unknot ${got.join(".")} is older than ${MIN_TEXT}, which ignores --baseline` : null;
+  const older = at !== -1 ? got[at] < MIN_UNKNOT[at] : m[4] !== void 0;
+  return older ? `unknot ${m[0]} is older than ${MIN_TEXT}, which ignores --baseline` : null;
+}
+function unknotProjectProblem(tracked) {
+  if (!tracked.some((f) => f.startsWith(".unknot/"))) return "the repository has no committed .unknot directory, so unknot diagnose fails with UK_NOT_INITIALIZED in every checkout";
+  if (!tracked.includes(".unknot/.gitignore")) return "the committed .unknot has no .unknot/.gitignore, so a check would write one into its checkout, and its state would show as a change";
+  return null;
 }
 async function probeUnknot(env, cwd) {
   try {
     const r = await execCapture(["unknot", "--version"], { cwd, env, timeoutMs: 15e3 });
-    return r.exitCode === 0 ? oneLine5(r.stdout) || "unknown" : null;
+    return r.exitCode === 0 ? { state: "ok", output: oneLine5(r.stdout) } : { state: "failed", exitCode: r.exitCode };
   } catch {
-    return null;
+    return { state: "missing" };
   }
 }
 function simplifyFindingsBlock(text2, allowedPaths, limit) {
@@ -40678,32 +40701,36 @@ function simplifyFindingsBlock(text2, allowedPaths, limit) {
   const inScope = compileGlobs(allowedPaths, { nocase: false });
   const keep = doc.findings.filter((f) => inScope(oneLine5(f.location, 300).replace(/:\d+$/, ""))).slice(0, limit);
   if (keep.length === 0) return null;
-  return keep.map((f, i) => {
+  const head = "From unknot's map of the base revision, built for this plan (not the working copy), in unknot's rank order:\n";
+  return head + keep.map((f, i) => {
     const fix = oneLine5(f.smallest_simplification, 240);
     return `${i + 1}. [${oneLine5(f.severity, 10) || "?"}] ${oneLine5(f.kind, 60)} ${oneLine5(f.location, 100) || "?"}: ${oneLine5(f.title)}${fix ? `
    smallest simplification: ${fix}` : ""}`;
   }).join("\n");
 }
-async function unknotFindings(repo, env, timeoutSeconds) {
+async function unknotFindings(dir, scope, env, timeoutSeconds) {
   try {
-    const r = await execCapture(["unknot", "diagnose", "--json", "--limit", "50"], { cwd: repo, env, timeoutMs: timeoutSeconds * 1e3 });
+    const opts = { cwd: dir, env, timeoutMs: timeoutSeconds * 1e3 };
+    if ((await execCapture(["unknot", "map"], opts)).exitCode !== 0) return null;
+    const r = await execCapture(["unknot", "diagnose", "--json", "--limit", "500", ...scope], opts);
     return r.exitCode === 0 ? r.stdout : null;
   } catch {
     return null;
   }
 }
-var SIMPLICITY_ID, isSimplicityCheck, MIN_UNKNOT, MIN_TEXT, LISTED, EVIDENCE_LISTED, UNKNOT_INSTALL, oneLine5, evidenceOf, isSimplifyGoal;
+var SIMPLICITY_ID, isSimplicityCheck, MIN_UNKNOT, MIN_TEXT, LISTED, EVIDENCE_LISTED, UNKNOT_INIT, UNKNOT_INSTALL, oneLine5, evidenceOf, isSimplifyGoal;
 var init_simplicity = __esm({
   "src/evidence/simplicity.ts"() {
     "use strict";
     init_exec();
     init_globs();
-    SIMPLICITY_ID = /^simplicity([-_.:].*)?$/i;
+    SIMPLICITY_ID = /^simplicity(-.*)?$/;
     isSimplicityCheck = (id2) => SIMPLICITY_ID.test(id2);
     MIN_UNKNOT = [0, 4, 0];
     MIN_TEXT = MIN_UNKNOT.join(".");
     LISTED = 8;
     EVIDENCE_LISTED = 3;
+    UNKNOT_INIT = "run /unknot:init in the repository and commit the .unknot directory, including .unknot/.gitignore";
     UNKNOT_INSTALL = "claude plugin install unknot@quintinbotes, then node <plugin directory>/bin/unknot cli install (the launcher), or update with claude plugin update unknot@quintinbotes";
     oneLine5 = (s, max = 200) => String(s ?? "").split("\n")[0].trim().slice(0, max);
     evidenceOf = (f) => (f.evidence ?? []).slice(0, EVIDENCE_LISTED).map((e) => `${oneLine5(e.source_ref, 80)} ${oneLine5(e.summary, 100)}`.trim()).filter(Boolean).join("; ");
@@ -42595,7 +42622,7 @@ function testChangesUnder(base, def) {
   return base.changedPaths.filter((p) => underCheck(p, def) && isTestPath(p, base.testLayout, base.diffs?.get(p)));
 }
 function isTestCommandCheck(def) {
-  return def !== void 0 && def.kind === "command" && checkCategory(def) === "test";
+  return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" && !isSimplicityCheck(def.id);
 }
 function isBrowserCheck(snapshot2, id2) {
   return snapshot2.config.checks[id2]?.kind === "playwright" || (snapshot2.config.ui?.journey_check_ids ?? []).includes(id2);
@@ -43139,6 +43166,7 @@ var init_fail_before = __esm({
     init_environment_failure();
     init_git2();
     init_baseline();
+    init_simplicity();
     init_runner();
     NEVER_ACCEPTED = /* @__PURE__ */ new Set(["environment", "error", "install"]);
     FAIL_BEFORE_DECISION_KIND = "verification.fail-before";
@@ -43994,14 +44022,14 @@ function finish(input, u, how, alternatives, reason) {
 function qualifiedModel(provider, input, alternatives) {
   const cfg = input.snapshot.config;
   const cap = input.capabilities[provider];
-  const configured2 = cfg.providers[provider]?.model ?? null;
+  const configured = cfg.providers[provider]?.model ?? null;
   const offered = (m) => !cap || cap.models.length === 0 || cap.models.includes(m);
-  if (configured2 !== null) {
-    if (!offered(configured2)) {
-      alternatives.push({ provider, model: configured2, reason: `providers.${provider}.model "${configured2}" is not offered by the adapter` });
+  if (configured !== null) {
+    if (!offered(configured)) {
+      alternatives.push({ provider, model: configured, reason: `providers.${provider}.model "${configured}" is not offered by the adapter` });
       return null;
     }
-    return { provider, model: configured2, basis: "configured", detail: `providers.${provider}.model names it` };
+    return { provider, model: configured, basis: "configured", detail: `providers.${provider}.model names it` };
   }
   const reg = input.registry;
   const surface = PROVIDER_SURFACE[provider];
@@ -45115,7 +45143,7 @@ var init_scheduler = __esm({
         if (!(this.perWorkerMb > 0)) throw new OrbitError("CONFIG_INVALID", "perWorkerMemoryMb must be positive");
       }
       capacity() {
-        const configured2 = this.config.scheduler.hard_limits.parallel_workers;
+        const configured = this.config.scheduler.hard_limits.parallel_workers;
         const notes = [];
         let cores = this.system.availableParallelism();
         if (!Number.isFinite(cores) || cores < 1) {
@@ -45130,8 +45158,8 @@ var init_scheduler = __esm({
         const cpu = Math.max(1, Math.floor(cores) - 1);
         const freeMb = Math.floor(freeBytes / (1024 * 1024));
         const memory = Math.max(0, Math.floor((freeMb - this.headroomMb) / this.perWorkerMb));
-        const parts = { parallel_workers: configured2, cpu, memory };
-        const raw = Math.min(configured2, cpu, memory);
+        const parts = { parallel_workers: configured, cpu, memory };
+        const raw = Math.min(configured, cpu, memory);
         const limitedBy = Object.entries(parts).filter(([, v]) => v === raw).map(([k]) => k);
         const slots = Math.max(1, raw);
         if (raw < 1) notes.push(`free memory (${freeMb} MB) is below headroom plus one worker estimate; limited to one worker so the run can progress`);
@@ -47455,10 +47483,10 @@ function routeSafetyReview(ctx) {
     const why = c.independent === chosen.independent ? `ranked below ${chosen.entry.modelId} (override, review.providers order, qualification basis, tier, then cost)` : "same provider as the implementer; an independent reviewer is preferred";
     rejected.push(alternative(c.entry, true, costOf2(c.entry), why));
   }
-  const configured2 = policy.providers[chosen.entry.provider]?.reasoning_effort ?? null;
+  const configured = policy.providers[chosen.entry.provider]?.reasoning_effort ?? null;
   const effortSteps = signals.criticalSecurity ? 1 : 0;
   let effort = chooseEffort(chosen.entry, ctx.profile.baseEffort, effortSteps);
-  if (configured2 && effort !== null && chosen.entry.capabilities.effortLevels.includes(configured2) && effortRank(configured2) > effortRank(effort)) effort = configured2;
+  if (configured && effort !== null && chosen.entry.capabilities.effortLevels.includes(configured) && effortRank(configured) > effortRank(effort)) effort = configured;
   if (signals.criticalSecurity) notes.push("critical security impact raises review effort");
   const cost = costOf2(chosen.entry);
   const decision = {
@@ -50236,8 +50264,8 @@ function raiseOutputCap(ctx, purpose, error) {
   if (!over) return null;
   if (raisedOutputCap(ctx, purpose) !== null) return null;
   const role = ctx.db.get("SELECT role FROM workers WHERE run_id = ? AND purpose = ? ORDER BY rowid DESC LIMIT 1", ctx.run.id, purpose)?.role ?? null;
-  const configured2 = role ? ctx.snapshot.config.routing.output_budgets?.[role] ?? DEFAULT_OUTPUT_BUDGETS[role] : void 0;
-  const previous = over.cap ?? configured2;
+  const configured = role ? ctx.snapshot.config.routing.output_budgets?.[role] ?? DEFAULT_OUTPUT_BUDGETS[role] : void 0;
+  const previous = over.cap ?? configured;
   if (previous === void 0 || previous >= OUTPUT_CAP_CEILING) return null;
   const next = Math.min(previous * 2, OUTPUT_CAP_CEILING);
   const base = unitOf(purpose);
@@ -50691,9 +50719,9 @@ function fallbackWorstCase(ctx, role) {
 }
 function sessionOutputTokens(ctx, entry, role) {
   if (entry.provider !== "claude") return null;
-  const configured2 = outputBudgets(ctx.snapshot.config)[role];
-  if (typeof configured2 !== "number" || !Number.isSafeInteger(configured2) || configured2 < 1) return null;
-  return Math.max(configured2, Math.min(configured2 * 2, OUTPUT_CAP_CEILING));
+  const configured = outputBudgets(ctx.snapshot.config)[role];
+  if (typeof configured !== "number" || !Number.isSafeInteger(configured) || configured < 1) return null;
+  return Math.max(configured, Math.min(configured * 2, OUTPUT_CAP_CEILING));
 }
 function dollars(v) {
   return v.toFixed(2);
@@ -50757,10 +50785,10 @@ function routeFor(ctx, purpose, workKind, signals) {
 }
 function unvalidatedChoice(ctx, signals) {
   const config = ctx.snapshot.config;
-  const configured2 = config.providers.claude?.model ?? null;
+  const configured = config.providers.claude?.model ?? null;
   const entries = ctx.deps.registry.list().filter((e) => e.provider === "claude" && e.surfaces.some((s) => s.surface === "claude-cli" && s.available !== false)).filter((e) => allowMatch(e, config.routing.allowed_models) === "explicit");
-  if (configured2) {
-    const hit = entries.find((e) => e.modelId === configured2 || e.eligibility.aliases.includes(configured2) || e.eligibility.cliAlias === configured2);
+  if (configured) {
+    const hit = entries.find((e) => e.modelId === configured || e.eligibility.aliases.includes(configured) || e.eligibility.cliAlias === configured);
     if (hit) return { model: hit.modelId, effort: config.providers.claude?.reasoning_effort ?? null };
   }
   const wanted = signals.repeatedFingerprints >= (config.scheduler.repeated_failure_threshold ?? 2) && (signals.evidence?.length ?? 0) > 0 ? 3 : 2;
@@ -53561,12 +53589,12 @@ function statesCheckRunsTests(statement, checkIds) {
   return null;
 }
 function unknownNamedChecks(statement, checkIds) {
-  const configured2 = new Set([...checkIds].map((id2) => id2.toLowerCase()));
+  const configured = new Set([...checkIds].map((id2) => id2.toLowerCase()));
   const unknown = [];
   const seen = /* @__PURE__ */ new Set();
   const add = (word) => {
     const lower2 = word.toLowerCase();
-    if (configured2.has(lower2) || NOT_CHECK_NAMES.has(lower2) || seen.has(lower2)) return;
+    if (configured.has(lower2) || NOT_CHECK_NAMES.has(lower2) || seen.has(lower2)) return;
     seen.add(lower2);
     unknown.push(word);
   };
@@ -58440,8 +58468,8 @@ function journeyStatus(test) {
 function escapeRegExp4(text2) {
   return text2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-function fallbackBrowser(checkoutDir, configured2) {
-  const name = configured2[0] ?? "chromium";
+function fallbackBrowser(checkoutDir, configured) {
+  const name = configured[0] ?? "chromium";
   try {
     const req = createRequire3(join52(checkoutDir, "package.json"));
     const dir = dirname27(req.resolve("playwright-core/package.json"));
@@ -66133,8 +66161,9 @@ function worktreeOf(ctx) {
 async function simplifyFindings(ctx, issue) {
   const gate = Object.values(ctx.snapshot.config.checks).find((c) => isSimplicityCheck(c.id));
   if (!gate || !isSimplifyGoal(issue)) return null;
-  const out = await unknotFindings(ctx.run.repoRoot, ctx.deps.hostEnv ?? process.env, gate.timeout_seconds);
-  return out === null ? null : simplifyFindingsBlock(out, ctx.snapshot.config.scope.allowed_paths, SIMPLIFY_FINDINGS_LIMIT);
+  const scope = ctx.snapshot.config.scope.allowed_paths;
+  const out = await unknotFindings(worktreeOf(ctx), scope, { ...ctx.deps.hostEnv ?? process.env, ...gate.env.PATH ? { PATH: gate.env.PATH } : {} }, gate.timeout_seconds);
+  return out === null ? null : simplifyFindingsBlock(out, scope, SIMPLIFY_FINDINGS_LIMIT);
 }
 function plannerPrompt(ctx, workerId, slice, findings) {
   const issue = readIssueGoal(ctx.runDir);
@@ -74837,29 +74866,33 @@ ${r.stderr}`.trim() };
 
 // src/cli/commands/doctor-simplicity.ts
 async function problemOf(input) {
-  const ids = configured(input.config);
-  if (ids.length === 0) return { ids, problem: null, version: null };
-  const version = await (input.probe ?? (() => probeUnknot(process.env, process.cwd())))();
-  return { ids, problem: unknotVersionProblem(version), version };
+  const ids = Object.keys(input.config.checks).filter(isSimplicityCheck);
+  if (ids.length === 0) return { ids, problem: null, fix: null, version: null };
+  const checkPath = ids.map((id2) => input.config.checks[id2].env.PATH).find((p) => typeof p === "string");
+  const env = checkPath ? { ...input.env, PATH: checkPath } : input.env;
+  const probe2 = await (input.probe ?? ((e) => probeUnknot(e, input.cwd)))(env);
+  const versionProblem = unknotVersionProblem(probe2);
+  if (versionProblem !== null) return { ids, problem: versionProblem, fix: UNKNOT_INSTALL, version: null };
+  const projectProblem = unknotProjectProblem(input.files);
+  if (projectProblem !== null) return { ids, problem: projectProblem, fix: UNKNOT_INIT, version: null };
+  return { ids, problem: null, fix: null, version: probe2.state === "ok" ? probe2.output : null };
 }
 async function simplicityCheck(input) {
-  const { ids, problem, version } = await problemOf(input);
+  const { ids, problem, fix, version } = await problemOf(input);
   if (ids.length === 0) return [];
   const id2 = "checks.simplicity";
   const area = "checks";
   if (problem === null) return [{ id: id2, area, status: "pass", summary: `unknot ${version} runs the simplicity check (${ids.join(", ")})`, details: [], missing: null, fix: null }];
-  return [{ id: id2, area, status: "fail", summary: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, details: [], missing: "unknot 0.4.0 or newer on PATH", fix: UNKNOT_INSTALL }];
+  return [{ id: id2, area, status: "fail", summary: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, details: [], missing: "unknot 0.4.0 or newer on the checks' PATH, in a repository with a committed .unknot", fix }];
 }
 async function simplicityRefusal(input) {
-  const { ids, problem } = await problemOf(input);
-  return problem === null ? null : { reason: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, fix: UNKNOT_INSTALL };
+  const { ids, problem, fix } = await problemOf(input);
+  return problem === null ? null : { reason: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, fix };
 }
-var configured;
 var init_doctor_simplicity = __esm({
   "src/cli/commands/doctor-simplicity.ts"() {
     "use strict";
     init_simplicity();
-    configured = (config) => Object.keys(config.checks).filter(isSimplicityCheck);
   }
 });
 
@@ -75759,7 +75792,7 @@ async function runDoctor(ctx, opts) {
     "checks",
     () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) })
   );
-  await safely("checks.simplicity", "checks", () => configLoaded ? simplicityCheck({ config, probe: () => probeUnknot(ctx.env, repo ?? ctx.cwd) }) : []);
+  await safely("checks.simplicity", "checks", () => configLoaded ? simplicityCheck({ config, env: ctx.env, cwd: repo ?? ctx.cwd, files: tracked }) : []);
   await safely("checks.dotnet-tests", "checks", () => repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []);
   await safely("workers.loopback", "isolation", () => repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []);
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
@@ -75835,7 +75868,6 @@ var init_doctor = __esm({
     init_layout();
     init_invocation();
     init_review_fix();
-    init_simplicity();
     init_doctor_plugins();
     init_doctor_policy_note();
     init_doctor_dotnet();
@@ -78499,7 +78531,6 @@ var init_admission = __esm({
     init_preflight();
     init_review_fix();
     init_doctor_simplicity();
-    init_simplicity();
     init_invocation();
     init_budget();
     ENVIRONMENT_CODES = /* @__PURE__ */ new Set(["AUTH_EXPIRED", "AUTH_MISSING", "PROVIDER_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "POLICY_DENIED"]);
@@ -78526,7 +78557,7 @@ var init_admission = __esm({
         cheap.push("the policy has a ui section or a playwright check, but @playwright/test is not installed in this repository");
         fixes.push("npm install -D @playwright/test, then npx playwright install (or remove the ui section and the playwright check from .orbit/config.yaml)");
       }
-      const simplicity = await simplicityRefusal({ config, probe: () => probeUnknot(ctx.env, repo) });
+      const simplicity = await simplicityRefusal({ config, env: ctx.env, cwd: repo, files: hasCommits ? (await git2(repo, ["ls-files", "-z", "--", ".unknot"])).split("\0").filter(Boolean) : [] });
       if (simplicity !== null) {
         cheap.push(simplicity.reason);
         fixes.push(simplicity.fix);
@@ -80196,9 +80227,9 @@ async function missingCheck(ctx, repo) {
   } catch {
     return null;
   }
-  const configured2 = new Set(Object.values(config.checks).map((c2) => c2.category ?? "test"));
+  const configured = new Set(Object.values(config.checks).map((c2) => c2.category ?? "test"));
   const { proposed } = await detectChecks({ repo, files: await trackedFiles(ctx, repo), pathEnv: ctx.env.PATH });
-  const c = proposed.find((p) => !configured2.has(p.category) && !(p.id in config.checks));
+  const c = proposed.find((p) => !configured.has(p.category) && !(p.id in config.checks));
   return c ? { check: { id: c.id, command: c.command, category: c.category, timeout_seconds: c.timeout_seconds }, baseBranch: config.repository.base_branch } : null;
 }
 function question(p, draft, issueRepo) {

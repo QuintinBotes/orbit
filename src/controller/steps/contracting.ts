@@ -135,8 +135,9 @@ function worktreeOf(ctx: RunContext): string {
 async function simplifyFindings(ctx: RunContext, issue: IssueGoal | null): Promise<string | null> {
   const gate = Object.values(ctx.snapshot.config.checks).find((c) => isSimplicityCheck(c.id));
   if (!gate || !isSimplifyGoal(issue)) return null;
-  const out = await unknotFindings(ctx.run.repoRoot, ctx.deps.hostEnv ?? process.env, gate.timeout_seconds);
-  return out === null ? null : simplifyFindingsBlock(out, ctx.snapshot.config.scope.allowed_paths, SIMPLIFY_FINDINGS_LIMIT);
+  const scope = ctx.snapshot.config.scope.allowed_paths;
+  const out = await unknotFindings(worktreeOf(ctx), scope, { ...(ctx.deps.hostEnv ?? process.env), ...(gate.env.PATH ? { PATH: gate.env.PATH } : {}) }, gate.timeout_seconds);
+  return out === null ? null : simplifyFindingsBlock(out, scope, SIMPLIFY_FINDINGS_LIMIT);
 }
 
 const SIMPLIFY_FINDINGS_LIMIT = 10;

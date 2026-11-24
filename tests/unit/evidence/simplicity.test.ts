@@ -1,7 +1,9 @@
 // Issue #232: the simplicity gate. A check whose command is `unknot diagnose --baseline <base> --fail-on new:high --json`
 // fails a candidate that adds a high-severity finding, names each finding, and never fails on what the base already had.
 import { describe, expect, it } from 'vitest';
-import { isSimplicityCheck, judgeSimplicity, MIN_UNKNOT, simplifyFindingsBlock, unknotVersionProblem } from '../../../src/evidence/simplicity.ts';
+import { isSimplicityCheck, judgeSimplicity, MIN_UNKNOT, simplifyFindingsBlock, unknotProjectProblem, unknotVersionProblem, type UnknotProbe } from '../../../src/evidence/simplicity.ts';
+import { isTestCommandCheck } from '../../../src/evidence/fail-before.ts';
+import { defaultCheck } from '../../../src/policy/config.ts';
 
 const finding = (over: Record<string, unknown> = {}) => ({
   kind: 'module.dependency-cycle',
@@ -21,15 +23,16 @@ const run = (body: string, exitCode: number | null, status: 'PASSED' | 'FAILED' 
 
 describe('isSimplicityCheck', () => {
   it('reads the check id', () => {
-    expect(['simplicity', 'simplicity-gate', 'Simplicity'].map(isSimplicityCheck)).toEqual([true, true, true]);
-    expect(['lint', 'simplicity2', 'not-simplicity'].map(isSimplicityCheck)).toEqual([false, false, false]);
+    expect(['simplicity', 'simplicity-gate', 'simplicity-a-b'].map(isSimplicityCheck)).toEqual([true, true, true]);
+    // Exactly `simplicity` or `simplicity-...`, case-sensitive: other names keep being ordinary checks.
+    expect(['lint', 'simplicity2', 'not-simplicity', 'Simplicity', 'Simplicity_lint', 'simplicity_lint', 'simplicity.x', 'simplicity:y'].map(isSimplicityCheck)).toEqual(Array(8).fill(false));
   });
 });
 
 describe('judgeSimplicity', () => {
   it('scenario 1: exit 1 names each new finding with its kind, location and evidence', () => {
     const v = run(NOISE + doc([finding()]), 1);
-    expect(v?.note).toContain('simplicity gate: 1 new high-severity finding');
+    expect(v?.note).toContain('simplicity gate: 1 new finding against the base (1 high-severity)');
     expect(v?.note).toContain('- [high] module.dependency-cycle src/a.ts:1: 2 modules form an import cycle');
     expect(v?.note).toContain('src/a.ts:1 imports src/b.ts');
     expect(v?.note).toContain('src/b.ts:1 imports src/b.ts');
@@ -43,6 +46,23 @@ describe('judgeSimplicity', () => {
     const v = run(doc(Array.from({ length: 12 }, (_, i) => finding({ location: `src/m${i}.ts:1` }))), 1);
     expect(v?.note.split('\n').length).toBeLessThanOrEqual(10);
     expect(v?.note).toContain('(4 more)');
+  });
+
+  it('counts from baseline.new, says how many it shows, and lists lower severities after the high ones', () => {
+    const low = finding({ severity: 'low', kind: 'local.size', location: 'src/big.ts:1', title: 'big' });
+    const d = JSON.parse(doc([low, finding()])) as { baseline: { new: number } };
+    d.baseline.new = 40;
+    const v = run(JSON.stringify(d), 1);
+    const lines = v!.note.split('\n');
+    expect(lines[0]).toBe('simplicity gate: 40 new findings against the base (1 high-severity), showing 2');
+    expect(lines[1]).toContain('[high] module.dependency-cycle');
+    expect(lines[2]).toContain('[low] local.size');
+  });
+
+  it('parses the balanced document, so stderr after it does not turn a pass into a failure', () => {
+    expect(run(`${NOISE}${doc([])}\n{"level":"warn","msg":"} trailing"}\nbye }\n`, 0)).toBeNull();
+    const v = run(`${doc([finding()])}\n12:31PM INF done }\n`, 1);
+    expect(v?.note).toContain('module.dependency-cycle');
   });
 
   it('exit 5: the base could not be mapped, said as that and not as a finding', () => {
@@ -70,13 +90,42 @@ describe('judgeSimplicity', () => {
 });
 
 describe('unknotVersionProblem', () => {
+  const ok = (output: string): UnknotProbe => ({ state: 'ok', output });
   it('accepts 0.4.0 and newer, names an older one and a missing one', () => {
     expect(MIN_UNKNOT).toEqual([0, 4, 0]);
-    expect(unknotVersionProblem('0.4.0\n')).toBeNull();
-    expect(unknotVersionProblem('unknot 1.2.3')).toBeNull();
-    expect(unknotVersionProblem('0.3.3')).toContain('older than 0.4.0');
-    expect(unknotVersionProblem(null)).toContain('not installed');
-    expect(unknotVersionProblem('weird')).toBeNull();
+    expect(unknotVersionProblem(ok('0.4.0\n'))).toBeNull();
+    expect(unknotVersionProblem(ok('unknot 1.2.3'))).toBeNull();
+    expect(unknotVersionProblem(ok('0.3.3'))).toContain('older than 0.4.0');
+    expect(unknotVersionProblem({ state: 'missing' })).toContain('not installed');
+  });
+  it('a prerelease of 0.4.0 is older than 0.4.0', () => {
+    expect(unknotVersionProblem(ok('0.4.0-beta.1'))).toContain('older than 0.4.0');
+    expect(unknotVersionProblem(ok('unknot 0.4.1-rc.2'))).toBeNull();
+  });
+  it('output with no version fails as unreadable, never passes', () => {
+    expect(unknotVersionProblem(ok('weird'))).toContain('cannot tell the version');
+    expect(unknotVersionProblem(ok(''))).toContain('cannot tell the version');
+  });
+  it('a --version that exits non-zero says the install is broken, not missing', () => {
+    const p = unknotVersionProblem({ state: 'failed', exitCode: 3 });
+    expect(p).toContain('broken');
+    expect(p).toContain('exit 3');
+    expect(p).not.toContain('not installed');
+  });
+});
+
+describe('unknotProjectProblem', () => {
+  it('needs a committed unknot directory with its own .gitignore, so a check writes nothing that shows as a change', () => {
+    expect(unknotProjectProblem(['src/a.ts'])).toContain('.unknot');
+    expect(unknotProjectProblem(['.unknot/config.yaml'])).toContain('.unknot/.gitignore');
+    expect(unknotProjectProblem(['.unknot/.gitignore', '.unknot/config.yaml'])).toBeNull();
+  });
+});
+
+describe('fail-before never probes the gate', () => {
+  it('a check named simplicity is not a test command check, whatever its category (a probe has no base to compare)', () => {
+    expect(isTestCommandCheck({ ...defaultCheck('simplicity'), category: 'test' })).toBe(false);
+    expect(isTestCommandCheck({ ...defaultCheck('unit'), category: 'test' })).toBe(true);
   });
 });
 
