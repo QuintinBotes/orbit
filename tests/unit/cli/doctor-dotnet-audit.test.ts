@@ -70,6 +70,17 @@ describe('dotnetAuditCheck', () => {
     expect(`${c!.summary} ${c!.fix}`).not.toMatch(/[\u2013\u2014]/);
   });
 
+  // CodeQL js/incomplete-multi-character-sanitization: comments are removed in one pass, so a setting after a `<!--`
+  // that a removed comment joined is still read, as before.
+  it('reads a setting after a <!-- that removing a comment joined, and none in a whole comment', () => {
+    const cfg = config([BUILD], RESTORE);
+    const joined = props('<PropertyGroup><<!-- x -->!-- <NuGetAudit>true</NuGetAudit> --></PropertyGroup>');
+    const on = dotnetAuditCheck(input({ 'Directory.Build.props': AUDIT_ON, 'acme.csproj': STRICT }, cfg));
+    expect(on).not.toEqual([]);
+    expect(dotnetAuditCheck(input({ 'Directory.Build.props': joined, 'acme.csproj': STRICT }, cfg))).toEqual(on);
+    expect(dotnetAuditCheck(input({ 'Directory.Build.props': props('<PropertyGroup><!-- <NuGetAudit>true</NuGetAudit> --></PropertyGroup>'), 'acme.csproj': STRICT }, cfg))).toEqual([]);
+  });
+
   it('reads warnings as errors from MSBuild properties, a check\'s command and a check\'s env', () => {
     for (const [files, check, detail] of [
       [{ 'Directory.Build.targets': props('<PropertyGroup><MSBuildTreatWarningsAsErrors>True</MSBuildTreatWarningsAsErrors></PropertyGroup>') }, BUILD, 'Directory.Build.targets: MSBuildTreatWarningsAsErrors True'],

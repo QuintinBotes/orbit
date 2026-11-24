@@ -190,7 +190,7 @@ describe('worker toolchain profiles', () => {
       const layouts = vi.mocked(toolchainLayout).mock.calls.map(([input]) => input).filter((input) => input.mode === 'worker');
       expect(layouts).toHaveLength(1);
       expect([...layouts[0]!.networkHosts].sort(), JSON.stringify(extra)).toEqual([...spec.sandbox.allowedHosts].sort());
-      expect(spec.sandbox.allowedHosts.includes('api.nuget.org'), JSON.stringify(extra)).toBe(extra.length > 0);
+      expect(spec.sandbox.allowedHosts.some((host) => host === 'api.nuget.org'), JSON.stringify(extra)).toBe(extra.length > 0);
       expect(spec.env.NuGetAudit, JSON.stringify(extra)).toBe(extra.length > 0 && process.platform !== 'darwin' ? undefined : 'false');
     }
   });
