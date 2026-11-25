@@ -1,12 +1,10 @@
 /**
  * What a default-mode (no review.mode) lab run leaves behind, normalised so two runs of the same code agree: the decision
- * kinds and summaries, the reviewer sessions, the state path and the final report, plus the hash of the default config.
- * tests/acceptance/review-voice-default.fixture.json holds the capture of origin/next before issue #231.
+ * kinds and summaries, the reviews, the reviewer sessions, the state path and the final report.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { hashObject } from '../../../src/core/hash.ts';
-import { parseConfig } from '../../../src/policy/config.ts';
+import { listReviews } from '../../../src/review/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { listWorkers } from '../../../src/storage/workers.ts';
 import type { Lab } from './lab.ts';
@@ -28,9 +26,9 @@ export function normalize(text: string): string {
 export function captureDefaultRun(l: Lab, runId: string): unknown {
   const db = l.db();
   return {
-    default_config_hash: hashObject(parseConfig('version: 1\n')),
     state_path: transitions(db, runId),
     decisions: listDecisions(db, runId, {}).map((d) => ({ kind: d.kind, summary: normalize(d.summary) })).sort((a, b) => (a.kind + a.summary).localeCompare(b.kind + b.summary)),
+    reviews: listReviews(db, runId, { includeInvalidated: true }).map((r) => ({ provider: r.provider, model: r.model, verdict: r.verdict })).sort((a, b) => (a.provider + a.model).localeCompare(b.provider + b.model)),
     reviewers: listWorkers(db, { runId, role: 'reviewer' }).map((w) => ({ provider: w.provider, purpose: normalize(w.purpose ?? '') })).sort((a, b) => a.purpose.localeCompare(b.purpose)),
     report: normalize(readFileSync(join(l.runDir(runId), 'final.md'), 'utf8')),
   };
