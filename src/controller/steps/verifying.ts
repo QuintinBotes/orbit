@@ -46,7 +46,7 @@ import { settleRouteOutcome } from '../route-outcome.ts';
 import { failBeforeStale, routeFailBefore } from '../fail-before.ts';
 import { storedPlan } from './contracting.ts';
 import { amendBaseline } from './baseline-amendment.ts';
-import { assertContract, decide, finishRun, move, note, progress, safePoint, type StepResult } from './common.ts';
+import { assertContract, decide, finishRun, move, note, partnerImplemented, progress, safePoint, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { recordGate } from './preflight.ts';
 
@@ -75,7 +75,7 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
   // 1. Implementation scope: the gate the hooks only assist.
   let scope = cand.scope ?? (await inspectScope({ repoRoot: ctx.run.repoRoot, baseRev: ctx.run.baseRevision!, candidateRev: cand.commitSha, snapshot: ctx.snapshot, contractAllowedPaths: contract.allowed_paths }));
   if (!cand.scope) setCandidateScope(ctx.db, cand.id, scope);
-  let scopeGate = implementationScopeGate(scope, ctx.snapshot);
+  let scopeGate = implementationScopeGate(scope, ctx.snapshot, { partner: partnerImplemented(ctx) });
   const authorizedOnceNotes: string[] = [];
   if (!scopeGate.passed && ctx.run.mode === 'supervised') {
     // Supervised mode asks a person before refusing a dependency change the policy does not authorize (spec section 5).
@@ -84,7 +84,7 @@ export async function verifyingStep(ctx: RunContext): Promise<StepResult> {
     if (asked.kind === 'granted') {
       scope = asked.scope;
       authorizedOnceNotes.push(...asked.notes);
-      scopeGate = implementationScopeGate(scope, ctx.snapshot);
+      scopeGate = implementationScopeGate(scope, ctx.snapshot, { partner: partnerImplemented(ctx) });
       scopeGate.notes.push(...asked.notes);
     }
   }
@@ -151,7 +151,7 @@ async function askForAuthorization(ctx: RunContext, cand: CandidateRecord, scope
   if (details.policyViolation) return { kind: 'not-applicable' };
   const ops = deniedDependencyOperations(scope, ctx.snapshot);
   if (ops.length === 0) return { kind: 'not-applicable' };
-  const remaining = implementationScopeGate(scopeWithGrants(scope, ops), ctx.snapshot);
+  const remaining = implementationScopeGate(scopeWithGrants(scope, ops), ctx.snapshot, { partner: partnerImplemented(ctx) });
   if (!remaining.passed) return { kind: 'not-applicable' };
   const pending: string[] = [];
   const notes: string[] = [];
@@ -282,7 +282,7 @@ function lastValidCandidate(ctx: RunContext, cand: CandidateRecord): CandidateRe
  * and the next attempt redoes the work from there with a brief that says so.
  */
 async function violatingCandidate(ctx: RunContext, cand: CandidateRecord): Promise<StepResult> {
-  const reasons = cand.scope ? implementationScopeGate(cand.scope, ctx.snapshot).reasons : [];
+  const reasons = cand.scope ? implementationScopeGate(cand.scope, ctx.snapshot, { partner: partnerImplemented(ctx) }).reasons : [];
   const deny = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'decision.recorded' AND json_extract(data_json, '$.decision_id') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, `dec-${ctx.run.id}-deny-${cand.id}`);
   const resumed = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = 'run.resumed' AND id > ? ORDER BY id DESC LIMIT 1", ctx.run.id, deny?.id ?? 0);
   const attemptSince = resumed ? ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'implementation.attempt' AND id > ?", ctx.run.id, resumed.id) : undefined;

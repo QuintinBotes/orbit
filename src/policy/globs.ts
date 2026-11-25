@@ -28,6 +28,22 @@ export function compileGlobs(globs: readonly string[], opts: { nocase: boolean }
   };
 }
 
+/**
+ * Whether one of `globs` names `relPath` itself rather than sweeping it in: the glob matches the path and is a literal
+ * path, ends in the file's own name (`**\/AGENTS.md`), or starts with a literal directory (`.claude/skills/x/**`). A
+ * catch-all (`**`, `*`, `**\/*`, `.`) names nothing. Case-insensitive, like the protections.
+ */
+export function globsName(globs: readonly string[], relPath: string): boolean {
+  const p = stripDotSlash(relPath);
+  const file = p.slice(p.lastIndexOf('/') + 1).toLowerCase();
+  return globs.some((g) => {
+    if (!picomatch(g, { dot: true, nocase: true, windows: false })(p)) return false;
+    const last = g.slice(g.lastIndexOf('/') + 1).toLowerCase();
+    const scan = picomatch.scan(g);
+    return !scan.isGlob || scan.base !== '' || last === file;
+  });
+}
+
 /** The literal leading directory of each glob (`.git/**` -> `.git`); empty when the glob starts with a wildcard. */
 export function globBases(globs: readonly string[]): string[] {
   const out: string[] = [];

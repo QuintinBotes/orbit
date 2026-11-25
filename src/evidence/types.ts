@@ -69,6 +69,10 @@ export interface ScopeReport {
   /** Signals that tests or oracles were weakened (removed assertions, .skip, raised timeouts, snapshot edits). */
   weakening_signals: { path: string; signal: string; detail: string }[];
   visual_baseline_changes: string[];
+  /** Only when an instruction file changed (INSTRUCTION_FILE_GLOBS, issue #235): the changed paths, sorted. */
+  instruction_files_changed?: string[];
+  /** Those of them that no entry of the goal's scope names (a catch-all names nothing): held when a partner changed them. */
+  instruction_files_unnamed?: string[];
 }
 
 export type CriterionStatus = 'supported' | 'unsupported' | 'unverified' | 'blocked';

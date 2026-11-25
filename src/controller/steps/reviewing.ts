@@ -51,7 +51,7 @@ import type { Trigger } from '../../inquisition/types.ts';
 import { machineAdmission, runWorktreeRoot, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions, independentReviewGate } from '../gates.ts';
 import { settleRouteOutcome } from '../route-outcome.ts';
-import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, MOVED, move, note, policySummary, progress, repoInstructions, safePoint, WAIT, type StepResult } from './common.ts';
+import { assertContract, blockOnAuth, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, MOVED, move, note, partnerImplemented, policySummary, progress, repoInstructions, safePoint, WAIT, type StepResult } from './common.ts';
 import { compileGlobs } from '../../policy/globs.ts';
 import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/scheduler.ts';
 import type { WorkUnit } from '../../scheduling/types.ts';
@@ -65,6 +65,16 @@ import { attemptCandidateId, briefPath, currentAttempt, type StoredBrief } from 
 import { handledTriggerKeys } from './verifying.ts';
 
 export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
+  try {
+    return await reviewingStepInner(ctx);
+  } catch (err) {
+    // A partner's instruction-file diff that cannot be shown to the reviewer whole blocks the run (#235).
+    if (isOrbitError(err, 'POLICY_DENIED') && err.details?.instructionFiles) return finishRun(ctx, 'BLOCKED', err.message);
+    throw err;
+  }
+}
+
+async function reviewingStepInner(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const contract = assertContract(ctx);
@@ -1814,7 +1824,7 @@ async function reviewerSelection(ctx: RunContext, cand: CandidateRecord): Promis
 /** Without a mandatory independent provider, the policy's same-provider rules still decide who reviews. */
 function fallbackSelection(ctx: RunContext, env: Awaited<ReturnType<typeof checkEnvironment>>, failed: Record<string, string>): ReviewerSelection {
   const credentials: Record<string, CredentialStatus | undefined> = Object.fromEntries(env.credentials.map((c) => [c.provider, c.status ?? undefined]));
-  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex', registry: ctx.deps.registry, failed });
+  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex' || partnerInstructionFiles(ctx, ctx.candidate).length > 0, requireIndependent: partnerInstructionFiles(ctx, ctx.candidate).length > 0, registry: ctx.deps.registry, failed });
 }
 
 /**
@@ -1827,6 +1837,15 @@ function runImplementers(ctx: RunContext): string[] {
 
 function lastImplementerModel(ctx: RunContext): string | null {
   return listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).at(-1)?.model ?? null;
+}
+
+/**
+ * The instruction files a partner changed in this candidate (issue #235). Any that reach review are ones the goal's scope
+ * names (an unnamed one is held at VERIFYING), and they always get the cross-model pass, as a risky change does, with their
+ * diffs first in the packet.
+ */
+function partnerInstructionFiles(ctx: RunContext, cand: Pick<CandidateRecord, 'scope'> | null | undefined): string[] {
+  return partnerImplemented(ctx) ? (cand?.scope?.instruction_files_changed ?? []) : [];
 }
 
 /** The packet is built once per candidate and written next to the run; the prompt carries it as untrusted data. */
@@ -1843,6 +1862,7 @@ async function preparePacket(ctx: RunContext, cand: CandidateRecord, reviewDir: 
     ledger: listLedger(ctx.db, ctx.run.id).map((l) => ({ id: l.id, claim: l.claim, source: l.source, confidence: l.confidence, status: l.status, ...(l.consequence ? { consequence_if_wrong: l.consequence } : {}), reversibility: l.reversibility, ...(l.experiment ? { validation_experiment: l.experiment } : {}) })),
     questions: listQuestions(ctx.db, ctx.run.id, { status: 'open' }).map((q) => q.question),
     provider,
+    instructionFiles: partnerInstructionFiles(ctx, cand),
     // A reviewer sees the probe only under required (ADR 0014 section 1): under advisory and off it is the person's.
     ...(failBeforePolicy(ctx.snapshot.config).mode === 'required' ? { failBeforeLogs: failBeforeLogs(ctx, ev.report) } : {}),
     repoMapSlice: await goalSlice(ctx.run.repoRoot, cand.commitSha, contract.original_goal, ctx.snapshot.config),

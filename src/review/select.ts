@@ -58,6 +58,8 @@ export interface SelectReviewerInput {
   implementers?: readonly string[];
   /** The change is risky (the planning assessment classed it complex): a cross-model pass plus a fresh same-family pass (issue #176). */
   risky?: boolean;
+  /** Block when no independent reviewer is usable, whatever review.when_unavailable says (a partner changed an instruction file, #235). */
+  requireIndependent?: boolean;
 }
 
 /** A reviewer that used every regeneration on a candidate without a usable review (#116). */
@@ -157,7 +159,8 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
   const review = config.review;
   const impl = input.implementer.provider;
   const alternatives: RejectedReviewer[] = [];
-  const fallback = reviewFallback(review);
+  // A partner's instruction-file edit is cleared only by an independent review, whatever the policy's fallback says (#235).
+  const fallback = input.requireIndependent ? 'block' : reviewFallback(review);
   const order = reviewProviderOrder(review);
   const preferred = order[0] ?? null;
 
@@ -234,7 +237,7 @@ export function selectReviewer(input: SelectReviewerInput): ReviewerSelection {
     return {
       decision: 'BLOCK',
       code,
-      reason: `independent review is required (review.when_unavailable: block) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
+      reason: `independent review is required (${input.requireIndependent ? 'a partner changed instruction files' : 'review.when_unavailable: block'}) and no independent reviewer is usable: ${detail}. Review is not being substituted by "${impl}" or any equivalent label; verification is incomplete until an independent provider is available.`,
       alternatives,
     };
   }
