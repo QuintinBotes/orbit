@@ -19,7 +19,7 @@ import type { ScopeReport } from '../evidence/types.ts';
 import type { PolicySnapshot } from './types.ts';
 import { buildRepoMap } from '../repomap/map.ts';
 import { BUILTIN_PROTECTED_PATHS, INSTRUCTION_FILE_GLOBS } from './builtin.ts';
-import { compileGlobs } from './globs.ts';
+import { compileGlobs, globsName } from './globs.ts';
 import { gitTreeReader, loadTestLayout } from './test-files.ts';
 import { detectWeakening, type WeakeningInput } from './weakening.ts';
 
@@ -80,7 +80,10 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const isBaseline = compileGlobs(baselineGlobs, { nocase: false });
 
   const isInstruction = compileGlobs(INSTRUCTION_FILE_GLOBS, { nocase: true });
-  const instructionFiles = changes.map((c) => c.path).filter(isInstruction).sort();
+  // Files the protections already cover are handled as forbidden, not twice.
+  const instructionFiles = changes.map((c) => c.path).filter((p) => isInstruction(p) && !isProtected(p)).sort();
+  const goalGlobs = input.contractAllowedPaths ?? config.scope.allowed_paths;
+  const instructionUnnamed = instructionFiles.filter((p) => !globsName(goalGlobs, p));
   const forbidden: string[] = [];
   const outOfScope: string[] = [];
   const visual: string[] = [];
@@ -146,6 +149,7 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
     weakening_signals: weakening,
     visual_baseline_changes: visual,
     ...(instructionFiles.length > 0 ? { instruction_files_changed: instructionFiles } : {}),
+    ...(instructionUnnamed.length > 0 ? { instruction_files_unnamed: instructionUnnamed } : {}),
   };
 }
 

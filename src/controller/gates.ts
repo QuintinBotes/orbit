@@ -300,8 +300,8 @@ export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnap
   const deps = snapshot.config.dependencies;
   if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(', ')}`);
   if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(', ')}`);
-  const held = opts.partner ? (scope.instruction_files_changed ?? []).filter((p) => scope.out_of_scope_paths_changed.includes(p)) : [];
-  if (held.length > 0) reasons.push(`a partner changed instruction files the goal's scope does not name: ${held.join(', ')}; held for review`);
+  const held = opts.partner ? (scope.instruction_files_unnamed ?? []) : [];
+  if (held.length > 0) reasons.push(`a partner changed instruction files the goal's scope does not name (a catch-all does not): ${held.join(', ')}; held for review`);
   const policyViolation = reasons.length > 0;
   const add = (why: string) => {
     reasons.push(why);

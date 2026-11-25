@@ -286,9 +286,15 @@ export async function buildReviewPacket(input: ReviewPacketInput): Promise<Revie
   for (const p of input.evidenceReport.scope.out_of_scope_paths_changed) hot.add(p);
   for (const p of input.evidenceReport.scope.forbidden_paths_changed) hot.add(p);
 
+  const priority = new Set(input.instructionFiles ?? []);
+  // A partner's instruction file reaches the reviewer whole or not at all (#235): the run blocks instead of a clipped or missing diff.
+  const cannotShow = (path: string, why: string): OrbitError => new OrbitError('POLICY_DENIED', `a partner changed the instruction file ${path} and its diff cannot be shown to the reviewer whole (${why}); held for review`, { instructionFiles: [path] });
   const candidates: Changed[] = [];
   for (const f of all) {
-    if (isCredential(f.path)) {
+    if (priority.has(f.path)) {
+      if (isCredential(f.path)) throw cannotShow(f.path, 'it matches a built-in credential path, whose contents are never sent to a provider');
+      candidates.push(f);
+    } else if (isCredential(f.path)) {
       excluded.push({ path: f.path, part: 'both', reason: 'credential-path', detail: 'matches a built-in credential path; contents are never sent to a provider' });
     } else if (f.binary) {
       excluded.push({ path: f.path, part: 'both', reason: 'binary', detail: `binary file, ${f.status === 'A' ? 'added' : f.status === 'D' ? 'deleted' : 'modified'}` });
@@ -298,7 +304,6 @@ export async function buildReviewPacket(input: ReviewPacketInput): Promise<Revie
   }
   // Tests rank just below the code they test, by the one test-file predicate with the candidate's layout (ADR 0011).
   const testLayout = await loadTestLayout(gitTreeReader((args) => git(input.repoRoot, [...args])), baseSha, commitSha, all.map((f) => f.path));
-  const priority = new Set(input.instructionFiles ?? []);
   const score = (f: Changed): number => {
     let s = 0;
     if (priority.has(f.path)) s += 1000;
@@ -322,13 +327,19 @@ export async function buildReviewPacket(input: ReviewPacketInput): Promise<Revie
   let diffUsed = 0;
   for (const f of considered) {
     const room = diffBudget - diffUsed;
+    if (room < 600 && priority.has(f.path)) throw cannotShow(f.path, 'the packet has no room left for it');
     if (room < 600) {
       excluded.push({ path: f.path, part: 'diff', reason: 'size-budget', detail: `diff budget exhausted, +${f.added} -${f.deleted}` });
       continue;
     }
-    const raw = await git(input.repoRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--text', '-U3', baseSha, commitSha, '--', f.path], 4 * 1024 * 1024);
+    const raw = await git(input.repoRoot, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--text', '-U3', baseSha, commitSha, '--', f.path], 4 * 1024 * 1024).catch((err: unknown) => {
+      if (priority.has(f.path)) throw cannotShow(f.path, `git could not render it: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    });
     const body = red(raw);
-    const cap = Math.min(limits.maxFileDiffBytes, room - entryOverhead(f.path));
+    // An instruction file is exempt from the per-file cap, and refused when it does not fit the diff budget whole.
+    if (priority.has(f.path) && byteLen(body) > room - entryOverhead(f.path)) throw cannotShow(f.path, `its diff is ${byteLen(body)} bytes and the packet's diff budget has ${Math.max(0, room - entryOverhead(f.path))} left`);
+    const cap = priority.has(f.path) ? room - entryOverhead(f.path) : Math.min(limits.maxFileDiffBytes, room - entryOverhead(f.path));
     let text = body;
     if (byteLen(body) > cap) {
       text = `${clipBytes(body, cap - 120)}\n[orbit: diff truncated at ${cap - 120} bytes]\n`;

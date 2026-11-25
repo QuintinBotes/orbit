@@ -331,23 +331,34 @@ describe('behaviour and UI gates', () => {
 });
 
 describe('implementationScopeGate: instruction files (#235)', () => {
-  const instr = (over: Partial<ScopeReport>) => scope({ instruction_files_changed: ['AGENTS.md'], ...over });
+  const unnamed = (...paths: string[]) => scope({ instruction_files_changed: paths, instruction_files_unnamed: paths });
 
   it('holds a partner change to an instruction file the goal does not name, as a policy violation naming the file', () => {
-    const g = implementationScopeGate(instr({ out_of_scope_paths_changed: ['AGENTS.md'] }), snap(), { partner: true });
+    const g = implementationScopeGate(unnamed('AGENTS.md'), snap(), { partner: true });
     expect(g.passed).toBe(false);
     expect(g.details.policyViolation).toBe(true);
     expect(g.reasons.join(' ')).toMatch(/instruction files? .*AGENTS\.md.*held for review/);
   });
 
+  it('holds a nested file, a deletion and a case variant the same way (the report lists them as unnamed)', () => {
+    const g = implementationScopeGate(unnamed('subdir/AGENTS.md', 'AGENTS.md', 'sub/agents.md'), snap(), { partner: true });
+    expect(g.details.policyViolation).toBe(true);
+    expect(g.reasons.join(' ')).toContain('subdir/AGENTS.md, AGENTS.md, sub/agents.md');
+  });
+
+  it('holds on the report alone, not on who made the candidate: a later Claude repair that keeps the file is still held', () => {
+    // The gate sees only the tree's diff against the base and whether a partner worked in the run.
+    expect(implementationScopeGate(unnamed('AGENTS.md'), snap(), { partner: true }).details.policyViolation).toBe(true);
+  });
+
   it('lets a partner change to an instruction file the goal names through', () => {
-    const g = implementationScopeGate(instr({}), snap(), { partner: true });
+    const g = implementationScopeGate(scope({ instruction_files_changed: ['AGENTS.md'] }), snap(), { partner: true });
     expect(g.passed).toBe(true);
     expect(g.details.policyViolation).toBe(false);
   });
 
   it('controls: a Claude change, or one without the partner option, is judged as before', () => {
-    const s = instr({ out_of_scope_paths_changed: ['AGENTS.md'] });
+    const s = scope({ instruction_files_changed: ['AGENTS.md'], instruction_files_unnamed: ['AGENTS.md'], out_of_scope_paths_changed: ['AGENTS.md'] });
     for (const g of [implementationScopeGate(s, snap()), implementationScopeGate(s, snap(), { partner: false })]) {
       expect(g.details).toEqual({ policyViolation: false, repairable: [expect.stringMatching(/outside the authorized scope/)] });
     }

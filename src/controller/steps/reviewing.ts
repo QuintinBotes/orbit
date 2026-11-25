@@ -64,6 +64,16 @@ import { attemptCandidateId, briefPath, currentAttempt, type StoredBrief } from 
 import { handledTriggerKeys } from './verifying.ts';
 
 export async function reviewingStep(ctx: RunContext): Promise<StepResult> {
+  try {
+    return await reviewingStepInner(ctx);
+  } catch (err) {
+    // A partner's instruction-file diff that cannot be shown to the reviewer whole blocks the run (#235).
+    if (isOrbitError(err, 'POLICY_DENIED') && err.details?.instructionFiles) return finishRun(ctx, 'BLOCKED', err.message);
+    throw err;
+  }
+}
+
+async function reviewingStepInner(ctx: RunContext): Promise<StepResult> {
   const stop = await safePoint(ctx);
   if (stop) return stop;
   const contract = assertContract(ctx);
@@ -1756,7 +1766,7 @@ async function reviewerSelection(ctx: RunContext, cand: CandidateRecord): Promis
 /** Without a mandatory independent provider, the policy's same-provider rules still decide who reviews. */
 function fallbackSelection(ctx: RunContext, env: Awaited<ReturnType<typeof checkEnvironment>>, failed: Record<string, string>): ReviewerSelection {
   const credentials: Record<string, CredentialStatus | undefined> = Object.fromEntries(env.credentials.map((c) => [c.provider, c.status ?? undefined]));
-  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex' || partnerInstructionFiles(ctx, ctx.candidate).length > 0, registry: ctx.deps.registry, failed });
+  return selectReviewer({ snapshot: ctx.snapshot, capabilities: env.capabilities, credentials, implementer: { provider: implementerProvider(ctx), model: lastImplementerModel(ctx) }, implementers: runImplementers(ctx), risky: ctx.run.difficulty === 'complex' || partnerInstructionFiles(ctx, ctx.candidate).length > 0, requireIndependent: partnerInstructionFiles(ctx, ctx.candidate).length > 0, registry: ctx.deps.registry, failed });
 }
 
 /**
