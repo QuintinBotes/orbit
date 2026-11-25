@@ -26821,7 +26821,7 @@ var ORBIT_VERSION;
 var init_version = __esm({
   "src/cli/version.ts"() {
     "use strict";
-    ORBIT_VERSION = "0.4.0";
+    ORBIT_VERSION = "0.4.1";
   }
 });
 
