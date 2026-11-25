@@ -20,6 +20,19 @@ export const REVIEW_FALLBACKS: readonly ReviewFallback[] = Object.freeze(['claud
 
 export const DEFAULT_REVIEW_FALLBACK: ReviewFallback = 'claude';
 
+/**
+ * `review.mode` (issue #231): `default` keeps the fresh same-family session of a risky change; `review-voice` replaces it
+ * with Review Voice's CLI, run by the controller on the exact candidate diff. Off by default; the cross-model pass is unchanged.
+ */
+export type ReviewMode = 'default' | 'review-voice';
+
+export const REVIEW_MODES: readonly ReviewMode[] = Object.freeze(['default', 'review-voice']);
+
+/** The mode of a config or an older snapshot, which has none (default). */
+export function reviewMode(review: { mode?: ReviewMode }): ReviewMode {
+  return review.mode ?? 'default';
+}
+
 /** Provider families Orbit has an independent review adapter for. A provider such as Gemini needs an adapter first. */
 export const SUPPORTED_REVIEW_PROVIDERS: readonly string[] = Object.freeze(['codex', 'muse']);
 

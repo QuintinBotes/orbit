@@ -40,7 +40,8 @@ import { marksCharges } from '../../scheduling/accounting.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { REVIEWER_FAILED_KIND, reviewerLabel, selectReviewer, selectionDecisionRecord, type ReviewerFailure, type ReviewerSelection } from '../../review/select.ts';
 import { failBeforePolicy, providerFamily } from '../../policy/config.ts';
-import { preferredReviewProvider } from '../../policy/review.ts';
+import { preferredReviewProvider, reviewMode } from '../../policy/review.ts';
+import { mapReviewVoiceOutput, REVIEW_VOICE_FALLBACK_KIND, REVIEW_VOICE_MODEL, reviewVoiceAvailability, reviewVoiceEnv, reviewVoiceRange, reviewVoiceTimeoutMs, runReviewVoice } from '../../review/review-voice.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { findingLabel, listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
@@ -125,6 +126,10 @@ async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepR
   const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).map((w) => [w.id, w.purpose]));
   if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).some((r) => r.workerId !== null && purposes.get(r.workerId)?.startsWith(`${FAMILY_BASE}:`))) return null;
   if (listDecisions(ctx.db, ctx.run.id, { kind: FAMILY_PASS_FAILED_KIND }).some((d) => (d.data as { tree_hash?: unknown }).tree_hash === cand.treeHash)) return null;
+  // review.mode: review-voice (issue #231): Review Voice's CLI gives this pass, outside any worker; the default session runs only when it cannot.
+  if (reviewMode(ctx.snapshot.config.review) === 'review-voice' && (!reviewVoiceFellBack(ctx) || hasReviewVoiceReview(ctx, cand, same.provider))) {
+    if (await reviewVoicePass(ctx, cand, same.provider)) return null;
+  }
   const pass: SelectedReviewer = { ...sel, provider: same.provider, model: same.model, effort: same.effort, basis: same.basis, independent: false, sameFamily: null, reason: same.reason, alternatives: [] };
   return singleReview(ctx, cand, pass, {
     base: `${FAMILY_BASE}:${cand.id}`,
@@ -138,6 +143,59 @@ async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepR
 }
 
 type SelectedReviewer = Extract<ReviewerSelection, { decision: 'SELECT' }>;
+
+function hasReviewVoiceReview(ctx: RunContext, cand: CandidateRecord, provider: string): boolean {
+  return listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, includeInvalidated: true }).some((r) => r.model === REVIEW_VOICE_MODEL && r.provider === provider);
+}
+
+/** After Review Voice failed once, it is not called again for the rest of the run (a later candidate goes straight to the default reviewer). */
+function reviewVoiceFellBack(ctx: RunContext): boolean {
+  return listDecisions(ctx.db, ctx.run.id, { kind: REVIEW_VOICE_FALLBACK_KIND }).length > 0;
+}
+
+/**
+ * The Review Voice pass of a risky change: its CLI on the exact candidate diff, recorded as a review of the tree. True when
+ * the review is recorded (now or earlier); false when it could not be had, with the reason recorded as a decision, so the
+ * default same-family session runs instead.
+ */
+async function reviewVoicePass(ctx: RunContext, cand: CandidateRecord, provider: string): Promise<boolean> {
+  if (hasReviewVoiceReview(ctx, cand, provider)) return true;
+  const settings = ctx.snapshot.config.review.review_voice;
+  const env = process.env;
+  const fallBack = (reason: string): false => {
+    decide(ctx, { id: `dec-${ctx.run.id}-review-voice-fallback-${cand.id}`, kind: REVIEW_VOICE_FALLBACK_KIND, summary: `Review Voice gave no review of tree ${cand.treeHash} (${clipAtWord(reason, 300)}); the default same-family reviewer stands in`, data: { tree_hash: cand.treeHash, candidate_id: cand.id, reason } });
+    return false;
+  };
+  const available = reviewVoiceAvailability(settings, env);
+  if (!available.ok) return fallBack(available.reason);
+  const range = reviewVoiceRange(ctx.run, cand);
+  if (!range.ok) return fallBack(range.reason);
+  let changed: Set<string>;
+  try {
+    changed = new Set((await git(ctx.run.repoRoot, ['diff', '--name-only', '-z', '--no-renames', range.base, range.head, '--'])).split('\0').filter((p) => p.length > 0));
+  } catch (err) {
+    return fallBack(`the changed files could not be listed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const ran = await runReviewVoice({ command: settings!.command, cwd: ctx.run.repoRoot, base: range.base, head: range.head, timeoutMs: reviewVoiceTimeoutMs(settings), env: reviewVoiceEnv(env), signal: ctx.signal });
+  // An aborted step (lease lost, step timeout, shutdown) is no failure of Review Voice: the CLI is already killed, and nothing is recorded.
+  ctx.signal.throwIfAborted();
+  if (!ran.ok) return fallBack(`${ran.reason} (after ${ran.attempts} attempts)`);
+  let mapped;
+  try {
+    mapped = mapReviewVoiceOutput(ran.output, cand.commitSha, changed);
+  } catch (err) {
+    return fallBack(err instanceof Error ? err.message : String(err));
+  }
+  if (mapped.warnings.length > 0) {
+    decide(ctx, { id: `dec-${ctx.run.id}-review-voice-dropped-${cand.id}`, kind: 'review.review-voice-dropped', summary: `Review Voice findings dropped on tree ${cand.treeHash}: ${clipAtWord(mapped.warnings.join('; '), 400)}`, data: { tree_hash: cand.treeHash, candidate_id: cand.id, warnings: mapped.warnings } });
+  }
+  recordReview(
+    ctx.db,
+    { id: `rev-review-voice-${cand.id}`, runId: ctx.run.id, candidateId: cand.id, treeHash: cand.treeHash, round: listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1, provider, model: REVIEW_VOICE_MODEL, workerId: null, verdict: mapped.verdict, packetSha256: null, findings: mapped.findings },
+    ctx.clock,
+  );
+  return true;
+}
 
 /** The reviewer for the candidate, or the step that blocks the run because none may review it (yet). */
 async function usableReviewer(ctx: RunContext, cand: CandidateRecord): Promise<{ ok: true; sel: SelectedReviewer } | { ok: false; step: StepResult }> {
