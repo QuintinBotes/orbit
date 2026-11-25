@@ -13,10 +13,11 @@ import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.
 import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { which } from '../../../src/isolation/util.ts';
 import { makeLab, type Lab } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
 const skip = !probe.ok ? `srt unavailable: ${probe.detail}` : dotnet === null ? 'dotnet is not installed' : null;
 

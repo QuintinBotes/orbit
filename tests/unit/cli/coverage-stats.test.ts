@@ -81,8 +81,10 @@ describe('orbit stats', () => {
 
 function metrics(over: Partial<Metrics> = {}): Metrics {
   return {
-    window: { from: null, to: null },
-    runs: { total: 4, finished: 3, accepted: 2, by_state: { SUCCEEDED: 2, BLOCKED: 1, CREATED: 1 } },
+    window: { from: null, to: null, orbit_version: null },
+    runs: { total: 4, finished: 3, accepted: 2, verified_undelivered: 0, by_state: { SUCCEEDED: 2, BLOCKED: 1, CREATED: 1 } },
+    failure_classes: { ended: 0, by_class: {}, secondary: {}, without_class: 0, unclassified: 0 },
+    by_version: [],
     verified_pass_rate: { numerator: 2, denominator: 3, rate: 2 / 3, evidence_reports: { numerator: 5, denominator: 6, rate: 5 / 6 } },
     false_pass_rate: { numerator: 1, denominator: 4, rate: 0.25 },
     escalation_quality: { numerator: 1, denominator: 2, rate: 0.5, escalations: 3, fixed: 1, not_fixed: 1, pending: 1, unmeasured: 0, other_escalations: 0 },
@@ -106,6 +108,7 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
     concurrency_overhead: { worker_queue_ms: 800, workers_measured: 5, worker_active_ms: 45_000, step_wait_ms: 100_000, step_wait_events: 4, overhead_ratio: 0.1 },
     stale_evidence_prevented: { evidence_invalidated: 2, reviews_invalidated: 1, deliveries_refused: 1, total: 4 },
     ui_defects: { discovered: 3, runs_with_ui_defects: 2 },
+    routes: [],
     missing: [],
     ...over,
   };
@@ -113,7 +116,7 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
 
 describe('renderStats', () => {
   it('prints the headline, one row per metric, the per-model table and the closing note', () => {
-    const out = renderStats(metrics({ window: { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 1, 1) } }));
+    const out = renderStats(metrics({ window: { from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 1, 1), orbit_version: null } }));
     expect(out.split('\n')[0]).toBe('Orbit stats for 4 run(s) created from 2026-01-01T00:00:00.000Z to 2026-02-01T00:00:00.000Z (3 finished, 2 accepted)');
     expect(out).toMatch(/verified pass rate\s+66\.7%\s+2 accepted of 3 finished runs; evidence PASS 5 of 6\n/);
     expect(out).toMatch(/false-pass rate\s+25\.0%\s+1 of 4 reviewed PASS candidates refused by review\n/);
@@ -134,7 +137,7 @@ describe('renderStats', () => {
 
   it('shows a dash for every metric with no data, flags partial spend, lists what could not be measured, and omits an empty model table', () => {
     const empty = metrics({
-      runs: { total: 0, finished: 0, accepted: 0, by_state: {} },
+      runs: { total: 0, finished: 0, accepted: 0, verified_undelivered: 0, by_state: {} },
       verified_pass_rate: { numerator: 0, denominator: 0, rate: null, evidence_reports: { numerator: 0, denominator: 0, rate: null } },
       false_pass_rate: { numerator: 0, denominator: 0, rate: null },
       escalation_quality: { numerator: 0, denominator: 0, rate: null, escalations: 0, fixed: 0, not_fixed: 0, pending: 0, unmeasured: 0, other_escalations: 0 },

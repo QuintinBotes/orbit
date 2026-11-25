@@ -8,6 +8,7 @@ import { markWorkerRunning, planWorker, requestWorkerCancel } from '../../../src
 import { reconcileOnStart } from '../../../src/recovery/reconcile.ts';
 import { IMPLEMENTER_OUTPUT, OWNER, alive, canStripTypes, cleanupAll, clock, counterUsed, makeEnv, makeRun, planImplementer, seedCounters, sleep, startWorker, strangerProcess, waitFor, workerRow } from './helpers.ts';
 import { implementerSpec, writeScenario } from '../adapters/helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 afterEach(cleanupAll);
 
@@ -179,7 +180,8 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: workers', () => {
 });
 
 describe.skipIf(!canStripTypes)('reconcileOnStart: pid identity', () => {
-  it('a recorded pid that now belongs to an unrelated process (start time differs) is dead to us and is never signalled', async () => {
+  it('a recorded pid that now belongs to an unrelated process (start time differs) is dead to us and is never signalled', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     const stranger = strangerProcess(env);
@@ -205,7 +207,8 @@ describe.skipIf(!canStripTypes)('reconcileOnStart: pid identity', () => {
     expect(alive(stranger.pid)).toBe(true);
   });
 
-  it('the same pid with the matching start time is recognized as the worker (control for the test above)', async () => {
+  it('the same pid with the matching start time is recognized as the worker (control for the test above)', async (ctx) => {
+    skipWithoutPs(ctx);
     const env = makeEnv();
     makeRun(env);
     const stranger = strangerProcess(env);

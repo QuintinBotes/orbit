@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { KnowledgeStore } from '../../../src/knowledge/store.ts';
+import { ManualClock } from '../../../src/core/clock.ts';
 import { ingestSourceId } from '../../../src/knowledge/ingest.ts';
 import type { EvalRunner } from '../../../src/knowledge/evals.ts';
 import { makeLesson, ev } from '../knowledge/helpers.ts';
@@ -26,6 +27,30 @@ function writeConfig(l: Lab, text: string): void {
 function openStore(l: Lab): KnowledgeStore {
   return KnowledgeStore.open(join(l.repo, '.orbit', 'knowledge.sqlite'));
 }
+
+describe('orbit learn list shows status, support, contradictions and age (issue #173 FR-008)', () => {
+  it('lists each lesson with its counts and age, flags a stale one, and show names why it is not eligible', async () => {
+    const l = lab();
+    mkdirSync(join(l.repo, '.orbit'), { recursive: true });
+    const t0 = Date.parse('2026-11-01T00:00:00.000Z');
+    const s = KnowledgeStore.open(join(l.repo, '.orbit', 'knowledge.sqlite'), { clock: new ManualClock(t0) });
+    const a = s.upsertLesson(makeLesson({ statement: 'Pin the clock in tests that format dates.', status: 'validated', evidence: [ev('r1'), ev('r2'), ev('r3', 'final.md', 'contradicts')], citation: { run_id: 'r1', path: 'src/dates.ts', line: 4, check_id: 'unit', finding_id: null } })).lesson;
+    const b = s.upsertLesson(makeLesson({ statement: 'Name fixtures after the scenario they build.', kind: 'convention' })).lesson;
+    s.markChecked(b.id, 'cited path src/fixtures.ts no longer exists');
+    s.close();
+    const at = { clock: new ManualClock(t0 + 3 * 86_400_000) };
+    const r = await l.cli(['learn', 'list'], at);
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toMatch(/ID\s+STATUS\s+KIND\s+CONFIDENCE\s+SUPPORT\s+CONTRADICT\s+AGE\s+STATEMENT/);
+    expect(r.out).toMatch(new RegExp(`${a.id}\\s+validated\\s+practice\\s+medium\\s+2\\s+1\\s+3d\\s+Pin the clock`));
+    expect(r.out).toMatch(new RegExp(`${b.id}\\s+candidate \\(stale\\)\\s+convention\\s+medium\\s+1\\s+0\\s+3d`));
+    const listed = JSON.parse((await l.cli(['learn', 'list', '--json'], at)).out) as { id: string; freshness: { stale_reason: string | null; created_at: number } }[];
+    expect(listed.find((x) => x.id === b.id)?.freshness).toMatchObject({ stale_reason: 'cited path src/fixtures.ts no longer exists', created_at: t0 });
+    const showA = await l.cli(['learn', 'show', a.id], at);
+    expect(showA.out).toContain('cites:        run r1, src/dates.ts:4, check unit');
+    expect((await l.cli(['learn', 'show', b.id], at)).out).toContain('not eligible: cited path src/fixtures.ts no longer exists');
+  });
+});
 
 describe('orbit learn list, show and export', () => {
   it('has nothing to read before the first lesson exists', async () => {

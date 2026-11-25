@@ -28,6 +28,9 @@ import { stripAnsi } from './fingerprint.ts';
  * compile error or failing test in its output. PREFLIGHT reads every failure of the base
  * revision this way, and a misconfigured check (evidence/check-misconfigured.ts) next, before it
  * may call one a pre-existing failure (docs/decisions/0010-base-failure-classification.md).
+ *
+ * A check that died importing a package no install put in its checkout is the fourth (classifyModuleNotFound, issue
+ * #166): the dependency install is Orbit's to run in every checkout, and no change to the code installs a package.
  */
 
 export type EnvironmentSignal =
@@ -46,7 +49,8 @@ export type EnvironmentSignal =
   | 'nuget-tls-denied'
   | 'program-not-found'
   | 'program-denied'
-  | 'pipe-denied';
+  | 'pipe-denied'
+  | 'module-not-found';
 
 /**
  * The signals added for the base revision by ADR 0010 and by ADR 0009's addendum (`pipe-denied`). On a candidate they
@@ -56,8 +60,10 @@ export type EnvironmentSignal =
  * failure for the repair loop. `pipe-denied` is gated although the runner writes the note it is read from: the note
  * relays MSBuild's crash report from the check's own temp directory, about a node the repository's projects or tests
  * made MSBuild start, and it is the same refusal `socket-denied` reads from `dotnet test`'s MSB1025, so both get one rule.
+ * `module-not-found` is gated too: a change can import a package nothing declares. It also counts when the records
+ * show the candidate's checkout was not provisioned (classifyCandidateModuleNotFound).
  */
-export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'program-denied', 'pipe-denied']);
+export const BASE_GATED_SIGNALS: ReadonlySet<EnvironmentSignal> = new Set<EnvironmentSignal>(['permission-denied', 'socket-denied', 'network-denied', 'nuget-http-denied', 'nuget-tls-denied', 'program-not-found', 'program-denied', 'pipe-denied', 'module-not-found']);
 
 export interface EnvironmentFailureInput {
   checkId: string;
@@ -90,6 +96,10 @@ export interface EnvironmentFailure {
    * the shell found a bare name at on PATH, or a bare name it did not find. Absent for every other cause.
    */
   program?: string;
+  /** The package that is not installed where the check runs (module-not-found), by its name. Absent for every other cause. */
+  module?: string;
+  /** The file that imported `module`, as the runtime named it, when it named one. */
+  importer?: string;
 }
 
 export const MAX_EVIDENCE_LINES = 3;
@@ -125,6 +135,7 @@ const CAUSES: Record<EnvironmentSignal, string> = {
   'program-not-found': 'a program the check runs was not found where it runs (exit 127)',
   'program-denied': 'the sandbox or the operating system refused to start a program the check runs (exit 126, "operation not permitted")',
   'pipe-denied': 'the sandbox refused an MSBuild worker node the named pipe it binds under /tmp, so MSBuild built nothing',
+  'module-not-found': 'a package the check imports is not installed where the check runs',
 };
 
 /**
@@ -278,6 +289,14 @@ export interface CouldNotRunInput {
    * count, and the failure goes to repair. Absent: the base revision itself is judged (or a probe), and every signal counts.
    */
   baseSignals?: readonly EnvironmentSignal[];
+  /**
+   * For a caller whose check may write everything it owns, with nothing protected inside (doctor's probe, in a scratch
+   * checkout): a read-only file system refusal on a filesystem call counts as well when its line names no absolute
+   * path, since whatever was refused was then outside `insideRoots`. uutils coreutils, which Ubuntu 26.04 ships, prints
+   * `mkdir: Read-only file system` where GNU names the directory. Not for a run's check: a protected path inside its
+   * checkout is read-only too, and a refusal there is the code's.
+   */
+  pathlessReadOnly?: boolean;
 }
 
 // A filesystem call, by the name a runtime, the C library or a shell tool gives it, or the error type that reports one.
@@ -292,6 +311,8 @@ const LISTEN_CALL = /\blisten\b/i;
 // macOS's Seatbelt refuses a write with EPERM; srt on Linux mounts everything outside the writable paths read-only, so
 // the same write fails there with EROFS.
 const DENIAL = /\bEPERM\b|operation not permitted|\bEROFS\b|read-only file system/i;
+// The Linux half of DENIAL, which only a write to a read-only mount gives.
+const READ_ONLY = /\bEROFS\b|read-only file system/i;
 // A Unix socket or a file the host's permissions (or the sandbox) forbid: EACCES, "permission denied", and .NET's
 // "Access to the path '/x' is denied".
 const PERMISSION_DENIAL = /\bEACCES\b|permission denied|access to the path '[^']*' is denied/i;
@@ -301,9 +322,11 @@ const SEATBELT_DENY = /\bdeny\(\d+\)\s+([a-z][\w-]*)(?:\s+(\S+))?/i;
 /**
  * The sandbox's network proxy refusing a connection: srt's own refusal (its 403 body and X-Proxy-Error tag, which a
  * verbose client prints) and the way clients report a proxy's 403 to the tunnel they asked for (curl and everything on
- * libcurl, git included; .NET's HttpClient, so NuGet). Under srt every proxy a check talks to is srt's.
+ * libcurl, git included; .NET's HttpClient, so NuGet; pnpm, whose own error code for a fetch answered 403 is all it
+ * prints when it fetches a package, or the pnpm version `packageManager` pins, with no cache to read: issue #141).
+ * Under srt every proxy a check talks to is srt's.
  */
-const NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'/i;
+const NETWORK_DENIAL = /Connection blocked by network allowlist|\bX-Proxy-Error\b|\bblocked-by-allowlist\b|\bCONNECT tunnel failed, response 403\b|\bproxy tunnel request to proxy '[^']*' failed with status code '403'|\bERR_PNPM_FETCH_403\b/i;
 /**
  * NuGet's HTTP client failing to start in the sandbox on macOS, before it reaches the network: the type initializer of
  * System.Net.CookieContainer reads the host's domain name, which srt's profile does not let it read (captured under the
@@ -320,6 +343,15 @@ const NUGET_HTTP_DENIAL = /\berror NU1301:.*\bThe type initializer for 'System\.
  */
 const NUGET_TLS_DENIAL = /\berror NU1301:\s+The SSL connection could not be established\b/;
 const DOMAIN_NAME_DENIED = /\bGetDomainName: -1\b/;
+/**
+ * The operating system's answer at the foot of an error chain, as Rust's tools print it under "Caused by:" (cargo
+ * refused its registry or its cache: "Read-only file system (os error 30)"). The line names neither the call nor the
+ * path; the head of its chain does ("error: failed to create directory `/home/acme/.cargo/registry/index/...`"), so
+ * the two are read together (chainHead).
+ */
+const OS_ERROR = /\((?:os error|errno) \d+\)\s*$/i;
+/** How far above an OS_ERROR line the head of its error chain is looked for. */
+const CHAIN_LINES = 6;
 /**
  * A permission denial on a socket: .NET's SocketException with errno 13 (EACCES) or 1 (EPERM), or a bind, listen or
  * connect refused with EACCES or EPERM. It names no path when the socket is a TCP one or .NET's, so on its own it cannot
@@ -475,7 +507,8 @@ function pipeCause(pipes: readonly PipeDenial[]): string {
  *   - a denial on a filesystem call that names a path outside `insideRoots`: EPERM or "operation not permitted"
  *     (macOS), EROFS or "read-only file system" (Linux): the .NET runtime's `mkdir("/tmp/.dotnet/shm/...") == -1;
  *     errno == EPERM`, node's `EPERM: operation not permitted, mkdir '/x'`, a shell tool's `mkdir: /x: Operation not
- *     permitted` or `mkdir: cannot create directory ‘/x’: Read-only file system` (filesystem-denied); or EACCES or
+ *     permitted` or `mkdir: cannot create directory ‘/x’: Read-only file system` (filesystem-denied; with
+ *     `pathlessReadOnly`, a read-only file system refusal that names no absolute path too); or EACCES or
  *     "permission denied" (the host's permissions, or a Unix socket the sandbox refuses: node's `listen EACCES:
  *     permission denied /tmp/x.pipe`; permission-denied);
  *   - a Seatbelt deny line (one for a file operation only on such a path);
@@ -515,7 +548,7 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     if (lines.length < MAX_EVIDENCE_LINES && !lines.includes(shown)) lines.push(shown);
   };
   for (const pipe of pipes) show(pipe.line, 0);
-  for (const raw of all) {
+  for (const [index, raw] of all.entries()) {
     const line = raw.trim();
     const deny = SEATBELT_DENY.exec(line);
     const denial = DENIAL.exec(line);
@@ -524,11 +557,14 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
     const nuget = domainNameDenied ? NUGET_HTTP_DENIAL.exec(line) : null;
     const tls = NUGET_TLS_DENIAL.exec(line);
     const socket = toolCrashed ? SOCKET_DENIAL.exec(line) : null;
-    const pathOutside = (): boolean => (line.match(ABSOLUTE_PATH) ?? []).some(outside);
+    // The line whose paths a denial is about: its own, or for the foot of an error chain the chain's head (OS_ERROR).
+    const subject = OS_ERROR.test(line) && (line.match(ABSOLUTE_PATH) ?? []).length === 0 ? chainHead(all, index) : null;
+    const pathOutside = (): boolean => (line.match(ABSOLUTE_PATH) ?? []).some(outside) || (subject !== null && (subject.match(ABSOLUTE_PATH) ?? []).every(outside));
+    const readOnlyWithoutPath = (): boolean => input.pathlessReadOnly === true && READ_ONLY.test(line) && (line.match(ABSOLUTE_PATH) ?? []).length === 0;
     const candidates: { signal: EnvironmentSignal; at: number }[] = [];
     if (deny && (!deny[1]!.toLowerCase().startsWith('file-') || (deny[2] !== undefined && isAbsolute(deny[2]) && outside(deny[2])))) candidates.push({ signal: 'sandbox-violation', at: deny.index });
-    if (denial && FS_CALL.test(line) && pathOutside()) candidates.push({ signal: 'filesystem-denied', at: denial.index });
-    if (permission && (FS_CALL.test(line) || LISTEN_CALL.test(line)) && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
+    if (denial && (FS_CALL.test(line) || subject !== null) && (pathOutside() || readOnlyWithoutPath())) candidates.push({ signal: 'filesystem-denied', at: denial.index });
+    if (permission && (FS_CALL.test(line) || LISTEN_CALL.test(line) || subject !== null) && pathOutside()) candidates.push({ signal: 'permission-denied', at: permission.index });
     if (network) candidates.push({ signal: 'network-denied', at: network.index });
     if (nuget) candidates.push({ signal: 'nuget-http-denied', at: nuget.index });
     if (tls) candidates.push({ signal: 'nuget-tls-denied', at: tls.index });
@@ -543,8 +579,128 @@ export function classifyCouldNotRun(input: CouldNotRunInput): EnvironmentFailure
       const first = text.split('\n', MAX_SCANNED_LINES).find((l) => MSBUILD_INTERNAL_FAILURE.test(l));
       if (first !== undefined) show(first.replace(/\r$/, '').trim(), 0);
     }
+    // The head of the chain names the path that was refused; the answer under it follows.
+    if (subject !== null && (found.signal === 'filesystem-denied' || found.signal === 'permission-denied')) show(subject, 0);
     show(line, found.at);
   }
   if (signals.length === 0) return null;
   return { checkId: input.checkId, fingerprint: null, signals, cause: signals.map((s) => (s === 'pipe-denied' ? pipeCause(pipes) : CAUSES[s])).join('; '), lines };
+}
+
+/**
+ * The head of the error chain whose foot is line `at`: the nearest line above it, within CHAIN_LINES and with only
+ * "Caused by:" and blank lines or other links of the chain between, that names an absolute path. Null when there is none.
+ */
+function chainHead(lines: readonly string[], at: number): string | null {
+  let causedBy = false;
+  for (let i = at - 1; i >= 0 && i >= at - CHAIN_LINES; i--) {
+    const line = lines[i]!.trim();
+    if (line === '') continue;
+    if (/^Caused by:$/i.test(line)) {
+      causedBy = true;
+      continue;
+    }
+    if (!causedBy) return null;
+    if ((line.match(ABSOLUTE_PATH) ?? []).length > 0) return line;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// A check that died importing a package that is not installed in its checkout
+
+export interface ModuleNotFoundInput {
+  checkId: string;
+  /** The check's output, as logged (already redacted). */
+  output: string;
+}
+
+// node's ES module loader: "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'esbuild' imported from /x/scripts/build.mjs".
+const ESM_PACKAGE_NOT_FOUND = /\bCannot find package '([^']+)' imported from (\S.*?)\s*$/;
+// node's CommonJS loader: "Error: Cannot find module 'esbuild'", then "Require stack:" and "- /x/scripts/build.cjs".
+const CJS_MODULE_NOT_FOUND = /\bCannot find module '([^']+)'\s*$/;
+const REQUIRE_STACK_ENTRY = /^-\s+(\S.*)$/;
+/**
+ * A package specifier: a bare name, or a scope and a name with any subpath. A path, a URL or a `#` import is not one,
+ * and neither is what reads like a path alias of a bundler or a tsconfig, which the loader was never told about:
+ * `~/x`, `@/x`, and an unscoped name with a subpath (`src/x`), which the text cannot tell from a package's subpath.
+ */
+const PACKAGE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/[a-z0-9][\w.~-]*)(?:\/.*)?$|^([a-z0-9][\w.~-]*)$/i;
+
+/**
+ * The environment cause of a check that died because a package it imports is not installed where it runs, or null
+ * (issue #166, FR-003; the reports are issues #133 and #158, `Cannot find package 'esbuild' imported from
+ * .../check-1/scripts/build.mjs`). Both halves are required:
+ *
+ * - node's own report that it could not resolve a package by its name, from the ES module loader
+ *   (ERR_MODULE_NOT_FOUND, "Cannot find package 'x' imported from <file>") or the CommonJS one (MODULE_NOT_FOUND,
+ *   "Cannot find module 'x'" with its require stack). A specifier that is a path is a file of the repository that does
+ *   not exist: a missing target or the code's failure, never this;
+ * - and no sign that the repository's code was compiled or tested and failed (showsCodeFailure): a test file that
+ *   cannot import is reported by its runner as a failing test, and stays the code's.
+ *
+ * That shows the package is absent, not whose doing that is: the repository's own code can import a package nothing
+ * declares, on the base revision or in a change. So the signal is one of BASE_GATED_SIGNALS, and each caller needs
+ * the records to show that the checkout was not provisioned: PREFLIGHT counts it only when no dependency install ran
+ * and passed in the base revision's checkout (controller/environment-block.ts), a candidate through
+ * classifyCandidateModuleNotFound.
+ */
+export function classifyModuleNotFound(input: ModuleNotFoundInput): EnvironmentFailure | null {
+  const text = stripAnsi(input.output);
+  if (showsCodeFailure(text)) return null;
+  const lines = text.split('\n', MAX_SCANNED_LINES).map((raw) => raw.replace(/\r$/, '').trim());
+  for (const [i, line] of lines.entries()) {
+    const esm = ESM_PACKAGE_NOT_FOUND.exec(line);
+    const cjs = esm ? null : CJS_MODULE_NOT_FOUND.exec(line);
+    const specifier = esm?.[1] ?? cjs?.[1];
+    if (specifier === undefined) continue;
+    const named = PACKAGE_SPECIFIER.exec(specifier);
+    const name = named?.[1] ?? named?.[2];
+    if (name === undefined) continue;
+    let importer = esm?.[2];
+    if (cjs && /^Require stack:$/.test(lines[i + 1] ?? '')) importer = REQUIRE_STACK_ENTRY.exec(lines[i + 2] ?? '')?.[1];
+    return {
+      checkId: input.checkId,
+      fingerprint: null,
+      signals: ['module-not-found'],
+      cause: `the package "${name}" the check imports is not installed where the check runs`,
+      lines: [excerpt(line, esm?.index ?? cjs?.index ?? 0)],
+      module: name,
+      ...(importer !== undefined ? { importer } : {}),
+    };
+  }
+  return null;
+}
+
+export interface CandidateModuleNotFoundInput extends ModuleNotFoundInput {
+  /** The environment signals the same check showed on the base revision (its baseline failure's classification). */
+  baseSignals: readonly EnvironmentSignal[];
+  /**
+   * The same check on the base revision, from a complete baseline of the candidate's base revision: whether it passed
+   * there, and whether a dependency install ran and passed in that checkout. Null when there is no such baseline.
+   */
+  base: { passed: boolean; installed: boolean } | null;
+  /** Whether a dependency install passed in the checkout the candidate's check ran in. */
+  installed: boolean;
+}
+
+/**
+ * A candidate's check that died importing a package that is not installed in its checkout (classifyModuleNotFound),
+ * when the records show the environment and not the change (issue #166, User Story 2). A check that passed on the base
+ * revision in a checkout prepared the same way and now misses a module is the change's until shown otherwise: a change
+ * can import a package it never added, from its own file, from output compiled from it, or through a tool it
+ * configured, whose importer is then a file under node_modules. So the importer is not read. It counts only when:
+ *
+ * - the same check showed the same missing module on the base revision; or
+ * - the candidate's checkout was demonstrably not provisioned: the check passed on the base revision in a checkout
+ *   where the dependency install ran and passed, and no install passed in the checkout the candidate's check ran in.
+ *
+ * Anything else goes to repair.
+ */
+export function classifyCandidateModuleNotFound(input: CandidateModuleNotFoundInput): EnvironmentFailure | null {
+  const found = classifyModuleNotFound({ checkId: input.checkId, output: input.output });
+  if (!found) return null;
+  if (input.baseSignals.includes('module-not-found')) return found;
+  if (input.base === null || !input.base.passed || !input.base.installed || input.installed) return null;
+  return found;
 }

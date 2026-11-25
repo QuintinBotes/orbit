@@ -37,7 +37,7 @@ import { verifySnapshot } from '../policy/snapshot.ts';
 import { BudgetLedger } from '../scheduling/budget.ts';
 import type { ControllerDeps } from './context.ts';
 import { getLease, getRun, listRuns, releaseLease, renewLease } from './run-store.ts';
-import { isTerminal, RUN_STATES, type RunState } from './states.ts';
+import { isTerminal, NON_TERMINAL, type RunState } from './states.ts';
 import { step } from './steps/index.ts';
 import type { StepResult } from './steps/common.ts';
 import { finalizeRun, writeFinalReport } from './report.ts';
@@ -109,8 +109,6 @@ interface Owned {
   abort: AbortController | null;
 }
 
-const NON_TERMINAL: RunState[] = RUN_STATES.filter((s) => !isTerminal(s));
-
 export class Controller {
   readonly ownerId: string;
   readonly deps: ControllerDeps;
@@ -151,7 +149,13 @@ export class Controller {
     if (this.started) throw new Error('controller already started');
     this.started = true;
     const { db, clock } = this.deps;
-    registerController(db, { id: this.ownerId, pid: process.pid, host: hostname(), procStart: processStartTime(process.pid), mode: this.opts.mode }, clock);
+    let procStart: string | null = null;
+    try {
+      procStart = processStartTime(process.pid);
+    } catch {
+      // ps refused (a sandbox on macOS, #203): without a start time, liveness is the pid and the heartbeat, never "dead" while the pid lives.
+    }
+    registerController(db, { id: this.ownerId, pid: process.pid, host: hostname(), procStart, mode: this.opts.mode }, clock);
     this.log.info('controller started', { mode: this.opts.mode, run: this.opts.runId ?? null });
     if (this.opts.handleSignals) {
       this.signalHandler = (sig) => void this.stop(`received ${sig}`);

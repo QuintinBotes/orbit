@@ -875,8 +875,8 @@ interface CheckDir {
   intent: ShimIntent;
 }
 
-/** Check directories by check_runs id, found from each directory's intent.json (the layout is evidence/<seq>/<check>[~n] and baseline/<check>[~n]). */
-function findCheckDirs(root: string): Map<string, CheckDir> {
+/** Check directories by check_runs id, found from each directory's intent.json (the layout is evidence/<seq>/<check>[~n], baseline/<check>[~n] and worktree-install/<check>[~n]). */
+export function findCheckDirs(root: string): Map<string, CheckDir> {
   const found = new Map<string, CheckDir>();
   const visit = (parent: string): void => {
     for (const name of safeDirs(parent)) {
@@ -886,6 +886,7 @@ function findCheckDirs(root: string): Map<string, CheckDir> {
     }
   };
   visit(join(root, 'baseline'));
+  visit(join(root, 'worktree-install'));
   for (const seq of safeDirs(join(root, 'evidence'))) visit(join(root, 'evidence', seq));
   return found;
 }

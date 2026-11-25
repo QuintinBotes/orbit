@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
 import { sha256 } from '../core/hash.ts';
 import { credentialGlobsOf } from '../policy/builtin.ts';
+import { orbitTmpRoot, orbitTmpRoots } from '../policy/paths.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import { removeScratch } from './toolchains.ts';
 import type { SandboxProfile } from './types.ts';
@@ -306,6 +307,8 @@ export interface CodexReviewerProfileInput {
   homeDir: string;
   /** For ORBIT_HOME; defaults to process.env. */
   env?: Readonly<Record<string, string | undefined>>;
+  /** A partner implementer (issue #176): `checkout` is its worktree, which it may write. Default false. */
+  writable?: boolean;
 }
 
 /**
@@ -342,9 +345,10 @@ export function codexReviewerProfile(profile: SandboxProfile, input: CodexReview
   }
   const defaultCodexHome = join(home, '.codex');
   return {
-    writablePaths: [workerDir, codexHome],
+    writablePaths: input.writable ? [workerDir, codexHome, checkout] : [workerDir, codexHome],
     denyReadPaths: uniq([...profile.denyReadPaths.map(canonicalPath).filter((p) => p !== codexHome), ...(defaultCodexHome === codexHome ? [] : [defaultCodexHome])]),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout, ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
+    // A writable worktree is not listed as readable too: srt would write-deny it as a read-only path.
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout]), ...CODEX_HOME_READ_ONLY.map((rel) => join(codexHome, rel))]),
     allowedHosts: [...PROVIDER_HOSTS.codex],
     limits: { ...profile.limits },
   };
@@ -354,6 +358,8 @@ export interface MuseReviewerProfileInput {
   /** The review checkout: readable, never writable. */
   checkout: string;
   workerDir: string;
+  /** A partner implementer (issue #176): `checkout` is its worktree, which it may write. Default false. */
+  writable?: boolean;
 }
 
 /**
@@ -373,9 +379,9 @@ export function museReviewerProfile(profile: SandboxProfile, input: MuseReviewer
     throw new OrbitError('ISOLATION_UNAVAILABLE', `refusing to let the reviewer write ${workerDir}: the worker directory overlaps the review checkout ${checkout}, which must stay read-only`, { path: workerDir });
   }
   return {
-    writablePaths: [workerDir],
+    writablePaths: input.writable ? [workerDir, checkout] : [workerDir],
     denyReadPaths: uniq(profile.denyReadPaths.map(canonicalPath)),
-    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), checkout]),
+    readablePaths: uniq([...readablePathsOf(profile).map(canonicalPath), ...(input.writable ? [] : [checkout])]),
     allowedHosts: [...PROVIDER_HOSTS.muse],
     limits: { ...profile.limits },
   };
@@ -419,7 +425,7 @@ export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<strin
   return uniq([
     ...HOME_DENY_READ.map((rel) => join(home, rel)),
     ...SYSTEM_DENY_READ.map(canonicalPath),
-    orbitTmpRoot(),
+    ...orbitTmpRoots(),
     ...claudeLogins(home, env, dirs.claudeConfigDir).flatMap((d) => claudeState(home, d)),
     ...codexHomes(home, env, dirs.codexHome),
     ...museConfigDirs(home, env),
@@ -427,17 +433,11 @@ export function credentialDenyPaths(opts: { homeDir?: string; env?: Record<strin
 }
 
 /**
- * Root of every worker's private temp directory: /tmp/orbit-<uid>, the same
- * shape Claude Code uses for its own /tmp/claude-<uid>. It is short on
- * purpose: Claude Code and srt create Unix sockets in temp directories, and a
- * socket path over 104 bytes (macOS) fails, which a directory deep inside the
- * repository would cause. Every profile denies reading it, and each worker's
- * own subdirectory is re-allowed through its writable set, so concurrent
- * workers cannot read each other's temp files.
+ * Every profile denies reading every temp root (orbitTmpRoots), and each worker's own subdirectory is re-allowed through its writable
+ * set, so concurrent workers cannot read each other's temp files with Bash; the guard hook keeps the file tools out
+ * (policy/authorize.ts, `read.worker-tmp`).
  */
-export function orbitTmpRoot(uid: number | undefined = process.getuid?.()): string {
-  return canonicalPath(join('/tmp', uid === undefined ? 'orbit' : `orbit-${uid}`));
-}
+export { orbitTmpRoot, orbitTmpRoots };
 
 /** A worker's private temp directory, derived from its worker directory so a restarted controller finds the same one. */
 export function workerTmpDir(workerDir: string, root: string = orbitTmpRoot()): string {
@@ -446,19 +446,18 @@ export function workerTmpDir(workerDir: string, root: string = orbitTmpRoot()): 
 
 /**
  * Create the worker's temp directory, owner-only. /tmp is shared, so the
- * root is checked after creation: it must be a real directory (not a
- * symlink planted by someone else) owned by this user with no group or other
- * access. Claude Code itself asks for a private (0700) directory when
- * CLAUDE_CODE_TMPDIR points somewhere else. The adapter sets TMPDIR to the
- * returned path and the srt provider passes it through.
+ * root is checked after creation (privateRootProblem). Claude Code itself asks
+ * for a private (0700) directory when CLAUDE_CODE_TMPDIR points somewhere
+ * else. The adapter sets TMPDIR to the returned path and the srt provider
+ * passes it through.
  */
 export function prepareWorkerTmpDir(workerDir: string, root: string = orbitTmpRoot()): string {
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  const st = lstatSync(root);
-  const uid = process.getuid?.();
-  if (!st.isDirectory() || st.isSymbolicLink() || (uid !== undefined && st.uid !== uid) || (st.mode & 0o077) !== 0) {
-    throw new OrbitError('ISOLATION_UNAVAILABLE', `${root} is not a private directory owned by this user; refusing to put worker temp files there`, { path: root });
+  const problem = privateRootProblem(lstatSync(root));
+  if (problem !== null) {
+    throw new OrbitError('ISOLATION_UNAVAILABLE', `${root} is not a private directory owned by this user (${problem}); refusing to put worker temp files there`, { path: root });
   }
+  const uid = process.getuid?.();
   const dir = workerTmpDir(workerDir, root);
   // A sandboxed process can write its temp directory's entry, so a reused one may now be a link or a file. Never follow
   // it: the sandbox's write rule resolves the path, so a link would make its target writable, and chmod would follow it
@@ -475,6 +474,19 @@ export function prepareWorkerTmpDir(workerDir: string, root: string = orbitTmpRo
   }
   chmodSync(dir, 0o700);
   return dir;
+}
+
+/**
+ * Why an lstat of the temp root does not show a private directory of this user's, or null: it must be a real directory
+ * (not a link someone else planted in the shared /tmp), owned by this user, with no group or other access.
+ */
+export function privateRootProblem(st: Stats): string | null {
+  const uid = process.getuid?.();
+  if (st.isSymbolicLink()) return 'it is a symbolic link';
+  if (!st.isDirectory()) return 'it is not a directory';
+  if (uid !== undefined && st.uid !== uid) return `it is owned by uid ${st.uid}`;
+  if ((st.mode & 0o077) !== 0) return `its mode is ${(st.mode & 0o777).toString(8)}`;
+  return null;
 }
 
 function lstatOrNull(p: string): Stats | null {
@@ -583,7 +595,7 @@ function denyList(opts: { home: string; repoRoot: string; worktree: string; extr
     // Credential files in the worktree (.env, keys, and what the policy protects as credentials): a deny nested in the
     // re-allowed worktree stays the more specific rule. An enumeration that cannot finish throws rather than guess.
     ...credentialFilesIn(opts.worktree, credentialGlobsOf(opts.snapshot), opts.credentialWalkLimit === undefined ? {} : { limit: opts.credentialWalkLimit }),
-    orbitTmpRoot(),
+    ...orbitTmpRoots(),
     ...(parent ? [parent] : []),
     ...opts.extra,
   ]);

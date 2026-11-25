@@ -2,8 +2,8 @@
 // a REPAIR_REQUIRED review with a blocking finding goes REVIEWING -> REPAIRING with a repair brief, the
 // repaired tree is verified and reviewed again, and the finding is closed only by the test written for it
 // failing on the pre-repair tree and passing on the repaired one (ADR 0015); a test that passes on both
-// leaves it open, whatever the check prints; the review_rounds cap ends the run EXHAUSTED with the open
-// findings; a finding about financial semantics goes to the Inquisition instead of being repaired on a guess.
+// leaves it open, whatever the check prints; the review_rounds cap stops the run with the open findings (BLOCKED,
+// offering the verified candidate, #169); a finding about financial semantics goes to the Inquisition instead of being repaired on a guess.
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -108,7 +108,33 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(report.budget.counters.find((c) => c.counter === 'review_rounds')?.used).toBe(2);
   }, 120_000);
 
-  it('a repair test that passes on the pre-repair tree too leaves the finding open, though the runner names it as passed, and the run ends EXHAUSTED at the review_rounds cap', async () => {
+  // Issue #130: such a review cleared the gate without approving, nothing took its finding, and the run ended BLOCKED.
+  it('a REPAIR_REQUIRED review whose only finding is advisory is repaired, and the repaired tree is delivered only on an APPROVE', async () => {
+    const low = { structured: { verdict: 'REPAIR_REQUIRED', candidate_revision: '$CANDIDATE', findings: [{ ...FINDING, severity: 'low' }] } };
+    const l = lab();
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), REPAIR], reviewer: [low, APPROVE] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    const path = transitions(l, run.id);
+    const firstReview = path.indexOf('REVIEWING');
+    expect(path.slice(firstReview, firstReview + 5)).toEqual(['REVIEWING', 'REPAIRING', 'VERIFYING', 'REVIEWING', 'DELIVERING']);
+    expect(listReviews(l.db(), run.id, { includeInvalidated: true }).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'APPROVE']);
+
+    // A second review that again asks for repair through an advisory finding does not deliver: at the cap the run ends.
+    const capped = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
+    writeScenario(capped, baseScenario({ implementer: [implementMul('*'), REPAIR], reviewer: [low, low] }));
+    const again = startLabRun(capped);
+    await drive(capped, again.id);
+    const end = runState(capped, again.id);
+    expect(end.state, end.outcomeReason ?? '').toBe('BLOCKED');
+    expect(end.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1 \(review 2\) \(low\)/);
+    expect(transitions(capped, again.id)).not.toContain('DELIVERING');
+  }, 240_000);
+
+  it('a repair test that passes on the pre-repair tree too leaves the finding open, though the runner names it as passed, and the run stops at the review_rounds cap (BLOCKED, offering the verified candidate: #169)', async () => {
     // The runner prints "ok - tests/mul-input.test.mjs": the 0.3.1 log rules credited that line, ADR 0015 reads no output.
     const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2), files: { 'tests/run.mjs': NAMING_RUNNER } });
     const weak = { ...REPAIR, edits: [...REPAIR.edits.slice(0, 2), { op: 'write', path: 'tests/mul-input.test.mjs', content: "import { mul } from '../apps/calc.mjs';\nif (mul(2, 3) !== 6) process.exit(1);\n" }] };
@@ -117,7 +143,7 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1/);
     const [finding] = listFindings(l.db(), run.id);
     expect(finding!.status).not.toBe('resolved');
@@ -126,23 +152,27 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     expect(listProbeAttempts(l.db(), run.id).filter((a) => a.logPath?.includes('/repair-probe/')).map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'PASSED']);
   }, 120_000);
 
-  it('a finding the repair did not cover stays open and the run ends EXHAUSTED at the review_rounds cap, naming the open finding', async () => {
-    const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
-    // The second attempt changes something, but names no test for the finding, so nothing closes it.
-    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])], reviewer: [REPAIR_REQUIRED, REPAIR_REQUIRED] }));
+  it('a finding the repair did not cover stays open, gets its one re-review, which finds it still present, and the run stops at the review_rounds cap naming it (BLOCKED, offering the verified candidate: #169)', async () => {
+    const l = lab({ tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 3) });
+    // The second attempt changes something, but names no test for the finding, so nothing closes it. Before a third
+    // attempt with the same brief (#156), the carried finding gets its one re-review (ADR 0015, amendment of 2026-11-16),
+    // the third review answer: still present. That spends the last review round, so no repair can be reviewed.
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])], reviewer: [REPAIR_REQUIRED, REPAIR_REQUIRED, REPAIR_REQUIRED] }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
-    expect(done.outcomeReason).toMatch(/review_rounds hard cap reached \(2 of 2\).*COR-1/);
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
+    expect(done.outcomeReason).toMatch(/^review_rounds hard cap reached \(3 of 3\) with 1 open finding\(s\): COR-1/);
+    expect(listDecisions(l.db(), run.id, { kind: 'review.finding-rereview' })).toHaveLength(1);
+    expect(listDecisions(l.db(), run.id, { kind: 'repair.non-progress' })).toHaveLength(0);
     const outcome = JSON.parse(done.outcomeJson!) as { open_findings: { external_id: string; status: string }[] };
     expect(outcome.open_findings.map((f) => f.external_id)).toContain('COR-1');
     expect(listFindings(l.db(), run.id).every((f) => f.status !== 'rejected' && f.status !== 'resolved')).toBe(true);
     expect(transitions(l, run.id).filter((s) => s === 'REPAIRING')).toHaveLength(1);
   }, 120_000);
 
-  it('a review repair that reproduces the reviewed tree ends EXHAUSTED as non-progress, not by spending every attempt (NB1)', async () => {
+  it('a review repair that reproduces the reviewed tree stops as non-progress, not by spending every attempt (NB1; BLOCKED, offering the verified candidate: #169)', async () => {
     const l = lab();
     // The repair attempt writes exactly what attempt 1 wrote: the same tree comes back for review, with the same finding.
     writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*')], reviewer: [REPAIR_REQUIRED] }));
@@ -150,7 +180,7 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toMatch(/non-progress/);
     expect(done.outcomeReason).toMatch(/same tree/);
     const outcome = JSON.parse(done.outcomeJson!) as { non_progress?: { terminate: boolean }; open_findings?: { external_id: string }[] };
@@ -162,6 +192,21 @@ describe.skipIf(!canStripTypes)('controller: the review repair loop', () => {
     const report = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'final.json'), 'utf8')) as { next_action: string };
     expect(report.next_action).toMatch(/no measurable progress/);
     expect(report.next_action).not.toMatch(/budget is spent/);
+  }, 120_000);
+
+  it('a REPAIR_REQUIRED review briefs its medium finding with its high one, so the repair is asked for both (#156)', async () => {
+    const l = lab();
+    const test1 = { ...FINDING, id: 'TEST-1', category: 'test-adequacy', claim: 'No test covers mul with non-numeric arguments.' };
+    const doc1 = { ...FINDING, id: 'DOC-1', severity: 'medium', category: 'documentation', location: 'README.md:1', claim: 'The README does not say that mul throws on non-numeric arguments.' };
+    writeScenario(l, baseScenario({ implementer: [implementMul('*'), implementMul('*')], reviewer: [{ structured: { verdict: 'REPAIR_REQUIRED', candidate_revision: '$CANDIDATE', findings: [test1, doc1] } }] }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const stored = JSON.parse(readFileSync(join(l.repo, '.orbit', 'runs', run.id, 'briefs', 'attempt-2.json'), 'utf8')) as { brief: { briefs?: { finding_ids: string[] }[]; finding_ids?: string[] } };
+    const briefed = (stored.brief.briefs ?? [stored.brief]).flatMap((b) => b.finding_ids ?? []);
+    const ids = new Map(listFindings(l.db(), run.id).map((f) => [f.externalId, f.id]));
+    expect(briefed).toContain(ids.get('TEST-1'));
+    expect(briefed).toContain(ids.get('DOC-1'));
   }, 120_000);
 
   it('a blocking finding about financial semantics goes to the Inquisition before any repair', async () => {

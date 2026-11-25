@@ -260,6 +260,8 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   const fb = base !== undefined ? input.failBefore : undefined;
   const failBeforeOf = new Map<string, CriterionFailBefore>();
   if (fb !== undefined) for (const [id, s] of support) failBeforeOf.set(id, criterionFailBefore(s, fb));
+  // Per criterion (issue #200): a contract that maps tests to criteria is judged by each criterion's own tests.
+  for (const [id, e] of fb?.criteria ?? []) failBeforeOf.set(id, e);
   const restsOnNewTests = (e: CriterionFailBefore | undefined): e is CriterionFailBefore => e !== undefined && e.outcome !== 'not-applicable';
   const advisoryGaps: string[] = [];
   const notRun: string[] = [];
@@ -285,12 +287,12 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
       else if (e.outcome === 'not-established') advisoryGaps.push(`${id} could not be probed (${e.reason})`);
       return { status, why: undefined };
     }
-    if (e.mode !== 'required' || e.outcome === 'failed-before') return { status, why: undefined };
+    if (e.mode !== 'required' || e.outcome === 'failed-before' || e.outcome === 'kept') return { status, why: undefined };
     if (e.accepted) {
       note(unverified, `fail-before: ${id} accepted without fail-before by ${e.accepted.by} (question ${e.accepted.question_id}): ${e.reason}`);
       return { status, why: undefined };
     }
-    if (e.outcome === 'passed-before') return { status: 'unverified', why: passedBeforeNote(e) };
+    if (e.outcome === 'passed-before') return { status: 'unverified', why: e.tests ? e.reason : passedBeforeNote(e) };
     return { status: 'blocked', why: `fail-before not established: ${e.reason}` };
   };
   const passedBeforeNote = (e: CriterionFailBefore): string => {
@@ -330,6 +332,13 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
     let status: CriterionStatus;
     let artifacts: string[] = [];
     let why: string | undefined;
+    // A person-checked criterion (issue #200, FR-011) is never proven by a test: it waits on that person, in every mode.
+    if (c.kind === 'person') {
+      const waits = `${c.id} is person-checked: no test proves it, and it waits on a person`;
+      note(unverified, `${c.mandatory ? 'criterion' : 'optional criterion'} ${waits}`);
+      return { criterion_id: c.id, status: 'unverified', artifacts: [], note: waits, ...(failBeforeOf.get(c.id) ? { fail_before: failBeforeOf.get(c.id)! } : {}) };
+    }
+    const own = fb?.criteria?.get(c.id);
     if (ids.length === 0) {
       status = 'unverified';
       why = c.ui === true ? 'no browser check is mapped to this UI criterion' : 'no executed check is mapped to this criterion; prose proof alone is not evidence';
@@ -353,7 +362,8 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         status = 'unverified';
         why = 'no browser check is mapped to this UI criterion; command checks alone do not prove a user journey';
       } else {
-        const gapWhy = newEvidenceGap(c.id, ids);
+        // A criterion judged by its own mapped tests needs no test change under its checks: its tests' runs are the evidence.
+        const gapWhy = own ? null : newEvidenceGap(c.id, ids);
         if (gapWhy !== null) {
           status = 'unverified';
           why = gapWhy;

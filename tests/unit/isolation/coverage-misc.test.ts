@@ -206,8 +206,8 @@ describe('profile defaults', () => {
 
   it('names the temp root without a uid when the host has none', () => {
     vi.spyOn(process, 'getuid').mockReturnValue(undefined as never);
-    expect(orbitTmpRoot()).toMatch(/\/tmp\/orbit$/);
+    expect(orbitTmpRoot()).toMatch(/\/orbit$/);
     vi.restoreAllMocks();
-    expect(orbitTmpRoot(7)).toMatch(/\/tmp\/orbit-7$/);
+    expect(orbitTmpRoot(7)).toMatch(/\/orbit-7$/);
   });
 });

@@ -11,7 +11,10 @@ describe('decideStatus', () => {
     ['candidate', 5, 1, null],
     ['candidate', 0, 1, 'deprecated'],
     ['candidate', 2, 3, 'deprecated'],
-    ['validated', 3, 3, null],
+    // Issue #173: contradictions from two distinct runs deprecate a lesson, whatever its support.
+    ['validated', 3, 1, null],
+    ['validated', 3, 2, 'deprecated'],
+    ['validated', 3, 3, 'deprecated'],
     ['validated', 3, 4, 'deprecated'],
     ['validated', 0, 1, 'deprecated'],
     ['deprecated', 10, 0, null],
@@ -23,6 +26,7 @@ describe('decideStatus', () => {
   it('names the rule behind every change', () => {
     expect(decideStatus('candidate', { support: 2, contradict: 0 })?.rule).toBe('promote.supported-by-distinct-runs');
     expect(decideStatus('validated', { support: 0, contradict: 1 })?.rule).toBe('deprecate.contradictions-exceed-support');
+    expect(decideStatus('validated', { support: 5, contradict: 2 })?.rule).toBe('deprecate.contradicted-twice');
   });
 });
 

@@ -13,7 +13,7 @@ import { MAX_REGENERATIONS } from '../../../src/controller/steps/common.ts';
 import { frozenPolicySetting } from '../../../src/controller/resume.ts';
 import type { ReviewFallback } from '../../../src/policy/review.ts';
 import type { OrbitConfig, ProviderConfig } from '../../../src/policy/types.ts';
-import { APPROVE, FAKES, FAKE_CODEX, baseScenario, implementMul, labDeps, makeLab, readText, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
+import { APPROVE, FAKES, FAKE_CODEX, IMPLEMENTER_OUTPUT, baseScenario, implementMul, labDeps, makeLab, readText, runState, startLabRun, writeScenario, type Lab } from './harness.ts';
 
 const canStripTypes = Boolean((process as unknown as { features?: { typescript?: unknown } }).features?.typescript);
 // A session's wall clock never drops below 60 s while a budget is set (controller/workers.ts), so a real timeout costs 60 s.
@@ -180,13 +180,15 @@ describe.skipIf(!canStripTypes)('controller: a reviewer that fails at run time',
 
   it('a hard cap reached with rounds granted prints the effective cap and says it includes them', async () => {
     const l = lab('block', [...Array(MAX_REGENERATIONS).fill(EXIT), REPAIR_REQUIRED, REPAIR_REQUIRED], (c) => void (c.scheduler.hard_limits.review_rounds = 2), {
-      implementer: [implementMul('*'), implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }])],
+      // The repair names a test for COR-1 that does not tell the trees apart: the finding stays open until the cap.
+      implementer: [implementMul('*'), { ...implementMul('*', [{ op: 'write', path: 'tests/extra.test.mjs', content: '// unrelated\n' }]), structured: { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/extra.test.mjs', note: 'validation for finding COR-1' }] } }],
     });
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    // The candidates passed verification, so the run that ran out offers one instead of ending EXHAUSTED (#169).
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toContain('review_rounds hard cap reached (4 of 4, including 2 for replaced reviewers) with 1 open finding(s)');
     expect(rawCap(l, run.id)).toBe(2);
   }, 120_000);

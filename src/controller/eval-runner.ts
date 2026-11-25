@@ -37,7 +37,7 @@ import { openDb, type OrbitDb } from '../storage/db.ts';
 import { listActiveWorkers, listWorkers } from '../storage/workers.ts';
 import { buildReplaySuite, evaluateOverlay, type CaseResult, type EvalRunner, type ReplayCase, type ReplaySuite } from '../knowledge/evals.ts';
 import { KnowledgeStore } from '../knowledge/store.ts';
-import { completeEvaluation, startEvaluation } from '../knowledge/overlays.ts';
+import { completeEvaluation, startEvaluation, type HeldOutBenchmark } from '../knowledge/overlays.ts';
 import type { EvalMetrics, PromptOverlay } from '../knowledge/types.ts';
 import { currentCandidate, repoKey, type ControllerDeps, type RunContext } from './context.ts';
 import type { ControllerOptions } from './loop.ts';
@@ -96,8 +96,16 @@ export function measureRun(db: OrbitDb, runId: string, requiredCheckIds?: readon
   return { state: run.state, verified, attempts, costUsd: usage.costComplete ? usage.totals.costUsd : null, spentUsd, falsePass };
 }
 
-/** Run states that settle a task: a verdict the run will not take back. BLOCKED waits for a person; CANCELLED says nothing about the prompt. */
+/**
+ * Run states that settle a task: a verdict the run will not take back. BLOCKED waits for a person; CANCELLED says nothing
+ * about the prompt. A run that ran out holding a verified candidate is BLOCKED only so a person can deliver it (issue
+ * #169): for the prompt it settled as EXHAUSTED did, so it counts (SETTLED_BLOCK).
+ */
 const SETTLED_STATES = ['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE'] as const;
+const SETTLED_BLOCK = "(state = 'BLOCKED' AND CASE WHEN json_valid(outcome_json) THEN json_extract(outcome_json, '$.decided') = 'EXHAUSTED' ELSE 0 END)";
+
+// A run whose learning (done or failed) recorded that lessons and overlays were out of its prompts (issue #173) never carried an overlay.
+const OUT_OF_PROMPTS = "EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.type IN ('learning.completed', 'learning.failed') AND CASE WHEN json_valid(e.data_json) THEN json_extract(e.data_json, '$.in_prompts') = 0 ELSE 0 END)";
 
 export interface LiveWindow extends EvalMetrics {
   /** Settled tasks in the window. */
@@ -111,7 +119,7 @@ export interface LiveWindow extends EvalMetrics {
  */
 export function liveWindow(db: OrbitDb, sinceMs: number): LiveWindow | null {
   const rows = db.all<{ id: string }>(
-    `SELECT id FROM runs WHERE state IN (${SETTLED_STATES.map(() => '?').join(', ')}) AND created_at >= ? ORDER BY created_at, id`,
+    `SELECT id FROM runs WHERE (state IN (${SETTLED_STATES.map(() => '?').join(', ')}) OR ${SETTLED_BLOCK}) AND created_at >= ? AND NOT ${OUT_OF_PROMPTS} ORDER BY created_at, id`,
     ...SETTLED_STATES,
     sinceMs,
   );
@@ -170,8 +178,9 @@ export function replayConfig(config: OrbitConfig, remainingUsd: number): OrbitCo
   const c = JSON.parse(JSON.stringify(config)) as OrbitConfig;
   if (DELIVERY_MODES.has(c.mode)) c.mode = 'autonomous';
   for (const a of [...DELIVERY_ACTIONS, ...RELEASE_ACTIONS]) c.actions[a] = false;
-  // The overlay under test is read from the clone's knowledge graph, which needs learning on; nothing else in it may run.
-  c.knowledge = { ...c.knowledge, enabled: true, share_globally: false, curator_budget_usd: 0, eval_budget_usd: 0, auto_adopt_overlays: false };
+  // The overlay under test is read from the clone's knowledge graph, which needs learning on and, since measuring it in
+  // the prompt is the point, lessons in prompts (the clone's graph holds that overlay and no lesson); nothing else may run.
+  c.knowledge = { ...c.knowledge, enabled: true, lessons_in_prompts: true, share_globally: false, curator_budget_usd: 0, eval_budget_usd: 0, auto_adopt_overlays: false };
   c.scheduler.hard_limits.model_cost_usd = Math.max(0.01, Math.min(c.scheduler.hard_limits.model_cost_usd, remainingUsd));
   return c;
 }
@@ -316,15 +325,16 @@ export interface EvaluationOutcome {
  * the active overlay changes during the replay: a candidate is never adopted
  * over something it was not compared with.
  */
-export async function evaluateAndDecide(input: { store: KnowledgeStore; overlay: PromptOverlay; runner: EvalRunner; suite: ReplaySuite; maxAttempts?: number; onRetry?: (attempt: number, max: number) => void }): Promise<EvaluationOutcome> {
+export async function evaluateAndDecide(input: { store: KnowledgeStore; overlay: PromptOverlay; runner: EvalRunner; suite: ReplaySuite; maxAttempts?: number; onRetry?: (attempt: number, max: number) => void; benchmark?: HeldOutBenchmark }): Promise<EvaluationOutcome> {
   const max = input.maxAttempts ?? 3;
   let overlay = input.overlay;
   if (overlay.status === 'candidate') overlay = startEvaluation(input.store, overlay.id);
   for (let attempt = 1; attempt <= max; attempt++) {
     const baseline = input.store.activeOverlay(overlay.role, overlay.scope);
     const r = await evaluateOverlay(input.runner, input.suite, baseline, overlay);
+    const heldOut = input.benchmark ? await input.benchmark.run(baseline, overlay) : undefined;
     try {
-      const out = completeEvaluation(input.store, overlay.id, { cases: r.cases, suite_id: r.suite_id, baseline: r.baseline, candidate: r.candidate, baseline_overlay_id: baseline?.id ?? null });
+      const out = completeEvaluation(input.store, overlay.id, { cases: r.cases, suite_id: r.suite_id, baseline: r.baseline, candidate: r.candidate, baseline_overlay_id: baseline?.id ?? null, ...(heldOut ? { held_out: heldOut } : {}) });
       return { overlay: out.overlay, adopted: out.decision.adopt, reason: out.decision.reason, cases: r.cases };
     } catch (err) {
       if (!isOrbitError(err, 'CONCURRENT_UPDATE') || attempt === max) throw err;

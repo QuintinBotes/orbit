@@ -8,7 +8,11 @@
  *   deny    exit 0 with {"hookSpecificOutput":{"hookEventName":"PreToolUse",
  *           "permissionDecision":"deny","permissionDecisionReason":"..."}}
  *   allow   exit 0 with no output: the hook never grants anything, it only
- *           takes away, so the session's own permission rules still apply
+ *           takes away, so the session's own permission rules still apply.
+ *           From 80% of the session's turn cap on, the allow carries
+ *           {"hookSpecificOutput":{"hookEventName":"PreToolUse",
+ *           "additionalContext":"..."}} telling the session how many turns
+ *           it has left (issue #177); it still grants nothing
  *   error   exit 2, the only blocking failure code (exit 1 and crashes are
  *           NON-blocking in Claude Code), with the reason on stderr and the
  *           same deny JSON on stdout
@@ -22,6 +26,9 @@ import { isAbsolute } from 'node:path';
 import type { AuthorizationDecision, PolicySnapshot } from './types.ts';
 import { verifySnapshot } from './snapshot.ts';
 import { authorize } from './authorize.ts';
+import { claudeModelRequests } from '../adapters/claude-transcript.ts';
+import { readLogLines } from '../adapters/supervise.ts';
+import { ENV_TURN_CAP, ENV_TURN_REMIND_AT, turnReminder } from '../scheduling/turn-cap.ts';
 
 export interface GuardOptions {
   snapshotPath: string;
@@ -29,6 +36,8 @@ export interface GuardOptions {
   /** Absolute root of the worker's worktree; every edit must resolve inside it. */
   worktreeRoot: string;
   home?: string;
+  /** The worker's private temp directory, the one part of the workers' temp root it may read. */
+  workerTmpDir?: string;
 }
 
 export interface GuardResult {
@@ -40,6 +49,7 @@ export interface GuardResult {
 export const ENV_POLICY_PATH = 'ORBIT_POLICY_PATH';
 export const ENV_POLICY_HASH = 'ORBIT_POLICY_HASH';
 export const ENV_WORKTREE = 'ORBIT_WORKTREE';
+export const ENV_WORKER_TMPDIR = 'ORBIT_WORKER_TMPDIR';
 
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
 
@@ -76,9 +86,29 @@ export function runGuardHook(stdin: string, env: Record<string, string | undefin
     if (!snapshotPath) throw new GuardInputError(`${ENV_POLICY_PATH} is not set`);
     if (!expectedHash) throw new GuardInputError(`${ENV_POLICY_HASH} is not set`);
     if (!worktreeRoot) throw new GuardInputError(`${ENV_WORKTREE} is not set`);
-    return handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}) });
+    const workerTmpDir = env[ENV_WORKER_TMPDIR];
+    const result = handlePreToolUse(stdin, { snapshotPath, expectedHash, worktreeRoot, ...(env.HOME ? { home: env.HOME } : {}), ...(workerTmpDir ? { workerTmpDir } : {}) });
+    return result.exitCode === 0 && result.stdout === '' ? withTurnReminder(result, stdin, env) : result;
   } catch (err) {
     return failClosed(err);
+  }
+}
+
+/**
+ * An allow, plus the turns the session has left once it has taken 80% of its cap (issue #177): the session's model
+ * requests so far are counted from its transcript. Anything missing or unreadable leaves the allow as it was; the
+ * reminder never turns an allow into a denial.
+ */
+function withTurnReminder(result: GuardResult, stdin: string, env: Record<string, string | undefined>): GuardResult {
+  try {
+    const cap = Number(env[ENV_TURN_CAP]);
+    const remindAt = Number(env[ENV_TURN_REMIND_AT]);
+    const path = (JSON.parse(stdin) as { transcript_path?: unknown }).transcript_path;
+    if (!Number.isSafeInteger(cap) || !Number.isSafeInteger(remindAt) || typeof path !== 'string' || !isAbsolute(path)) return result;
+    const text = turnReminder(claudeModelRequests(readLogLines(path).events) ?? 0, cap, remindAt);
+    return text ? { ...result, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: text } }) } : result;
+  } catch {
+    return result;
   }
 }
 
@@ -139,7 +169,7 @@ function parseInput(text: string): HookInput {
 /** null: a tool this hook has no rule for, so it stays out of the decision. */
 function decide(snapshot: PolicySnapshot, input: HookInput, opts: GuardOptions): AuthorizationDecision | null {
   const ti = input.tool_input;
-  const ctx = { worktreeRoot: opts.worktreeRoot, ...(input.cwd ? { cwd: input.cwd } : {}), ...(opts.home ? { home: opts.home } : {}) };
+  const ctx = { worktreeRoot: opts.worktreeRoot, ...(input.cwd ? { cwd: input.cwd } : {}), ...(opts.home ? { home: opts.home } : {}), ...(opts.workerTmpDir ? { workerTmpDir: opts.workerTmpDir } : {}) };
   switch (input.tool_name) {
     case 'Edit':
     case 'Write': {

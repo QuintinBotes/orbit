@@ -17,7 +17,8 @@ import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
-import { git } from './git.ts';
+import { isSimplicityCheck, judgeSimplicity } from './simplicity.ts';
+import { checkoutId, git } from './git.ts';
 import { buildHostDenialNote, buildHostFix, FORMAT_PROBE_LOST_NOTE, formatLoadedNoProject, formatProbeLost, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
 import {
@@ -111,6 +112,8 @@ export interface RunnerContext {
    * or the missing program may have been fixed since, which the recorded result cannot show.
    */
   setAside?: ReadonlySet<string>;
+  /** `orbit verify` re-verifies a run that may have ended: a checkout-bound check may still be planned for it. */
+  installAfterEnd?: boolean;
   /**
    * Where attempts are recorded: check_runs (CHECK_RUN_RECORDS) unless given. The fail-before probe records its own
    * attempts elsewhere (evidence/fail-before.ts), because an expected failure on its tree is not the run's.
@@ -155,6 +158,8 @@ export interface CheckSubject {
   treeHash: string;
   evidenceDir: string;
   source: Extract<FailureSource, 'check' | 'baseline' | 'install'>;
+  /** The revision a check compares the tree against, as ORBIT_BASE_REVISION: a candidate's parent; absent, the checkout's own HEAD (the base revision, where nothing is new). */
+  baseRev?: string;
 }
 
 export function candidateEvidenceDir(runDir: string, seq: number): string {
@@ -189,7 +194,8 @@ export async function reattachCheck(ctx: RunnerContext, checkRunId: string): Pro
   if (row.runId !== ctx.run.id) throw new OrbitError('INTERNAL', `check run ${checkRunId} belongs to run ${row.runId}, not ${ctx.run.id}`);
   const subject = subjectForRow(ctx, row);
   const def = definitionForRow(ctx, subject, row);
-  return executeCheckGroup(ctx, subject, def);
+  // The caller names the row to collect, whose checkout may be gone: its group is the one recorded in that checkout.
+  return executeCheckGroup(ctx, subject, def, row.checkout);
 }
 
 /** Reattach every check of the run that has no final status. Returns their results. */
@@ -240,11 +246,16 @@ export async function runCheckSet(ctx: RunnerContext, subject: CheckSubject, def
 }
 
 export function candidateSubject(runDir: string, candidate: Candidate): CheckSubject {
-  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir, candidate.seq), source: 'check' };
+  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir, candidate.seq), source: 'check', baseRev: candidate.parentSha };
 }
 
 export function baselineSubject(runDir: string, baseTree: string, source: 'baseline' | 'install' = 'baseline'): CheckSubject {
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join(runDir, 'baseline'), source };
+}
+
+/** The dependency install in the implementer's worktree (issue #132): its own binding and evidence, never baseline or candidate evidence. */
+export function worktreeInstallSubject(runDir: string, tree: string): CheckSubject {
+  return { candidateId: null, bindingId: `worktree:${tree}`, treeHash: tree, evidenceDir: join(runDir, 'worktree-install'), source: 'install' };
 }
 
 /** The recorded configuration hash for a check, verified against its definition. */
@@ -332,6 +343,7 @@ async function assertCheckoutTree(dir: string, treeHash: string): Promise<void> 
 
 function subjectForRow(ctx: RunnerContext, row: CheckRunRecord): CheckSubject {
   const install = INSTALL_CHECK_IDS.includes(row.checkId);
+  if (Object.values(WORKTREE_INSTALL_IDS).includes(row.checkId)) return worktreeInstallSubject(ctx.runDir, row.treeHash);
   if (row.candidateId === null) return baselineSubject(ctx.runDir, row.treeHash, install ? 'install' : 'baseline');
   const subject = candidateSubject(ctx.runDir, getCandidate(ctx.db, row.candidateId));
   return install ? { ...subject, source: 'install' } : subject;
@@ -342,6 +354,15 @@ export const INSTALL_CHECK_ID = 'orbit-install';
 /** Check id of the allowlisted lifecycle-script step that follows a script-free install. */
 export const INSTALL_SCRIPTS_CHECK_ID = 'orbit-install-scripts';
 const INSTALL_CHECK_IDS: readonly string[] = [INSTALL_CHECK_ID, INSTALL_SCRIPTS_CHECK_ID];
+/** The install steps' ids in the implementer's worktree, so their rows never answer a query for the baseline's. */
+export const WORKTREE_INSTALL_IDS: Readonly<Record<string, string>> = { [INSTALL_CHECK_ID]: 'orbit-worktree-install', [INSTALL_SCRIPTS_CHECK_ID]: 'orbit-worktree-install-scripts' };
+/** Every id Orbit's own install steps run under, wherever they install. */
+const ALL_INSTALL_IDS: readonly string[] = [...INSTALL_CHECK_IDS, ...Object.values(WORKTREE_INSTALL_IDS)];
+/**
+ * Checks whose value is the untracked state they leave in their checkout (node_modules): a recorded attempt is reused or
+ * reattached only in the checkout it ran in (evidence/git.ts checkoutId), and runs again in any other.
+ */
+const CHECKOUT_BOUND_CHECK_IDS: ReadonlySet<string> = new Set(ALL_INSTALL_IDS);
 
 const DEFINITION_FILE = 'definition.json';
 
@@ -422,13 +443,15 @@ function dirsFor(subject: CheckSubject, checkId: string, index: number): Attempt
   };
 }
 
-async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition): Promise<CheckResult> {
+async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, recordedCheckout?: string | null): Promise<CheckResult> {
   const configHash = configHashFor(ctx.snapshot, def);
   const binding: EvidenceBinding = { candidateId: subject.bindingId, treeHash: subject.treeHash, checkConfigHash: configHash, policyHash: ctx.run.policyHash };
   const query = { runId: ctx.run.id, candidateId: subject.candidateId, checkId: def.id };
+  const bound = CHECKOUT_BOUND_CHECK_IDS.has(def.id);
+  const checkout = !bound ? null : recordedCheckout !== undefined ? recordedCheckout : await checkoutId(ctx.checkoutDir);
 
   const loadGroup = (): CheckRunRecord[] => {
-    const rows = recordsOf(ctx).list(ctx.db, query);
+    const rows = recordsOf(ctx).list(ctx.db, query).filter((r) => !bound || r.checkout === checkout);
     const root = [...rows].reverse().find((r) => r.rerunOf === null);
     if (!root || ctx.setAside?.has(root.id)) return [];
     // A group recorded under another configuration or policy says nothing about this one.
@@ -466,7 +489,7 @@ async function executeCheckGroup(ctx: RunnerContext, subject: CheckSubject, def:
     if (detached(ctx)) throw detachError(ctx);
     touched = true;
     const root = group[0] ?? null;
-    const planned = await launchAttempt(ctx, subject, def, configHash, root?.id ?? null);
+    const planned = await launchAttempt(ctx, subject, def, configHash, root?.id ?? null, checkout);
     group = loadGroup().length > 0 ? loadGroup() : [planned];
   }
 
@@ -534,6 +557,12 @@ function safeCwd(checkout: string, rel: string): string {
  * fails with EACCES and the build stops at "Error reading git repository information" (.NET SDK 9 and 10). Turning the
  * query off keeps that protection and every other rule of the sandbox; a check's own env can turn it back on.
  *
+ * MSBUILDUSESERVER=0 keeps the MSBuild server off (issue #180). From .NET SDK 11 every build goes through it by default:
+ * a process that outlives the build and binds a named pipe under /tmp, which the sandbox refuses as it refuses a worker
+ * node's. The server died recording that, the CLI built in process instead, and the runner failed the check on the
+ * record. The SDK reads DOTNET_CLI_USE_MSBUILD_SERVER only when MSBUILDUSESERVER is unset, and MSBuild reads this one
+ * itself, so it covers both. Earlier SDKs leave the server off already.
+ *
  * Orbit never changes a check's processor count (issue #10, reopened; evidence/msbuild.ts): DOTNET_PROCESSOR_COUNT
  * reaches the test host, where it changes how the repository's tests run (xunit before 2.8 deadlocks a test that blocks
  * on async code on one processor). MSBuild worker nodes, which the sandbox refuses their named pipe under /tmp, are kept
@@ -548,6 +577,7 @@ export const DOTNET_CHECK_ENV: Readonly<Record<string, string>> = {
   DOTNET_ADD_GLOBAL_TOOLS_TO_PATH: 'false',
   DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK: '1',
   EnableSourceControlManagerQueries: 'false',
+  MSBUILDUSESERVER: '0',
 };
 
 /** Where NuGet records the migrations it has run, under the home directory, and the newest one's marker file. */
@@ -605,7 +635,7 @@ export function checkEnv(def: CheckDefinition, dirs: Pick<AttemptDirs, 'homeDir'
   };
 }
 
-async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string, rerunOf: string | null): Promise<CheckRunRecord> {
+async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: CheckDefinition, configHash: string, rerunOf: string | null, checkout: string | null = null): Promise<CheckRunRecord> {
   const argv = def.shell ? ['/bin/sh', '-c', def.command[0]!] : [...def.command];
   const cwd = safeCwd(ctx.checkoutDir, def.cwd);
   await assertCheckoutUnmodified(ctx.checkoutDir, def.id);
@@ -620,7 +650,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
 
   const toolchains = checkToolchains(ctx, def, cwd, dirs, tmp);
   prepareToolchainLayout(toolchains);
-  const env = checkEnv(def, dirs, process.env.PATH, toolchains.env);
+  const env: Record<string, string> = { ORBIT_BASE_REVISION: subject.baseRev ?? 'HEAD', ...checkEnv(def, dirs, process.env.PATH, toolchains.env) };
   const profile = profileForCheck({
     worktree: ctx.checkoutDir,
     check: def,
@@ -652,6 +682,8 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
         // is: the record says so exactly when Orbit's NuGetAudit=false reached the check (its own env left it alone).
         limitations: [...wrapped.limitations, ...(toolchains.env.NuGetAudit === 'false' && env.NuGetAudit === 'false' ? [NUGET_AUDIT_LIMITATION] : [])],
         rerunOf,
+        checkout,
+        afterEnd: checkout !== null && ctx.installAfterEnd === true,
       },
       ctx.clock,
     );
@@ -745,7 +777,7 @@ function stillRunsMessage(row: CheckRunRecord, why: string): string {
  * host's by default; a container's is Linux) decide whether NuGet's vulnerability audit can run in it.
  */
 export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutDir' | 'toolchainCacheRoot' | 'homeDir' | 'isolation'>, def: CheckDefinition, cwd: string, dirs: Pick<AttemptDirs, 'toolchainsDir'>, tmpDir: string, platform: NodeJS.Platform = process.platform): ToolchainLayout {
-  const install = INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
+  const install = ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id];
   return commandToolchains({
     command: def.command,
     shell: def.shell,
@@ -767,7 +799,7 @@ export function checkToolchains(ctx: Pick<RunnerContext, 'snapshot' | 'checkoutD
  * `dependencies.install_command` (it has no env a person sets), any other check is `checks.<id>`.
  */
 function msbuildFixWhere(ctx: Pick<RunnerContext, 'snapshot'>, def: CheckDefinition): MsbuildFixWhere | null {
-  return INSTALL_CHECK_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
+  return ALL_INSTALL_IDS.includes(def.id) && !ctx.snapshot.config.checks[def.id] ? { command: 'dependencies.install_command', env: null } : null;
 }
 
 /**
@@ -1161,6 +1193,12 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     status = 'ERROR';
     note = 'the check process disappeared without writing an exit record (killed externally or the host restarted)';
   }
+  // The simplicity gate (issue #232) names its new findings, and fails a pass that compared nothing against the base.
+  const simplicity = isSimplicityCheck(def.id) ? judgeSimplicity({ body, exitCode: exit?.exitCode ?? null, status, timeoutSeconds: def.timeout_seconds }) : null;
+  if (simplicity) {
+    status = simplicity.status ?? status;
+    note = simplicity.note;
+  }
   // A denial recorded while the check ran, or by the final exit scan, is a failure, never a pass (srt exits 0 on
   // SIGTERM), unless it was cancelled or timed out first.
   const denial = status === 'CANCELLED' || status === 'TIMEOUT' ? null : readDenial(dirs.checkDir);
@@ -1199,7 +1237,8 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
       /* checkout already removed */
     }
     // The check's own output plus Orbit's note, but not the footer: its "status=FAILED" would count as an error line in every log and give unrelated silent failures one fingerprint.
-    const fp = fingerprintFailure(note ? `${body}\n${note}\n` : body, def, { exitCode, timedOut: status === 'TIMEOUT', roots });
+    // The gate's note is the failure: unknot's document is data, not a log of errors.
+    const fp = fingerprintFailure(simplicity ? `${simplicity.note}\n` : note ? `${body}\n${note}\n` : body, def, { exitCode, timedOut: status === 'TIMEOUT', roots });
     fingerprint = fp.fingerprint;
     excerpt = fp.excerpt;
   }

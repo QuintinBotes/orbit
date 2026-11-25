@@ -81,7 +81,7 @@ async function loadFailure(deps: ControllerDeps, runId: string, signal: AbortSig
   if (isTerminal(getRun(deps.db, runId).state)) return { progressed: false, done: true };
   // Enough to stop workers and record the outcome; nothing read here grants authority.
   const ctx = lenientContext(deps, runId, signal);
-  return finishRun(ctx, 'BLOCKED', `${err.code}: ${err.message}`);
+  return finishRun(ctx, 'BLOCKED', `${err.code}: ${err.message}`, { cause: 'environment' });
 }
 
 async function retryOrBlock(ctx: RunContext, err: unknown): Promise<StepResult> {
@@ -101,7 +101,7 @@ async function retryOrBlock(ctx: RunContext, err: unknown): Promise<StepResult> 
       limit = 0;
     }
   }
-  if (prior + 1 >= limit) return finishRun(ctx, 'BLOCKED', `${ctx.run.state} failed ${prior + 1} time(s); last error ${code}: ${message}`, { data: { code } });
+  if (prior + 1 >= limit) return finishRun(ctx, 'BLOCKED', `${ctx.run.state} failed ${prior + 1} time(s); last error ${code}: ${message}`, { data: { code }, cause: 'environment' });
   return { progressed: false, waiting: `step failed (${code}); retrying: ${message}` };
 }
 

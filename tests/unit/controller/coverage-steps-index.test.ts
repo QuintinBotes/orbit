@@ -57,6 +57,7 @@ describe('a run whose authority cannot be verified', () => {
     const run = getRun(lab.db, lab.runId);
     expect(run.state).toBe('BLOCKED');
     expect(run.outcomeReason).toMatch(/^POLICY_TAMPERED: /);
+    expect(run.failureClass).toBe('environment');
   });
 
   it('blocks on a stored contract that no longer validates', async () => {
@@ -137,6 +138,7 @@ describe('infrastructure retries', () => {
     const run = getRun(lab.db, lab.runId);
     expect(run.state).toBe('BLOCKED');
     expect(run.outcomeReason).toContain('PREFLIGHT failed 5 time(s); last error GIT_FAILED: git broke');
+    expect(run.failureClass).toBe('environment');
     expect(events(STEP_ERROR_EVENT)).toHaveLength(5);
     expect(JSON.parse(events(STEP_ERROR_EVENT)[0]!.data_json)).toMatchObject({ state: 'PREFLIGHT', code: 'GIT_FAILED' });
   });

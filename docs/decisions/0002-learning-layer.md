@@ -36,6 +36,29 @@ Learning happens in three places, all outside the trust boundary:
    and it is rolled back automatically when live metrics regress past a
    threshold. Every version is kept.
 
+Amendment (2026-11-15, issue #168). Item 2 was built and not connected:
+nothing recorded a route outcome, so routing never read one. Routing is now
+connected, and only routing: each settled implementation attempt records one
+outcome, and a cheaper tier displaces the routing table's choice for a task
+class only with a minimum sample, a minimum measured pass rate and a lower
+expected cost, inside a time window, among the models the policy allows and
+never against `routing.overrides` (`routing.learning`; the rules are in
+docs/learning.md). Initial allowances and difficulty classes are not adjusted
+from outcomes. Orbit does not try a cheaper model on its own, so a model
+collects outcomes only from runs that route to it.
+
+Amendment (2026-11-20, issue #173). Lessons and overlays stay out of worker
+prompts unless `knowledge.lessons_in_prompts` is on, and it is off by default
+until a full benchmark shows that they help. Recording, citing, re-checking
+and expiring lessons run either way. A lesson curated from a run cites the run
+and the file and line, check or review finding it came from; before it may
+enter a prompt the citation is re-checked against the repository, and a lesson
+with no supporting run for `knowledge.lesson_expiry_days` expires.
+Contradictions are read from the run's records, and contradictions from two
+distinct runs deprecate a lesson whatever its support. When an overlay
+evaluation has a result from the benchmark's held-out scenarios, a candidate
+with a lower pass rate there is not adopted.
+
 ## Guardrails
 
 - Lessons and overlays are advisory text inside a fenced block. Policy, hard

@@ -2,9 +2,10 @@ import { OrbitError } from '../core/errors.ts';
 import type { DifficultyClass } from '../scheduling/types.ts';
 import { FAMILY_TIER, tierOf } from './registry.ts';
 import { roundUsd } from './pricing.ts';
-import { isIndependentReviewer } from '../policy/config.ts';
+import { DEFAULT_ROUTING_LEARNING, isIndependentReviewer, partnerImplementers, providerFamily, routingLearning } from '../policy/config.ts';
 import { reviewFallback, reviewProviderOrder } from '../policy/review.ts';
 import {
+  FAMILY_SURFACE,
   WORK_KINDS,
   type CostBasis,
   type CostBreakdown,
@@ -15,9 +16,11 @@ import {
   type RouteAlternative,
   type RouteDecision,
   type RouteJustification,
+  type RouteLearning,
   type RouteRef,
   type RouteSignals,
   type RouteStat,
+  type RoutingLearning,
   type RoutingPolicy,
   type Surface,
   type WorkKind,
@@ -39,6 +42,26 @@ import {
  * otherwise the priors below apply, and every decision says which basis it
  * used. The priors are planning assumptions, not calibrated probabilities.
  *
+ * Measured outcomes (`routing.learning`, issue #168) decide nothing below
+ * `min_samples` judged outcomes of one route in one task class (the work kind
+ * and the difficulty class). At or above it, an adjacent cheaper tier whose
+ * measured pass rate is at least `min_pass_rate`, and whose expected cost per
+ * verified task is clearly lower, displaces the table's choice; when its rate
+ * falls below the threshold the table's choice stands again. Learning chooses
+ * only among the models the policy made eligible, never into Fable, never
+ * while difficulty is being escalated, never below the tier an earlier attempt
+ * of the same run ran on, and never against `routing.overrides`. The caller
+ * passes outcomes only for implementation attempts.
+ * Every decision that read outcomes records what it read and why (`learning`).
+ *
+ * Partner implementers (issue #176): with `routing.implementers` naming Codex or Muse, an implementation attempt of
+ * routine candidate work (routine-code, focused-tests; `signals.implementation`) goes to the first listed partner that
+ * may take it, before the Claude ladder. A planner, a diagnosis or an inquiry stays on the ladder whatever its work kind. A partner
+ * is passed over for the rest of the run once it was skipped (quota, login, no writable tier) or once
+ * PARTNER_MAX_FAILURES of its candidates failed verification or review, and across runs once its measured pass rate for
+ * the task class falls below `routing.learning.min_pass_rate`. Claude is always the fallback, and Claude's
+ * verification decides whether a partner's candidate is kept.
+ *
  * route() is pure: it reads the registry and the outcomes it is given and
  * returns a JSON-ready decision for the controller to record.
  */
@@ -53,6 +76,10 @@ export interface RouteRequest {
   signals: RouteSignals;
   registry: RegistryView;
   policy: RoutingPolicy;
+  /**
+   * Measured outcomes of this task class, already limited to the learning window by the caller. Omitted or empty:
+   * the table and the priors decide alone.
+   */
   outcomes?: readonly RouteStat[];
 }
 
@@ -112,8 +139,8 @@ const PRIOR_SUCCESS: Readonly<Record<number, Record<DifficultyClass, number>>> =
 const PRIOR_REVIEW_SUCCESS = 0.9;
 /** Pseudo-count weight of the prior when blending with measured outcomes. */
 const PRIOR_WEIGHT = 4;
-/** Outcomes needed before a route counts as measured and may override the table. */
-export const MIN_MEASURED_SAMPLES = 5;
+/** Judged outcomes needed before a route counts as measured and may override the table, unless `routing.learning.min_samples` says otherwise. */
+export const MIN_MEASURED_SAMPLES = DEFAULT_ROUTING_LEARNING.min_samples;
 /** A measured alternative must be this much cheaper per verified task to displace the table's choice. */
 const CALIBRATION_MARGIN = 0.1;
 /** Screenshot routes escalate when measured accuracy falls below this. */
@@ -142,6 +169,7 @@ interface Ctx {
   policy: RoutingPolicy;
   registry: RegistryView;
   outcomes: readonly RouteStat[];
+  learning: RoutingLearning;
   threshold: number;
   evidence: string[];
   ignored: string[];
@@ -173,13 +201,92 @@ export function route(req: RouteRequest): RouteDecision {
     policy: req.policy,
     registry: req.registry,
     outcomes: req.outcomes ?? [],
+    learning: routingLearning(req.policy),
     threshold: Math.max(1, req.policy.scheduler?.repeated_failure_threshold ?? 2),
     evidence: uniq([...(s.evidence ?? []), ...(s.previousRoute?.evidence ?? [])]),
     ignored: workerClaimNotes(s),
     previous,
     previousTier: previous && previous.provider === 'claude' ? tierOf(previous) : null,
   };
-  return req.workKind === 'safety-review' ? routeSafetyReview(ctx) : routeLadder(ctx);
+  if (req.workKind === 'safety-review') return routeSafetyReview(ctx);
+  return routePartner(ctx) ?? routeLadder(ctx);
+}
+
+/** A partner whose candidates failed this many times in one run hands the next attempt to Claude (issue #176). */
+export const PARTNER_MAX_FAILURES = 2;
+
+/**
+ * The first partner `routing.implementers` lists that may implement this unit, or null for the Claude ladder. Why each
+ * listed partner was passed over is recorded with the decision either way.
+ */
+function routePartner(ctx: Ctx): RouteDecision | null {
+  const partners = partnerImplementers(ctx.policy);
+  const s = ctx.signals;
+  if (partners.length === 0 || s.implementation !== true) return null;
+  if (ctx.profile.output !== 'candidate' || !ctx.profile.routine) {
+    ctx.ignored.push(`routing.implementers names ${partners.join(', ')}, but ${ctx.workKind} is not a bounded unit a partner implements`);
+    return null;
+  }
+  const passed: RouteAlternative[] = [];
+  for (const p of partners) {
+    const cfg = ctx.policy.providers[p];
+    const failures = s.partnerFailures?.[p] ?? 0;
+    const skipped = s.partnersSkipped?.[p];
+    const why =
+      skipped !== undefined
+        ? `skipped for the rest of this run: ${skipped}`
+        : failures >= PARTNER_MAX_FAILURES
+          ? `${failures} of its candidates in this run failed verification or review`
+          : cfg?.data_policy_eligible !== true
+            ? `providers.${p}.data_policy_eligible is not true, so the code may not be sent to it`
+            : !cfg.model
+              ? `providers.${p}.model names no model`
+              : measuredBelowFloor(ctx, p, cfg.model);
+    if (why !== null) {
+      passed.push({ provider: p, model: cfg?.model ?? '', family: providerFamily(p), eligible: false, expected_cost_per_verified_task: null, cost_basis: 'unavailable', rejected_because: why });
+      continue;
+    }
+    const model = cfg!.model as string;
+    const family = providerFamily(p) as 'codex' | 'muse';
+    const entry = ctx.registry.get(model);
+    const cost = entry ? estimateRoute(entry, ctx) : null;
+    const reason = [
+      `routing.implementers lets ${p} implement ${ctx.workKind}`,
+      ...passed.map((a) => `${a.provider} passed over: ${a.rejected_because}`),
+      `${p} implements in its own writable worktree; Claude's verification decides whether its candidate is kept`,
+      cost ? costText(cost) : 'expected cost per verified task unavailable (no pricing or measured cost)',
+    ].join('; ');
+    return {
+      kind: 'route',
+      summary: `route ${ctx.workKind} -> ${p}/${model} (partner)`,
+      work_kind: ctx.workKind,
+      provider: p,
+      model,
+      surface: FAMILY_SURFACE[family],
+      family: entry?.family ?? family,
+      effort: cfg!.reasoning_effort ?? null,
+      reason,
+      justification: { signals: [], evidence: [...ctx.evidence], ignored: ctx.ignored },
+      alternatives_considered: passed,
+      expected_cost_per_verified_task: cost?.total ?? null,
+      expected_cost_breakdown: cost?.breakdown ?? null,
+      cost_basis: cost?.basis ?? 'unavailable',
+      success_probability: round3(cost?.success ?? (PRIOR_SUCCESS[2] as Record<DifficultyClass, number>)[s.difficulty]),
+      attempt: s.attempt,
+      difficulty: s.difficulty,
+    };
+  }
+  ctx.ignored.push(`no partner implements: ${passed.map((a) => `${a.provider} ${a.rejected_because}`).join('; ')}; Claude implements`);
+  return null;
+}
+
+/** Why measured outcomes drop a partner for this task class (FR-004), or null while they do not. */
+function measuredBelowFloor(ctx: Ctx, provider: string, model: string): string | null {
+  const st = ctx.outcomes.find((o) => o.provider === provider && o.modelId === model && o.workKind === ctx.workKind && (o.difficulty === undefined || o.difficulty === null || o.difficulty === ctx.signals.difficulty));
+  const judged = st ? st.verified + st.failed + st.rejected : 0;
+  if (!st || judged === 0 || judged < ctx.learning.min_samples) return null;
+  const rate = st.verified / judged;
+  return rate < ctx.learning.min_pass_rate ? `measured pass rate ${pct(rate)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) is below ${pct(ctx.learning.min_pass_rate)}` : null;
 }
 
 /** The decisions-table shape: kind, one-line summary, and the full decision as data. */
@@ -204,12 +311,14 @@ function routeLadder(ctx: Ctx): RouteDecision {
 
   let startTier = profile.startTier;
   let preferred: string | null = null;
+  let overridden = false;
   const override = policy.routing.overrides[ctx.workKind];
   if (override) {
     const r = resolveOverride(override, ctx.registry);
     if (r && r.provider === 'claude' && r.tier !== null) {
       startTier = r.tier;
       preferred = r.modelId;
+      overridden = true;
       notes.push(`routing.overrides.${ctx.workKind} sets the starting point to ${override}`);
     } else {
       ctx.ignored.push(`routing.overrides.${ctx.workKind}=${override} names no claude-cli model or family; ignored`);
@@ -303,7 +412,7 @@ function routeLadder(ctx: Ctx): RouteDecision {
   if (ctx.workKind === 'screenshot' && active.length === 0 && tier < FABLE_TIER - 1) {
     const stat = statFor(ctx, chosen);
     const judged = stat ? stat.verified + stat.failed + stat.rejected : 0;
-    if (stat && judged >= MIN_MEASURED_SAMPLES && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
+    if (stat && judged >= ctx.learning.min_samples && stat.successRate !== null && stat.successRate < ACCURACY_FLOOR) {
       const up = pickInTier(byTier.get(tier + 1) ?? [], null, costOf);
       if (up) {
         justification.signals.push({ signal: 'measured-accuracy', detail: `measured accuracy ${pct(stat.successRate)} over ${judged} outcomes is below ${pct(ACCURACY_FLOOR)}`, evidence: [] });
@@ -313,32 +422,138 @@ function routeLadder(ctx: Ctx): RouteDecision {
     }
   }
 
-  // Calibration: with enough measured outcomes, an adjacent tier that is
-  // clearly cheaper per verified task displaces the table's choice. Never
-  // while difficulty is being escalated, and never into Fable (gated above).
-  if (active.length === 0 && !downRoutedFrom) {
-    const mine = costOf(chosen);
-    if (mine.basis === 'measured' && mine.total !== null) {
-      let best: { m: ModelEntry; c: RouteCost } | null = null;
-      for (const t of [tier - 1, tier + 1]) {
-        if (t < 1 || t >= FABLE_TIER) continue;
-        for (const m of byTier.get(t) ?? []) {
-          const c = costOf(m);
-          if (c.basis !== 'measured' || c.total === null) continue;
-          if (c.total < mine.total * (1 - CALIBRATION_MARGIN) && (!best || (best.c.total as number) > c.total)) best = { m, c };
-        }
-      }
-      if (best) {
-        const detail = `measured expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} vs $${fmt(mine.total)} for ${chosen.modelId}`;
-        notes.push(`calibrated by measured outcomes: ${detail}`);
-        if ((tierOf(best.m) ?? 0) > tier) justification.signals.push({ signal: 'measured-outcomes', detail, evidence: [] });
-        chosen = best.m;
+  // Calibration (routing.learning): with enough measured outcomes of this task class, an adjacent tier displaces the
+  // table's choice. Never while difficulty is being escalated, never into Fable (gated above), and never against an
+  // explicit routing.overrides entry: a person's choice wins over anything measured.
+  const tableChoice = chosen;
+  let learning: RouteLearning | undefined;
+  if (ctx.outcomes.length > 0) {
+    const blocked = overridden
+      ? `routing.overrides.${ctx.workKind} is an explicit choice, so measured outcomes do not displace it`
+      : active.length > 0
+        ? 'difficulty is being escalated, so measured outcomes do not displace the route'
+        : downRoutedFrom
+          ? 'the route follows a solved diagnosis back down, so measured outcomes do not displace it'
+          : null;
+    const learned = calibrate(ctx, tier, chosen, byTier, costOf, blocked);
+    if (learned.measured.length > 0) {
+      learning = {
+        applied: learned.pick !== null,
+        table_choice: ref(tableChoice),
+        reason: learned.reason,
+        task_class: { work_kind: ctx.workKind, difficulty: signals.difficulty },
+        min_samples: ctx.learning.min_samples,
+        min_pass_rate: ctx.learning.min_pass_rate,
+        window_days: ctx.learning.window_days,
+        measured: learned.measured,
+      };
+      if (learned.pick) {
+        notes.push(`calibrated by measured outcomes: ${learned.reason}`);
+        if ((tierOf(learned.pick) ?? 0) > tier) justification.signals.push({ signal: 'measured-outcomes', detail: learned.reason, evidence: [] });
+        chosen = learned.pick;
+      } else if (learned.restored) {
+        notes.push(`table default kept: ${learned.reason}`);
       }
     }
   }
 
   const escalatedFrom = rising && (tierOf(chosen) ?? 0) > base ? escalationOrigin(ctx, byTier, base, costOf) : undefined;
-  return finish(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom);
+  const decision = finish(ctx, startTier, chosen, null, profile.baseEffort, effortBump, notes, justification, assessment, costOf, escalatedFrom, downRoutedFrom);
+  if (learning) decision.learning = learning;
+  return decision;
+}
+
+interface Calibration {
+  /** The model that displaces the table's choice, or null when the table's choice stands. */
+  pick: ModelEntry | null;
+  /** A cheaper route had enough outcomes and its measured pass rate is below the threshold: the table's choice is restored. */
+  restored: boolean;
+  reason: string;
+  measured: RouteLearning['measured'];
+}
+
+/**
+ * Whether measured outcomes displace the table's choice, and why or why not. Deterministic: the same statistics give
+ * the same answer, candidates are compared by expected cost, then tier, then model id, and no ratio is taken over an
+ * empty count. A cheaper (lower) tier needs `min_samples` judged outcomes, a measured pass rate of at least
+ * `min_pass_rate` and a clearly lower expected cost per verified task than the table's choice, whatever basis the
+ * table's own estimate has. A higher tier displaces the table's choice only when both are measured and it is clearly
+ * cheaper per verified task. A route whose cost cannot be estimated never displaces anything: unknown is not zero.
+ */
+function calibrate(ctx: Ctx, tier: number, chosen: ModelEntry, byTier: Map<number, ModelEntry[]>, costOf: (m: ModelEntry) => RouteCost, blocked: string | null): Calibration {
+  const { min_samples: min, min_pass_rate: floor } = ctx.learning;
+  const mine = costOf(chosen);
+  const measured: RouteLearning['measured'] = [];
+  const candidates: { m: ModelEntry; c: RouteCost; t: number }[] = [];
+  const below: string[] = [];
+  const short: string[] = [];
+  const held: string[] = [];
+  // The tier an earlier attempt of this run ran on (escalated or held there): outcomes measured on other runs never
+  // send the work below it.
+  const floorTier = ctx.previousTier;
+  const describe = (m: ModelEntry, verdict: string): void => {
+    const st = statFor(ctx, m);
+    if (!st) return;
+    const judged = st.verified + st.failed + st.rejected;
+    measured.push({
+      provider: m.provider,
+      model: m.modelId,
+      judged,
+      verified: st.verified,
+      pass_rate: judged > 0 ? round3(st.verified / judged) : null,
+      cost_samples: st.costSamples,
+      mean_cost_usd: st.costSamples > 0 ? st.meanCostUsd : null,
+      runs: st.runs ?? null,
+      first_ts: st.firstTs ?? null,
+      last_ts: st.lastTs ?? null,
+      verdict,
+    });
+  };
+  describe(chosen, "the table's choice");
+  for (const t of [tier - 1, tier + 1]) {
+    if (t < 1 || t >= FABLE_TIER) continue;
+    for (const m of [...(byTier.get(t) ?? [])].sort((a, b) => a.modelId.localeCompare(b.modelId))) {
+      const st = statFor(ctx, m);
+      if (!st) continue;
+      const judged = st.verified + st.failed + st.rejected;
+      const rate = judged > 0 ? st.verified / judged : null;
+      const c = costOf(m);
+      let verdict: string;
+      if (t < tier && floorTier !== null && t < floorTier) {
+        verdict = `an earlier attempt of this run ran on ${TIER_NAME[floorTier]}, and measured outcomes never route the run below it`;
+        held.push(`${m.modelId} is below ${TIER_NAME[floorTier]}, where an earlier attempt of this run ran`);
+      } else if (judged < min || rate === null) {
+        verdict = `${judged} of the ${min} judged outcomes needed`;
+        short.push(`${m.modelId} has ${verdict}`);
+      } else if (t < tier && rate < floor) {
+        verdict = `measured pass rate ${pct(rate)} over ${judged} outcomes is below ${pct(floor)}`;
+        below.push(`${verdict} for ${m.modelId}`);
+      } else if (c.total === null) {
+        verdict = 'its cost is unknown, and an unknown cost is not counted as a lower one';
+      } else if (t > tier && (c.basis !== 'measured' || mine.basis !== 'measured')) {
+        verdict = "a higher tier displaces the table's choice only when both are measured";
+      } else if (mine.total === null || !(c.total < mine.total * (1 - CALIBRATION_MARGIN))) {
+        verdict = `expected cost per verified task $${fmt(c.total)} is not clearly below $${fmt(mine.total)} for ${chosen.modelId}`;
+      } else {
+        verdict = 'qualifies';
+        candidates.push({ m, c, t });
+      }
+      describe(m, verdict);
+    }
+  }
+  if (blocked) return { pick: null, restored: false, reason: blocked, measured };
+  candidates.sort((a, b) => (a.c.total as number) - (b.c.total as number) || a.t - b.t || a.m.modelId.localeCompare(b.m.modelId));
+  const best = candidates[0];
+  if (best) {
+    const st = statFor(ctx, best.m) as RouteStat;
+    const judged = st.verified + st.failed + st.rejected;
+    const reason = `measured pass rate ${pct(st.verified / judged)} over ${judged} outcomes of ${ctx.workKind} (${ctx.signals.difficulty}) in the last ${ctx.learning.window_days} days for ${best.m.modelId} (minimum ${min} outcomes, threshold ${pct(floor)}); expected cost per verified task $${fmt(best.c.total)} for ${best.m.modelId} (${costBasisWords(best.c.basis)}) vs $${fmt(mine.total)} for ${chosen.modelId} (${costBasisWords(mine.basis)})`;
+    return { pick: best.m, restored: false, reason, measured };
+  }
+  if (below.length > 0) return { pick: null, restored: true, reason: `${below.join('; ')}, so ${chosen.modelId} from the routing table is used`, measured };
+  if (held.length > 0) return { pick: null, restored: false, reason: `the routing table decides: ${held.join('; ')}`, measured };
+  const reason = short.length > 0 ? `the routing table decides: ${short.join('; ')}` : `the routing table decides: no measured route is clearly cheaper per verified task than ${chosen.modelId}`;
+  return { pick: null, restored: false, reason, measured };
 }
 
 /**
@@ -622,7 +837,8 @@ function estimateRoute(m: ModelEntry, ctx: Ctx): RouteCost {
   const measuredCost = stat && stat.costSamples > 0 ? stat.meanCostUsd : null;
   const attemptCost = measuredCost ?? (m.pricing ? priceProfile(profile.tokens, m.pricing) : null);
   if (attemptCost === null) return { total: null, breakdown: null, basis: 'unavailable', success };
-  const basis: CostBasis = judged >= MIN_MEASURED_SAMPLES && (stat?.costSamples ?? 0) >= MIN_MEASURED_SAMPLES ? 'measured' : judged > 0 || measuredCost !== null ? 'blended' : 'prior';
+  const min = ctx.learning.min_samples;
+  const basis: CostBasis = judged >= min && (stat?.costSamples ?? 0) >= min ? 'measured' : judged > 0 || measuredCost !== null ? 'blended' : 'prior';
   const attempts = 1 / success;
   const handoff = ctx.signals.previousRoute && ctx.signals.previousRoute.model !== m.modelId && ctx.previous?.modelId !== m.modelId && m.pricing;
   const breakdown: CostBreakdown = {
@@ -643,8 +859,14 @@ function priceProfile(t: WorkProfile['tokens'], p: ModelPricing): number {
   return (uncached * p.input + cached * p.cache_read + written * p.cache_write_5m + t.output * p.output) / 1_000_000;
 }
 
+/** Where an expected cost comes from, in words: a list-price estimate is never called measured. */
+function costBasisWords(basis: CostBasis): string {
+  return basis === 'measured' ? 'measured' : basis === 'blended' ? 'measured cost blended with list price' : basis === 'prior' ? 'list price' : 'unknown';
+}
+
+/** The measured outcomes of one route in this task class. Statistics read for another difficulty class are not comparable and are not used. */
 function statFor(ctx: Ctx, m: ModelEntry): RouteStat | undefined {
-  return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider);
+  return ctx.outcomes.find((s) => s.workKind === ctx.workKind && s.modelId === m.modelId && s.provider === m.provider && (s.difficulty === undefined || s.difficulty === null || s.difficulty === ctx.signals.difficulty));
 }
 
 // ---------------------------------------------------------------------------

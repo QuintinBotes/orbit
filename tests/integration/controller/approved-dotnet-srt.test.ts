@@ -13,10 +13,11 @@ import { operationKey, runApprovedOperation, type GuardedOperation } from '../..
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { which } from '../../../src/isolation/util.ts';
 import { giveRepository, makeUnitLab, type UnitLab } from '../../unit/controller/coverage-helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
 const skip = !probe.ok ? `srt unavailable: ${probe.detail}` : dotnet === null ? 'dotnet is not installed' : null;
 

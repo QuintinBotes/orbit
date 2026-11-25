@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,10 +7,13 @@ import { checkSandboxCheck } from '../../../src/cli/commands/doctor-sandbox.ts';
 import { runChecks } from '../../../src/evidence/runner.ts';
 import { classifyCouldNotRun } from '../../../src/evidence/environment-failure.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
+import { toolchainCacheRoot } from '../../../src/isolation/toolchains.ts';
 import { which } from '../../../src/isolation/util.ts';
 import { defaultCheck, defaultConfig } from '../../../src/policy/config.ts';
+import { repoKeyFor } from '../../../src/storage/retention.ts';
 import { checkDef } from '../../unit/evidence/fixtures.ts';
 import { runnerEnv, type RunnerEnv } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Issue #10: a `dotnet build` check under Orbit's real srt check profile. Before the fix the SDK's first-run NuGet
@@ -19,7 +22,7 @@ import { runnerEnv, type RunnerEnv } from './harness.ts';
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
 const skip = !probe.ok ? `srt unavailable: ${probe.detail}` : dotnet === null ? 'dotnet is not installed' : null;
 
@@ -60,9 +63,10 @@ function temp(prefix: string): string {
   return d;
 }
 
-/** `orbit doctor`'s checks.sandbox for one check, through the real srt provider. */
+/** `orbit doctor`'s checks.sandbox for one check, through the real srt provider, with the repository's NuGet cache in place (issue #142 warns on a missing one). */
 async function doctorProbe(command: string[], opts: { orbitHome?: string; env?: Record<string, string> } = {}) {
   const repo = temp('orbit-dotnet-repo-');
+  if (opts.orbitHome) mkdirSync(join(toolchainCacheRoot(opts.orbitHome, repoKeyFor(repo)), 'nuget'), { recursive: true });
   const config = defaultConfig('autonomous');
   config.checks = { build: { ...defaultCheck('build'), command, mandatory: true, ...(opts.env ? { env: opts.env } : {}) } };
   return checkSandboxCheck({ config, repo, provider, available: true, env: process.env, homeDir: homedir(), ...(opts.orbitHome ? { orbitHome: opts.orbitHome } : {}) });

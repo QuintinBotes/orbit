@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { OrbitError } from '../core/errors.ts';
 import { suppressSqliteExperimentalWarning } from '../core/warnings.ts';
 import { MIGRATIONS } from './schema.ts';
 
@@ -96,14 +97,32 @@ export function openDb(path: string, options: { busyTimeoutMs?: number; migratio
   return api;
 }
 
-function migrate(db: DatabaseSync, migrations: readonly string[]): void {
-  const current = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
-  if (current > migrations.length) {
-    throw new Error(`database is at schema version ${current}, newer than this Orbit (${migrations.length}). Upgrade Orbit.`);
-  }
+const userVersion = (db: DatabaseSync): number => Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+
+function refuseNewer(version: number, migrations: readonly string[]): void {
+  if (version > migrations.length) throw new Error(`database is at schema version ${version}, newer than this Orbit (${migrations.length}). Upgrade Orbit.`);
+}
+
+/** Bring `db` to the last of `migrations`, one transaction per migration; exported for its tests. */
+export function migrate(db: DatabaseSync, migrations: readonly string[]): void {
+  const current = userVersion(db);
+  refuseNewer(current, migrations);
   for (let v = current; v < migrations.length; v++) {
     db.exec('BEGIN IMMEDIATE');
     try {
+      // Another opener may have migrated between the read above and the write lock (issue #190): read it again under the lock.
+      const at = userVersion(db);
+      refuseNewer(at, migrations);
+      if (at > v) {
+        db.exec('COMMIT');
+        continue;
+      }
+      if (current >= 1) {
+        const leases = db.prepare('SELECT run_id, owner_id FROM leases WHERE expires_at > ? ORDER BY run_id').all(Date.now()) as { run_id: string; owner_id: string }[];
+        if (leases.length > 0) {
+          throw new OrbitError('CONCURRENT_UPDATE', `Cannot migrate the state database while an older Orbit is driving these runs: ${leases.map((lease) => `${lease.run_id} (owner ${lease.owner_id})`).join(', ')}. Let the runs finish, stop them, or use that same Orbit version until their leases end.`, { leases });
+        }
+      }
       db.exec(migrations[v]!);
       db.exec(`PRAGMA user_version = ${v + 1}`);
       db.exec('COMMIT');

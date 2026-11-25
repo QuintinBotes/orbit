@@ -16,24 +16,31 @@ jobs:
   verify:
     name: verify (${{ matrix.os }}, node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # 60, not 45: on the macOS runner the integration step alone takes about 29 minutes, and the job reached 45
+    # in the acceptance step with no test failed once the suite grew (#166).
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      # Ubuntu covers both supported Node lines; macOS runners cost more, so
-      # macOS runs on the current line only.
+      # Ubuntu covers every supported Node line; macOS runners cost more, so
+      # macOS runs on one line only.
       matrix:
         include:
           - os: ubuntu-latest
             node: '22'
           - os: ubuntu-latest
             node: '24'
+          - os: ubuntu-latest
+            node: '26'
           - os: macos-latest
             node: '24'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # A pull request needs the history to diff against its base (the fragments check below). The 0 is quoted: an
+          # unquoted 0 is falsy in an expression, so `cond && 0 || 1` always gave 1 and the base ref was never fetched.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -53,6 +60,27 @@ jobs:
           sudo apt-get install -y -qq bubblewrap socat ripgrep
           # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bubblewrap needs them.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Ubuntu 26.04 also confines bubblewrap itself (the bwrap-userns-restrict profile), so the user namespace
+          # Claude Code's sandbox makes inside it may not write /proc/self/setgroups ("apply-seccomp: ... nested userns
+          # is capability-restricted"). Unload that profile and the policy behind it; a no-op on images without them.
+          for p in bwrap-userns-restrict unprivileged_userns; do
+            if [ -f /etc/apparmor.d/$p ]; then sudo ln -sf /etc/apparmor.d/$p /etc/apparmor.d/disable/ && sudo apparmor_parser -R /etc/apparmor.d/$p || true; fi
+          done
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_apparmor_policy=0 || true
+
+      # The runner images of 11 November 2026 made .NET SDK 11.0.100 the default SDK (on macOS from macos-26-arm64
+      # 20261112.0504), which builds through the MSBuild server unless a check's env turns it off (#180). The .NET tests
+      # run on it on Ubuntu with Node 24, and on the newest earlier SDK on Ubuntu with Node 22 and on macOS, where SDK 11's
+      # dotnet format no longer fails the folder form that dotnet-format.int.test.ts expects to fail.
+      - name: .NET SDK
+        env:
+          BEFORE_SDK_11: ${{ matrix.node == '22' || runner.os == 'macOS' }}
+        run: |
+          command -v dotnet >/dev/null || exit 0
+          dotnet --list-sdks
+          if [ "$BEFORE_SDK_11" = true ]; then sudo rm -rf "$(dirname "$(readlink -f "$(command -v dotnet)")")"/sdk/11.*; fi
+          dotnet --version
 
       - name: Playwright's Chromium
         run: npx playwright install --with-deps chromium
@@ -62,8 +90,17 @@ jobs:
 
       # Before any test: the plugin integration test rebuilds plugin/dist, so a check after the tests always passed and a
       # stale committed bundle reached main (0.3.1).
+      # Pull requests into next do not commit the bundle (#230): next may carry a stale one between releases, so it is not
+      # checked there. It is checked where it ships: on main (pushes and pull requests into it) and on release tags.
       - name: Committed bundle matches the sources
+        if: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
         run: npm run check:dist
+
+      - name: Fragments are well formed and no shared file is edited
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/fragments.mjs check --base "origin/$BASE_REF"
 
       - name: Typecheck
         run: npm run typecheck
@@ -80,5 +117,111 @@ jobs:
       - name: Acceptance tests (mock providers)
         run: npm run test:acceptance
 
+      # Orbit's regression suite (#172): one scenario per fixed issue, fake providers, no model. A scenario whose fixed
+      # outcome no longer holds fails the job, named with its issue. The scorecard is not committed from CI.
+      - name: Lab bench
+        timeout-minutes: 10
+        run: node plugin/dist/orbit.mjs bench --tier lab --out "$RUNNER_TEMP/scorecards"
+
       - name: Plugin validation
         run: node scripts/check-plugin.mjs
+
+  # Ubuntu 26.04 as a user installs it (#181). The verify jobs unload AppArmor's bwrap-userns-restrict profile; here it
+  # stays loaded, so this job checks what such a user sees (no sandbox starts, and doctor says why and names the fix),
+  # then applies that fix and runs the sandbox tests: srt's own, and the real claude CLI's claude-sandbox tier.
+  stock-apparmor:
+    name: sandbox (ubuntu-26.04, stock AppArmor)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sandbox prerequisites, AppArmor as installed
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat ripgrep
+
+      # As in verify (#180): the worker loopback tests run dotnet in the sandbox.
+      - name: Keep .NET on the newest SDK before 11
+        run: |
+          command -v dotnet >/dev/null || exit 0
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          sudo rm -rf "$root"/sdk/11.*
+          dotnet --version
+
+      - name: Install the Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code
+
+      - name: No sandbox starts, and doctor names the cause and the fix
+        env:
+          ORBIT_STOCK_APPARMOR: '1'
+        run: npx vitest run tests/integration/isolation/apparmor-stock.int.test.ts
+
+      # The commands `orbit doctor` names for this host (isolationFix in src/cli/commands/doctor.ts), as a user runs them.
+      - name: Apply the fix doctor names
+        run: |
+          sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n' | sudo tee /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
+      - name: Sandbox tests
+        run: npx vitest run tests/integration/isolation tests/integration/adapters
+
+  # Tests quarantined for a failure whose cause is not established yet (tests/support/quarantine.ts, each with an open
+  # issue) still run here on every change, so quarantine does not become deletion. The job never fails the workflow
+  # and is not a required check: a red run here is the evidence the test's issue is waiting for.
+  quarantined:
+    name: quarantined tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      ORBIT_RUN_QUARANTINED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sandbox prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          for p in bwrap-userns-restrict unprivileged_userns; do
+            if [ -f /etc/apparmor.d/$p ]; then sudo ln -sf /etc/apparmor.d/$p /etc/apparmor.d/disable/ && sudo apparmor_parser -R /etc/apparmor.d/$p || true; fi
+          done
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_apparmor_policy=0 || true
+
+      - name: Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Quarantined tests
+        run: npx vitest run tests/integration/isolation/container.int.test.ts tests/integration/ui/runner-baselines.test.ts tests/integration/ui/browser-isolation-srt.test.ts

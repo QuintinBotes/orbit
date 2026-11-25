@@ -62,6 +62,10 @@ describe('checkEnv: the .NET SDK variables', () => {
     expect(checkEnv(checkDef('build', { env: { EnableSourceControlManagerQueries: 'true' } }), paths, '/host').EnableSourceControlManagerQueries).toBe('true');
   });
 
+  it('turns off the MSBuild server, on by default from SDK 11, whose named pipe under /tmp the sandbox refuses (#180)', () => {
+    expect(checkEnv(checkDef('build'), paths, '/host').MSBUILDUSESERVER).toBe('0');
+  });
+
   // Orbit never changes a check's processor count (ADR 0009, addendum): DOTNET_PROCESSOR_COUNT reaches the test host,
   // where xunit before 2.8 deadlocks a test that blocks on async code, and it changes how a repository's tests run. A
   // dotnet check pins one MSBuild node in its own command (-m:1) instead.
@@ -107,12 +111,14 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
   // installed or a line printed after it can be lost (each was once on a loaded CI runner). MSBuild prints this line first.
   const deniedNode = (after = 'setInterval(() => {}, 1000)', before = '') =>
     `${before}const fs=require("fs"),path=require("path");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"pid"),String(process.pid));console.log("  Determining projects to restore...");const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});${after}`;
+  /** The report text for the two scripts below, in the check's env rather than their text. */
+  const FAILURE_ENV = { FAILURE_FIXTURE: FAILURE };
   /** A check that records the denial only when the test releases it, then exits 0 as the sandbox wrapper can on SIGTERM. */
   const deniedNodeOnSignal = () =>
-    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};process.on("SIGTERM",()=>{deny();process.exit(0)});fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");setInterval(()=>{},1000)`;
+    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),process.env.FAILURE_FIXTURE);};process.on("SIGTERM",()=>{deny();process.exit(0)});fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");setInterval(()=>{},1000)`;
   /** A check that records the denial only when the test releases it, then exits as MSBuild does on Linux. */
   const deniedNodeOnRelease = (exit: number) =>
-    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(FAILURE)});};const release=path.join(process.env.ORBIT_ARTIFACTS_DIR,"release");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");const wait=setInterval(()=>{if(!fs.existsSync(release))return;clearInterval(wait);deny();console.log("  Determining projects to restore...");process.exit(${exit})},1)`;
+    `const fs=require("fs"),path=require("path");const deny=()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),process.env.FAILURE_FIXTURE);};const release=path.join(process.env.ORBIT_ARTIFACTS_DIR,"release");fs.writeFileSync(path.join(process.env.ORBIT_ARTIFACTS_DIR,"ready"),"");const wait=setInterval(()=>{if(!fs.existsSync(release))return;clearInterval(wait);deny();console.log("  Determining projects to restore...");process.exit(${exit})},1)`;
 
   /** Runs one hook after the supervisor's first scan and before its next poll, without waiting for a clock interval. */
   const afterFirstPoll = (hook: () => Promise<void>): Clock => {
@@ -166,7 +172,7 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
       process.kill(childPgid, 'SIGTERM');
       await waitFor(() => existsSync(join(checkDir, 'exit.json')));
     });
-    e = await runnerEnv([nodeCheck('build', deniedNodeOnSignal(), { timeout_seconds: 120 })], { clock });
+    e = await runnerEnv([nodeCheck('build', deniedNodeOnSignal(), { timeout_seconds: 120, env: FAILURE_ENV })], { clock });
     envs.push(e);
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['build'], clock });
     expect(r!.status).toBe('FAILED');
@@ -217,7 +223,7 @@ describe('a check whose MSBuild node the sandbox refused its pipe', () => {
       writeFileSync(join(checkDir, 'artifacts', 'release'), '');
       await waitFor(() => existsSync(join(checkDir, 'exit.json')));
     });
-    e = await runnerEnv([checkDef('format', { command: ['node deny.js && dotnet format tests/Acme.Tests/Acme.Tests.csproj --verify-no-changes'], shell: true, timeout_seconds: 120 })], { clock, files: { 'deny.js': deniedNodeOnRelease(1) } });
+    e = await runnerEnv([checkDef('format', { command: ['node deny.js && dotnet format tests/Acme.Tests/Acme.Tests.csproj --verify-no-changes'], shell: true, timeout_seconds: 120, env: FAILURE_ENV })], { clock, files: { 'deny.js': deniedNodeOnRelease(1) } });
     envs.push(e);
     const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['format'], clock });
     expect(r!.status).toBe('FAILED');

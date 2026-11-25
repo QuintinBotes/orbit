@@ -108,6 +108,10 @@ export function makeSandbox(opts: { config?: string | null; fakes?: { claude?: R
     ORBIT_HOME: join(home, '.orbit'),
     USER: 'alice',
     LANG: 'C',
+    // The suite's temp directory, and the mark of an Orbit check that lets Orbit nest its temp root there: under Orbit's
+    // check sandbox that directory is the only one the CLI may write (#203).
+    ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
+    ...(process.env.ORBIT_CHECK_TOKEN ? { ORBIT_CHECK_TOKEN: process.env.ORBIT_CHECK_TOKEN } : {}),
     // A clean environment does not inherit the suite's kill switch: no test pops a desktop notification.
     ORBIT_NOTIFICATIONS: 'off',
     ...GIT_ENV,
@@ -122,7 +126,7 @@ export function makeSandbox(opts: { config?: string | null; fakes?: { claude?: R
     env,
     run(args, o = {}) {
       return new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, ['--experimental-transform-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: o.cwd ?? repo, env: env(o.env), stdio: ['pipe', 'pipe', 'pipe'], detached: o.detached === true });
+        const child = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', CLI_ENTRY, ...args], { cwd: o.cwd ?? repo, env: env(o.env), stdio: ['pipe', 'pipe', 'pipe'], detached: o.detached === true });
         let stdout = '';
         let stderr = '';
         child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));

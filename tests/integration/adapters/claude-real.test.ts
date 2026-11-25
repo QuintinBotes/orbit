@@ -10,6 +10,7 @@ import { archiveAttempt } from '../../../src/adapters/supervise.ts';
 import { startFakeAnthropicApi } from '../../fakes/fake-anthropic-api.mjs';
 import { MODEL_OUTPUT_SCHEMAS } from '../../../src/contract/model-outputs.ts';
 import { IMPLEMENTER_OUTPUT, REVIEW_OUTPUT, implementerSpec, makeFixture, waitFor, type Fixture } from './helpers.ts';
+import { skipWithoutSandbox } from '../../support/sandbox.ts';
 
 // The REAL claude binary against a local fake Messages API: no model spend,
 // real permission engine, real hooks, real stream-json. Pattern verified in
@@ -122,7 +123,8 @@ describe.skipIf(!CLAUDE || !canStripTypes)('ClaudeAdapter with the real claude C
     expect(JSON.parse(init)).toMatchObject({ type: 'system', subtype: 'init', permissionMode: 'dontAsk', mcp_servers: [] });
   });
 
-  it('claude-sandbox tier: an implementer\'s Bash runs inside the worktree, and a Bash write outside it is stopped by the sandbox', async () => {
+  it('claude-sandbox tier: an implementer\'s Bash runs inside the worktree, and a Bash write outside it is stopped by the sandbox', async (ctx) => {
+    skipWithoutSandbox(ctx);
     const { f, a } = setup([]);
     api.setSteps([
       { tool: 'Bash', input: { command: 'echo inside > apps/bash.txt', description: 'write inside' } },

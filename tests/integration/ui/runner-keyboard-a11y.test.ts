@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { renderUiFailureBrief, uiFailureBrief } from '../../../src/ui/brief.ts';
 import { candidateAt, freePort, harness, makeUiRepo, resetTo, runUi, type UiRepo } from './helpers.ts';
+import { skipWithoutChromium } from '../../support/chromium.ts';
+
+// Every test here drives Chromium.
+beforeEach(skipWithoutChromium);
 
 // G32 (keyboard navigation) and G35 (accessibility.fail_on_new_serious_or_critical)
 // against the fixture application with real Chromium.

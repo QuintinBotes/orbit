@@ -3,19 +3,20 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TaskResult } from '../../../src/adapters/types.ts';
-import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, type CandidateRecord } from '../../../src/evidence/store.ts';
+import { finishCheckRun, markCheckRunning, planCheckRun, recordFailure, setCandidateScope, type CandidateRecord } from '../../../src/evidence/store.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { insertQuestion, listHypotheses } from '../../../src/inquisition/store.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
-import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
+import { attemptHistory, diagnosingStep, localizedFault, raisesTimeout, sessionEndPromptLines, timeoutContext, timeoutPromptLines, withTimeoutHypothesis } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { DIAGNOSIS } from '../../integration/controller/harness.ts';
-import { addCandidate, addEvidence, giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
+import { addCandidate, addEvidence, cleanScope, giveRepository, initLedger, makeUnitLab, okResult, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 const FP = 'fp:calc-mul';
+const OVER_SIZE = cleanScope({ changed_files: 2, changed_lines: 3010, within_size_limits: false, largest_changes: [{ path: 'dist/b.mjs', lines: 3000 }, { path: 'apps/a.ts', lines: 10 }] });
 const diagnosis = (over: { fingerprint?: string; statement?: string; scopedFix?: string; ruledOut?: boolean; confidence?: 'low' | 'medium' | 'high' } = {}) => {
   const d = structuredClone(DIAGNOSIS.structured) as typeof DIAGNOSIS.structured;
   const fp = over.fingerprint ?? FP;
@@ -80,6 +81,19 @@ function addAttempt(k: number, opts: { supported?: boolean; fingerprint?: string
 }
 
 describe('preconditions and stops', () => {
+  it('with the diagnosis stage off (orbit bench --without diagnosis, #172) the brief is the failure records and no verifier session starts', async () => {
+    const { adapter } = await setup();
+    lab.deps.withoutDiagnosis = true;
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(adapter.specs).toEqual([]);
+    const stored = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8')) as { source: string; brief: { evidence: string[]; post_fix_checks: string[] } };
+    expect(stored.source).toBe('failures');
+    expect(stored.brief.evidence).toEqual(['unit: mul(2, 3) expected 6, got 5']);
+    expect(stored.brief.post_fix_checks.length).toBeGreaterThan(0);
+    expect(decisions('repair.brief').map((d) => d.summary)).toEqual([`repair brief (failures) for attempt 2: ${FP}`]);
+  });
+
   it('stops at a safe point; needs a candidate and a budget', async () => {
     await setup();
     requestCancel(lab.db, lab.runId, 'u', lab.clock);
@@ -155,6 +169,36 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     }
   });
 
+  it('does not offer a forced resume for a smaller change when no implementation attempt is left (#157)', async () => {
+    const { cand } = await judgedTwice({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    const attempts = lab.ctx().ledger!.state('implementation_attempts');
+    lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'implementation_attempts'", lab.runId);
+    expect(attempts.hard_cap).toBeGreaterThan(0);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    const reason = getRun(lab.db, lab.runId).outcomeReason!;
+    expect(reason).not.toContain('--force');
+    expect(reason).toContain('no implementation attempt is left for a smaller change in this run');
+  });
+
+  it('the same tree denied for size again blocks on a person, naming the limit and the heaviest files (#157)', async () => {
+    const { cand, adapter } = await judgedTwice({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    await run();
+    expect(state()).toBe('BLOCKED');
+    expect(adapter.specs).toHaveLength(0);
+    const done = getRun(lab.db, lab.runId);
+    expect(done.outcomeReason).toContain('over scheduler.hard_limits.changed_lines again (3010 lines against a limit of 2000)');
+    expect(done.outcomeReason).toContain('The largest changes: dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(done.outcomeReason).toContain('too small for a generated file the task requires');
+    expect(done.outcomeReason).toContain('name a committed generated file in scope.generated_paths');
+    expect(done.outcomeReason).toContain(`resume with orbit resume ${lab.runId} --force`);
+    expect(done.outcomeReason).not.toMatch(/[\u2013\u2014]/u);
+    expect(JSON.parse(done.outcomeJson!)).toMatchObject({ frozen_policy: { setting: 'scheduler.hard_limits.changed_lines' } });
+    expect(decisions('repair.non-progress')[0]?.data).toMatchObject({ attempt: 2, same_tree_as: 1, tree_hash: cand.treeHash, settings: ['scheduler.hard_limits.changed_lines'] });
+  });
+
   it('an attempt whose session stopped before it finished is not a stall: the diagnosis and the repair follow', async () => {
     const { adapter } = await judgedTwice();
     // What IMPLEMENTING notes when the attempt's last session ends max_turns, timeout, failed or malformed_output.
@@ -163,6 +207,21 @@ describe('a repair that ends on a tree an earlier attempt produced, judged as it
     expect(state()).toBe('REPAIRING');
     expect(adapter.specs).toHaveLength(1);
     expect(decisions('repair.non-progress')).toEqual([]);
+    const cap = lab.ctx().ledger!.maxTurnsPerSession();
+    expect(adapter.specs[0]!.prompt).toContain(`Session end: the implementer session of attempt 2 ended at its turn cap (${cap} model requests) before it finished, so the candidate may be unfinished.`);
+    expect(adapter.specs[0]!.prompt).toContain('One competing hypothesis must be that the task did not fit one session');
+  });
+
+  it('a diagnosis after a session that timed out says so; one after a failed session or an earlier attempt\'s timeout does not', async () => {
+    const { adapter } = await judgedTwice();
+    lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ attempt: 2, status: 'timeout', error: null }));
+    await settle();
+    expect(adapter.specs[0]!.prompt).toContain('Session end: the implementer session of attempt 2 ended at its timeout before it finished, so the candidate may be unfinished.');
+    for (const ended of [{ attempt: 2, status: 'failed' }, { attempt: 1, status: 'max_turns' }]) {
+      lab.db.run("DELETE FROM events WHERE type = 'implementation.worker-ended'");
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, ?, 'implementation.worker-ended', 'x', ?)", lab.runId, lab.clock.now(), JSON.stringify({ ...ended, error: null }));
+      expect(sessionEndPromptLines(lab.ctx()), JSON.stringify(ended)).toEqual([]);
+    }
   });
 
   it('a session of an earlier attempt that stopped early does not excuse the latest attempt', async () => {
@@ -220,6 +279,26 @@ describe('the repair brief', () => {
     expect(stored).toMatchObject({ attempt: 2, source: 'scope', fingerprint: FP });
     expect(stored.brief.scoped_fix).toContain('apps/**, tests/**');
     expect(decisions('repair.brief')[0]?.summary).toBe(`repair brief (scope) for attempt 2: ${FP}`);
+  });
+
+  it('a refusal for size alone gets a size hypothesis naming the heaviest files and no out-of-scope revert (#157)', async () => {
+    const { cand } = await setup({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, OVER_SIZE);
+    await run();
+    const { brief } = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8'));
+    expect(brief.hypotheses).toHaveLength(1);
+    expect(brief.hypotheses[0].statement).toBe('The change is over the size limits (40 files, 2000 lines); its largest changes are dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(brief.scoped_fix).toContain('by shrinking the changes to dist/b.mjs (3000 lines), apps/a.ts (10 lines)');
+    expect(JSON.stringify(brief)).not.toContain('Revert the out-of-scope changes');
+  });
+
+  it('a refusal for size and scope keeps the revert and adds the size hypothesis', async () => {
+    const { cand } = await setup({ failure: 'scope' });
+    setCandidateScope(lab.db, cand.id, { ...OVER_SIZE, allowed_paths_pass: false, out_of_scope_paths_changed: ['docs/x.md'] });
+    await run();
+    const { brief } = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8'));
+    expect(brief.hypotheses.map((h: { statement: string }) => h.statement)).toEqual([expect.stringMatching(/outside the authorized scope/), expect.stringMatching(/^The change is over the size limits/)]);
+    expect(brief.scoped_fix).toMatch(/^Revert the out-of-scope changes .*shrinking the changes to dist\/b\.mjs/);
   });
 
   it('a scope refusal without an excerpt still says what was denied', async () => {
@@ -315,6 +394,15 @@ describe('the repair brief', () => {
     expect(out).toMatchObject({ done: true });
     expect(state()).toBe('EXHAUSTED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain(`diagnosis produced no valid repair brief within 2 attempts for ${FP}`);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('model');
+  });
+
+  it('issue #190: a diagnosis whose sessions both ended at their turn cap is turn-cap, not model', async () => {
+    await setup({ script: () => okResult(null, { status: 'max_turns', error: 'Reached maximum number of turns (30)' }) });
+    await settle();
+    expect(state()).toBe('EXHAUSTED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toContain('diagnosis produced no valid repair brief');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('turn-cap');
   });
 
   it('every hypothesis ruled out by evidence leaves nothing authorized to try: IMPOSSIBLE', async () => {

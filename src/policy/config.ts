@@ -26,6 +26,7 @@ import type {
   FailBeforeMode,
   IsolationLimits,
   NotificationsConfig,
+  RepoMapConfig,
   OrbitConfig,
   ProviderConfig,
   ReleaseConfig,
@@ -34,6 +35,7 @@ import type {
   UiConfig,
   UiExplorationConfig,
 } from './types.ts';
+import type { RoutingLearning } from '../routing/types.ts';
 import { globProblem } from './globs.ts';
 import { hostEntryCovered, hostEntryProblem } from './hosts.ts';
 import { orbitHint } from '../core/invocation.ts';
@@ -90,6 +92,8 @@ export interface ConfigOptions {
   source?: string;
   /** Mode from the command line; validated exactly as if the file had said it. */
   mode?: RunMode;
+  /** repository.base_branch from the command line (`orbit queue run --base`); validated exactly as if the file had said it. */
+  baseBranch?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +114,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       allowed_paths: ['apps/**', 'packages/**', 'tests/**', 'docs/**'],
       protected_paths: ['.github/**', 'infra/**', '.orbit/config.yaml', '**/.env*'],
       credential_paths: [],
+      generated_paths: [],
     },
     actions: {
       edit: true,
@@ -183,7 +188,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
     delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60, require_ci: false },
-    verification: { allow_flaky_pass: false, fail_before: 'advisory', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
+    verification: { allow_flaky_pass: false, fail_before: 'required', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
     checks: {},
     ui: null,
     isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
@@ -194,14 +199,26 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       codex: defaultProvider('codex', false),
     },
     // Fable is left out on purpose: headless Claude Code bills Fable usage credits without asking.
-    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS } },
+    // Partner implementers are off until a full benchmark shows they help (issue #176): Claude implements alone.
+    routing: { allowed_models: ['opus', 'sonnet', 'haiku'], overrides: {}, output_budgets: { ...DEFAULT_OUTPUT_BUDGETS }, learning: { ...DEFAULT_ROUTING_LEARNING }, implementers: ['claude'] },
     static_security: defaultStaticSecurity(),
     release: null,
     retention: { keep_runs_days: 30, redact_patterns: [] },
-    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true },
+    knowledge: { enabled: true, share_globally: false, max_advisory_tokens: 800, curator_budget_usd: 0.25, eval_budget_usd: 0, auto_adopt_overlays: true, lessons_in_prompts: false, max_prompt_lessons: 3, lesson_expiry_days: 28 },
     guard: { terms_file: null, allowed_emails: [] },
     notifications: defaultNotifications(),
+    repo_map: defaultRepoMap(),
   };
+}
+
+/** #175: the prompt slice is off until a full benchmark shows it helps; the map's deterministic uses are always on. */
+export function defaultRepoMap(): RepoMapConfig {
+  return { prompt_slice: false, prompt_slice_tokens: 1500, prompt_slice_min_files: 500 };
+}
+
+/** The repository map settings of a config; a snapshot written before the section existed reads the defaults. */
+export function repoMapPolicy(config: Pick<OrbitConfig, 'repo_map'>): RepoMapConfig {
+  return { ...defaultRepoMap(), ...(config.repo_map ?? {}) };
 }
 
 /** ADR 0008: desktop notifications on; webhook, pull request comments and remote answers off. */
@@ -308,6 +325,24 @@ export const DEFAULT_OUTPUT_BUDGETS: Readonly<Record<BudgetRole, number>> = Obje
 
 export const BUDGET_ROLES: readonly BudgetRole[] = Object.freeze(Object.keys(DEFAULT_OUTPUT_BUDGETS) as BudgetRole[]);
 
+/**
+ * `routing.learning` defaults (issue #168): twenty judged outcomes of a route in one task class before they decide
+ * anything, a measured pass rate of 80% to displace the table's choice, and outcomes of the last 90 days only.
+ */
+export const DEFAULT_ROUTING_LEARNING: Readonly<RoutingLearning> = Object.freeze({ enabled: true, min_samples: 20, min_pass_rate: 0.8, window_days: 90 });
+
+/** `routing.learning` as configured, a value outside its range replaced by the default; an older snapshot without it reads the defaults. */
+export function routingLearning(config: { routing: { learning?: Partial<RoutingLearning> } }): RoutingLearning {
+  const l = config.routing.learning ?? {};
+  const num = (v: unknown, fallback: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback);
+  return {
+    enabled: typeof l.enabled === 'boolean' ? l.enabled : DEFAULT_ROUTING_LEARNING.enabled,
+    min_samples: Math.floor(num(l.min_samples, DEFAULT_ROUTING_LEARNING.min_samples, 1, 100_000)),
+    min_pass_rate: num(l.min_pass_rate, DEFAULT_ROUTING_LEARNING.min_pass_rate, 0, 1),
+    window_days: num(l.window_days, DEFAULT_ROUTING_LEARNING.window_days, 1, 3650),
+  };
+}
+
 export function defaultUiExploration(): UiExplorationConfig {
   return { enabled: false, max_minutes: 15, budget_usd: 2 };
 }
@@ -377,6 +412,13 @@ export function raiseFailBefore(config: OrbitConfig, mode: FailBeforeMode): Orbi
   return deepFreeze({ ...config, verification: { ...config.verification, fail_before: mode } });
 }
 
+/** The policy with `scheduler.hard_limits.model_cost_usd` lowered to `usd` when that is lower (never raised): what is left of a queue's budget. */
+export function capModelCost(config: OrbitConfig, usd: number): OrbitConfig {
+  const cap = Math.max(0.01, Math.min(config.scheduler.hard_limits.model_cost_usd, usd));
+  if (cap === config.scheduler.hard_limits.model_cost_usd) return config;
+  return deepFreeze({ ...config, scheduler: { ...config.scheduler, hard_limits: { ...config.scheduler.hard_limits, model_cost_usd: cap } } });
+}
+
 export function isolationLimits(config: Pick<OrbitConfig, 'isolation'>): IsolationLimits {
   // A snapshot written before a limit existed reads that limit with its default.
   return { ...defaultIsolationLimits(), ...(config.isolation.limits ?? {}) };
@@ -408,6 +450,11 @@ export function providerFamily(id: string): 'claude' | 'codex' | 'muse' | null {
     if (id === family || id.startsWith(`${family}-`) || id.startsWith(`${family}_`)) return family;
   }
   return null;
+}
+
+/** The partners `routing.implementers` lets implement, in its order: every listed provider except Claude (issue #176). */
+export function partnerImplementers(config: { routing: { implementers?: readonly string[] } }): string[] {
+  return (config.routing.implementers ?? []).filter((id) => providerFamily(id) === 'codex' || providerFamily(id) === 'muse');
 }
 
 /** A review is independent only when both ids resolve to a family and the families differ; an unknown id fails closed. */
@@ -473,10 +520,12 @@ export function validateConfig(raw: unknown, opts: ConfigOptions = {}): OrbitCon
   findDangerousKeys(raw, '', problems);
   if (problems.length > 0) throw invalid(source, problems);
   if (raw.version === undefined) problems.push('version: required (use "version: 1")');
+  // Before the merge, so the release profile's default branches and every rule see the branch the command line names.
+  const input: Record<string, unknown> = opts.baseBranch === undefined ? raw : { ...raw, repository: { ...(isPlainObject(raw.repository) ? raw.repository : {}), base_branch: opts.baseBranch } };
 
-  const fileMode = raw.mode;
+  const fileMode = input.mode;
   const mode: RunMode = opts.mode ?? (typeof fileMode === 'string' && (RUN_MODES as readonly string[]).includes(fileMode) ? (fileMode as RunMode) : DEFAULT_MODE);
-  const merged = mergeWithDefaults(raw, mode, problems);
+  const merged = mergeWithDefaults(input, mode, problems);
   // The merge kept the file's mode (or the default); a command-line mode replaces it.
   if (opts.mode !== undefined) merged.mode = opts.mode;
 
@@ -877,6 +926,7 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     globList(c.scope.protected_paths, 'scope.protected_paths', problems);
     // Credential paths match repository-relative names only; an absolute or escaping entry would silently protect nothing.
     globList(c.scope.credential_paths ?? [], 'scope.credential_paths', problems);
+    globList(c.scope.generated_paths ?? [], 'scope.generated_paths', problems);
     if (c.actions.edit && c.scope.allowed_paths.length === 0) problems.push('scope.allowed_paths: is empty, so actions.edit would allow nothing; list paths or set actions.edit to false');
   },
   function networkHosts(c, problems) {
@@ -920,6 +970,14 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     for (const [work, model] of Object.entries(c.routing.overrides)) {
       if (!modelPermitted(model, c.routing.allowed_models)) problems.push(`routing.overrides.${work}: "${model}" is not permitted by routing.allowed_models`);
     }
+    const implementers = c.routing.implementers ?? [];
+    implementers.forEach((id, i) => {
+      const family = providerFamily(id);
+      if (family === null || (family === 'claude' && id !== 'claude')) problems.push(`routing.implementers[${i}]: "${id}" is not claude or a codex or muse provider`);
+      else if (!Object.hasOwn(c.providers, id)) problems.push(`routing.implementers[${i}]: "${id}" is not defined under providers`);
+      // A partner always goes before the Claude ladder, so one listed after claude would not mean what the order says.
+      else if (family !== 'claude' && implementers.slice(0, i).includes('claude')) problems.push(`routing.implementers[${i}]: "${id}" comes after claude; list partners first (Claude is always the fallback)`);
+    });
   },
   function retentionPatterns(c, problems) {
     c.retention.redact_patterns.forEach((p, i) => {
@@ -949,6 +1007,12 @@ const SEMANTIC_RULES: readonly Rule[] = Object.freeze([
     const caps = c.scheduler.hard_limits;
     for (const [k, v] of Object.entries(c.scheduler.initial_allowances)) {
       if (v > caps.implementation_attempts) problems.push(`scheduler.initial_allowances.${k}: ${v} exceeds hard_limits.implementation_attempts (${caps.implementation_attempts})`);
+    }
+    const tc = c.scheduler.turn_cap;
+    if (tc) {
+      if (tc.floor > tc.ceiling) problems.push(`scheduler.turn_cap.floor: ${tc.floor} exceeds turn_cap.ceiling (${tc.ceiling})`);
+      if (tc.ceiling > caps.worker_turns_per_session) problems.push(`scheduler.turn_cap.ceiling: ${tc.ceiling} exceeds hard_limits.worker_turns_per_session (${caps.worker_turns_per_session})`);
+      if (tc.default < tc.floor || tc.default > tc.ceiling) problems.push(`scheduler.turn_cap.default: ${tc.default} is outside turn_cap.floor..ceiling (${tc.floor}..${tc.ceiling})`);
     }
     if (c.agents.default_parallelism > caps.parallel_workers) {
       problems.push(`agents.default_parallelism: ${c.agents.default_parallelism} exceeds scheduler.hard_limits.parallel_workers (${caps.parallel_workers})`);

@@ -17,6 +17,7 @@ import { BudgetLedger } from '../../../src/scheduling/budget.ts';
 import { appendEvent } from '../../../src/storage/events.ts';
 import { finishWorker, getWorker, listWorkers, markWorkerRunning, planWorker, type WorkerRecord } from '../../../src/storage/workers.ts';
 import { addCandidate, initLedger, makeUnitLab, OWNER, setContract, type UnitLab } from './coverage-helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 let lab: UnitLab;
 afterEach(() => {
@@ -181,7 +182,8 @@ describe('a lost session with nothing to collect is charged like any other role'
     markedOnce();
   });
 
-  it('an inquisitor reconciliation finds lost with no partial result', async () => {
+  it('an inquisitor reconciliation finds lost with no partial result', async (ctx) => {
+    skipWithoutPs(ctx);
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'INQUISITION'], adapters: { claude: { id: 'claude', collectResult: async () => null } as unknown as ProviderAdapter } });
     initLedger(lab);
     recordSpendCap(lab.ctx(), 'inquire:y', 2, 0.5);

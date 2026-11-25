@@ -18,6 +18,7 @@ export {
   defaultUi,
   failBeforePolicy,
   raiseFailBefore,
+  capModelCost,
   loadConfig,
   modelPermitted,
   parseConfig,

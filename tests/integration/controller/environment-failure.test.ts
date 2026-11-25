@@ -92,6 +92,8 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(final).not.toMatch(/[\u2013\u2014]/);
     const [ev] = listEvidenceReports(l.db(), run.id);
     expect(ev?.verdict).toBe('FAIL');
+    // Issue #168: a failure the environment caused says nothing about the model, so the attempt records no route outcome.
+    expect(l.db().all('SELECT outcome FROM route_outcomes WHERE run_id = ?', run.id)).toEqual([]);
   }, 180_000);
 
   it('a plain pre-existing code failure, with no environment signal, still enters the repair loop', async () => {
@@ -109,6 +111,17 @@ describe.skipIf(!canStripTypes)('controller: environment failures are not repair
     expect(path).toContain('DIAGNOSING');
     expect(listDecisions(l.db(), run.id, { kind: 'verification.environment-failure' })).toEqual([]);
     expect(runState(l, run.id).outcomeReason ?? '').not.toMatch(/environment cause/);
+    // Issue #168: a check that ran on the candidate and failed, with no environment signal, settles the attempt against
+    // its route: one outcome per attempt whose candidate failed, with the route the attempt was given.
+    const outcomes = l.db().all<{ outcome: string; role: string; provider: string; model_id: string; work_kind: string; attempt_key: string; evidence_ref: string }>('SELECT outcome, role, provider, model_id, work_kind, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', run.id);
+    const failed = listEvidenceReports(l.db(), run.id).filter((r) => r.verdict === 'FAIL');
+    const attempts = l.db().all<{ n: number }>("SELECT CAST(json_extract(data_json, '$.attempt') AS INTEGER) AS n FROM events WHERE run_id = ? AND type = 'implementation.candidate' ORDER BY id", run.id).map((r) => `attempt:${r.n}`);
+    expect(outcomes.length).toBeGreaterThan(0);
+    // Each attempt that became a candidate once at most, and every failed report settled the attempt it judged.
+    expect(new Set(outcomes.map((o) => o.attempt_key)).size).toBe(outcomes.length);
+    for (const o of outcomes) expect(attempts).toContain(o.attempt_key);
+    expect(new Set(outcomes.map((o) => o.evidence_ref))).toEqual(new Set(failed.map((r) => r.id)));
+    for (const o of outcomes) expect(o).toMatchObject({ outcome: 'failed', role: 'implementer', provider: 'claude', work_kind: 'routine-code' });
   }, 240_000);
 
   it('approving the baseline exception named in the reason lets the resumed run carry on: the excepted check is accepted, nothing is repaired', async () => {
@@ -162,7 +175,7 @@ const THROWING_APP = "throw new SyntaxError('Unexpected token } in tools/app-thr
 function withUiCriterion(scenario: object): object {
   const s = scenario as { roles: { planner: { structured: typeof PLANNER_OUTPUT }[] } };
   const plan = s.roles.planner[0]!.structured;
-  const criterion = { key: 'ui', statement: 'The calculator page shows the product of 2 and 3 as 6.', mandatory: true, ui: true, proof: ['journeys/mul.spec.ts asserts the page shows 6'], check_ids: ['ui'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }] };
+  const criterion = { key: 'ui', statement: 'The calculator page shows the product of 2 and 3 as 6.', mandatory: true, ui: true, proof: ['journeys/mul.spec.ts asserts the page shows 6'], check_ids: ['ui'], changes: [{ path: 'apps/calc.mjs', summary: 'add mul' }], kind: 'change', tests: ['journeys/mul.spec.ts'] };
   return { ...s, roles: { ...s.roles, planner: [{ structured: { ...plan, criteria: [...plan.criteria, criterion] } }] } };
 }
 

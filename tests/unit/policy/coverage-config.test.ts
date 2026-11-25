@@ -297,6 +297,11 @@ describe('semantic rules', () => {
     expect(retention[1]).toMatch(/^retention\.redact_patterns\[1\]: matches the empty string/);
     expect(retention).toHaveLength(2);
     expect(bad('repository: {base_branch: orbit/main}\n')).toEqual(['repository.branch_prefix: "orbit/" also matches the base branch "orbit/main"; task branches must never be able to name the base branch']);
+    // Each becomes a word of git commands, the offered delivery command included (#169): the schema allows no option and no shell syntax.
+    expect(bad('repository: {remote: "--receive-pack=/tmp/x"}\n')).toEqual(['repository.remote: must match pattern "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"']);
+    expect(bad('repository: {remote: "origin; touch /tmp/x"}\n')).toEqual(['repository.remote: must match pattern "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"']);
+    expect(bad('repository: {base_branch: "-f"}\n')[0]).toMatch(/^repository\.base_branch: must match pattern/);
+    expect(bad('repository: {branch_prefix: "$(id)/"}\n')[0]).toMatch(/^repository\.branch_prefix: must match pattern/);
     expect(bad('scheduler: {hard_limits: {parallel_workers: 1, ci_repair_cycles: 1}}\nagents: {default_parallelism: 5}\ndelivery: {max_ci_repair_cycles: 5}\n')).toEqual([
       'agents.default_parallelism: 5 exceeds scheduler.hard_limits.parallel_workers (1)',
       'delivery.max_ci_repair_cycles: 5 exceeds scheduler.hard_limits.ci_repair_cycles (1)',

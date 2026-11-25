@@ -17,6 +17,8 @@ const root = join(here, '../../fixtures');
 const CAPTURES = ['environment', 'misconfigured'];
 /** A fixture that is an application, not a capture of output. */
 const APPLICATIONS = ['ui-app'];
+/** Hand-written inputs, not captured on a machine: the spec bodies of issue #170 and the live goal catalog of issue #172. */
+const INPUTS = ['bench', 'specs'];
 
 interface Rule {
   name: string;
@@ -66,7 +68,7 @@ function filesOf(dir: string, prefix = ''): string[] {
 describe('the classification fixtures carry nothing of the machine or the person that captured them', () => {
   it('knows every fixture directory: a new capture directory is scanned too', () => {
     const dirs = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-    expect(dirs, 'add a directory of captured output to CAPTURES, an application to APPLICATIONS').toEqual([...CAPTURES, ...APPLICATIONS].sort());
+    expect(dirs, 'add a directory of captured output to CAPTURES, an application to APPLICATIONS, a hand-written input to INPUTS').toEqual([...CAPTURES, ...APPLICATIONS, ...INPUTS].sort());
   });
 
   for (const dir of CAPTURES) {

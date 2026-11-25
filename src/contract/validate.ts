@@ -84,6 +84,8 @@ function crossCheck(c: GoalContract, snapshot: PolicySnapshot, expectedHash: str
       if (!isCheck(id)) problems.push(`criterion ${ac.id} cites check "${id}", which the policy does not define`);
       else if (!c.required_check_ids.includes(id)) problems.push(`criterion ${ac.id} cites check "${id}", which is not in required_check_ids`);
     }
+    // A mapped test becomes one argument of a trusted tests_command: a repository path, never an option or a way out.
+    for (const t of ac.tests ?? []) if (!safeTestPath(t)) problems.push(`criterion ${ac.id} maps test "${t}", which is not a repository-relative path`);
   }
   if (!c.acceptance_criteria.some((ac) => ac.mandatory)) problems.push('at least one acceptance criterion must be mandatory');
 
@@ -146,4 +148,9 @@ function crossCheck(c: GoalContract, snapshot: PolicySnapshot, expectedHash: str
   }
 
   return problems;
+}
+
+/** A repository-relative path a tests_command may take as one argument: not absolute, no `..`, no leading `-`. */
+export function safeTestPath(p: string): boolean {
+  return p !== '' && !p.startsWith('/') && !p.startsWith('-') && !p.includes('\0') && !p.includes('\\') && !p.split('/').some((s) => s === '..' || s === '');
 }

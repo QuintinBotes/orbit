@@ -26,7 +26,7 @@ import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
 import { grantNote } from '../../scheduling/budget.ts';
 import { recordAskedLedger } from '../undecided-ledger.ts';
-import { assertContract, budgetPhaseOf, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
+import { assertContract, budgetPhaseOf, finishRun, move, repoInstructions, safePoint, WAIT, type StepResult } from './common.ts';
 import { briefPath, currentAttempt, type StoredBrief } from './implementing.ts';
 import { handledTriggerKeys, pendingTrigger } from './verifying.ts';
 
@@ -100,6 +100,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
       contract,
       inquiry: loadInquisitionSnapshot(ctx.db, ctx.run.id, { ...(ctx.candidate ? { currentTreeHash: ctx.candidate.treeHash } : {}), thresholds: thresholdsFromPolicy(ctx.snapshot.config) }),
       supportedCriteria: supported,
+      repoInstructions: repoInstructions(ctx),
       worker: {
         route: { provider: route.provider, model: route.model, effort: route.effort },
         workerDir,

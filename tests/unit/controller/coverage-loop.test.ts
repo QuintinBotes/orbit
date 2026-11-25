@@ -180,6 +180,28 @@ describe('construction and lifecycle', () => {
     expect(c.ownedRuns()).toEqual([]);
   });
 
+  // #203: Orbit's check sandbox on macOS refuses ps (here: no ps on PATH), so the controller's own start time is unknown.
+  it('starts and registers without a start time when ps cannot run', async () => {
+    setup(['PREFLIGHT']);
+    hooks.step.mockImplementation(async (_deps: unknown, runId: string) => {
+      store.transition(lab.db, { runId, to: 'CANCELLED', ownerId: 'ctl-loop', reason: 'done' }, lab.clock);
+      return { progressed: true, done: true };
+    });
+    const c = make({ mode: 'foreground', runId: lab.runId });
+    vi.stubEnv('PATH', join(lab.base, 'no-ps-here'));
+    let done: Promise<void>;
+    try {
+      done = c.start(); // registers before its first await
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    await done;
+    const row = controllersActual.getController(lab.db, 'ctl-loop');
+    expect(row.pid).toBe(process.pid);
+    // Linux reads /proc, not ps.
+    expect(row.procStart === null).toBe(process.platform !== 'linux');
+  });
+
   it('a service controller keeps ticking until stopped and records why', async () => {
     setup(['PREFLIGHT']);
     hooks.step.mockResolvedValue({ progressed: false, waiting: 'nothing to do' });

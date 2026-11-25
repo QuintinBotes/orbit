@@ -6,6 +6,8 @@ import { canTransition, isRunState, isTerminal, type RunState } from './states.t
 import { appendEvent } from '../storage/events.ts';
 import type { RunMode } from '../policy/types.ts';
 import { RUN_ACCOUNTING_VERSION } from '../scheduling/accounting.ts';
+import { ORBIT_VERSION } from '../cli/version.ts';
+import { classifyRunEnd, failureClassOrNull, isFailureClass, parseOutcome, turnCapSessions, type FailureClass } from './failure-class.ts';
 
 export { appendEvent };
 export type { RunMode };
@@ -33,6 +35,12 @@ export interface RunRecord {
   environment: string | null;
   outcomeReason: string | null;
   outcomeJson: string | null;
+  /** Why the run ended, from the fixed list (failure-class.ts); null while it runs, when it succeeded, and for a run that ended before the class was recorded. */
+  failureClass: FailureClass | null;
+  /** The second cause of a run that had two. */
+  failureSecondary: FailureClass | null;
+  /** The Orbit version that started the run; null for a run created before the version was recorded (shown as `unknown`). */
+  orbitVersion: string | null;
   paused: boolean;
   cancelRequested: boolean;
   createdAt: number;
@@ -63,6 +71,9 @@ interface RunRow {
   environment: string | null;
   outcome_reason: string | null;
   outcome_json: string | null;
+  failure_class?: string | null;
+  failure_secondary?: string | null;
+  orbit_version?: string | null;
   paused: number;
   cancel_requested: number;
   created_at: number;
@@ -95,6 +106,9 @@ function toRecord(r: RunRow): RunRecord {
     environment: r.environment ?? null,
     outcomeReason: r.outcome_reason,
     outcomeJson: r.outcome_json,
+    failureClass: failureClassOrNull(r.failure_class),
+    failureSecondary: failureClassOrNull(r.failure_secondary),
+    orbitVersion: r.orbit_version ?? null,
     paused: r.paused === 1,
     cancelRequested: r.cancel_requested === 1,
     createdAt: r.created_at,
@@ -115,14 +129,35 @@ export interface NewRun {
   policyPath: string;
   /** The release environment the run names; validated by the caller against the policy. */
   environment?: string | null;
+  /** The Orbit version that starts the run; this build's unless the caller names another. */
+  orbitVersion?: string;
+  /** The issue the run was started from: recorded in the creation event (the issue goal itself is issue.json in the run directory). */
+  issue?: { repo: string; number: number; kind: string; body_sha256: string; updated_at: string } | null;
+}
+
+/** How a run with no recorded Orbit version is shown and asked for (`orbit stats --orbit-version unknown`). */
+export const UNKNOWN_ORBIT_VERSION = 'unknown';
+
+/** What a version looks like: 0.3.2, 0.4.0-rc.1, 1.0.0+build.5. Nothing else is stored as one. */
+const VERSION_SHAPE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/;
+
+export function isOrbitVersion(value: string): boolean {
+  return VERSION_SHAPE.test(value);
+}
+
+/** The version a run reports: the recorded one, or `unknown` for a run created before it was recorded. */
+export function orbitVersionOf(run: Pick<RunRecord, 'orbitVersion'>): string {
+  return run.orbitVersion ?? UNKNOWN_ORBIT_VERSION;
 }
 
 export function createRun(db: OrbitDb, input: NewRun, clock: Clock, actor = 'cli'): RunRecord {
   const now = clock.now();
+  const named = input.orbitVersion ?? ORBIT_VERSION;
+  const orbitVersion = isOrbitVersion(named) ? named : UNKNOWN_ORBIT_VERSION;
   return db.tx(() => {
     db.run(
-      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (id, repo_root, goal, mode, state, policy_hash, policy_path, environment, orbit_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?, ?)`,
       input.id,
       input.repoRoot,
       input.goal,
@@ -130,12 +165,13 @@ export function createRun(db: OrbitDb, input: NewRun, clock: Clock, actor = 'cli
       input.policyHash,
       input.policyPath,
       input.environment ?? null,
+      orbitVersion,
       now,
       now,
     );
     // The accounting the run is charged by for its whole life (RUN_ACCOUNTING_VERSION): a run created before 0.3.1 names
     // none and keeps the rules of the version that started it when a later one resumes it.
-    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}), accounting: RUN_ACCOUNTING_VERSION }, now, null, 'CREATED');
+    appendEvent(db, input.id, 'run.created', actor, { mode: input.mode, policy_hash: input.policyHash, ...(input.environment ? { environment: input.environment } : {}), ...(input.issue ? { issue: input.issue } : {}), accounting: RUN_ACCOUNTING_VERSION, orbit_version: orbitVersion }, now, null, 'CREATED');
     return getRun(db, input.id);
   });
 }
@@ -171,6 +207,11 @@ export interface TransitionRequest {
   data?: unknown;
   /** Optimistic check: fail if the run moved since the caller read it. */
   expectedFrom?: RunState;
+  /**
+   * For a transition that ends the run: the failure class to record when nothing the run recorded marks one (a CI
+   * timeout, a delivery that failed). What the records mark comes first (failure-class.ts classifyRunEnd).
+   */
+  cause?: FailureClass;
   /** Columns to update atomically with the transition. */
   patch?: Partial<Pick<RunRecord, 'outcomeReason' | 'outcomeJson' | 'contractJson' | 'contractHash' | 'baseRevision' | 'baseTree' | 'branch' | 'worktreePath' | 'difficulty' | 'difficultyJson'>>;
 }
@@ -222,13 +263,26 @@ export function transition(db: OrbitDb, req: TransitionRequest, clock: Clock): R
       sets.push('started_at = ?');
       params.push(now);
     }
+    // Every way into a terminal state passes here, so every ended run has its class (or none, for success): the
+    // caller cannot leave it out, and can only name a fallback from the fixed list.
+    let ended: { failure_class?: FailureClass; failure_secondary?: FailureClass } = {};
     if (isTerminal(req.to)) {
-      sets.push('ended_at = ?');
-      params.push(now);
+      if (req.cause !== undefined && !isFailureClass(req.cause)) throw new OrbitError('INTERNAL', `run ${run.id}: the cause named for its end is not a failure class`);
+      const outcomeJson = req.patch && 'outcomeJson' in req.patch ? req.patch.outcomeJson : run.outcomeJson;
+      const cls = classifyRunEnd({
+        state: req.to,
+        outcome: parseOutcome(outcomeJson),
+        data: typeof req.data === 'object' && req.data !== null && !Array.isArray(req.data) ? (req.data as Record<string, unknown>) : null,
+        cause: req.cause ?? null,
+        turnCapSessions: turnCapSessions(db, run.id),
+      });
+      sets.push('ended_at = ?', 'failure_class = ?', 'failure_secondary = ?');
+      params.push(now, cls.failureClass, cls.secondary);
+      ended = { ...(cls.failureClass ? { failure_class: cls.failureClass } : {}), ...(cls.secondary ? { failure_secondary: cls.secondary } : {}) };
     }
     // Resuming a BLOCKED run: it is live again, so its end time and blocker outcome no longer apply.
     if (isTerminal(run.state) && !isTerminal(req.to)) {
-      sets.push('ended_at = NULL');
+      sets.push('ended_at = NULL', 'failure_class = NULL', 'failure_secondary = NULL');
       if (!req.patch || !('outcomeReason' in req.patch)) sets.push('outcome_reason = NULL');
       if (!req.patch || !('outcomeJson' in req.patch)) sets.push('outcome_json = NULL');
     }
@@ -240,7 +294,7 @@ export function transition(db: OrbitDb, req: TransitionRequest, clock: Clock): R
     }
     const res = db.run(`UPDATE runs SET ${sets.join(', ')} WHERE id = ? AND version = ?`, ...params, run.id, run.version);
     if (res.changes !== 1) throw new OrbitError('CONCURRENT_UPDATE', `run ${run.id} changed during transition`);
-    appendEvent(db, run.id, 'state.transition', req.actor ?? 'controller', { reason: req.reason, ...(req.data ? { data: req.data } : {}) }, now, run.state, req.to);
+    appendEvent(db, run.id, 'state.transition', req.actor ?? 'controller', { reason: req.reason, ...(req.data ? { data: req.data } : {}), ...ended }, now, run.state, req.to);
     return getRun(db, run.id);
   });
   faultPoint('controller.transition.after-commit');

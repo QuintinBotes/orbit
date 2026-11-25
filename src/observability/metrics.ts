@@ -3,7 +3,9 @@
  * created inside a time window: verified pass rate, false-pass rate from
  * subsequent review, escalation quality, duplicate failures, time-to-green,
  * spend per accepted task, token and cache usage, concurrency overhead,
- * stale-evidence prevention and UI defects discovered.
+ * stale-evidence prevention and UI defects discovered, and for each route (a
+ * model doing one kind of work at one difficulty class) its measured pass rate
+ * and cost per accepted task, from the route outcomes of those runs.
  *
  * Rules that hold everywhere:
  *  - A rate with an empty denominator is null, never zero.
@@ -16,17 +18,24 @@
 import type { OrbitDb } from '../storage/db.ts';
 import { inputIncludesCacheRead } from '../routing/pricing.ts';
 import { roundUsd } from '../routing/pricing.ts';
+import { FAILURE_CLASSES, isFailureClass } from '../controller/failure-class.ts';
+import { ROUTE_OUTCOME_NOT_THE_ROUTES } from '../routing/usage.ts';
+import { UNKNOWN_ORBIT_VERSION } from '../controller/run-store.ts';
 
 export interface MetricsWindow {
   /** Inclusive lower bound on runs.created_at (epoch ms); null or absent for no lower bound. */
   from?: number | null;
   /** Exclusive upper bound on runs.created_at; null or absent for no upper bound. */
   to?: number | null;
+  /** Only runs this Orbit version started; `unknown` for runs created before the version was recorded. Null or absent for every version. */
+  orbitVersion?: string | null;
 }
 
 /** Run states a run does not leave without a person (BLOCKED) or at all. */
 const FINISHED_STATES = ['SUCCEEDED', 'EXHAUSTED', 'IMPOSSIBLE', 'BLOCKED'] as const;
 const TERMINAL = ['SUCCEEDED', 'BLOCKED', 'EXHAUSTED', 'IMPOSSIBLE', 'CANCELLED'] as const;
+/** A run that ran out holding a verified candidate ends BLOCKED and records it in its outcome (controller/verified-candidate.ts). */
+const VERIFIED_UNDELIVERED = "CASE WHEN state = 'BLOCKED' AND outcome_json IS NOT NULL AND json_valid(outcome_json) THEN COALESCE(json_type(outcome_json, '$.verified_candidate') = 'object', 0) ELSE 0 END";
 /** Failure sources that describe the candidate, not the base or a rerun that passed. */
 const CANDIDATE_FAILURE_SOURCES = ['check', 'worker', 'ci'] as const;
 
@@ -53,9 +62,38 @@ export interface TokenTotals {
   cache_hit_ratio: number | null;
 }
 
+/** Pass rate and spend of the runs one Orbit version started. */
+export interface VersionMetrics {
+  /** The version that started the runs; `unknown` for runs created before it was recorded. */
+  orbit_version: string;
+  runs: number;
+  finished: number;
+  accepted: number;
+  /** Accepted over finished runs; null when none finished. */
+  pass_rate: number | null;
+  spend_usd: number;
+  /** Spend of the version's ended runs over its accepted runs; null when none was accepted. */
+  per_accepted_usd: number | null;
+  cost_complete: boolean;
+  /** Ended runs per failure class, for the classes that have any. */
+  failure_classes: Record<string, number>;
+}
+
 export interface Metrics {
-  window: { from: number | null; to: number | null };
-  runs: { total: number; finished: number; accepted: number; by_state: Record<string, number> };
+  window: { from: number | null; to: number | null; orbit_version: string | null };
+  /**
+   * `verified_undelivered`: BLOCKED runs that ran out while holding a candidate that passed verification, which a person
+   * may still deliver (issue #169). They are counted among the finished runs and in their failure class too.
+   */
+  runs: { total: number; finished: number; accepted: number; verified_undelivered: number; by_state: Record<string, number> };
+  /**
+   * Why runs ended (schemas/failure-class.schema.json): ended runs per class, every class listed, and how often each
+   * was a run's second cause. `without_class` are the runs that succeeded; `unclassified` are runs that ended any
+   * other way before Orbit recorded a class.
+   */
+  failure_classes: { ended: number; by_class: Record<string, number>; secondary: Record<string, number>; without_class: number; unclassified: number };
+  /** The same runs by the Orbit version that started them, in version order, `unknown` last. */
+  by_version: VersionMetrics[];
   /** Accepted runs over finished runs, and the share of evidence reports that were PASS. */
   verified_pass_rate: Rate & { evidence_reports: Rate };
   /** Candidates with PASS evidence that a review then refused, over PASS-evidence candidates that were reviewed. */
@@ -93,25 +131,64 @@ export interface Metrics {
   };
   stale_evidence_prevented: { evidence_invalidated: number; reviews_invalidated: number; deliveries_refused: number; total: number };
   ui_defects: { discovered: number; runs_with_ui_defects: number };
+  /** One entry per route with a recorded outcome, in a stable order (issue #168). */
+  routes: RouteMetric[];
   /** Measurements these records could not provide, in words. */
   missing: string[];
+}
+
+/**
+ * The measured outcomes of one route: the attempts of one role on one model, for one kind of work at one difficulty
+ * class. These are the rows routing.learning reads; `orbit stats` shows them so a displaced route can be checked.
+ */
+export interface RouteMetric {
+  work_kind: string;
+  /** null for outcomes recorded without a difficulty class. */
+  difficulty: string | null;
+  role: string | null;
+  provider: string;
+  model: string;
+  /** Efforts the outcomes ran at, in order. */
+  efforts: string[];
+  outcomes: number;
+  runs: number;
+  verified: number;
+  failed: number;
+  rejected: number;
+  /** Outcomes not judged on the work itself: error, cancelled, and a failure or refusal in a run that ended for an environment or misconfigured-check cause. Never part of the pass rate. */
+  excluded: number;
+  /** verified over verified + failed + rejected; null with no judged outcome. */
+  pass_rate: Rate;
+  /** Sum of the known costs of every outcome of the route, failed attempts included. */
+  cost_usd: number;
+  /** Outcomes whose cost is not known. They are not counted as zero: with any, there is no cost per accepted task. */
+  unmeasured_outcomes: number;
+  cost_complete: boolean;
+  /** cost_usd over verified; null with no verified outcome or an unmeasured one. */
+  cost_per_accepted_usd: number | null;
+  first_ts: number;
+  last_ts: number;
 }
 
 export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
   const from = window.from ?? null;
   const to = window.to ?? null;
-  const where = `created_at >= ${from === null ? '0' : '?'} AND created_at < ${to === null ? '9223372036854775807' : '?'}`;
-  const params: number[] = [...(from === null ? [] : [from]), ...(to === null ? [] : [to])];
+  const orbitVersion = window.orbitVersion ?? null;
+  const where = `created_at >= ${from === null ? '0' : '?'} AND created_at < ${to === null ? '9223372036854775807' : '?'}${orbitVersion === null ? '' : ` AND COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') = ?`}`;
+  const params: Param[] = [...(from === null ? [] : [from]), ...(to === null ? [] : [to]), ...(orbitVersion === null ? [] : [orbitVersion])];
   /** Rows of `table` whose run_id is a run created inside the window. */
   const inWindow = `run_id IN (SELECT id FROM runs WHERE ${where})`;
   const missing: string[] = [];
 
-  const runRows = db.all<{ id: string; state: string; created_at: number; started_at: number | null }>(`SELECT id, state, created_at, started_at FROM runs WHERE ${where} ORDER BY created_at`, ...params);
+  const runRows = db.all<RunRow>(`SELECT id, state, created_at, started_at, failure_class, failure_secondary, COALESCE(orbit_version, '${UNKNOWN_ORBIT_VERSION}') AS orbit_version, ${VERIFIED_UNDELIVERED} AS verified FROM runs WHERE ${where} ORDER BY created_at`, ...params);
   const byState: Record<string, number> = {};
   for (const r of runRows) byState[r.state] = (byState[r.state] ?? 0) + 1;
   const finished = runRows.filter((r) => (FINISHED_STATES as readonly string[]).includes(r.state));
   const accepted = runRows.filter((r) => r.state === 'SUCCEEDED');
   if (runRows.length === 0) missing.push('no runs were created in this window');
+  const classes = failureClasses(runRows, missing);
+  // One query for the usage of every run in the window, not one per run (issue #190).
+  const versions = byVersion(runRows, db.all<UsageCost>(`SELECT run_id, cost_usd, cost_source FROM usage WHERE ${inWindow}`, ...params));
 
   const evidence = db.get<{ total: number; pass: number }>(`SELECT COUNT(*) AS total, COALESCE(SUM(verdict = 'PASS'), 0) AS pass FROM evidence_reports WHERE ${inWindow}`, ...params)!;
 
@@ -154,8 +231,10 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
   )!;
 
   return {
-    window: { from, to },
-    runs: { total: runRows.length, finished: finished.length, accepted: accepted.length, by_state: byState },
+    window: { from, to, orbit_version: orbitVersion },
+    runs: { total: runRows.length, finished: finished.length, accepted: accepted.length, verified_undelivered: runRows.filter((r) => r.verified === 1).length, by_state: byState },
+    failure_classes: classes,
+    by_version: versions,
     verified_pass_rate: { ...rate(accepted.length, finished.length), evidence_reports: rate(evidence.pass, evidence.total) },
     false_pass_rate: rate(passCandidates.refused, passCandidates.reviewed),
     escalation_quality: escalation,
@@ -166,15 +245,179 @@ export function metricsFor(db: OrbitDb, window: MetricsWindow = {}): Metrics {
     concurrency_overhead: overhead,
     stale_evidence_prevented: { evidence_invalidated: evidenceInvalidated, reviews_invalidated: reviewsInvalidated, deliveries_refused: deliveriesRefused, total: evidenceInvalidated + reviewsInvalidated + deliveriesRefused },
     ui_defects: { discovered: ui.discovered, runs_with_ui_defects: ui.runs },
+    routes: routeMetrics(db, inWindow, params, missing),
     missing,
   };
+}
+
+/** A bound parameter of the window: a time bound, or the Orbit version asked for. */
+type Param = number | string;
+
+interface RunRow {
+  id: string;
+  state: string;
+  created_at: number;
+  started_at: number | null;
+  failure_class: string | null;
+  failure_secondary: string | null;
+  orbit_version: string;
+  /** 1 for a BLOCKED run that ran out holding a verified candidate (issue #169), else 0. */
+  verified: number;
+}
+
+const isEnded = (r: RunRow): boolean => (TERMINAL as readonly string[]).includes(r.state);
+
+function failureClasses(runs: RunRow[], missing: string[]): Metrics['failure_classes'] {
+  const byClass: Record<string, number> = Object.fromEntries(FAILURE_CLASSES.map((c) => [c, 0]));
+  const secondary: Record<string, number> = {};
+  let ended = 0;
+  let withoutClass = 0;
+  let unclassified = 0;
+  for (const r of runs) {
+    if (!isEnded(r)) continue;
+    ended += 1;
+    if (isFailureClass(r.failure_class)) byClass[r.failure_class] = (byClass[r.failure_class] ?? 0) + 1;
+    else if (r.state === 'SUCCEEDED') withoutClass += 1;
+    else unclassified += 1;
+    if (isFailureClass(r.failure_secondary)) secondary[r.failure_secondary] = (secondary[r.failure_secondary] ?? 0) + 1;
+  }
+  if (unclassified > 0) missing.push(`${unclassified} ended run(s) carry no failure class: they ended before Orbit recorded one`);
+  return { ended, by_class: byClass, secondary, without_class: withoutClass, unclassified };
+}
+
+/** Versions in order (0.3.2 before 0.4.0-rc.1 before 0.4.0 before 0.10.0), with `unknown` last. */
+function compareVersions(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a === UNKNOWN_ORBIT_VERSION) return 1;
+  if (b === UNKNOWN_ORBIT_VERSION) return -1;
+  // A pre-release comes before its release, which a numeric collation of the whole string puts after it (issue #190).
+  const [coreA, preA] = splitPreRelease(a);
+  const [coreB, preB] = splitPreRelease(b);
+  const core = coreA.localeCompare(coreB, 'en', { numeric: true });
+  if (core !== 0 || preA === preB) return core;
+  if (preA === null) return 1;
+  if (preB === null) return -1;
+  return preA.localeCompare(preB, 'en', { numeric: true });
+}
+
+function splitPreRelease(version: string): [string, string | null] {
+  const dash = version.indexOf('-');
+  return dash < 0 ? [version, null] : [version.slice(0, dash), version.slice(dash + 1)];
+}
+
+type UsageCost = { run_id: string; cost_usd: number | null; cost_source: string };
+
+function byVersion(runs: RunRow[], usage: UsageCost[]): VersionMetrics[] {
+  const groups = new Map<string, RunRow[]>();
+  for (const r of runs) {
+    const g = groups.get(r.orbit_version);
+    if (g) g.push(r);
+    else groups.set(r.orbit_version, [r]);
+  }
+  const usageOf = new Map<string, UsageCost[]>();
+  for (const u of usage) {
+    const list = usageOf.get(u.run_id);
+    if (list) list.push(u);
+    else usageOf.set(u.run_id, [u]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => compareVersions(a, b))
+    .map(([version, rows]) => {
+      const finished = rows.filter((r) => (FINISHED_STATES as readonly string[]).includes(r.state)).length;
+      const accepted = rows.filter((r) => r.state === 'SUCCEEDED').length;
+      // As for the whole window: the spend of every ended run counts against the accepted ones.
+      let spend = 0;
+      let unmeasured = 0;
+      for (const r of rows.filter(isEnded)) {
+        for (const u of usageOf.get(r.id) ?? []) {
+          if (u.cost_usd === null || u.cost_source === 'unavailable') unmeasured += 1;
+          else spend += u.cost_usd;
+        }
+      }
+      const classes: Record<string, number> = {};
+      for (const c of FAILURE_CLASSES) {
+        const count = rows.filter((r) => isEnded(r) && r.failure_class === c).length;
+        if (count > 0) classes[c] = count;
+      }
+      const spendUsd = roundUsd(spend);
+      return {
+        orbit_version: version,
+        runs: rows.length,
+        finished,
+        accepted,
+        pass_rate: rate(accepted, finished).rate,
+        spend_usd: spendUsd,
+        per_accepted_usd: accepted > 0 ? roundUsd(spendUsd / accepted) : null,
+        cost_complete: unmeasured === 0,
+        failure_classes: classes,
+      };
+    });
+}
+
+function routeMetrics(db: OrbitDb, inWindow: string, params: Param[], missing: string[]): RouteMetric[] {
+  const rows = db.all<{
+    work_kind: string;
+    difficulty: string | null;
+    role: string | null;
+    provider: string;
+    model_id: string;
+    efforts: string | null;
+    outcomes: number;
+    runs: number;
+    verified: number;
+    failed: number;
+    rejected: number;
+    excluded: number;
+    cost: number | null;
+    cost_samples: number;
+    first_ts: number;
+    last_ts: number;
+  }>(
+    `SELECT work_kind, difficulty, role, provider, model_id, GROUP_CONCAT(DISTINCT effort) AS efforts, COUNT(*) AS outcomes, COUNT(DISTINCT run_id) AS runs,
+            COALESCE(SUM(outcome = 'verified'), 0) AS verified, COALESCE(SUM(outcome = 'failed' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS failed,
+            COALESCE(SUM(outcome = 'rejected' AND NOT ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS rejected,
+            COALESCE(SUM(outcome NOT IN ('verified', 'failed', 'rejected') OR ${ROUTE_OUTCOME_NOT_THE_ROUTES}), 0) AS excluded,
+            SUM(cost_usd) AS cost, COUNT(cost_usd) AS cost_samples, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+       FROM route_outcomes WHERE ${inWindow}
+      GROUP BY work_kind, difficulty, role, provider, model_id
+      ORDER BY work_kind, difficulty, role, provider, model_id`,
+    ...params,
+  );
+  const out = rows.map((r): RouteMetric => {
+    const unmeasured = r.outcomes - r.cost_samples;
+    const cost = roundUsd(r.cost ?? 0);
+    return {
+      work_kind: r.work_kind,
+      difficulty: r.difficulty,
+      role: r.role,
+      provider: r.provider,
+      model: r.model_id,
+      efforts: (r.efforts ?? '').split(',').filter(Boolean).sort(),
+      outcomes: r.outcomes,
+      runs: r.runs,
+      verified: r.verified,
+      failed: r.failed,
+      rejected: r.rejected,
+      excluded: r.excluded,
+      pass_rate: rate(r.verified, r.verified + r.failed + r.rejected),
+      cost_usd: cost,
+      unmeasured_outcomes: unmeasured,
+      cost_complete: unmeasured === 0,
+      cost_per_accepted_usd: r.verified > 0 && unmeasured === 0 ? roundUsd(cost / r.verified) : null,
+      first_ts: r.first_ts,
+      last_ts: r.last_ts,
+    };
+  });
+  const partial = out.filter((r) => !r.cost_complete);
+  if (partial.length > 0) missing.push(`cost is unknown for ${partial.reduce((a, r) => a + r.unmeasured_outcomes, 0)} route outcome(s) on ${partial.length} route(s); those routes have no cost per accepted task`);
+  return out;
 }
 
 function rate(numerator: number, denominator: number): Rate {
   return { numerator, denominator, rate: denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 10_000 : null };
 }
 
-function count(db: OrbitDb, sql: string, params: number[]): number {
+function count(db: OrbitDb, sql: string, params: Param[]): number {
   return Number(db.get<{ n: number }>(sql, ...params)?.n ?? 0);
 }
 
@@ -205,7 +448,7 @@ function timeToGreen(db: OrbitDb, runs: { id: string; created_at: number; starte
  * `escalated_from`. It fixed the fingerprint when its candidate carries none
  * of the failure fingerprints the attempt before it ended with.
  */
-function escalationQuality(db: OrbitDb, inWindow: string, params: number[]): Metrics['escalation_quality'] {
+function escalationQuality(db: OrbitDb, inWindow: string, params: Param[]): Metrics['escalation_quality'] {
   const decisions = db.all<{ id: string; run_id: string }>(`SELECT id, run_id FROM decisions WHERE kind = 'route' AND json_extract(data_json, '$.escalated_from') IS NOT NULL AND ${inWindow}`, ...params);
   let fixed = 0;
   let notFixed = 0;
@@ -250,7 +493,7 @@ function fingerprintsOf(db: OrbitDb, candidateId: string): Set<string> {
   return new Set(db.all<{ fingerprint: string }>(`SELECT DISTINCT fingerprint FROM failures WHERE candidate_id = ? AND source IN (${marks})`, candidateId, ...CANDIDATE_FAILURE_SOURCES).map((r) => r.fingerprint));
 }
 
-function duplicateFailures(db: OrbitDb, inWindow: string, params: number[]): Metrics['duplicate_failures'] {
+function duplicateFailures(db: OrbitDb, inWindow: string, params: Param[]): Metrics['duplicate_failures'] {
   const marks = CANDIDATE_FAILURE_SOURCES.map(() => '?').join(', ');
   const rows = db.all<{ run_id: string; fingerprint: string; candidates: number }>(
     `SELECT run_id, fingerprint, COUNT(DISTINCT candidate_id) AS candidates FROM failures
@@ -264,7 +507,7 @@ function duplicateFailures(db: OrbitDb, inWindow: string, params: number[]): Met
   return { ...rate(dups, total), distinct_fingerprints: rows.length, duplicates: dups };
 }
 
-function spendPerAccepted(db: OrbitDb, where: string, params: number[], accepted: number, missing: string[]): Metrics['spend_per_accepted_task'] {
+function spendPerAccepted(db: OrbitDb, where: string, params: Param[], accepted: number, missing: string[]): Metrics['spend_per_accepted_task'] {
   // Spend of every settled run counts against the tasks that were accepted: failed attempts are part of the price.
   const marks = TERMINAL.map(() => '?').join(', ');
   const rows = db.all<{ cost_usd: number | null; cost_source: string }>(
@@ -299,7 +542,7 @@ interface UsageRow {
   cache_write_tokens: number | null;
 }
 
-function tokenUsage(db: OrbitDb, inWindow: string, params: number[], missing: string[]): Metrics['token_usage'] {
+function tokenUsage(db: OrbitDb, inWindow: string, params: Param[], missing: string[]): Metrics['token_usage'] {
   const rows = db.all<UsageRow>(`SELECT provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens FROM usage WHERE ${inWindow}`, ...params);
   const total: Acc = newAcc();
   const groups = new Map<string, { provider: string; model: string | null; records: number; acc: Acc }>();
@@ -362,7 +605,7 @@ function ratioOf(part: number, whole: number): number | null {
   return whole > 0 ? Math.round((part / whole) * 10_000) / 10_000 : null;
 }
 
-function concurrencyOverhead(db: OrbitDb, inWindow: string, params: number[], missing: string[]): Metrics['concurrency_overhead'] {
+function concurrencyOverhead(db: OrbitDb, inWindow: string, params: Param[], missing: string[]): Metrics['concurrency_overhead'] {
   const w = db.get<{ queue: number | null; n: number; active: number | null }>(
     `SELECT SUM(MAX(0, spawned_at - created_at)) AS queue, COUNT(*) AS n,
             SUM(CASE WHEN ended_at IS NOT NULL THEN MAX(0, ended_at - spawned_at) ELSE 0 END) AS active

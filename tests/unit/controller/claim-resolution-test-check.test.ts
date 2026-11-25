@@ -12,7 +12,8 @@
 // its own, TEST-1 matched inside TEST-10, and a test a later review held insufficient credited on a later tree.
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 const { snapshotCandidate } = await import('../../../src/evidence/candidate.ts');
@@ -24,7 +25,7 @@ const { REVIEW_REPAIR_EVENT, reviewingStep } = await import('../../../src/contro
 const { listProbeAttempts } = await import('../../../src/evidence/fail-before.ts');
 const { listCheckRuns } = await import('../../../src/evidence/store.ts');
 const { defaultCheck } = await import('../../../src/policy/config.ts');
-const { addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, scriptedAdapter, setContract, validateModels } = await import('./coverage-helpers.ts');
+const { addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, pacedClock, scriptedAdapter, setContract, validateModels } = await import('./coverage-helpers.ts');
 type UnitLab = import('./coverage-helpers.ts').UnitLab;
 type IngestedFinding = import('../../../src/review/types.ts').IngestedFinding;
 type ProviderAdapter = import('../../../src/adapters/types.ts').ProviderAdapter;
@@ -59,6 +60,16 @@ const TEST_2: IngestedFinding = { ...TEST_1, externalId: 'TEST-2', claim: 'mul a
 
 const revisionOf = (prompt: string): string => prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
 
+/**
+ * A carried finding no test settles gets one re-review (ADR 0015, amendment of 2026-11-16). Here it finds the defect still
+ * present, so the finding goes back to repair as these tests expect. A re-review is no review of the tree: its answer
+ * raises no finding, so the findings each test judges are the ones it recorded.
+ */
+const reReviewed = (prompt: string): object | null => {
+  const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(prompt)?.[1];
+  return id ? { verdict: 'REPAIR_REQUIRED', candidate_revision: revisionOf(prompt), findings: [{ id, severity: 'high', category: 'correctness', location: 'apps/calc.mjs:2', claim: `${id} still holds on this tree`, evidence: 'mul still accepts it', suggested_validation: null }] } : null;
+};
+
 const ADD_TEST = "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from '../../apps/calc.mjs';\ntest('add(2, 3) is 5', () => assert.equal(add(2, 3), 5));\n";
 /** The base revision: add and its test, run by `node --test`. */
 const BASE_FILES = { 'apps/calc.mjs': 'export const add = (a, b) => a + b;\n', 'tests/unit/add.test.mjs': ADD_TEST };
@@ -79,6 +90,8 @@ interface Unit {
   command?: string[];
   /** The check's timeout_seconds; LAB_TIMEOUT when absent. */
   timeout?: number;
+  /** A file the check creates once it hangs: until it exists the lab clock waits in real time on every sleep (hangingClock). */
+  hung?: string;
 }
 
 /**
@@ -88,6 +101,18 @@ interface Unit {
  * day for the wall time, so only a test that means to time out (with a timeout of its own) does.
  */
 const LAB_TIMEOUT = 3600;
+
+/**
+ * The lab clock for a test whose check is meant to time out. Until the check has created `hung`, the file it writes
+ * when it starts to hang, every sleep waits in real time (pacedClock, issue #129), so a run that ends on its own is
+ * never timed out by simulated time running ahead of it, however slow the machine. Once the file exists the clock runs
+ * ahead again, and the hanging run passes its timeout at once instead of after that many real seconds.
+ */
+function hangingClock(clock: UnitLab['clock'], hung: string): void {
+  const paced = pacedClock(clock);
+  const ahead = clock.sleep.bind(clock);
+  clock.sleep = (ms) => (existsSync(hung) ? ahead(ms) : paced.sleep(ms));
+}
 
 /** How a check's latest run ended on a candidate: a flaky pass is a pass that needed a rerun. */
 type Ran = 'PASSED' | 'FAILED' | 'flaky';
@@ -121,7 +146,8 @@ async function setup(o: Setup = {}) {
       for (const [id, u] of Object.entries(tests)) c.checks[id] = { ...defaultCheck(id), command: u.command ?? [process.execPath, '--test'], timeout_seconds: u.timeout ?? LAB_TIMEOUT, category: u.category ?? 'test', cwd: u.cwd ?? '.' };
     },
   });
-  const reviewer = scriptedAdapter(lab, ({ spec }: { spec: { prompt: string } }) => okResult({ verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [] }));
+  if (o.unit?.hung) hangingClock(lab.clock, o.unit.hung);
+  const reviewer = scriptedAdapter(lab, ({ spec }: { spec: { prompt: string } }) => okResult(reReviewed(spec.prompt) ?? { verdict: 'APPROVE', candidate_revision: revisionOf(spec.prompt), findings: [] }));
   lab.deps.adapters = { claude: claude(), codex: reviewer };
   validateModels(lab);
   for (const e of lab.deps.registry.list()) if (e.provider === 'codex') lab.deps.registry.markAvailability(e.modelId, 'codex-cli', true, 'test');
@@ -190,7 +216,12 @@ function reportAs(repo: Repo, attempt: number, refs: { path: string; note: strin
   lab.db.run("UPDATE workers SET state = 'SUCCEEDED', result_json = ? WHERE id = ?", JSON.stringify({ structured: out }), w.id);
 }
 
-const run = () => reviewingStep(lab.ctx());
+/** One review step, then again while a reviewer session it started runs (a finding's one re-review), as the controller does. */
+const run = async () => {
+  let out = await reviewingStep(lab.ctx());
+  for (let i = 0; i < 8 && !out.done && state() === 'REVIEWING' && /is running$/.test(out.waiting ?? ''); i++) out = await reviewingStep(lab.ctx());
+  return out;
+};
 const state = () => getRun(lab.db, lab.runId).state;
 const blocking = (f: { resolutionJson: unknown }): unknown => (f.resolutionJson as { blocking?: unknown } | null)?.blocking;
 
@@ -327,6 +358,9 @@ describe('a test that does not tell the trees apart leaves the finding open and 
     expect(f.status).not.toBe('resolved');
     expect(blocking(f)).toBe(true);
     expect(f.resolution ?? '').not.toMatch(/new_test unit/);
+    // Carried to the repaired tree and settled by no test: its one re-review found it still present, then the repair.
+    expect(listDecisions(lab.db, lab.runId, { kind: 'review.finding-rereview' })).toHaveLength(1);
+    expect(f.resolution).toMatch(/its one re-review \S+ by codex of tree \w+ found it still present/);
     expect(state()).toBe('REPAIRING');
   };
 
@@ -546,7 +580,10 @@ describe('a reviewer who raises the finding again on a tree that has the repair 
     expect(all.map((x) => x.status).filter((s) => s === 'resolved')).toEqual([]);
     expect(all.at(-1)!.resolution).toContain(`tests/unit/mul-input.test.mjs: a review of tree ${c2.treeHash.slice(0, 12)}, which already had it, raised the finding again`);
     expect(probes()).toEqual([]);
-    expect(state()).toBe('REPAIRING');
+    // TEST-1 would go to repair again after a repair that named no test for it: non-progress (#156), not attempt 4. The
+    // candidates passed verification, so the run that ran out offers the newest of them (#169).
+    expect(state()).toBe('BLOCKED');
+    expect(listDecisions(lab.db, lab.runId, { kind: 'repair.non-progress' })).toHaveLength(1);
   });
 
   it("a finding an earlier repair's test resolves on a later tree says that repair's attempt", async () => {
@@ -585,14 +622,24 @@ describe('a probe that cannot establish discrimination leaves the finding open, 
   });
 
   it('a timeout on the pre-repair tree', async () => {
-    // The check's own timeout of 60 s: the lab's manual clock runs ahead while the runner polls, so the hanging run times
-    // out soon, and the control tree's run ends before it would.
-    currentUnit = { command: [process.execPath, 'tests/unit/mul-input.test.mjs'], timeout: 60 };
-    const source = "import { mul } from '../../apps/calc.mjs';\nlet threw = false;\ntry { mul('a', 2); } catch { threw = true; }\nif (!threw) await new Promise((r) => setTimeout(r, 60_000));\n";
-    const { finding } = await repairThenApprove({ source, before: placeholder });
-    expect(finding.status).not.toBe('resolved');
-    expect(finding.resolution).toContain('unit timed out on the probe tree');
-    expect(probes().map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'TIMEOUT']);
+    // The check's own timeout of 60 s. The finding's test creates `hung` just before it hangs: until then the lab clock
+    // waits in real time, and from then on it runs ahead, so the hanging run times out at once. The control tree's run
+    // takes a real second and a half and still passes: on the plain lab clock, 60 simulated seconds passed in less real
+    // time than a run on a loaded CI runner took, and the control tree timed out instead (probes: ['TIMEOUT']).
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orbit-hung-')));
+    try {
+      const hung = join(dir, 'hung');
+      currentUnit = { command: [process.execPath, 'tests/unit/mul-input.test.mjs'], timeout: 60, hung };
+      const slow = { 'tests/unit/mul-input.test.mjs': 'await new Promise((r) => setTimeout(r, 1500));\n' };
+      const source = `import { writeFileSync } from 'node:fs';\nimport { mul } from '../../apps/calc.mjs';\nlet threw = false;\ntry { mul('a', 2); } catch { threw = true; }\nif (!threw) {\n  writeFileSync(${JSON.stringify(hung)}, '');\n  await new Promise((r) => setTimeout(r, 60_000));\n}\n`;
+      const { finding } = await repairThenApprove({ source, before: slow });
+      expect(finding.status).not.toBe('resolved');
+      expect(finding.resolution).toContain('unit timed out on the probe tree');
+      // A timeout decides nothing, so it is not reused: the pass after the finding's re-review came back runs the finding's tree again.
+      expect(probes().map((a) => a.status)).toEqual(['PASSED', 'PASSED', 'TIMEOUT', 'TIMEOUT']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 30_000);
 
   it('a repair that changes a lockfile is not probed', async () => {

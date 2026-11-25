@@ -9,7 +9,7 @@
  * so a step is never hidden because the controller learned a new one.
  */
 import type { OrbitDb } from '../storage/db.ts';
-import type { RunRecord } from '../controller/run-store.ts';
+import { orbitVersionOf, type RunRecord } from '../controller/run-store.ts';
 import { spendBreakdown } from '../scheduling/budget.ts';
 
 export type TimelineCategory =
@@ -76,6 +76,11 @@ export interface Timeline {
     paused: boolean;
     cancel_requested: boolean;
     outcome_reason: string | null;
+    /** Why the run ended, from schemas/failure-class.schema.json; null while it runs, when it succeeded, and for a run that ended before the class was recorded. */
+    failure_class: string | null;
+    failure_secondary: string | null;
+    /** The Orbit version that started the run; `unknown` for a run created before it was recorded. */
+    orbit_version: string;
     branch: string | null;
     created_at: number;
     started_at: number | null;
@@ -320,9 +325,13 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
   };
   switch (e.type) {
     case 'run.created':
-      return { text: `run created in ${str(data.mode) ?? '?'} mode${str(data.environment) ? ` for environment ${str(data.environment)}` : ''}` };
-    case 'state.transition':
-      return { text: `${e.from_state ?? '?'} -> ${e.to_state ?? '?'}${str(data.reason) ? `: ${str(data.reason)!.replace(/\s+/g, ' ').trim()}` : ''}` };
+      return { text: `run created in ${str(data.mode) ?? '?'} mode${str(data.environment) ? ` for environment ${str(data.environment)}` : ''}${str(data.orbit_version) ? ` by Orbit ${str(data.orbit_version)}` : ''}` };
+    case 'state.transition': {
+      // The transition that ended the run carries why, as a failure class (controller/failure-class.ts).
+      const cls = str(data.failure_class);
+      const why = cls ? ` [${cls}${str(data.failure_secondary) ? `, secondary ${str(data.failure_secondary)}` : ''}]` : '';
+      return { text: `${e.from_state ?? '?'} -> ${e.to_state ?? '?'}${str(data.reason) ? `: ${str(data.reason)!.replace(/\s+/g, ' ').trim()}` : ''}${why}` };
+    }
     case 'run.paused':
       return { text: `run paused by ${e.actor}` };
     case 'run.unpaused':
@@ -412,6 +421,12 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       const cand = c?.candidate_id ? ` on candidate ${candidateSeq(c.candidate_id)}` : '';
       const fp = str(data.fingerprint) ?? c?.fingerprint ?? null;
       return { text: `${str(data.check_id) ?? c?.check_id ?? 'check'} ${status}${exit !== null ? ` (exit ${exit})` : ''}${cand}${took}${c?.flaky ? ' (flaky)' : ''}${fp && status !== 'PASSED' ? `; fingerprint ${fp}` : ''}` };
+    }
+    case 'check.fail-before-probe-started':
+      return { text: `fail-before probe of ${str(data.check_id) ?? 'a check'} started on tree ${short(str(data.tree_hash))} (attempt ${num(data.attempt) ?? '?'})` };
+    case 'check.fail-before-probe-finished': {
+      const exit = num(data.exit_code);
+      return { text: `fail-before probe of ${str(data.check_id) ?? 'a check'} ${str(data.status) ?? '?'}${exit !== null ? ` (exit ${exit})` : ''} on tree ${short(str(data.tree_hash))} (attempt ${num(data.attempt) ?? '?'})` };
     }
     case 'evidence.report': {
       const verdict = str(data.verdict) ?? '?';
@@ -562,6 +577,9 @@ export function buildTimeline(db: OrbitDb, run: RunRecord, opts: TimelineOptions
       paused: run.paused,
       cancel_requested: run.cancelRequested,
       outcome_reason: run.outcomeReason,
+      failure_class: run.failureClass,
+      failure_secondary: run.failureSecondary,
+      orbit_version: orbitVersionOf(run),
       branch: run.branch,
       created_at: run.createdAt,
       started_at: run.startedAt,

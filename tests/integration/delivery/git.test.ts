@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { assertTaskBranch, createDeliveryCommit, deliveryRef, findDeliveryCommit, lsRemoteBranch, parsePushPorcelain, pushBranch, readControllerIdentity, reconcilePush, remoteHost, resolveRemoteUrl } from '../../../src/delivery/git.ts';
+import { assertTaskBranch, createDeliveryCommit, deliveryRef, fastForwardBase, findDeliveryCommit, lsRemoteBranch, parsePushPorcelain, pushBranch, readControllerIdentity, reconcilePush, remoteHost, resolveRemoteUrl } from '../../../src/delivery/git.ts';
 import { git, makeLab, type Lab } from './harness.ts';
 
 const rules = { branchPrefix: 'orbit/', baseBranch: 'main' };
@@ -241,5 +241,24 @@ describe('remote resolution for network authorization', () => {
     expect(await resolveRemoteUrl(lab.work, 'origin')).toBe(canary);
     // A URL given directly would be rewritten on push, so it is not where the push goes.
     await expect(resolveRemoteUrl(lab.work, lab.remote)).rejects.toMatchObject({ code: 'CONFIG_INVALID', message: expect.stringContaining('rewrite') });
+  });
+});
+
+describe('fastForwardBase', () => {
+  const ff = () => fastForwardBase({ repoRoot: lab.work, remote: lab.remote, branch: 'main' });
+
+  it('fast-forwards a base behind the remote, and refuses a base with commits the remote does not have: they would go into every pull request the queue opens', async () => {
+    expect(await ff()).toEqual({ from: lab.base, to: lab.base });
+    // The remote moved on (a pull request merged there): the local base is behind and follows it.
+    git(lab.work, ['commit', '-q', '--allow-empty', '-m', 'merged on the remote']);
+    const merged = git(lab.work, ['rev-parse', 'HEAD']);
+    git(lab.work, ['push', '-q', 'origin', 'main']);
+    git(lab.work, ['reset', '-q', '--hard', lab.base]);
+    expect(await ff()).toEqual({ from: lab.base, to: merged });
+    expect(git(lab.work, ['rev-parse', 'HEAD'])).toBe(merged);
+    git(lab.work, ['commit', '-q', '--allow-empty', '-m', 'local only']);
+    const head = git(lab.work, ['rev-parse', 'HEAD']);
+    await expect(ff()).rejects.toMatchObject({ code: 'POLICY_DENIED', message: expect.stringContaining(`main has commits ${lab.remote}/main does not have (here ${head.slice(0, 12)}, there ${merged.slice(0, 12)})`) });
+    expect(git(lab.work, ['rev-parse', 'HEAD'])).toBe(head);
   });
 });

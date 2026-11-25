@@ -26,10 +26,11 @@ import { defaultCheck, defaultConfig, defaultUi } from '../../../src/policy/conf
 import { snapshotPolicy } from '../../../src/policy/snapshot.ts';
 import { runUiChecks } from '../../../src/ui/runner.ts';
 import { freePort } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: ROOT });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 const dotnet = which('dotnet', process.env.PATH) ?? [join(homedir(), '.dotnet', 'dotnet')].find((p) => existsSync(p)) ?? null;
 const skip = !probe.ok ? `srt unavailable: ${probe.detail}` : dotnet === null ? 'dotnet is not installed' : provider.privateLoopback ? 'every srt sandbox has its own loopback here' : null;
 

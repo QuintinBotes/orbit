@@ -7,6 +7,8 @@ import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import type { IsolationLimits } from '../../../src/policy/types.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 /**
  * The memory watchdog (G24) on this host's real ps and node: it kills a
@@ -32,7 +34,8 @@ function alive(pid: number): boolean {
 }
 
 describe.skipIf(!ps)('memory watchdog with the host ps', () => {
-  it('stops a command past the limit, kills its descendants and exits with the resource-limit status', async () => {
+  it('stops a command past the limit, kills its descendants and exits with the resource-limit status', async (ctx) => {
+    skipWithoutPs(ctx);
     // The parent spawns a child that holds the memory, and prints the child pid.
     const script = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(HOLD(400, 20_000))}],{stdio:'ignore'});console.log('child='+c.pid);setTimeout(()=>{},20000)`;
     const r = await runWrapped(wrapped([process.execPath, '-e', script], 150), process.cwd(), { timeoutMs: 20_000 });
@@ -45,7 +48,8 @@ describe.skipIf(!ps)('memory watchdog with the host ps', () => {
     expect(alive(pid)).toBe(false);
   });
 
-  it('passes the exit status, output and a clean run through when the command stays under the limit', async () => {
+  it('passes the exit status, output and a clean run through when the command stays under the limit', async (ctx) => {
+    skipWithoutPs(ctx);
     const r = await runWrapped(wrapped([process.execPath, '-e', 'console.log("fine"); console.error("warn"); process.exit(3)'], 2048), process.cwd());
     expect(r).toMatchObject({ code: 3, stdout: 'fine\n', stderr: 'warn\n' });
     const ok = await runWrapped(wrapped([process.execPath, '-e', HOLD(40, 600)], 2048), process.cwd());
@@ -53,7 +57,8 @@ describe.skipIf(!ps)('memory watchdog with the host ps', () => {
     expect(ok.stdout).toBe('allocated\n');
   });
 
-  it('forwards a termination signal so the command can shut down by itself', async () => {
+  it('forwards a termination signal so the command can shut down by itself', async (ctx) => {
+    skipWithoutPs(ctx);
     const script = `process.on('SIGTERM',()=>{console.log('got term');process.exit(0)});console.log('ready');setTimeout(()=>{},20000)`;
     const r = await runWrapped(wrapped([process.execPath, '-e', script], 2048), process.cwd(), { killAfterMs: 1200, killSignal: 'SIGTERM', timeoutMs: 15_000 });
     expect(r.stdout).toContain('got term');
@@ -69,7 +74,7 @@ describe.skipIf(!ps)('memory watchdog with the host ps', () => {
 
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srtProbe = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await srtProbe.available();
+const status = requiredOnCi(await srtProbe.available());
 
 describe.skipIf(!status.ok || !ps)('memory watchdog under the real srt', () => {
   const t = status.ok ? tempRoot('orbit-memory-srt-') : { root: '/nonexistent-orbit-test', remove: () => {} };

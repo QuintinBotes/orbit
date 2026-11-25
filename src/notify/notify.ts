@@ -19,6 +19,12 @@ import { appendEvent } from '../storage/events.ts';
 import { defaultNotifyDeps, notificationsOff, sendDesktop, sendGithubComment, sendWebhook, type ChannelOutcome, type CommentTarget, type NotifyDeps } from './channels.ts';
 import { buildPayload, testPayload, type NotificationKind, type NotificationPayload } from './payload.ts';
 import { answerThreads, commentTargets } from './remote-answers.ts';
+import { atomicWrite } from '../core/fsx.ts';
+import { sha256 } from '../core/hash.ts';
+import { redact } from '../core/redact.ts';
+import { ISSUE_COMMENT_FILE, renderIssueComment, type ReportForComment } from '../intake/comment.ts';
+import { issueReaderFor } from '../intake/github.ts';
+import { readIssueGoal, type IssueGoal } from '../intake/issue.ts';
 
 export interface RunNotifyInput {
   db: OrbitDb;
@@ -68,14 +74,52 @@ function where(t: CommentTarget): string {
   return `${t.kind} #${t.number}`;
 }
 
-/** Send through every channel the settings turn on; channels that are off are reported as skipped. */
-async function sendAll(p: NotificationPayload, n: NotificationsConfig, config: OrbitConfig | null, target: CommentTarget | null, repoRoot: string, deps: NotifyDeps): Promise<ChannelOutcome[]> {
-  const off = (channel: ChannelOutcome['channel']): ChannelOutcome => ({ channel, status: 'skipped', detail: `notifications.${channel} is off` });
+/**
+ * Send through every channel the settings turn on; channels that are off are reported as skipped. `instead`, when set,
+ * is why the comment is not posted although the channel is on.
+ */
+async function sendAll(p: NotificationPayload, n: NotificationsConfig, config: OrbitConfig | null, target: CommentTarget | null, repoRoot: string, deps: NotifyDeps, instead: string | null = null): Promise<ChannelOutcome[]> {
+  const skipped = (channel: ChannelOutcome['channel'], detail: string): ChannelOutcome => ({ channel, status: 'skipped', detail });
+  const off = (channel: ChannelOutcome['channel']): ChannelOutcome => skipped(channel, `notifications.${channel} is off`);
   return Promise.all([
     n.desktop ? sendDesktop(p, deps) : off('desktop'),
     n.webhook && config ? sendWebhook(p, config, deps) : off('webhook'),
-    n.github_comment && config ? sendGithubComment(p, target, () => deps.threads(repoRoot, config)) : off('github_comment'),
+    n.github_comment && config ? (instead !== null ? skipped('github_comment', instead) : sendGithubComment(p, target, () => deps.threads(repoRoot, config))) : off('github_comment'),
   ]);
+}
+
+/**
+ * The outcome comment on the issue a run was started from (docs/decisions/0019-run-from-issue.md). The text is always
+ * written to the run directory; it is posted only when the frozen policy turns `notifications.github_comment` on, and
+ * then the issue is read once more, to say whether it was edited since the run started. Like every channel it
+ * answers with an outcome and never throws.
+ */
+async function sendIssueOutcome(input: RunNotifyInput, payload: NotificationPayload, issue: IssueGoal, on: boolean): Promise<ChannelOutcome> {
+  const { run, runDir, config, deps } = input;
+  const where = `issue #${issue.number}`;
+  const outcome = (status: ChannelOutcome['status'], detail: string): ChannelOutcome => ({ channel: 'github_comment', status, detail });
+  const failed = (err: unknown): ChannelOutcome => outcome('failed', `${where}: ${redact(err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ').slice(0, 300)}`);
+  try {
+    const post = on && config !== null;
+    let now: { body_sha256: string; updated_at: string } | null = null;
+    if (post) {
+      try {
+        const reader = await (deps.issues ? deps.issues(run.repoRoot, config) : issueReaderFor(run.repoRoot, config, deps.env, { scoped: true }));
+        const current = await reader.getIssue(issue.number);
+        now = { body_sha256: sha256(current.body), updated_at: current.updatedAt };
+      } catch {
+        // The comment is still worth posting: it then says nothing about edits instead of guessing.
+        now = null;
+      }
+    }
+    const body = renderIssueComment({ payload, goal: issue, run, report: readJsonIfExists<ReportForComment>(join(runDir, 'final.json')), now });
+    atomicWrite(join(runDir, ISSUE_COMMENT_FILE), `${body}\n`);
+    if (!post) return outcome('skipped', `${where}: notifications.github_comment is off; the comment text is in ${ISSUE_COMMENT_FILE} in the run directory`);
+    await (await deps.threads(run.repoRoot, config)).createComment(issue.number, body);
+    return outcome('sent', `${where} (run outcome)`);
+  } catch (err) {
+    return failed(err);
+  }
 }
 
 async function dispatch(input: RunNotifyInput, kind: Exclude<NotificationKind, 'test'>, key: string, questionIds: string[]): Promise<ChannelOutcome[] | null> {
@@ -90,7 +134,13 @@ async function dispatch(input: RunNotifyInput, kind: Exclude<NotificationKind, '
   const payload = buildPayload({ kind, run, refs, questionIds, pullRequest: pr, remote: answerable[0] ? { where: where(answerable[0]) } : null });
   // Recorded before sending: a crash mid-send loses this notification rather than repeating it.
   db.tx(() => appendEvent(db, run.id, DISPATCHED, actor, { key, kind, state: run.state, questions: questionIds }, clock.now()));
-  const outcomes = await sendAll(payload, n, config, targets[0] ?? null, run.repoRoot, deps);
+  // A run started from an issue reports on that issue when it ends. Where the policy's linked issue is the same one,
+  // the short notice is not posted there a second time.
+  const issue = kind === 'run.ended' ? readIssueGoal(runDir) : null;
+  const first = targets[0] ?? null;
+  const same = issue !== null && first?.kind === 'issue' && first.number === issue.number;
+  const outcomes = await sendAll(payload, n, config, first, run.repoRoot, deps, same ? `${where(first)}: the run outcome comment posted there replaces this notice` : null);
+  if (issue) outcomes.push(await sendIssueOutcome(input, payload, issue, n.github_comment));
   db.tx(() => {
     for (const o of outcomes) appendEvent(db, run.id, `notification.${o.status}`, actor, { key, channel: o.channel, detail: o.detail }, clock.now());
   });

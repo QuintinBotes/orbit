@@ -34,13 +34,15 @@ import type { UiRunResult } from '../../../src/ui/types.ts';
 import { chromiumAvailable, copyExample } from '../../../scripts/demo/lib/example.ts';
 import { browserIsolationCheck } from '../../../src/cli/commands/doctor.ts';
 import { freePort } from './helpers.ts';
+import { QUARANTINED } from '../../support/quarantine.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const DEMO = join(ROOT, 'examples/demo-app');
 const SRT = join(ROOT, 'node_modules/.bin/srt');
 const onMac = process.platform === 'darwin';
 const srt = new SandboxRuntimeIsolation({ srtPath: SRT });
-const srtStatus = onMac ? await srt.available() : { ok: false, detail: 'not macOS (Linux has no Mach and needs no rule)' };
+const srtStatus = onMac ? requiredOnCi(await srt.available()) : { ok: false, detail: 'not macOS (Linux has no Mach and needs no rule)' };
 const hasChromium = onMac && chromiumAvailable(ROOT);
 const hasCc = onMac && spawnSync('cc', ['--version'], { stdio: 'ignore' }).status === 0;
 const ready = srtStatus.ok && hasChromium && hasCc;
@@ -174,7 +176,8 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
     expect(result.checks[0]!.isolationAdjustments).toEqual([]);
   }, 300_000);
 
-  it('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
+  // Quarantined (issue #186): on the macOS CI runner one journey now and then reaches its 20 s limit.
+  it.skipIf(QUARANTINED)('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
     for (let round = 1; round <= 2; round++) {
       const result = await runUi(srt);
       expect(result.verdict, `round ${round}: ${result.reasons.join('\n')}`).toBe('PASS');

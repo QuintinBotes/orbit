@@ -8,6 +8,7 @@ import { buildSrtSettings, SandboxRuntimeIsolation } from '../../../src/isolatio
 import { NoIsolation } from '../../../src/isolation/none.ts';
 import { reconcileApp, startApp, stopApp, type AppIsolation } from '../../../src/ui/app-fixture.ts';
 import { FIXTURE_APP, freePort } from './helpers.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 const profile = (writable: string[] = []) => ({ writablePaths: writable, denyReadPaths: [], allowedHosts: [], limits: { timeoutMs: 60_000, memoryMb: null, cpus: null, pids: null }, allowLocalBinding: true });
 const none: AppIsolation = { provider: new NoIsolation(), profile: profile() };
@@ -87,7 +88,7 @@ createServer((q, r) => r.end('ok')).listen(${port}, '127.0.0.1');
 // Under srt the application is wrapped like any untrusted process. buildSrtSettings honours the
 // profile's allowLocalBinding, and startApp sets it, so a loopback server can listen and answer.
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir: resolve(dirname(fileURLToPath(import.meta.url)), '../../..') });
-const srtStatus = await srt.available();
+const srtStatus = requiredOnCi(await srt.available());
 
 describe('srt settings for the application', () => {
   it('carry allowLocalBinding from the profile, and default it off for every other profile', () => {

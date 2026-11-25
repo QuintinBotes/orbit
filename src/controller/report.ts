@@ -30,7 +30,7 @@ import { listFindings, listReviews } from '../review/store.ts';
 import { readSecurityPolicy } from '../review/resolve.ts';
 import { REVIEWER_FAILED_KIND, SAME_PROVIDER_APPROVED_KIND, type ReviewerFailure, type ReviewerSelection } from '../review/select.ts';
 import { listLedger, listQuestions } from '../inquisition/store.ts';
-import { summarizeUsage } from '../routing/usage.ts';
+import { summarizeUsage, usageByRole } from '../routing/usage.ts';
 import { BudgetLedger, grantNote, spendBreakdown } from '../scheduling/budget.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import type { SpendBreakdown } from '../scheduling/types.ts';
@@ -44,20 +44,24 @@ import { WORKTREE_PRESERVED_EVENT, WORKTREES_RELEASED_EVENT, WORKTREES_RETAINED_
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { learnFromRun, type LearnReport } from '../knowledge/learn.ts';
 import { settleRun } from '../knowledge/feedback.ts';
+import { contradictedLessons, runEndObservation, touchedArea } from '../knowledge/extract.ts';
+import { DEFAULT_LESSON_EXPIRY_DAYS, recheckLessons } from '../knowledge/recheck.ts';
 import { promoteToGlobal } from '../knowledge/global.ts';
 import { checkPublication, loadPublicationGuard } from '../guard/publication.ts';
 import { profileForWorker } from '../isolation/profiles.ts';
 import { renderSystemPrompt } from '../adapters/prompt.ts';
 import { LAUNCH_FILE, type LaunchRecord } from '../adapters/supervise.ts';
 import type { TaskHandle, TaskResult, TaskSpec } from '../adapters/types.ts';
-import { getRun, type RunRecord } from './run-store.ts';
+import { getRun, orbitVersionOf, type RunRecord } from './run-store.ts';
 import { newRunNeeded } from './resume.ts';
 import { createdBranch } from './run-refs.ts';
+import { heldVerifiedCandidate, offerSection, type VerifiedCandidate } from './verified-candidate.ts';
 import { candidateRef } from '../evidence/candidate.ts';
 import { currentCandidate, type ControllerDeps, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { accountWorkerTurns, finishAndSettle, OUTPUT_CAP_CEILING, outcomeOf, outputCapExceeded, raiseOutputCap, recordSpendCap, settleRunUsage, storedResult } from './workers.ts';
 import { autoEvaluateOverlays } from './eval-runner.ts';
+import { PROOF_RESULT_KIND, type ProofResult } from '../review/proof.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
 import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
 
@@ -66,6 +70,15 @@ export interface FinalReport {
   run_id: string;
   outcome: string;
   outcome_reason: string | null;
+  /**
+   * Why the run ended, from schemas/failure-class.schema.json; null when it succeeded, has not ended, or ended before
+   * the class was recorded. These three fields are absent only in a report saved before Orbit recorded them.
+   */
+  failure_class?: string | null;
+  /** The second cause of a run that had two. */
+  failure_secondary?: string | null;
+  /** The Orbit version that started the run; `unknown` for a run created before it was recorded. */
+  orbit_version?: string;
   mode: string;
   original_goal: string;
   objective: string | null;
@@ -76,6 +89,12 @@ export interface FinalReport {
    */
   criteria: { id: string; statement: string; mandatory: boolean; status: string; artifacts: string[]; check_wide?: string; fail_before?: ReportFailBefore }[];
   checks: { id: string; status: string; exit_code: number | null; flaky: boolean; log: string }[];
+  /**
+   * Whether the candidate is done (issue #200, FR-012): per criterion its audit verdict and reason and its own fail-before
+   * outcome, per MUST its quotes or why it is unmet, and each caller and artifact finding. The latest proof result of the
+   * candidate's tree (or of any tree when it has none); absent when the proof gate never ran.
+   */
+  proof?: ProofResult;
   evidence: { report_id: string; verdict: string; tree_hash: string; candidate_revision: string } | null;
   reviews: { id: string; provider: string; model: string | null; verdict: string; tree_hash: string; findings: number; tool_calls?: number | null; reasoning_tokens?: number | null }[];
   /**
@@ -125,6 +144,8 @@ export interface FinalReport {
     tokens: { input: number; output: number; cache_read: number; cache_write: number };
     /** What the cost budget charged and what that adds to the reported spend; absent in reports written before it existed. */
     spend?: SpendBreakdown;
+    /** Input, cached input, output and cost per role with its cache hit ratio, and cost per accepted task (issue #177); absent in older reports. */
+    usage_by_role?: RoleUsageReport;
   } | null;
   unverified: string[];
   residual_risks: string[];
@@ -134,6 +155,12 @@ export interface FinalReport {
    * edits that could not be pinned). Absent when nothing was released or retained, and in reports written before it existed.
    */
   worktrees?: { preserved: { worktree: string; ref: string }[]; retained: { worktree: string; path: string; why: string }[] };
+  /**
+   * The candidate that passed verification and was not delivered, which a run that ran out offers to a person (issue
+   * #169): its commit and ref, the checks it passed, its open findings, and the commands that deliver or discard it.
+   * Present only while the run is BLOCKED holding one.
+   */
+  verified_candidate?: VerifiedCandidate;
   next_action: string;
   generated_at: number;
 }
@@ -171,6 +198,10 @@ export interface ReportReviewer {
   tier_reason?: string;
   /** What that tier does not enforce. */
   limitations?: string[];
+  /** A risky change (issue #176): the fresh same-family pass beside the cross-model review, as `provider/model`. Absent otherwise. */
+  same_family_reviewer?: string;
+  /** A risky change whose cross-model pass was skipped, with why. Absent otherwise. */
+  cross_model_skipped?: string;
 }
 
 export interface FailedReviewer {
@@ -184,6 +215,26 @@ export interface WriteReportOptions {
   clock: Clock;
   /** The verified snapshot, when there is one; a report for a run whose policy failed verification omits budget limits. */
   snapshot?: PolicySnapshot | null;
+}
+
+/** A role whose cached share of prompt tokens is under this is warned about: its cache prefix is likely broken. */
+export const CACHE_HIT_WARNING_RATIO = 0.5;
+
+export interface RoleUsageReport {
+  roles: { role: string; sessions: number; input_tokens: number; cached_input_tokens: number; output_tokens: number; cost_usd: number; cache_hit_ratio: number | null }[];
+  cache_hit_threshold: number;
+  /** One line per role whose cache hit ratio is under the threshold. */
+  warnings: string[];
+  /** The run's model cost when its one task was accepted (the run SUCCEEDED); null otherwise. */
+  cost_per_accepted_task: number | null;
+}
+
+function roleUsageReport(db: OrbitDb, runId: string, acceptedCostUsd: number | null): RoleUsageReport {
+  const roles = usageByRole(db, runId).map((t) => ({ role: t.role, sessions: t.records, input_tokens: t.inputTokens, cached_input_tokens: t.cacheReadTokens, output_tokens: t.outputTokens, cost_usd: t.costUsd, cache_hit_ratio: t.cacheHitRatio }));
+  const warnings = roles
+    .filter((r) => r.cache_hit_ratio !== null && r.cache_hit_ratio < CACHE_HIT_WARNING_RATIO)
+    .map((r) => `${r.role}: cache hit ratio ${r.cache_hit_ratio} is under ${CACHE_HIT_WARNING_RATIO}; check that its prompt keeps a stable prefix and its model is not switched mid-session`);
+  return { roles, cache_hit_threshold: CACHE_HIT_WARNING_RATIO, warnings, cost_per_accepted_task: acceptedCostUsd };
 }
 
 /**
@@ -253,6 +304,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     }
   }
   if (!budget) budget = { counters: [], cost_measurement: usage.note, cost_usd: usage.totals.costUsd, cost_complete: usage.costComplete, tokens: tokens(usage.totals), spend };
+  budget = { ...budget, usage_by_role: roleUsageReport(db, run.id, run.state === 'SUCCEEDED' ? usage.totals.costUsd : null) };
 
   const unverified = [...(ev?.report.unverified ?? [])];
   for (const c of criteria) if (c.mandatory && c.status !== 'supported') unverified.push(`${c.id} is ${c.status}`);
@@ -299,16 +351,23 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
   const worktrees = worktreesOf(db, run.id);
   // orbit gc records `run.artifacts_pruned` when it removes a run's files after retention (storage/retention.ts).
   const pruned = db.get<{ x: number }>("SELECT 1 AS x FROM events WHERE run_id = ? AND type = 'run.artifacts_pruned' LIMIT 1", run.id) !== undefined;
+  const offered = heldVerifiedCandidate(run);
+  const proofs = listDecisions(db, run.id, { kind: PROOF_RESULT_KIND }).map((d) => d.data as ProofResult);
+  const proof = proofs.filter((p) => cand !== null && p.tree_hash === cand.treeHash).at(-1) ?? proofs.at(-1) ?? null;
   return {
     schema: 'orbit.final/1',
     run_id: run.id,
     outcome: run.state,
     outcome_reason: run.outcomeReason,
+    failure_class: run.failureClass,
+    failure_secondary: run.failureSecondary,
+    orbit_version: orbitVersionOf(run),
     mode: run.mode,
     original_goal: run.goal,
     objective: contract?.objective ?? null,
     criteria,
     checks: ev?.report.checks.map((c) => ({ id: c.id, status: c.status, exit_code: c.exit_code, flaky: c.flaky, log: c.log })) ?? [],
+    ...(proof ? { proof } : {}),
     evidence: ev ? { report_id: ev.id, verdict: ev.verdict, tree_hash: ev.treeHash, candidate_revision: ev.report.candidate_revision } : null,
     reviews: reviews.map((r) => ({ id: r.id, provider: r.provider, model: r.model, verdict: r.verdict, tree_hash: r.treeHash, findings: findings.filter((f) => f.reviewId === r.id).length, ...depthOf(depths.get(r.id)) })),
     reviewer,
@@ -340,6 +399,7 @@ function assembleFinalReport(db: OrbitDb, run: RunRecord, opts: WriteReportOptio
     unverified: [...new Set(unverified)],
     residual_risks: [...new Set(risks)],
     ...(worktrees ? { worktrees } : {}),
+    ...(offered ? { verified_candidate: offered } : {}),
     next_action: `${nextAction(run, { branch, candidateRef: candidateRefName }, prNumber, listQuestions(db, run.id, { status: 'open' }).filter((q) => q.material), newRunNeeded(db, run), pruned)}${worktreeAdvice(worktrees, run.state === 'SUCCEEDED' ? candidateRefName : null)}`,
     generated_at: opts.clock.now(),
   };
@@ -427,18 +487,21 @@ function strOrNull(v: unknown): string | null {
  * provider must be the one that reviewed, so a selection that never led to a review is not reported as one.
  */
 function reviewerOf(db: OrbitDb, runId: string, candidateId: string | null, standing: readonly { provider: string; model: string | null; workerId: string | null }[], failed: FailedReviewer[]): ReportReviewer | null {
-  const last = standing.at(-1);
-  if (!last) return null;
+  if (standing.length === 0) return null;
   const selections = listDecisions(db, runId, { kind: 'review.select' }).filter((d) => (d.data as ReviewerSelection | null)?.decision === 'SELECT');
   // A reviewer selected after another failed at run time is recorded under the same id with a ~<n> suffix (#116).
   const own = `dec-${runId}-review-select-${candidateId}`;
   const recorded = selections.filter((d) => candidateId !== null && (d.id === own || d.id.startsWith(`${own}~`))).at(-1) ?? selections.at(-1);
   const tried = failed.length > 0 ? { failed_reviewers: failed } : {};
   const sel = recorded?.data as Extract<ReviewerSelection, { decision: 'SELECT' }> | undefined;
+  // The selected reviewer's own review, not the fresh same-family pass that may have come after it (issue #176).
+  const last = standing.findLast((r) => r.provider === sel?.provider) ?? standing.at(-1)!;
+  const family = sel?.sameFamily ? standing.findLast((r) => r.provider === sel.sameFamily!.provider && r !== last) : undefined;
+  const pair = { ...(family ? { same_family_reviewer: `${family.provider}/${family.model ?? 'default'}` } : {}), ...(sel?.crossModelSkipped ? { cross_model_skipped: sel.crossModelSkipped } : {}) };
   const approval = listDecisions(db, runId, { kind: SAME_PROVIDER_APPROVED_KIND }).at(-1)?.data as { approved_by?: unknown } | undefined;
   const approvedBy = typeof approval?.approved_by === 'string' ? approval.approved_by : null;
   if (sel && sel.provider === last.provider) {
-    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried };
+    return { provider: sel.provider, model: sel.model ?? last.model, independent: sel.independent, why_not_independent: sel.independent ? null : (sel.independentUnavailable ?? 'no independent reviewer was usable'), approved_by: sel.independent ? null : approvedBy, ...tierEvidence(db, runId, last), ...tried, ...pair };
   }
   // No selection on record for this reviewer: independence is judged from who implemented, never assumed.
   const implementer = listWorkers(db, { runId, role: 'implementer' }).at(-1)?.provider ?? 'claude';
@@ -474,8 +537,9 @@ export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
   const tier = r.tier === undefined ? '' : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ''}${r.limitations?.length ? `. Limitations: ${r.limitations.join(' ')}` : ''}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}`;
-  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}`;
+  const pair = `${r.same_family_reviewer ? `\n- Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : ''}${r.cross_model_skipped ? `\n- Cross-model review skipped: ${r.cross_model_skipped}` : ''}`;
+  if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}${pair}`;
+  return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}${pair}`;
 }
 
 function tokens(t: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
@@ -515,8 +579,9 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
           : `Inspect ${candidate}${ref !== null ? ` (git log ${ref})` : ''} and merge it yourself if you accept it.`;
     case 'BLOCKED': {
       const why = run.outcomeReason ?? 'The run is blocked.';
-      // A frozen-policy block already names the way forward (a new run), and most others already name the resume command.
-      if (outcomeHas(run, 'frozen_policy')) return why;
+      // A frozen-policy block already names the way forward (a new run), a run that holds a verified candidate how to
+      // deliver or discard it (issue #169), and most others already name the resume command.
+      if (outcomeHas(run, 'frozen_policy') || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
       // A reason recorded without a closing full stop still reads as its own sentence.
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       // Where a resume cannot clear the block, the reason either says a new run already (an environment block) or is told so (issue #33).
@@ -575,9 +640,13 @@ export function renderMarkdown(r: FinalReport): string {
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join('\n') : '- none');
   out.push(`# Orbit run ${r.run_id}: ${r.outcome}`, '');
   out.push('## Outcome', '', `${r.outcome}${r.outcome_reason ? `: ${r.outcome_reason}` : ''}`, '');
+  // A report saved before these fields existed has neither: it says so instead of printing "undefined".
+  out.push(`Failure class: ${r.failure_class ?? 'none'}${r.failure_class && r.failure_secondary ? ` (secondary: ${r.failure_secondary})` : ''}`, '', `Orbit version: ${r.orbit_version ?? 'unknown'}`, '');
+  if (r.verified_candidate) out.push('## Verified candidate', '', ...offerSection(r.verified_candidate), '');
   out.push('## Original goal', '', r.original_goal, '');
   if (r.objective) out.push('## Delivered behaviour', '', r.objective, '');
   out.push('## Criterion evidence', '', list(r.criteria.map(criterionLine)), '');
+  if (r.proof) out.push('## Proof', '', ...proofSection(r.proof), '');
   out.push('## Checks', '', list(r.checks.map((c) => `${c.id}: ${c.status}${c.exit_code !== null ? ` (exit ${c.exit_code})` : ''}${c.flaky ? ', flaky' : ''}, log ${c.log}`)), '');
   if (r.evidence) out.push(`Evidence report ${r.evidence.report_id}: ${r.evidence.verdict} on tree ${r.evidence.tree_hash}.`, '');
   out.push('## Reviews', '');
@@ -606,7 +675,10 @@ export function renderMarkdown(r: FinalReport): string {
     const spend = b.spend ? `spend: ${b.spend.explanation}` : `model cost: $${b.cost_usd.toFixed(4)} (${b.cost_complete ? 'measured' : 'incomplete: some usage has no cost'}); ${b.cost_measurement}`;
     // A session recorded before 0.3.1 whose transcript is gone has only its num_turns, which is not what the cap counts.
     const numTurns = (b.num_turns_sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} num_turns (the CLI's count of the prompt and every tool result, not model requests: the session's transcript is gone)`);
-    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`]), '');
+    const byRole = (b.usage_by_role?.roles ?? []).map((u) => `role ${u.role}: ${u.input_tokens} in, ${u.cached_input_tokens} cached in, ${u.output_tokens} out, $${u.cost_usd.toFixed(4)}, cache hit ratio ${u.cache_hit_ratio ?? 'unavailable'}`);
+    const perTask = b.usage_by_role ? [`cost per accepted task: ${b.usage_by_role.cost_per_accepted_task === null ? 'none (no task accepted)' : `$${b.usage_by_role.cost_per_accepted_task.toFixed(4)}`}`] : [];
+    const cacheWarnings = (b.usage_by_role?.warnings ?? []).map((w) => `warning: ${w}`);
+    out.push('## Budget consumption', '', list([...counters, ...(b.sessions ?? []).map((s) => `${s.counter}: ${round(s.used)} model requests`), ...numTurns, spend, `tokens: ${b.tokens.input} in, ${b.tokens.output} out, ${b.tokens.cache_read} cache read, ${b.tokens.cache_write} cache write`, ...byRole, ...perTask, ...cacheWarnings]), '');
   }
   out.push('## Not verified', '', list(r.unverified), '');
   out.push('## Residual risks', '', list(r.residual_risks), '');
@@ -627,6 +699,24 @@ function criterionLine(c: FinalReport['criteria'][number]): string {
     ...(fb ? [`fail-before (${fb.mode}): ${fb.outcome}${fb.cause ? ` (cause ${fb.cause})` : ''}: ${fb.reason}`] : []),
     ...(wide ? [wide] : []),
   ].join('; ');
+}
+
+/** The proof result (issue #200, FR-012): each criterion, each MUST and each finding, one line each. */
+export function proofSection(p: ProofResult): string[] {
+  const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`) : ['- none']);
+  const criteria = p.criteria.map((c) => {
+    if (c.status === 'waiting-on-person') return `${c.criterion_id} [waiting on a person]: person-checked, never proven by a test`;
+    const audit = c.audit ? `audit: ${c.audit.answer ?? 'no answer'} (${c.audit.reason})` : 'audit: none';
+    const fb = c.fail_before ? `fail-before: ${c.fail_before.outcome}${c.fail_before.accepted_by ? `, accepted by ${c.fail_before.accepted_by}` : ''} (${c.fail_before.reason})` : 'fail-before: none of its own';
+    return `${c.criterion_id} [${c.status}] (${c.kind}; tests: ${c.tests.join(', ') || 'none'}): ${audit}; ${fb}`;
+  });
+  const requirements = p.requirements.map((r) => {
+    const quotes = r.quotes.map((q) => `${q.path}:${q.start}-${q.end}`).join(', ');
+    const callers = r.callers.map((c) => `${c.function} called from ${c.callers.join(', ') || 'nowhere found'}`).join('; ');
+    return `${r.id} [${r.status}]: "${r.wording}"${quotes ? `; quoted: ${quotes}` : ''}${r.status === 'unmet' ? `; ${r.reason}` : ''}${callers ? `; callers: ${callers}` : ''}`;
+  });
+  const findings = [...p.caller_findings, ...p.artifact_findings].map((f) => `${f.id}${f.location ? ` at ${f.location}` : ''}: "${f.sentence}": ${f.claim}`);
+  return [`Tree ${p.tree_hash}: ${p.open.length === 0 ? 'done' : `${p.open.length} open result(s)`}.`, '', 'Criteria:', ...list(criteria), '', 'Requirements (MUST):', ...list(requirements), '', 'Findings:', ...list(findings)];
 }
 
 /** The depth fields of a report review line; empty for a review with no record (an older run). */
@@ -678,7 +768,7 @@ export async function finalizeRun(ctx: RunContext): Promise<void> {
   try {
     await learnAtTerminal(ctx);
   } catch (err) {
-    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500) }, ctx.clock.now()));
+    ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.failed', ctx.ownerId, { error: redact(err instanceof Error ? err.message : String(err)).slice(0, 500), in_prompts: ctx.snapshot.config.knowledge?.lessons_in_prompts === true }, ctx.clock.now()));
   }
   // The curator is charged after the report above was written, and `orbit report` prints that file, so its cost was
   // missing there while status and the timeline (read from the usage rows) had it (issue #33): write the report again.
@@ -713,8 +803,31 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   if (!k?.enabled) return;
   const run = ctx.refresh();
   const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary: { learn: LearnReport | null; skipped: string | null; settled: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, settled: null, promoted: null, overlays: null };
+  const summary: { learn: LearnReport | null; skipped: string | null; observed: string | null; settled: unknown; rechecked: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, observed: null, settled: null, rechecked: null, promoted: null, overlays: null };
   try {
+    // Issue #173 FR-006: every run that did not succeed leaves an observation keyed by its failure class, before
+    // anything that can be skipped (curation, the budget reserve) and without a model call.
+    const observation = runEndObservation(ctx.db, run.id);
+    if (observation) {
+      store.recordObservation(observation);
+      summary.observed = observation.id;
+    }
+    // Settling and re-checking read run records and the file system only, so a curator that fails cannot skip them.
+    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
+    summary.settled = settleRun(store, run.id, {
+      succeeded: run.state === 'SUCCEEDED',
+      attempts: listWorkers(ctx.db, { runId: run.id, role: 'implementer' }).length,
+      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? [],
+      contradictedLessonIds: contradictedLessons(ctx.db, run.id, store.retrievalsForRun(run.id)),
+      touched: touchedArea(ctx.db, run.id),
+      artifact: existsSync(join(ctx.runDir, 'final.md')) ? { path: 'final.md', sha256: sha256(readFileSync(join(ctx.runDir, 'final.md'))) } : { path: 'final.md', sha256: null },
+    });
+
+    // Re-check and expire every live lesson against the repository, whether or not lessons enter prompts.
+    const lessons = store.listLessons({ statuses: ['candidate', 'validated'] });
+    const eligible = recheckLessons(store, lessons, { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: k.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS });
+    summary.rechecked = { lessons: lessons.length, stale: lessons.length - eligible.length };
+
     const admitted = curationAdmitted(ctx);
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
     else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
@@ -725,15 +838,6 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
       summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
     }
     if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
-
-    const ev = listEvidenceReports(ctx.db, run.id).at(-1);
-    summary.settled = settleRun(store, run.id, {
-      succeeded: run.state === 'SUCCEEDED',
-      attempts: listWorkers(ctx.db, { runId: run.id, role: 'implementer' }).length,
-      verifiedCriteria: ev?.report.acceptance_evidence.filter((a) => a.status === 'supported').map((a) => a.criterion_id) ?? [],
-      contradictedLessonIds: [],
-      artifact: existsSync(join(ctx.runDir, 'final.md')) ? { path: 'final.md', sha256: sha256(readFileSync(join(ctx.runDir, 'final.md'))) } : { path: 'final.md', sha256: null },
-    });
 
     if (k.share_globally) {
       const guard = loadPublicationGuard(ctx.snapshot.config.guard.terms_file ? { termsPath: ctx.snapshot.config.guard.terms_file } : {});
@@ -747,7 +851,8 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
 
     // Overlays (ADR 0002): a settled run is live evidence about the active overlay, and the moment to try a waiting candidate.
     if (run.state !== 'CANCELLED') {
-      const live = checkLiveOverlays(ctx, store);
+      // An overlay that no prompt carries (issue #173: lessons_in_prompts off) has no live runs to be judged by.
+      const live = k.lessons_in_prompts === true ? checkLiveOverlays(ctx, store) : [];
       const evaluated = await autoEvaluateOverlays(ctx, store);
       summary.overlays = { live, evaluated };
     }
@@ -755,7 +860,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     store.close();
   }
   atomicWriteJson(join(ctx.runDir, 'learning.json'), summary);
-  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0 }, ctx.clock.now()));
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.completed', ctx.ownerId, { skipped: summary.skipped, created: summary.learn?.created.length ?? 0, merged: summary.learn?.merged.length ?? 0, in_prompts: k.lessons_in_prompts === true }, ctx.clock.now()));
 }
 
 /**

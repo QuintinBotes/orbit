@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { openDb, type OrbitDb } from '../../../src/storage/db.ts';
 import { ManualClock } from '../../../src/core/clock.ts';
 import { isOrbitError, type OrbitError } from '../../../src/core/errors.ts';
-import { createRun } from '../../../src/controller/run-store.ts';
+import { acquireLease, createRun, setPaused, transition } from '../../../src/controller/run-store.ts';
+import { resumeAnsweredRun } from '../../../src/controller/resume.ts';
 import { BudgetLedger, ROLE_COST_CEILING_USD, extensionDecisionRecord, implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem, type BudgetPolicy } from '../../../src/scheduling/budget.ts';
 import { recordUsage } from '../../../src/routing/usage.ts';
 import type { ExtensionRequest } from '../../../src/scheduling/types.ts';
@@ -233,6 +234,67 @@ describe('BudgetLedger.consume', () => {
     expect(ledger.syncWall().used).toBe(660_000);
     clock.advance(100 * 60_000);
     expect(caught(() => ledger.syncWall()).details).toMatchObject({ counter: 'wall_ms', limit: 'reserve' });
+  });
+
+  const HOURS_45 = 45 * 60 * 60_000;
+
+  it('does not charge wall time for a pause longer than the cap (#208)', () => {
+    const { db, clock, ledger } = setup();
+    clock.advance(10 * 60_000);
+    setPaused(db, 'run-1', true, 'person', clock);
+    clock.advance(HOURS_45);
+    expect(ledger.syncWall().used).toBe(600_000);
+    setPaused(db, 'run-1', false, 'person', clock);
+    clock.advance(5 * 60_000);
+    const wall = ledger.syncWall();
+    expect(wall.used).toBe(900_000);
+    expect(wall.used).toBeLessThan(wall.hard_cap);
+  });
+
+  it('does not charge wall time while BLOCKED on a question longer than the cap (#208)', () => {
+    const { db, clock, ledger } = setup();
+    acquireLease(db, 'run-1', 'ctl', 2 * HOURS_45, clock);
+    transition(db, { runId: 'run-1', to: 'PREFLIGHT', ownerId: 'ctl', reason: 'start' }, clock);
+    clock.advance(10 * 60_000);
+    transition(db, { runId: 'run-1', to: 'BLOCKED', ownerId: 'ctl', reason: 'a material question' }, clock);
+    clock.advance(HOURS_45);
+    expect(ledger.syncWall().used).toBe(600_000);
+    expect(resumeAnsweredRun(db, clock, 'run-1', 'ctl', 'person', 'answered')).toBe('PREFLIGHT');
+    clock.advance(5 * 60_000);
+    const wall = ledger.syncWall();
+    expect(wall.used).toBe(900_000);
+    expect(wall.used).toBeLessThan(wall.hard_cap);
+  });
+
+  it('excludes a pause that overlaps a block only once', () => {
+    const { db, clock, ledger } = setup();
+    acquireLease(db, 'run-1', 'ctl', 2 * HOURS_45, clock);
+    transition(db, { runId: 'run-1', to: 'PREFLIGHT', ownerId: 'ctl', reason: 'start' }, clock);
+    clock.advance(10 * 60_000);
+    setPaused(db, 'run-1', true, 'person', clock);
+    clock.advance(60_000);
+    transition(db, { runId: 'run-1', to: 'BLOCKED', ownerId: 'ctl', reason: 'a material question' }, clock);
+    clock.advance(HOURS_45);
+    resumeAnsweredRun(db, clock, 'run-1', 'ctl', 'person', 'answered');
+    clock.advance(60_000);
+    setPaused(db, 'run-1', false, 'person', clock);
+    clock.advance(5 * 60_000);
+    expect(ledger.syncWall().used).toBe(900_000);
+  });
+
+  it('does not subtract a block that ended before the budget was initialized', () => {
+    // The budget starts in PLANNING, so a run can block in PREFLIGHT or CONTRACTING before it exists.
+    const db = openDb(':memory:');
+    const clock = new ManualClock();
+    createRun(db, { id: 'run-1', repoRoot: '/repo/acme', goal: 'g', mode: 'autonomous', policyHash: 'sha256:x', policyPath: '/p' }, clock);
+    acquireLease(db, 'run-1', 'ctl', 2 * HOURS_45, clock);
+    transition(db, { runId: 'run-1', to: 'PREFLIGHT', ownerId: 'ctl', reason: 'start' }, clock);
+    transition(db, { runId: 'run-1', to: 'BLOCKED', ownerId: 'ctl', reason: 'a material question' }, clock);
+    clock.advance(HOURS_45);
+    resumeAnsweredRun(db, clock, 'run-1', 'ctl', 'person', 'answered');
+    const ledger = new BudgetLedger(db, clock).init('run-1', { config: policy() }, 'medium');
+    clock.advance(10 * 60_000);
+    expect(ledger.syncWall().used).toBe(600_000);
   });
 });
 

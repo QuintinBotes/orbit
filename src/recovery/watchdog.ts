@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { statSync } from 'node:fs';
 import type { Clock } from '../core/clock.ts';
 import { isAlive } from '../core/proc.ts';
@@ -14,7 +14,9 @@ import { LOG_FILE } from '../adapters/shim.ts';
 import type { Logger } from '../core/log.ts';
 import { releaseEndedRunWorktrees } from './release.ts';
 import { enterRecovery, type EnterRecoveryOutcome, type LedgerFor } from './budget.ts';
-import { stopWorker } from './reconcile.ts';
+import { findCheckDirs, stopWorker } from './reconcile.ts';
+import { shimPath } from '../evidence/check-shim.ts';
+import { probeDirs } from '../evidence/fail-before.ts';
 
 /**
  * The watchdog (spec section 4: "Publish heartbeat and last-progress
@@ -22,7 +24,7 @@ import { stopWorker } from './reconcile.ts';
  *
  * It tells a stalled run from a busy one using what the controller publishes:
  * `runs.last_progress_at` (measurable progress, spec section 7), worker log
- * activity, the age of the current step, and controller heartbeats. It
+ * activity, the output of the run's checks still running, the age of the current step, and controller heartbeats. It
  * acts on one thing only: a run this owner leases whose step has outlived its
  * timeout is abandoned (its workers stopped) and moved to RECOVERING, where
  * the controller reconciles and resumes within the recovery budget. Everything
@@ -181,8 +183,8 @@ async function watchRun(opts: WatchdogOptions, cfg: WatchdogConfig, run: RunReco
   const stepStart = lastTransitionAt(db, run) ?? run.updatedAt;
   const lease = getLease(db, run.id);
   const workers = listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] });
-  const activity = workers.map((w) => workerActivity(opts, w, now)).filter((t): t is number => t !== null);
-  // Activity is the latest evidence of life for this run: progress recorded for it, a worker still writing its log, or the step starting.
+  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now), ...probeActivity(db, run, now)].filter((t): t is number => t !== null);
+  // Activity is the latest evidence of life for this run: progress recorded for it, a worker, a check or a fail-before probe still writing its log, or the step starting.
   // The owner controller's own last_progress_at is not used: it moves when any of its runs progresses, so it would hide a stuck one.
   const lastActivity = Math.max(stepStart, run.lastProgressAt ?? 0, ...activity);
   const idle = now - lastActivity;
@@ -234,6 +236,48 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): nu
 }
 
 /**
+ * When each check of the run that is still PLANNED or RUNNING last wrote its output, and when the run's latest check
+ * ended: between two checks of a long baseline none is open, and the one that just ended is the evidence of life.
+ * A hung check is bounded by its own timeout_seconds.
+ */
+function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+  const ended = db.get<{ t: number | null }>('SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?', run.id)?.t ?? null;
+  const last = ended !== null && ended <= now ? [ended] : [];
+  const open = db.all<{ id: string }>("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  if (open.length === 0) return last;
+  const dirs = findCheckDirs(dirname(run.policyPath));
+  return [...last, ...open.map((c) => {
+    const found = dirs.get(c.id);
+    if (!found) return null;
+    try {
+      const t = statSync(shimPath(found.dir, 'output')).mtimeMs;
+      return t <= now ? t : null;
+    } catch {
+      return null;
+    }
+  })];
+}
+
+/** When each fail-before probe of the run that is still PLANNED or RUNNING last wrote its output, or started when it has written none yet. */
+function probeActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+  const open = db.all<{ id: string; started_at: number }>("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  if (open.length === 0) return [];
+  const dirs = probeDirs(dirname(run.policyPath));
+  return open.map((p) => {
+    let t = p.started_at;
+    const found = dirs.get(p.id);
+    if (found) {
+      try {
+        t = statSync(shimPath(found.dir, 'output')).mtimeMs;
+      } catch {
+        /* no output yet */
+      }
+    }
+    return t <= now ? t : null;
+  });
+}
+
+/**
  * Abandon the step: stop its workers, then RECOVERING (spending a recovery
  * attempt, EXHAUSTED when none are left). A step stuck inside RECOVERING has
  * nothing further to recover to, so the run is BLOCKED for a person.
@@ -248,7 +292,7 @@ async function abandon(opts: WatchdogOptions, run: RunRecord, workers: WorkerRec
   if (run.state === 'RECOVERING') {
     transition(
       db,
-      { runId: run.id, to: 'BLOCKED', ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: 'RECOVERING', patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
+      { runId: run.id, to: 'BLOCKED', ownerId, reason: `recovery did not finish: ${detail}`, actor: ownerId, expectedFrom: 'RECOVERING', cause: 'environment', patch: { outcomeReason: `Recovery did not finish: ${detail}. Inspect the run with \`orbit status ${run.id}\`, fix the environment, then \`orbit resume ${run.id}\`.` } },
       clock,
     );
     return 'blocked';

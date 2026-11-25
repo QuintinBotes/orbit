@@ -20,17 +20,20 @@ import type { EvidenceReport } from '../../evidence/types.ts';
 import { listReviews } from '../../review/store.ts';
 import type { ReviewRecord } from '../../review/types.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
+import type { OrbitConfig } from '../../policy/types.ts';
 import { ActionLedger } from '../../delivery/actions.ts';
 import { deliver, type DeliveryResult } from '../../delivery/deliver.ts';
 import { performRelease, resolveDeploy, type ReleaseResult } from '../../delivery/release.ts';
 import { FakeGitHub, GhCliClient, type GitHubClient } from '../../delivery/github.ts';
-import { resolveRemoteUrl } from '../../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../../delivery/git.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { completionGate, deliveryGate } from '../gates.ts';
 import { blockOnUndecidedLedger } from '../undecided-ledger.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, move, safePoint, WAIT, type StepResult } from './common.ts';
 import { implementerProvider } from './reviewing.ts';
 import { recordGate } from './preflight.ts';
+import { readIssueGoal } from '../../intake/issue.ts';
+import { proofApplies, proveDone } from '../proof.ts';
 
 export const DELIVERY_FILE = 'delivery.json';
 
@@ -51,6 +54,10 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
   if (waiting) return waiting;
   const undecided = await blockOnUndecidedLedger(ctx, 'delivery');
   if (undecided) return undecided;
+  // Done means proven (issue #200): each criterion audited and probed on its own, each MUST quoted, the documents and the
+  // pull request body checked against the candidate. An open result goes to repair; nothing is delivered before.
+  const proof = await proveDone(ctx, cand, DELIVERY_MODES.has(ctx.run.mode) ? deliverySummary(ctx) : null);
+  if (proof) return proof;
 
   if (!DELIVERY_MODES.has(ctx.run.mode)) {
     const branch = ctx.run.branch ?? `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
@@ -85,7 +92,7 @@ export async function deliveringStep(ctx: RunContext): Promise<StepResult> {
       const s = await safePoint(ctx);
       if (s) return s;
     }
-    if (isOrbitError(err, 'DELIVERY_FAILED') && err.details?.definitive === true) return finishRun(ctx, 'BLOCKED', `delivery failed: ${err.message}`);
+    if (isOrbitError(err, 'DELIVERY_FAILED') && err.details?.definitive === true) return finishRun(ctx, 'BLOCKED', `delivery failed: ${err.message}`, { cause: 'environment' });
     throw err;
   }
   // delivery/deliver checked freshness before each external action; the gate trail records the delivered tree.
@@ -120,7 +127,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
   if (!cand) throw new OrbitError('INTERNAL', `run ${ctx.run.id} is releasing without a candidate`);
   const ev = currentEvidenceReport(ctx.db, ctx.run.id, cand.id);
   const review = listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).filter((r) => r.verdict === 'APPROVE').at(-1) ?? null;
-  if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome });
+  if (!ev || !review) return finishRun(ctx, 'BLOCKED', `release refused: ${!ev ? 'no live evidence' : 'no approving review'} for the delivered tree ${d.tree}`, { outcome, cause: 'gate-deadlock' });
   const release = ctx.snapshot.config.release ?? null;
   const envs = release ? Object.keys(release.environments) : [];
   const deliveryRun = { id: ctx.run.id, repoRoot: ctx.run.repoRoot, branch: ctx.run.branch, baseRevision: ctx.run.baseRevision, policyHash: ctx.run.policyHash, cancelRequested: ctx.run.cancelRequested, goal: ctx.run.goal };
@@ -143,7 +150,7 @@ export async function releaseDelivered(ctx: RunContext, d: DeliveredRecord, outc
       // deployed ref; without one, every environment the release profile defines that the ref is allowed for, in profile order.
       environments: contract.delivery.environment ? [contract.delivery.environment] : 'all',
       readiness: () => {
-        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now() });
+        const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: cand, implementerProvider: implementerProvider(ctx), deliveredTree: d.tree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, contract) });
         return { ok: gate.passed, reasons: gate.reasons };
       },
       isolation: ctx.isolation(),
@@ -240,7 +247,7 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
   // DELIVERING asked already; a needs-decision entry recorded since (a CI repair's inquiry) is asked about here.
   const undecided = await blockOnUndecidedLedger(ctx, 'success');
   if (undecided) return undecided;
-  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now() });
+  const gate = completionGate(ctx.db, { run: ctx.run, snapshot: ctx.snapshot, candidate: ctx.candidate, implementerProvider: implementerProvider(ctx), deliveredTree, now: ctx.clock.now(), proofRequired: proofApplies(ctx, assertContract(ctx)) });
   recordGate(ctx, gate);
   if (!gate.passed) return finishRun(ctx, 'BLOCKED', `completion gate: ${gate.reasons.join('; ')}`, { outcome: { ...outcome, gate: gate.reasons } });
   return finishRun(ctx, 'SUCCEEDED', `all mandatory requirements hold for tree ${deliveredTree}${notes.length ? ` (${notes.join('; ')})` : ''}`, { outcome: { ...outcome, tree: deliveredTree, evidence_id: gate.details.evidenceId, review_id: gate.details.reviewId, notes } });
@@ -248,7 +255,10 @@ export async function complete(ctx: RunContext, deliveredTree: string, outcome: 
 
 function deliverySummary(ctx: RunContext): string {
   const ev = ctx.candidate ? currentEvidenceReport(ctx.db, ctx.run.id, ctx.candidate.id) : null;
-  return formatDeliverySummary(ctx.run.id, assertContract(ctx), ev?.report ?? null);
+  const summary = formatDeliverySummary(ctx.run.id, assertContract(ctx), ev?.report ?? null);
+  // A run started from an issue says so first, in the words GitHub reads to close the issue when the pull request merges.
+  const issue = readIssueGoal(ctx.runDir);
+  return issue ? `Closes #${issue.number}\n\n${summary}` : summary;
 }
 
 /**
@@ -277,21 +287,28 @@ export function formatDeliverySummary(
 /** The run's GitHub client: the configured fake for tests and demos, else the gh CLI with a scoped token. */
 export async function githubClient(ctx: RunContext): Promise<GitHubClient> {
   if (ctx.deps.github) return ctx.deps.github(ctx);
-  const config = ctx.snapshot.config;
+  return githubClientForConfig(ctx.run.repoRoot, ctx.snapshot.config, ctx.deps.hostEnv ?? process.env);
+}
+
+/**
+ * The pull request client a policy selects: the file-backed fake for the fake delivery provider, else gh for the
+ * remote's repository. `requireScopedToken: false` lets a command a person types read with their own gh login.
+ */
+export async function githubClientForConfig(repoRoot: string, config: Pick<OrbitConfig, 'delivery' | 'repository'>, env: Readonly<Record<string, string | undefined>>, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const remote = config.repository.remote;
   if (config.delivery.provider === 'fake') {
-    const url = await resolveRemoteUrl(ctx.run.repoRoot, remote).catch(() => null);
+    const url = await resolveRemoteUrl(repoRoot, remote).catch(() => null);
     // A local bare remote lets the fake report real PR heads, as the hosted service would.
     const local = url !== null && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !/^[^/]+@[^:]+:/.test(url) ? url : undefined;
-    return new FakeGitHub({ statePath: join(ctx.run.repoRoot, '.orbit', 'fake-github.json'), ...(local ? { remoteGitDir: local } : {}) });
+    return new FakeGitHub({ statePath: join(repoRoot, '.orbit', 'fake-github.json'), ...(local ? { remoteGitDir: local } : {}) });
   }
-  return githubClientFor(ctx.run.repoRoot, remote, ctx.deps.hostEnv ?? process.env);
+  return githubClientFor(repoRoot, remote, env, opts);
 }
 
 /** A gh CLI client for the repository's remote (OWNER/REPO from its push URL). */
-export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env): Promise<GitHubClient> {
+export async function githubClientFor(repoRoot: string, remote: string, env: Readonly<Record<string, string | undefined>> = process.env, opts: { requireScopedToken?: boolean } = {}): Promise<GitHubClient> {
   const url = await resolveRemoteUrl(repoRoot, remote);
-  const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-  if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
-  return new GhCliClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+  const repo = githubRepoFromUrl(url);
+  if (!repo) throw new OrbitError('CONFIG_INVALID', `remote ${remote} is not a GitHub repository; set delivery.provider or supply a client`, { remote });
+  return new GhCliClient({ repo, env, cwd: repoRoot, ...(opts.requireScopedToken !== undefined ? { requireScopedToken: opts.requireScopedToken } : {}) });
 }

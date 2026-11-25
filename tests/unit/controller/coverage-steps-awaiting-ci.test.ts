@@ -27,7 +27,7 @@ const { briefPath } = await import('../../../src/controller/steps/implementing.t
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { snapshotCandidate } = await import('../../../src/evidence/candidate.ts');
 const { BASELINE_FILE, runBaseline } = await import('../../../src/evidence/baseline.ts');
-const { currentEvidenceReport, listCheckRuns } = await import('../../../src/evidence/store.ts');
+const { currentEvidenceReport, listCheckRuns, setCandidateStatus } = await import('../../../src/evidence/store.ts');
 const { listDecisions } = await import('../../../src/storage/decisions.ts');
 const { recordReview } = await import('../../../src/review/store.ts');
 const { OrbitError } = await import('../../../src/core/errors.ts');
@@ -102,6 +102,8 @@ async function setup(o: Setup = {}): Promise<{ cand: CandidateRecord }> {
   recordReview(lab.db, { id: 'rev-1', runId: lab.runId, candidateId: cand.id, treeHash: cand.treeHash, round: 1, provider: 'codex', model: null, workerId: null, verdict: 'APPROVE', packetSha256: null, findings: [] }, lab.clock);
   const pr = o.pr === undefined ? 7 : o.pr;
   writeFileSync(join(lab.ctx().runDir, DELIVERY_FILE), JSON.stringify({ commit: cand.commitSha, tree: cand.treeHash, branch: `orbit/${lab.runId}`, pr: pr === null ? null : { number: pr }, delivered_at: lab.clock.now() }));
+  // As delivering does with the delivery record: the run has its pull request, so a CI block offers no candidate (#169).
+  setCandidateStatus(lab.db, cand.id, 'DELIVERED');
   return { cand };
 }
 
@@ -176,6 +178,7 @@ describe('what CI says', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toBe(`CI was cancelled on ${cand.commitSha.slice(0, 12)}; re-run it and resume the run`);
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('pending checks wait, naming them, and time out after the configured minutes', async () => {
@@ -187,6 +190,7 @@ describe('what CI says', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toBe('CI did not finish within 60 minutes (pending: unit, lint)');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('checks of another commit are not attributed to this one', async () => {
@@ -244,6 +248,7 @@ describe('no checks reported', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('delivery.require_ci is true');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('environment');
   });
 
   it('in release mode releases with the unverified-CI note', async () => {
@@ -305,8 +310,10 @@ describe('a failing CI', () => {
     expect(lab.db.get<{ candidate_id: string | null }>("SELECT candidate_id FROM failures WHERE run_id = ? AND source = 'ci'", lab.runId)?.candidate_id).toBeNull();
   });
 
-  it('with the repair budget spent the run is EXHAUSTED', async () => {
-    await setup();
+  it('with the repair budget spent the run is EXHAUSTED: the delivered candidate is on its pull request already (#169)', async () => {
+    const { cand } = await setup();
+    // As the delivering step leaves it.
+    setCandidateStatus(lab.db, cand.id, 'DELIVERED');
     failing();
     lab.db.run("UPDATE budget_counters SET used = hard_cap, allowance = hard_cap WHERE counter = 'ci_repair_cycles'");
     await run();
@@ -320,6 +327,7 @@ describe('a failing CI', () => {
     await run();
     expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('CI failed and repair is not authorized');
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('gate-deadlock');
   });
 
   it('a failure with no log still yields a brief, and the excerpt is simply empty', async () => {

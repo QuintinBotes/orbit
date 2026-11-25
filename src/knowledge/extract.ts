@@ -4,6 +4,8 @@ import { canonicalJson, sha256 } from '../core/hash.ts';
 import { CHECK_RUN_STATUSES, FAILURE_SOURCES } from '../evidence/store.ts';
 import type { ScopeReport } from '../evidence/types.ts';
 import { RESOLVED_FINDING_STATUSES } from '../review/types.ts';
+import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
+import type { RetrievalRow, RunEndObservation } from './store.ts';
 import type { EvidenceRef, LessonKind } from './types.ts';
 import { asSha256, cleanUntrusted, truncate } from './text.ts';
 
@@ -168,7 +170,7 @@ function parseJson(text: string | null): unknown {
 }
 
 /** Paths named by a diff stat, whatever its exact layout ({files:[{path}]}, {files:[string]}, {paths:[...]}). */
-function diffStatPaths(stat: unknown): string[] {
+function diffStatPaths(stat: unknown, max = PATHS_MAX): string[] {
   if (!stat || typeof stat !== 'object') return [];
   const s = stat as Record<string, unknown>;
   const list = Array.isArray(s.files) ? s.files : Array.isArray(s.paths) ? s.paths : [];
@@ -177,7 +179,7 @@ function diffStatPaths(stat: unknown): string[] {
     if (typeof f === 'string') out.push(f);
     else if (f && typeof f === 'object' && typeof (f as { path?: unknown }).path === 'string') out.push((f as { path: string }).path);
   }
-  return out.slice(0, PATHS_MAX);
+  return out.slice(0, max);
 }
 
 /** A bounded, redacted copy of a diff stat: totals always, the file list only while it stays small. */
@@ -507,4 +509,89 @@ function dedupeRefs(refs: EvidenceRef[]): EvidenceRef[] {
     seen.add(k);
     return true;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Run evidence for settling lessons, and the observation of a run's end (issue #173)
+
+/** Fingerprints that failed on one candidate: its failing check runs and its own (not CI) failure rows. */
+function failingFingerprints(db: OrbitDb, runId: string, candidateId: string): Set<string> {
+  const marks = FAILING_CHECK_STATUSES.map(() => '?').join(',');
+  const checks = db.all<{ fingerprint: string }>(`SELECT fingerprint FROM check_runs WHERE run_id = ? AND candidate_id = ? AND fingerprint IS NOT NULL AND status IN (${marks})`, runId, candidateId, ...FAILING_CHECK_STATUSES);
+  const failures = db.all<{ fingerprint: string }>('SELECT fingerprint FROM failures WHERE run_id = ? AND candidate_id = ? AND source <> ?', runId, candidateId, CI_FAILURE_SOURCE);
+  return new Set([...checks, ...failures].map((r) => r.fingerprint));
+}
+
+/**
+ * The lessons a run proved wrong (FR-004): a lesson shown to a worker that was repairing a failure fingerprint, whose
+ * own candidate then failed with that fingerprint again. Read from the run's records alone.
+ */
+export function contradictedLessons(db: OrbitDb, runId: string, retrievals: readonly RetrievalRow[]): string[] {
+  const out = new Set<string>();
+  const failedAgain = new Map<string, Set<string>>();
+  for (const r of retrievals) {
+    if (r.run_id !== runId || !r.worker_id || r.fingerprints.length === 0) continue;
+    let fps = failedAgain.get(r.worker_id);
+    if (!fps) {
+      fps = new Set();
+      for (const c of db.all<{ id: string }>('SELECT id FROM candidates WHERE run_id = ? AND worker_id = ?', runId, r.worker_id)) for (const fp of failingFingerprints(db, runId, c.id)) fps.add(fp);
+      failedAgain.set(r.worker_id, fps);
+    }
+    if (r.fingerprints.some((fp) => fps.has(fp))) out.add(r.lesson_id);
+  }
+  return [...out].sort();
+}
+
+/** What a run's attempts touched (FR-005): the files their candidates changed and the checks that failed on them. */
+export function touchedArea(db: OrbitDb, runId: string): { paths: string[]; checkIds: string[] } {
+  const paths = new Set<string>();
+  for (const c of db.all<{ diff_stat_json: string | null }>('SELECT diff_stat_json FROM candidates WHERE run_id = ?', runId)) for (const p of diffStatPaths(parseJson(c.diff_stat_json), Infinity)) paths.add(p);
+  const marks = FAILING_CHECK_STATUSES.map(() => '?').join(',');
+  const checks = db.all<{ check_id: string }>(`SELECT DISTINCT check_id FROM check_runs WHERE run_id = ? AND candidate_id IS NOT NULL AND status IN (${marks})`, runId, ...FAILING_CHECK_STATUSES);
+  return { paths: [...paths].sort(), checkIds: checks.map((c) => c.check_id).sort() };
+}
+
+const RUN_END_LISTS = ['environment_failures', 'incomplete_checks', 'misconfigured_checks'] as const;
+
+/**
+ * The observation of a run that ended without succeeding (FR-006), keyed by its failure class: each check its outcome
+ * names (an environment failure, an incomplete or misconfigured check) and each check that did not pass on its last
+ * candidate, with the fingerprint or signature that identifies the failure. No model is asked. Null for a run that
+ * succeeded or has not ended.
+ */
+export function runEndObservation(db: OrbitDb, runId: string): RunEndObservation | null {
+  const run = db.get<{ state: string; failure_class: string | null; failure_secondary: string | null; outcome_json: string | null; ended_at: number | null }>('SELECT state, failure_class, failure_secondary, outcome_json, ended_at FROM runs WHERE id = ?', runId);
+  if (!run || run.state === 'SUCCEEDED' || !TERMINAL_STATES.has(run.state as RunState)) return null;
+  const checks = new Map<string, { check_id: string; signature: string }>();
+  const add = (checkId: unknown, signature: unknown): void => {
+    if (typeof checkId !== 'string' || !checkId) return;
+    const entry = { check_id: cleanUntrusted(checkId, 80), signature: cleanUntrusted(typeof signature === 'string' && signature ? signature : 'none recorded', 200) };
+    checks.set(`${entry.check_id}\u0000${entry.signature}`, entry);
+  };
+  const outcome = parseJson(run.outcome_json) as Record<string, unknown> | null;
+  for (const key of RUN_END_LISTS) {
+    const list = outcome?.[key];
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const f = item as Record<string, unknown>;
+      const signals = Array.isArray(f.signals) && f.signals.length > 0 ? f.signals.filter((x): x is string => typeof x === 'string').join(', ') : null;
+      add(f.check_id, f.fingerprint ?? f.signature ?? signals ?? f.cause);
+    }
+  }
+  const last = db.get<{ id: string }>('SELECT id FROM candidates WHERE run_id = ? ORDER BY seq DESC LIMIT 1', runId);
+  if (last) {
+    for (const c of db.all<{ check_id: string; status: string; fingerprint: string | null }>('SELECT check_id, status, fingerprint FROM check_runs WHERE run_id = ? AND candidate_id = ? AND status <> ? ORDER BY started_at, id', runId, last.id, PASSED_CHECK_STATUS)) {
+      add(c.check_id, c.fingerprint ?? c.status);
+    }
+  }
+  return {
+    // One per ending: a run resumed from BLOCKED can end again, in another class.
+    id: `obs-${sha256(`${runId}\u0000run-end\u0000${run.ended_at ?? ''}\u0000${run.state}`).slice(0, 12)}`,
+    run_id: runId,
+    state: run.state,
+    failure_class: run.failure_class,
+    failure_secondary: run.failure_secondary,
+    checks: [...checks.values()].sort((a, b) => a.check_id.localeCompare(b.check_id) || a.signature.localeCompare(b.signature)).slice(0, PATHS_MAX),
+  };
 }

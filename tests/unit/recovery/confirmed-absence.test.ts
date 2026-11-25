@@ -16,6 +16,10 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { skipWithoutPs } from '../../support/ps.ts';
+
+// Every test here proves a process's identity or searches the process table, which needs ps on macOS.
+beforeEach(skipWithoutPs);
 
 type Proc = typeof import('../../../src/core/proc.ts');
 const hooks = vi.hoisted(() => ({

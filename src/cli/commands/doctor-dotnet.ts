@@ -11,6 +11,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, posix, resolve } from 'node:path';
 import { isDotnet, msbuildNodes, onOneProcessor, shellWord, verbOf, withOneMsbuildNode, words } from '../../evidence/msbuild.ts';
 import { detectToolchains, toolchainCacheRoot } from '../../isolation/toolchains.ts';
+import { withoutXmlComments } from '../../policy/test-files.ts';
 import type { CheckDefinition, OrbitConfig } from '../../policy/types.ts';
 import { repoKeyFor } from '../../storage/retention.ts';
 import type { DoctorCheck } from './doctor.ts';
@@ -505,7 +506,7 @@ function lastMatch(text: string, pattern: RegExp): number {
 
 /** The settings of one project or MSBuild import that decide whether NU1900 fails a restore, comments left out. */
 function fileSettings(file: string, raw: string): { on: AuditSetting[]; errors: AuditSetting[]; kept: boolean } {
-  const text = raw.replace(/<!--[\s\S]*?-->/g, '');
+  const text = withoutXmlComments(raw);
   const out = { on: [] as AuditSetting[], errors: [] as AuditSetting[], kept: false };
   for (const m of text.matchAll(AUDIT_PROPERTY)) {
     const [, name, attrs, value] = m as unknown as [string, string, string, string];

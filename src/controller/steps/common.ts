@@ -4,7 +4,13 @@
  * expectation, terminal outcomes that stop workers and always end in a
  * written report, and decisions recorded through storage/decisions.ts.
  */
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
+import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
+import { sha256 } from '../../core/hash.ts';
+import { REPO_INSTRUCTION_FILES, type RepoInstruction } from '../../adapters/prompt.ts';
+import { gitEnv } from '../../evidence/git.ts';
 import { clipAtWord } from '../../core/text.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { isSessionRefusal } from '../../adapters/types.ts';
@@ -15,6 +21,7 @@ import { heartbeatController } from '../../storage/controllers.ts';
 import { authBlocker, blockRunOnCredentials, type BlockedCredentialState } from '../../recovery/credentials.ts';
 import { folderFormRunsAt, runWorktreeRoot, type RunContext } from '../context.ts';
 import { isTerminal, type RunState } from '../states.ts';
+import type { FailureClass } from '../failure-class.ts';
 import type { BudgetPhase } from '../../scheduling/types.ts';
 import { markProgress, transition, type TransitionRequest } from '../run-store.ts';
 import { frozenPolicyForceHelps } from '../resume.ts';
@@ -22,6 +29,7 @@ import { raiseOutputCap, stopActiveWorkers } from '../workers.ts';
 import { closeMootBaselineQuestions } from './baseline-questions.ts';
 import { releaseRunWorktrees, retainRunWorktrees } from '../worktree-cleanup.ts';
 import { finalizeRun } from '../report.ts';
+import { findVerifiedCandidate, heldSentence, offerAdvice, writeOfferBody } from '../verified-candidate.ts';
 import { blockingQuestions } from '../gates.ts';
 import { listQuestions, withdrawQuestion } from '../../inquisition/store.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
@@ -43,12 +51,14 @@ export const DONE: StepResult = { progressed: true, done: true };
 export interface MoveOptions {
   patch?: TransitionRequest['patch'];
   data?: unknown;
+  /** For a move that ends the run: see TransitionRequest.cause. */
+  cause?: FailureClass;
 }
 
 /** One transition, with the lease and an optimistic check that the run is still where this step found it. */
 export function move(ctx: RunContext, to: RunState, reason: string, opts: MoveOptions = {}): StepResult {
   const from = ctx.run.state;
-  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...(opts.patch ? { patch: opts.patch } : {}), ...(opts.data === undefined ? {} : { data: opts.data }) }, ctx.clock);
+  ctx.run = transition(ctx.db, { runId: ctx.run.id, to, ownerId: ctx.ownerId, reason, actor: ctx.ownerId, expectedFrom: from, ...(opts.patch ? { patch: opts.patch } : {}), ...(opts.data === undefined ? {} : { data: opts.data }), ...(opts.cause ? { cause: opts.cause } : {}) }, ctx.clock);
   heartbeatController(ctx.db, ctx.ownerId, ctx.clock, { progress: true });
   ctx.log.info('transition', { from, to, reason: reason.slice(0, 300) });
   return isTerminal(to) ? DONE : MOVED;
@@ -84,9 +94,18 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * exhaustion stops workers and preserves artifacts), then the transition,
  * then the final report and the learning hook, which never change the
  * outcome. BLOCKED keeps nothing running either: it waits for a person.
+ *
+ * The transition records why the run ended as a failure class, from the outcome and data given here and the run's
+ * events (failure-class.ts). `cause` names the class for an end those records carry no marker for.
+ *
+ * A run that would end EXHAUSTED while it holds a candidate that passed verification ends BLOCKED instead and offers
+ * that candidate (issue #169, verified-candidate.ts): the outcome names it beside `decided: 'EXHAUSTED'`, and the reason
+ * says why the run stopped, what it holds, and how to deliver or discard it. A run that stops BLOCKED while it holds one
+ * offers it too (`decided: 'BLOCKED'`), and the block keeps its own way forward.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
   let advice = '';
+  const stopped = reason;
   if (to === 'BLOCKED') {
     // A block whose cause lives in the frozen policy cannot be cleared by editing the config and resuming: say so. A block
     // that knows better than the generic advice (a missing target, which a fix of the config may not even be) brings its own.
@@ -100,21 +119,34 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   }
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note(ctx, 'workers.stop-failed', { workers: unstoppable });
-  const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };
   ctx.refresh();
+  // After the cancellation is read: a cancelled run is offered nothing, so it records the end the step decided. A run that
+  // stops BLOCKED holding a verified candidate offers it too, beside the block's own way forward.
+  // Only from a verified policy: a block on a tampered or unreadable snapshot reads nothing from it, the offered commands included.
+  const offered = (to === 'EXHAUSTED' || to === 'BLOCKED') && !ctx.run.cancelRequested && ctx.policyVerified ? findVerifiedCandidate(ctx.db, ctx.run, ctx.snapshot) : null;
+  if (offered) {
+    // The candidate and the way forward are the advice: a long reason gives way before them on the run row.
+    advice = `${heldSentence(offered)} ${offerAdvice(offered, to === 'EXHAUSTED')}`;
+    reason = withSentence(reason, advice);
+    opts = { ...opts, outcome: { ...(opts.outcome ?? {}), decided: to, verified_candidate: offered } };
+    to = 'BLOCKED';
+  }
+  const outcome = { state: to, reason, ...(opts.outcome ?? {}), ...(unstoppable.length > 0 ? { workers_not_stopped: unstoppable } : {}) };
   // A durable cancellation outranks every other outcome: only CANCELLED is reachable once it is recorded.
   const target = ctx.run.cancelRequested && to !== 'CANCELLED' ? 'CANCELLED' : to;
   if (target === 'SUCCEEDED') closeMootBaselineQuestions(ctx);
   // A cancelled run asks nothing more: its questions are withdrawn, so status does not list them as open.
   if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
-  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data });
+  const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data, ...(opts.cause ? { cause: opts.cause } : {}) });
   // SUCCEEDED and CANCELLED release their checkouts: the result lives in the branch and the candidate refs. EXHAUSTED and
   // IMPOSSIBLE keep theirs, on record, for the person who continues by hand; orbit gc removes them after retention.
   // BLOCKED keeps its too: a person resumes from it. Settled before the report is written: a release saves an unsaved
   // implementer edit as a candidate, and the report names the newest one, and a retention is what the report names too.
   if (target === 'SUCCEEDED' || target === 'CANCELLED') await releaseRunWorktrees(ctx);
   else if (target === 'EXHAUSTED' || target === 'IMPOSSIBLE') await retainRunWorktrees(ctx);
+  // The pull request body the delivery command names, written with the outcome that names it.
+  if (offered && target === 'BLOCKED') writeOfferBody(ctx.runDir, ctx.run.id, offered, ctx.contract, stopped);
   await finalizeRun(ctx);
   return result;
 }
@@ -289,6 +321,37 @@ export const DOTNET_WORKER_NOTE = `${DOTNET_WORKER_BUILDS}dotnet format loads th
  */
 export const DOTNET_WORKER_NOTE_NO_FORMAT = `${DOTNET_WORKER_BUILDS}dotnet format does not run here: every form but dotnet format whitespace --folder loads the project through a build host whose named pipe this sandbox refuses too, and whitespace --folder lists the folders above your worktree, which this sandbox does not let you read`;
 
+/** Where a run records the instruction files its workers were given, and the event that says so (issue #178, FR-001). */
+export const REPO_INSTRUCTIONS_FILE = 'repo-instructions.json';
+export const REPO_INSTRUCTIONS_EVENT = 'repo.instructions-read';
+
+/**
+ * The repository's AGENTS.md, then CLAUDE.md, as the run's base revision has them, for every worker prompt. The first
+ * call reads them from git and records which it read (with a hash of each) in the run directory and as one event; every
+ * later prompt of the run uses that record while the base revision is the one it was read at (a rebase onto a moved base
+ * reads and records them again), so a worker that edits either file in its worktree changes what no other
+ * worker is given, and the working tree's uncommitted copy is never read.
+ */
+export function repoInstructions(ctx: RunContext): RepoInstruction[] {
+  const file = join(ctx.runDir, REPO_INSTRUCTIONS_FILE);
+  const saved = readJsonIfExists<{ revision: string | null; files: (RepoInstruction & { sha256: string })[] }>(file);
+  // A rebase onto a moved base branch changes the base revision: read the files again there.
+  if (saved && saved.revision === ctx.run.baseRevision) return saved.files.map(({ path, content }) => ({ path, content }));
+  const base = ctx.run.baseRevision;
+  const files = base === null ? [] : REPO_INSTRUCTION_FILES.flatMap((path) => {
+    try {
+      const content = execFileSync('git', ['show', `${base}:${path}`], { cwd: ctx.run.repoRoot, env: gitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+      return [{ path, content, sha256: sha256(content) }];
+    } catch {
+      return []; // not in the base revision (or unreadable): nothing to give
+    }
+  });
+  // The event first: a record file without its event would never be recorded again.
+  note(ctx, REPO_INSTRUCTIONS_EVENT, { files: files.map((f) => f.path), revision: base });
+  atomicWriteJson(file, { revision: base, files });
+  return files.map(({ path, content }) => ({ path, content }));
+}
+
 /** The controller-written summary of a worker's authority (spec section 21: "policy summary"). */
 export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): string {
   const c = ctx.snapshot.config;
@@ -302,6 +365,7 @@ export function policySummary(ctx: RunContext, opts: { readOnly: boolean }): str
     `- network: ${c.network.allowed_hosts.length > 0 ? c.network.allowed_hosts.join(', ') : 'none'}`,
     `- trusted checks (run by the controller, not you): ${Object.keys(c.checks).join(', ') || 'none'}`,
     '- you cannot commit, push, open pull requests, change policy, or decide completion',
+    `- ${opts.readOnly ? '' : 'change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused; '}dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages`,
     // A worker's toolchains are its worktree's markers, the repository's tracked files (controller/workers.ts).
     ...(c.isolation.provider === 'sandbox-runtime' && detectToolchains({ roots: [ctx.snapshot.repo_root] }).includes('dotnet') ? [folderFormRunsAt(ctx, runWorktreeRoot(ctx)) ? DOTNET_WORKER_NOTE : DOTNET_WORKER_NOTE_NO_FORMAT] : []),
   ];
@@ -390,7 +454,7 @@ export async function scheduleTransientRetry(ctx: RunContext, failed: { base: st
     if (decision.action === 'stop' && (decision.limit === 'infrastructure_retries' || decision.limit === 'wall')) {
       return finishRun(ctx, 'EXHAUSTED', `${failed.what}: the provider kept failing transiently and ${decision.reason} (last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { data: { counter: decision.limit === 'wall' ? 'wall_ms' : 'infrastructure_retries' } });
     }
-    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`);
+    return finishRun(ctx, 'BLOCKED', `${failed.what}: the provider kept failing transiently (${decision.reason}; last: ${failed.error ? clipAtWord(failed.error, 200) : failed.status})`, { cause: 'environment' });
   }
   const record: RetryRecord = { what: failed.what, base: failed.base, purpose: failed.purpose, status: failed.status, retry: prior.length + 1, delay_ms: decision.delayMs, ceiling_ms: decision.ceilingMs, retry_after_ms: classification.retryAfterMs, not_before: ctx.clock.now() + decision.delayMs };
   // The retry is charged with its record: a crash between the two can neither charge it twice nor lose the wait.
@@ -422,6 +486,9 @@ export async function handleWorkerFailure(
   failed: { provider: string; status: string; error: string | null; reason?: string | null },
   opts: { attemptsUsed: number; maxAttempts: number; what: string; base?: string; purpose?: string; exhausted?: (failed: { status: string; error: string | null }) => Promise<StepResult> },
 ): Promise<FailureHandling> {
+  // A used-up allowance (issue #176) is not fixed by logging in: a caller that can do without this session (a reviewer
+  // fails over to the next one) takes it as given up; anything else blocks on credentials, as a rejected login does.
+  if (failed.status === 'auth_failed' && failed.reason === 'quota' && opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
   if (failed.status === 'auth_failed') return { retry: false, result: await blockOnAuth(ctx, failed.provider, 'auth_failed', failed.error) };
   if (isSessionRefusal({ status: failed.status, reason: failed.reason })) return { retry: false, result: await blockOnRefusedSession(ctx, opts.what, failed.error) };
   if (failed.status === 'cancelled') {
@@ -442,7 +509,16 @@ export async function handleWorkerFailure(
     return { retry: true };
   }
   if (opts.exhausted) return { retry: false, result: await opts.exhausted({ status: failed.status, error: failed.error }) };
-  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`) };
+  return { retry: false, result: await finishRun(ctx, 'BLOCKED', `${opts.what}: no usable result after ${opts.attemptsUsed} attempt(s) (last: ${failed.status}${failed.error ? `, ${clipAtWord(failed.error, 200)}` : ''})`, { cause: workerLimitCause(failed.status) }) };
+}
+
+/**
+ * The class of a worker that ended at one of its session limits, for a step that names the cause of its end (issue
+ * #190): the turn cap, or the session's time limit, which recovery/backoff.ts reads as the host's or the provider's
+ * performance. Undefined for any other end: output that failed or was malformed is the model's.
+ */
+export function workerLimitCause(status: string): FailureClass | undefined {
+  return status === 'max_turns' ? 'turn-cap' : status === 'timeout' ? 'environment' : undefined;
 }
 
 /** The regeneration bound for malformed model output (spec section 14). */

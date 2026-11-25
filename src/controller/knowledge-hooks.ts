@@ -1,9 +1,11 @@
 /**
  * The learning layer as the controller sees it during a run (ADR 0002):
  * advisory lessons for a worker's prompt and the active role overlay. Both
- * are advisory text and grant nothing. Any failure here costs the worker its
- * advice, never the step: knowledge is opened, read and closed per call, and
- * every error is swallowed into a log line.
+ * are advisory text and grant nothing, and both stay out of prompts unless
+ * `knowledge.lessons_in_prompts` is on (issue #173: off until a full benchmark
+ * shows they help). Any failure here costs the worker its advice, never the
+ * step: knowledge is opened, read and closed per call, and every error is
+ * swallowed into a log line.
  */
 import { join } from 'node:path';
 import type { WorkerRole } from '../adapters/types.ts';
@@ -12,6 +14,7 @@ import { appendEvent } from '../storage/events.ts';
 import { KnowledgeStore } from '../knowledge/store.ts';
 import { applyLiveCheck } from '../knowledge/overlays.ts';
 import { recordRetrieval, renderAdvisoryBlock, retrieve } from '../knowledge/retrieve.ts';
+import { DEFAULT_LESSON_EXPIRY_DAYS } from '../knowledge/recheck.ts';
 import type { RunContext } from './context.ts';
 import { liveWindow } from './eval-runner.ts';
 
@@ -24,7 +27,8 @@ export function globalKnowledgePath(ctx: Pick<RunContext, 'deps'>): string {
 }
 
 function withStore<T>(ctx: RunContext, fallback: T, fn: (store: KnowledgeStore) => T): T {
-  if (!ctx.snapshot.config.knowledge?.enabled) return fallback;
+  const k = ctx.snapshot.config.knowledge;
+  if (!k?.enabled || k.lessons_in_prompts !== true) return fallback;
   let store: KnowledgeStore | null = null;
   try {
     store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
@@ -64,8 +68,9 @@ export function advisoryBlockFor(ctx: RunContext, input: AdvisoryInput): string 
       fingerprints: input.fingerprints,
       languages: [],
       maxTokens: config.max_advisory_tokens,
-    });
-    recordRetrieval(store, { runId: ctx.run.id, workerId: input.workerId }, lessons);
+      recheck: { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: config.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS },
+    }, { maxLessons: config.max_prompt_lessons ?? 3, maxCandidates: 0 });
+    recordRetrieval(store, { runId: ctx.run.id, workerId: input.workerId, fingerprints: input.fingerprints }, lessons);
     return renderAdvisoryBlock(lessons);
   });
 }

@@ -342,6 +342,7 @@ function leftoverGroup(pgid: number): boolean {
 
 function shimAlive(handle: Pick<TaskHandle, 'pid' | 'procStart'>): boolean {
   try {
+    // A live pid with no recorded start time (ps refused, #203) is unknown: kept running, never taken for lost.
     return isAlive(handle.pid, handle.procStart);
   } catch {
     // ps unavailable: without proof of death, keep treating it as running.
@@ -383,6 +384,8 @@ function leftoverGroupStrict(pgid: number): boolean {
 }
 
 function shimAliveStrict(handle: Pick<TaskHandle, 'pid' | 'procStart'>): boolean {
+  // No recorded start time: the pid may be another process's now, so it proves nothing (as reconcile's stopRowProcess).
+  if (handle.procStart === null) return false;
   try {
     return isAlive(handle.pid, handle.procStart);
   } catch {

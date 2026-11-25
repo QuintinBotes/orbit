@@ -153,7 +153,7 @@ Keep the manifest in `.claude-plugin/plugin.json` and components at the plugin r
 }
 ```
 
-Validate manifest compatibility against the installed version before shipping.
+Validate manifest compatibility against the installed version before shipping. Every skill must also validate against the Agent Skills format (name, description, license, compatibility, metadata and allowed-tools as that format defines them; the name equals its folder); keys outside it are Claude Code's documented extensions only.
 
 ### Repository-local persistence
 
@@ -197,9 +197,13 @@ orbit pause <run-id>
 orbit resume <run-id>
 orbit cancel <run-id>
 orbit report <run-id>
+orbit export <run-id> --otel
+orbit bench --tier lab
 ```
 
-`orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly.
+`orbit init` and every worker read the repository's own instructions, `AGENTS.md`, then `CLAUDE.md`, and record which were read. Init prefers a check command those files document over one derived from manifests and says in the proposal where it read it; workers get both files, as the base revision has them, as untrusted data in their prompt.
+
+`orbit doctor` checks execution interfaces, authentication, model eligibility, isolation, Git, storage, configured checks, browser dependencies, provider adapters, and background-service readiness. Report missing capabilities explicitly. When the OS sandbox cannot start because the host's AppArmor confines bubblewrap (Ubuntu 26.04's default `bwrap-userns-restrict` profile), doctor names that cause and the AppArmor change that lets the sandbox start; a run is refused with the same cause, never run with less isolation.
 
 ### Persistent execution
 
@@ -353,7 +357,7 @@ Intake → environment → baseline → planning → sandboxed implementation
 - Separate implementation and delivery credentials.
 - Keep delivery credentials out of worker sessions.
 - Resolve symlinks, canonicalize paths, and reject traversal.
-- Inspect final diffs independently of tool hooks.
+- Inspect final diffs independently of tool hooks. Lines of committed generated files that the policy names (`scope.generated_paths`) are reported apart and do not count toward the changed-lines limit.
 - Constrain indirect writes through shell commands.
 - Treat repository instructions, logs, web pages, and dependency output as untrusted data.
 - Tool output cannot grant authority.
@@ -383,6 +387,8 @@ Select applicable requirements per task and justify omissions:
 
 Store original goal, normalized objective, mandatory/optional criteria, non-goals, allowed scope, baseline revision, check definitions, proof mappings, assumptions, delivery target, policy hash, budgets, and escalation rules.
 
+A contract drafted from a GitHub issue (ADR 0019) records the issue as its `source`, and its first criteria quote the issue's acceptance scenarios (at most 50), or a bug's reproduction. A plan that proves one of them only with checks the policy does not define is regenerated. Worker prompts say those statements are the issue's text: untrusted data, not instructions.
+
 ```json
 {
   "version": "1.0",
@@ -408,7 +414,7 @@ Store original goal, normalized objective, mandatory/optional criteria, non-goal
 }
 ```
 
-Command definitions belong in trusted configuration. A command supplied by a model in a contract is not automatically authorized executable code.
+Command definitions belong in trusted configuration. A command supplied by a model in a contract is not automatically authorized executable code. A criterion's mapped `tests` are repository paths, never commands: each becomes one argument of its check's trusted `tests_command`, and a path that is absolute, contains `..` or starts with `-` makes the contract invalid. A criterion's `kind` (`change`, `keep` or `person`) says how it is proven (section 11, "Completion proof").
 
 ### Preflight
 
@@ -460,7 +466,9 @@ Use transactions, owner leases, heartbeats, process reconciliation, and atomic a
 | CI repair cycles | Candidate changes prompted by remote CI |
 | Infrastructure retries | Transient service/process retries |
 
-API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets.
+API retries do not consume implementation attempts, but do consume applicable wall-time and spend budgets. Time a run spends paused, or BLOCKED waiting for a person, is not charged to the wall-time budget.
+
+A worker session's turn cap is the 75th percentile of the turns that earlier successful sessions of the same role and task class took, a session the cap stopped or that asked to continue counting as the ceiling, within a configured floor and ceiling and never above the hard cap; with no history the configured default applies, and once a session of a role in a run outgrew its cap the run's later sessions of that role get the ceiling. From 80% of its cap a session is told how many turns remain. An implementer session that reaches that point and states what remains gets one extension for its attempt, and its unfinished work is neither verified nor diagnosed as a defect; a session the cap stops is recorded as `turn-cap`.
 
 ### Initial allowance
 
@@ -513,6 +521,17 @@ Fable, Opus, Sonnet, and Haiku are intended model families for routing. Resolve 
 
 These are defaults to evaluate, not guarantees of best performance.
 
+### Partner implementers
+
+Claude implements unless `routing.implementers` names a partner (ADR 0022). The default is `[claude]`: partner implementers are off until a full benchmark shows they help. With Codex or Muse listed, routine candidate work (routine coding and focused tests: an implementation attempt or a parallel work unit with disjoint paths) goes to the first listed partner that may take it, on its configured model and effort, in its own writable worktree. The scope, policy and verification gates that apply to a Claude candidate apply unchanged, and Claude's verification decides whether the candidate is kept. A partner is passed over, and Claude implements:
+
+- once two of its candidates in the run failed verification or review: the third attempt goes to Claude;
+- for the rest of the run once its quota or login failed, or once preflight found its CLI, its writable tier or its credentials unusable. A quota or authentication failure is classed `credentials`, recorded as `routing.partner-skipped`, and charged to no candidate: the attempt it held goes on with the next route, without spending another;
+- when `providers.<id>.data_policy_eligible` is not true or `providers.<id>.model` names no model;
+- across runs, when its measured pass rate for the task class, recorded per provider in `route_outcomes`, falls below `routing.learning.min_pass_rate` after `min_samples` judged outcomes.
+
+Partner output is untrusted and parsed against Orbit's own copy of the implementer schema. Codex's writable tier is its own `workspace-write` sandbox (or `srt` in the os-sandbox tier); Muse implements only inside `srt` (`META_API_KEY` plus `srt`), with `--worktree off`, `--contributor-mode off` and the shell disabled. Every route decision records why each listed partner was or was not chosen.
+
 ### Routing objective
 
 Optimize expected cost per verified accepted task, not the cheapest token price:
@@ -529,11 +548,20 @@ Escalate using observed difficulty, not worker confidence. Increase reasoning ef
 - Keep full logs in artifacts and send relevant excerpts.
 - Retrieve repository context on demand.
 - Maintain compact contracts, decisions, and repair briefs.
-- Use supported prompt caching.
+- Use supported prompt caching: stable prompt content comes before volatile content.
 - Avoid repeating this entire document in each worker.
 - Set role-specific output budgets.
 - Preserve evidence references and hashes in handoffs.
-- Track input/output/cached tokens and cost per accepted run.
+- Track input/output/cached tokens and cost per accepted run, and per role with its cache hit ratio; warn when a role's ratio is under the threshold.
+- Keep learned lessons and overlays out of worker prompts unless `knowledge.lessons_in_prompts` is on (off by default until a full benchmark shows they help). Whether or not they enter prompts, every lesson cites its run and the file and line, check or finding it came from; it is re-checked against the repository, and marked stale and not retrieved when its cited file or check is gone or it had no support for `knowledge.lesson_expiry_days` (default 28). A lesson shown to a worker whose own candidate then repeats the failure it was repairing is contradicted, and contradictions from two distinct runs deprecate it. Support goes only to lessons whose cited area the run touched. Every run that ends without succeeding stores an observation keyed by its failure class without a model call. At most `knowledge.max_prompt_lessons` (default 3) validated lessons enter a prompt, a lesson that names a secret or a person is refused when it is written, and an overlay whose evaluation shows a lower pass rate on the benchmark's held-out scenarios is not adopted.
+
+### Repository map
+
+`orbit map build|query` builds a deterministic map of one tree from git objects, with no model call: every tracked file with its size; a generated flag (the `linguist-generated` attribute, or a header in the first kilobyte of a file the map reads (a TypeScript, JavaScript, Python, Rust or Go source, or a go.mod, Cargo.toml or .NET project file) up to 1 MiB: a comment line with an unquoted `@generated`, or a line that says both generated and `DO NOT EDIT`); test-to-source links (a test imports the source, shares its name, or is in its Go package); import edges for TypeScript, JavaScript, Python, Rust and Go; and the paths each configured check's command names. A language without a parser gets the file list and the test links only. The map is cached by tree hash in the clone's git directory, never served for another tree, and rebuilt incrementally: a new tree reads only the blobs the newest cached map has not read as the same kind of file. A 5,000-file repository maps in under ten seconds.
+
+The gates always use it. Scope inspection leaves the lines of files that the maps of both the base and the candidate tree flag as generated out of `changed_lines` and reports them as `generated_lines`. A review finding filed under the category `missing-test` is refuted when the map of the candidate links a test to the file at its location.
+
+With `repo_map.prompt_slice` on, the planner and reviewer prompts carry the map's slice for the files and directories the goal names, each file with its imports and tests, within `repo_map.prompt_slice_tokens` (default 1,500); a repository with fewer than `repo_map.prompt_slice_min_files` files (default 500) gets none. The implementer is then told that `orbit map query <path>` answers structural questions; plain search stays its default. The switch is off until a full benchmark shows that the slice keeps the pass rate and cuts median turns per attempt by at least 10%.
 
 ### Agent scheduling
 
@@ -663,9 +691,28 @@ If creating a commit changes only Git metadata, retain the tested tree identity 
 }
 ```
 
+### Simplicity gate
+
+A check whose id is exactly `simplicity` or starts `simplicity-` (case-sensitive) is the model-free simplicity gate (issue #232). Its command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` run through a shell in the candidate's checkout. Orbit sets `ORBIT_BASE_REVISION` in every check's environment: the candidate's parent revision, or `HEAD` on the base revision itself, where nothing is new, so the baseline run passes at once.
+
+- **Fails on what the candidate adds.** Unknot exits 1 for a new finding at the severity (an import cycle or a hub is `high` by default). The check fails and its failure note says how many new findings Unknot counts (`baseline.new`) and how many it lists, then names each (high severity first, lower ones after, at most eight, then a count) with its kind, location, title and evidence, which is what the repair brief carries. A finding the base already has is never new, so a clean change passes on a base that has findings.
+- **Cannot compare, says so.** A base Unknot cannot map (exit 5) fails with that reason, not as a finding. A check over its `timeout_seconds` fails as a timeout and says the scope was too large to map in that time. An Unknot older than 0.4.0 ignores `--baseline`, prints no `schema_version` and exits 0, so a pass whose output is not a schema 1.x document is turned into a failure naming the version needed.
+- **Unavailable Unknot.** With the check configured, `orbit doctor` fails `checks.simplicity` when `unknot` (probed with the PATH the check gets) is not installed, is broken, prints no readable version, is older than 0.4.0 (a prerelease of 0.4.0 included), or when the repository has no committed `.unknot` with its `.unknot/.gitignore` (so every candidate would fail with UK_NOT_INITIALIZED, or a check would write into its checkout), and prints the step, and `orbit run` refuses to start, as it does for other problems it can see before a run exists.
+- **Planner input.** On a run started from an issue labelled `simplify`, with the check configured, the planner's prompt carries the output of `unknot map` and `unknot diagnose --json <allowed paths>` run in the run's own worktree (never the user's checkout; the state stays in the ignored `.unknot/state`), limited to findings in `scope.allowed_paths` (at most ten, in Unknot's rank order), as a marked untrusted block that is advisory: it grants nothing, and the contract and the checks decide. If Unknot gives nothing the prompt is unchanged.
+- **Off by default.** No simplicity check is defined unless the policy defines one (the starter lists a commented example); the planner input needs both that check and the label. The fail-before probe never runs the gate: a probe tree has no base of its own to compare with. No model is called by either.
+
 ### Completion proof
 
 Every mandatory criterion needs explicit evidence. Passing unit tests alone does not prove an entire user journey. Model review cannot replace reproducible checks. Missing execution evidence must be labeled unverified.
+
+A run is done only when each criterion's proof would fail without it (issue #200; ADR 0014, addendum of 2026-11-20). Under `verification.fail_before: required`, the default, for a contract whose plan maps tests to criteria:
+
+- **Mapped tests.** The plan maps each criterion to its own test files (`tests`) and marks its `kind`: `change` (the default), `keep` for behaviour that must still hold, or `person` for what only a person can satisfy (a decision, an approval, a merge). Each mapped test runs alone, through its check's trusted `tests_command` with the path appended, so its outcome is read from exit status alone.
+- **Fail-before per criterion.** A change criterion is proven only when each of its mapped tests fails on the base tree with the candidate's test-owned files and passes on the candidate; a keep criterion only when each passes on both. One test that does not do so leaves the criterion unproven whatever the other criteria showed, and it goes to repair; a test that cannot run alone (no mapped test, no `tests_command`, a probe not established) blocks for a person, as ADR 0014 says.
+- **Criterion audit.** Before delivery, a fresh reviewer session sees only the criterion's text and its mapped tests with the test-owned files they import, never the implementation, the plan or the worker's report, and answers whether the tests would still pass if the criterion were false. "Yes", or no answer, leaves the criterion unproven.
+- **Conformance.** Each MUST of the goal (the issue spec a run started from, the goal and the objective) gets one fresh session that quotes the file and line range implementing its exact wording or marks it unmet. Orbit checks every quote against the candidate byte for byte, lists the callers of each changed function holding a quoted line (by search), and a changed behaviour at a caller no requirement covers is a finding.
+- **Artifacts.** One fresh session checks the pull request body and every documentation file the candidate adds or changes against the candidate; each sentence describing behaviour the candidate does not have is a finding. Generated files are skipped.
+- **Done.** An unproven criterion, an unmet MUST, a caller finding or an artifact finding is an open result. Delivery waits: the candidate goes to repair with a brief naming each, and every check runs again on the repaired candidate. No run is delivered or succeeds while one is open. A person-checked criterion is neither audited nor probed, never counts as proven by a test, and is listed as waiting on that person. The final report shows, per criterion, the audit verdict and reason and its own fail-before outcome; per MUST, the quotes or why it is unmet; and each finding.
 
 ## 12. Cross-provider verification
 
@@ -685,12 +732,13 @@ reportUsage()
 
 Support Claude and Codex initially. Other providers may implement the same interface.
 
-Muse implements the same interface as a reviewer only (ADR 0017,
-docs/interfaces/muse.md). A repository opts in with a `providers.muse` block
+Muse implements the same interface as a reviewer (ADR 0017, replaced by ADR 0022,
+docs/interfaces/muse.md), and Codex and Muse may also implement bounded work
+when `routing.implementers` lists them (section 8, "Partner implementers"). A repository opts in with a `providers.muse` block
 (defaults: model `muse-wonder-full-1.0`, reasoning effort `high`, tier `auto`,
 not data-policy eligible until a person attests it) and lists it in
 `review.providers`, in any order with Codex. The adapter refuses any task that
-is not read-only, and the review checkout's read-only state rests on an
+is not read-only, but an implementer's in its own worktree inside `srt`, and the review checkout's read-only state rests on an
 external boundary, never on Muse's own settings alone: either `srt` wraps the whole muse process (tier
 `os-sandbox`, only on `META_API_KEY`, writes to the worker directory only,
 egress to the provider host only; set explicitly without `srt` or the key, Muse
@@ -738,6 +786,8 @@ Run reviewers separately with read-only access where possible. Codex sandbox con
 Do not decide by majority vote. Convert disagreements into testable claims; reproduce them; invoke Inquisition as needed; block unresolved high-impact findings. Record why findings were accepted or rejected.
 
 Cross-provider review improves diversity but does not guarantee independence or correctness. If another provider is mandatory and unavailable, block or report incomplete verification; do not silently substitute an equivalent label.
+
+Independence is computed per run from who implemented: a reviewer is independent only of a family different from every provider that implemented in the run, and Claude counts as an independent reviewer of a partner's work. A risky change (the planning assessment classes it `complex`) gets two passes: one cross-model review from another provider's top tier (a Claude model at the opus-class floor, or the partner provider's recommended or evaluated model), and one fresh-session review from the implementer's own family, run after it and recorded beside it (ADR 0022). A cross-model reviewer below its provider's top tier adds nothing to a risky change, so it is not used: the cross-model pass is skipped, the selection and the final report say why, and `review.when_unavailable` decides whether the same-family review stands alone. A change that is not risky keeps one review.
 
 ## 13. UI testing
 
@@ -822,6 +872,10 @@ Before every external action: validate policy, target, revision, and evidence; p
 
 Merge is opt-in and requires exact candidate, branch checks, review policy, and no blockers. Revalidate after candidate changes. Deployment uses a separate release profile with environment-specific safeguards.
 
+### Change fragments (Orbit's own repository)
+
+A pull request into `next` records its changelog entries and traceability rows as one file each under `changes/changelog/` and `changes/traceability/`, and does not edit `CHANGELOG.md`, `docs/traceability.md` or their `plugin/` copies; a malformed fragment fails the pull request check with its file named, as does a direct edit of those files outside a release. The release step folds the fragments into the shared files in a stable order (by file name) and deletes them. `plugin/dist` and the plugin copies of the documentation are current on `main` and at every release tag: a pull request into `next` does not commit them, the release pull request rebuilds them (`npm run build`) together with the version bump and the fold, and CI runs `check:dist` on `main` and the release workflow on the tag. Between releases `next` may carry a stale bundle.
+
 ## 16. Observability
 
 Record every model choice, agent spawn/cancellation, allowance extension, policy denial, experiment, provider disagreement, evidence invalidation, state transition, and external-action reconciliation.
@@ -829,6 +883,28 @@ Record every model choice, agent spawn/cancellation, allowance extension, policy
 Track verified pass rate, false-pass rate from subsequent review, escalation quality, duplicate failures, time-to-green, spend per accepted task, token/cache usage, concurrency overhead, stale-evidence prevention, and UI defects discovered.
 
 Do not expose sensitive content in logs. Make missing usage measurements explicit.
+
+Use the open conventions other tools read. `orbit export <run-id> --otel` writes a run as OpenTelemetry traces (OTLP/JSON) with a span per worker carrying its model, tokens and cost under the GenAI semantic conventions of one pinned and stated release, since those conventions are still in development; it never includes prompt or source text. The run report, the benchmark scorecard and the spec check result have published JSON Schemas in `schemas/`, and each document names its schema version.
+### Retro
+
+`orbit retro [--since <when>] [--issue-repo <owner/repo>] [--json]` looks back over the runs that ended and proposes what would have prevented the failures that repeat. It calls no model, and it applies or sends nothing without a person's yes.
+
+- Terminal runs are grouped by failure class and signature. The signature is the names of the outcome markers that set the class and of the policy rules that denied the run's calls, never the wording of a reason or a value.
+  A worker can print any rule name in its transcript, so an issue draft, the one proposal that leaves the machine, leaves the rule names out of its signature.
+- A group of two runs or more is one proposal that cites every run in it. A single run makes none, except a run of an Orbit-fault class (`gate-deadlock`), which is one proposal on its own. Runs that succeeded or were `cancelled` make none.
+- A proposal is one of four kinds:
+  - an Orbit-fault class is a draft Orbit issue;
+  - a `review-dispute` is a check when the repository declares one, as `orbit init` detects them, of a category its Orbit configuration does not run, and a reviewer standard otherwise;
+  - every other class is a policy change.
+- A run that ended `awaiting-decision` waits for a person's `orbit decide`; it did not fail, so it is no failure input: it makes no check, standard, policy change or issue draft. The report lists such runs apart (`awaiting_decision` in `--json`) with their open question ids and the `orbit decide` command (a run with no open question names what else it waits on). Only a question that three runs or more waited on (the same wording, ignoring case and punctuation) is one proposal: a policy default that quotes the question, redacted and cut to 300 characters.
+- Each proposal is written to a draft file in `.orbit/runs/retro-drafts/`. The draft is built from run records only: run ids, states, classes, the names of markers and rules, and the states each run went through. Paths are redacted, and no goal, reason, finding text, source code or secret reaches it. The one free text is the wording of a recurring question in its policy draft, redacted and cut to 300 characters.
+- Each proposal is one question at a terminal, and only an explicit yes acts:
+  - a yes to an issue draft files it with `gh issue create`, in `QuintinBotes/orbit` or `--issue-repo`, once the publication guard clears it;
+  - a yes to a check commits `.orbit/config.yaml` with the check added, on a new branch `orbit/retro/check-<id>` from the tip of `repository.base_branch`, with the repository's hooks off. The base branch, the checkout and its index are not touched, and an existing branch is never replaced; one that already holds the check counts as applied;
+  - a yes to a reviewer standard or a policy change records it as accepted, and the person makes the change.
+- Without a terminal, or with `--json`, nobody is asked and nothing is sent or applied. The proposal stays a draft, and the next retro makes it again with the runs it then cites.
+- Every proposal and answer is recorded in the state database, keyed by kind, class and signature. A proposal that was declined, sent, applied or accepted is not made again.
+- `orbit retro` is refused inside a worker.
 
 ## 17. Acceptance and fault testing
 
@@ -866,6 +942,15 @@ Kill worker during edit; kill controller mid-transition; lose PR response; malfo
 18. Visual baseline changes cannot hide regressions.
 19. Security findings follow severity/exception policy.
 20. Cancellation remains effective after restart.
+
+### Benchmark
+
+`orbit bench` scores one Orbit version on a fixed set of goals and stores a scorecard per version and tier, `docs/scorecards/orbit-<version>-<tier>.json`: stable JSON (sorted keys, one value per line), so two versions diff line by line, and the same results give the same bytes apart from `generated_at`. It runs from an Orbit source checkout. Workers cannot start it.
+
+- **Lab tier** (`--tier lab`): the regression suite. Each scenario replays an issue Orbit fixed, on `examples/demo-app` with the fake providers and the real controller, and states how the run ends now: the terminal state, the failure class, and where they show the fix, the implementation attempts, a phrase of the outcome reason or a recorded decision. A scenario passes when the run ends that way. Each reports pass or fail, the state and failure class the run ended with, its attempts and its simulated spend (the fake providers' reported cost). No model is called, and two runs give the same scorecard. A scenario that fails makes the command exit 1 and name it with its issue; CI runs the whole lab on every change. Every issue fixed from #172 on adds a scenario (`src/bench/scenarios.ts`). A scenario whose expectation cannot be judged (a state that is not terminal, an unknown failure class, no provider steps) is invalid: it is listed and left out of every count.
+- **Live tier** (`--tier live`): the capability suite. Goals come from a catalog file (`data/bench/live-goals.json`, checked as a whole before anything runs) and pin a commit of one of the owner's repositories (QuintinBotes/orbit, claude-stack, proofmesh, review-voice) where a real failure happened; no third-party code. Each goal carries a held-out acceptance check the worker never sees: test files of the accepted fix (`reference`), laid over the tree the run delivered, and a command that must pass. A goal whose check does not fail on its commit and pass on the fix is invalid and excluded. Each goal runs three times and every result is kept. The report gives the pass rate over the runs, the cost per accepted task and the time. With `--baseline` each goal is also attempted three times by one plain `claude -p` session, and the report gives the difference. The live tier spends money: it refuses to start without `--budget <usd>`, which has no default, and without the owner's approval, `--approved-by <name>`, both recorded in the scorecard. Every session is capped at an equal share of the budget, and no session starts once less than one share is left.
+- **Stages** (`--without <stage>`, lab tier): the suite runs again with one stage off, and the report shows the pass rate and spend with and without it and names each scenario that changed. Stages that can be turned off: `diagnosis` (no verifier session; the repair brief is the failure records as they are) and `fail-before` (new tests are not run on the base revision). The gates scope, secrets and verification cannot be turned off.
+- **False dones**: the headline of every scorecard starts with the false-done rate of its Orbit version: the share of its runs reported done (SUCCEEDED) that were later found defective. A person records each false done in `docs/scorecards/false-dones.json` with the Orbit version, what was reported done, what found it (`hidden-check`, `review-finding`, `reopened-issue` or `revert`) and a link to it; the scorecard lists each with its link. Nothing is collected automatically, and a malformed record is an error, never skipped.
 
 ## 18. Implementation milestones
 

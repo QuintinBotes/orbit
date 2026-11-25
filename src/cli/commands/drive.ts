@@ -11,6 +11,7 @@ import type { OrbitConfig } from '../../policy/types.ts';
 import { Controller, buildFinalReport, defaultControllerDeps } from '../../controller/index.ts';
 import { getRun, setPaused, type RunRecord } from '../../controller/run-store.ts';
 import { declinedLedger, missingTargetChecks, newRunNeeded } from '../../controller/resume.ts';
+import { heldVerifiedCandidate } from '../../controller/verified-candidate.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { listQuestions } from '../../inquisition/store.ts';
 import { continueCommand, expireLeaseOfDeadOwner, liveLease, type CliContext } from '../context.ts';
@@ -75,6 +76,8 @@ export interface DriveOptions {
 export interface DriveResult {
   run: RunRecord;
   interrupted: boolean;
+  /** SIGTERM stopped the controller: the run is neither paused nor ended. */
+  terminated: boolean;
   exitCode: number;
 }
 
@@ -135,7 +138,9 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
     }
     void controller.stop('paused by Ctrl-C');
   };
+  let terminated = false;
   const onTerm = (): void => {
+    terminated = true;
     void controller.stop('received SIGTERM');
   };
   signals.on('SIGINT', onInterrupt);
@@ -172,7 +177,7 @@ export async function driveForeground(ctx: CliContext, opts: DriveOptions): Prom
   else if (run.paused || interrupted) exitCode = EXIT.PAUSED;
   else exitCode = EXIT.FAILURE;
   announceEnd(ctx, db, run, exitCode, wantJson);
-  return { run, interrupted: interrupted || run.paused, exitCode };
+  return { run, interrupted: interrupted || run.paused, terminated, exitCode };
 }
 
 /** The command that continues the run, as it is right now: with no service a plain resume would leave the run idle. */
@@ -247,7 +252,10 @@ function announceEnd(ctx: CliContext, db: OrbitDb, run: RunRecord, exitCode: num
       // Where a resume cannot clear the block (a frozen policy, an environment block with nothing to approve, every
       // implementation attempt used), no answer to an open question makes "then resume" the way forward (issue #33).
       const fresh = safeNewRunNeeded(db, run);
-      if (open.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
+      // A run that ran out holding a verified candidate (issue #169): the reason above ends with both commands.
+      const offered = heldVerifiedCandidate(run, { exhausted: true });
+      if (offered) line(ctx.io, `candidate ${offered.seq} passed verification before the run stopped: deliver it with the command above, or discard it with "${offered.discard_command}"; resuming would continue the run under the limits that stopped it`);
+      else if (open.length > 0 && fresh === null) line(ctx.io, `answer with "orbit decide ${run.id} <question-id> <answer>", then "${next}"`);
       // A missing target the contract does not name has three causes and a fix of the config is only one of them: the reason above ends with the advice by cause.
       else if (frozen && missingTargetChecks(run).length > 0) line(ctx.io, `the advice above says what to do by cause; resuming would only block again, so "orbit cancel ${run.id}" and start a new run with "orbit run"`);
       else if (frozen) line(ctx.io, `this block comes from the run's frozen policy: fix .orbit/config.yaml, then "orbit cancel ${run.id}" and start a new run with "orbit run"`);

@@ -35,12 +35,14 @@ import type { ScopeReport } from '../../evidence/types.ts';
 import { detectTriggers, loadInquisitionSnapshot, PROOF_BLOCKING_TRIGGERS, thresholdsFromPolicy } from '../../inquisition/triggers.ts';
 import type { Trigger } from '../../inquisition/types.ts';
 import { validateModelOutput, type ImplementerOutput } from '../../contract/model-outputs.ts';
-import { checksNotExecutedFor, environmentBlockReason, environmentFailuresFor, type BlockedCheck } from '../environment-block.ts';
+import { checksNotExecutedFor, environmentBlockReason, environmentFailuresFor, mandatoryCommandChecks, type BlockedCheck } from '../environment-block.ts';
+import { turnCapSessions, type FailureClass } from '../failure-class.ts';
 import { listWorkers } from '../../storage/workers.ts';
 import { runWorktreeRoot, type RunContext } from '../context.ts';
 import { implementationScopeGate, behaviourGate, type ScopeGateDetails } from '../gates.ts';
 import { authorizedOnce, deniedDependencyOperations, grantFor, requestAuthorization, scopeWithGrants } from '../authorization.ts';
 import { collectVerificationEvidence } from '../verification.ts';
+import { settleRouteOutcome } from '../route-outcome.ts';
 import { failBeforeStale, routeFailBefore } from '../fail-before.ts';
 import { storedPlan } from './contracting.ts';
 import { amendBaseline } from './baseline-amendment.ts';
@@ -185,7 +187,15 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   const sameAsBase = verdict === 'FAIL' ? environmentFailuresFor(ctx, cand, ev.report) : [];
   const environment = [...sameAsBase, ...checksNotExecutedFor(ctx, cand, ev.report).filter((n) => !sameAsBase.some((b) => b.checkId === n.checkId))];
   if (environment.length > 0) return blockOnEnvironment(ctx, cand, ev, environment);
-  if (verdict === 'FAIL') return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  if (verdict === 'FAIL') {
+    // The attempt's evidence is settled against it only when a trusted check or a required browser journey ran on the
+    // candidate to its end and failed (issue #168). An environment failure returned above; a refusal by a gate that ran
+    // no check (scope, size, the static security gate) and a check or journey that only timed out, was cancelled or
+    // could not run (a loaded machine looks the same) are not measurements of how well the route did the work.
+    const ranAndFailed = ev.report.checks.some((c) => c.status === 'FAILED') || (ev.report.ui ?? []).some((j) => j.status === 'FAILED');
+    if (ranAndFailed) settleRouteOutcome(ctx, cand, { outcome: 'failed', evidenceRef: ev.id });
+    return move(ctx, 'DIAGNOSING', `candidate ${cand.seq} failed verification (${ev.id})`, { data: { report_id: ev.id } });
+  }
   // Fail-before under `required` (ADR 0014): not established blocks with a question per criterion; new tests that pass on
   // the base revision go to repair through the inquiry below, and to a person once the loop has gone round on this tree.
   const routed = await routeFailBefore(ctx, cand, ev, async () => {
@@ -195,7 +205,20 @@ async function act(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRec
   if (routed) return routed;
   const trigger = await pendingTrigger(ctx, cand, null);
   if (trigger) return move(ctx, 'INQUISITION', `verification incomplete: ${trigger.summary}`, { data: { trigger } });
-  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id } });
+  return finishRun(ctx, 'BLOCKED', `mandatory verification is unavailable for candidate ${cand.seq}: ${ev.report.unverified.slice(0, 5).join('; ') || 'the evidence is incomplete'}`, { outcome: { report_id: ev.id }, cause: unavailableCause(ctx, ev) });
+}
+
+/**
+ * Why mandatory verification is unavailable, from the report's check results (issue #190). A mandatory check or a
+ * journey with no result is verification that could not run: the environment (issue #158). With every one of them run,
+ * the gap is in what the candidate proves (no test of its own, say): the work stopped short, at the turn cap when
+ * implementer sessions ended there (run orb-20261119-081756-112901), and otherwise the model's.
+ */
+function unavailableCause(ctx: RunContext, ev: EvidenceReportRecord): FailureClass {
+  const ran = new Set(ev.report.checks.filter((c) => c.status !== 'ERROR' && c.status !== 'CANCELLED').map((c) => c.id));
+  const unrun = [...mandatoryCommandChecks(ctx)].some((id) => !ran.has(id)) || (ev.report.ui ?? []).some((u) => u.status === 'ERROR' || u.status === 'CANCELLED');
+  if (unrun) return 'environment';
+  return turnCapSessions(ctx.db, ctx.run.id) > 0 ? 'turn-cap' : 'model';
 }
 
 async function blockOnEnvironment(ctx: RunContext, cand: CandidateRecord, ev: EvidenceReportRecord, failures: BlockedCheck[]): Promise<StepResult> {

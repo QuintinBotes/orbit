@@ -8,11 +8,12 @@ import { insertLedgerEntry, insertQuestion } from '../../../src/inquisition/stor
 import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
 import { listFindings, listReviews, recordReview } from '../../../src/review/store.ts';
 import type { IngestedFinding } from '../../../src/review/types.ts';
-import { getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
+import { finishWorker, getWorker, listWorkers, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { newRunNeeded } from '../../../src/controller/resume.ts';
 import { REVIEW_REPAIR_EVENT, cancelObsoleteWork, implementerProvider, prepareReview, reviewFocuses, reviewingStep } from '../../../src/controller/steps/reviewing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
+import { implementRouteDecisionId } from '../../../src/controller/route-outcome.ts';
 import { defaultUi } from '../../../src/policy/config.ts';
 import { addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
@@ -49,6 +50,8 @@ interface Setup {
   tweak?: Parameters<typeof makeUnitLab>[0] extends infer O ? (O extends { tweak?: infer T } ? T : never) : never;
   edit?: boolean;
   onReviewerStart?: Parameters<typeof scriptedAdapter>[2];
+  /** More files the candidate adds. */
+  files?: Record<string, string>;
 }
 
 async function setup(o: Setup = {}) {
@@ -68,12 +71,22 @@ async function setup(o: Setup = {}) {
   setContract(lab, { baseline_revision: repo.base, allowed_paths: ['apps/calc.mjs'] });
   initLedger(lab);
   writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b;\n');
+  for (const [rel, text] of Object.entries(o.files ?? {})) {
+    mkdirSync(join(repo.worktree, rel, '..'), { recursive: true });
+    writeFileSync(join(repo.worktree, rel), text);
+  }
   const cand = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: repo.base, attempt: 1, workerId: null });
   lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 1 }));
   lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 1, candidate_id: cand.id }));
   addEvidence(lab, cand);
   return { cand, reviewer, repo };
 }
+
+/** The route attempt n was given, as routeFor records it (issue #168). */
+function routed(n: number): void {
+  recordDecision(lab.db, lab.ctx().runDir, { id: implementRouteDecisionId(lab.runId, n), runId: lab.runId, kind: 'route', summary: `implement:${n}`, data: { purpose: `implement:${n}`, provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', work_kind: 'routine-code' } }, lab.clock);
+}
+const routeOutcomes = () => lab.db.all<{ attempt_key: string; outcome: string; evidence_ref: string }>('SELECT attempt_key, outcome, evidence_ref FROM route_outcomes WHERE run_id = ? ORDER BY id', lab.runId);
 
 const run = () => reviewingStep(lab.ctx());
 const state = () => getRun(lab.db, lab.runId).state;
@@ -83,6 +96,42 @@ async function settle(max = 12) {
   // As the controller does, the step runs again while a worker runs, or after it made progress without leaving REVIEWING (a reviewer switch, #116).
   for (let i = 0; i < max && !out.done && state() === 'REVIEWING' && ((out.progressed && !out.waiting) || (out.waiting !== undefined && /is running$|running in|review running/.test(out.waiting))); i++) out = await run();
   return out;
+}
+
+/**
+ * A reviewer that approves, except in a finding's one re-review (ADR 0015, amendment of 2026-11-16), where it answers by
+ * the finding's id: `gone` (APPROVE with an info finding giving its evidence), `other` (REPAIR_REQUIRED naming only another
+ * finding) or, by default, still present (the finding raised again). A full review raises `full`, and approves without any.
+ */
+function answers(how: Record<string, 'gone' | 'other'> = {}, full: IngestedFinding[] = []): NonNullable<Setup['reviewer']> {
+  return ({ spec }) => {
+    const candidate_revision = spec.prompt.match(/candidate revision ([0-9a-f]{40})/)?.[1] ?? '0'.repeat(40);
+    const id = /This is a re-review of one finding, ([A-Z][A-Z0-9]*-[0-9]+) /.exec(spec.prompt)?.[1];
+    if (!id && full.length > 0) return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: full.map((x) => ({ id: x.externalId, severity: x.severity, category: x.category, location: x.location, claim: x.claim, evidence: x.evidence, suggested_validation: x.suggestedValidation })) });
+    if (!id) return okResult({ verdict: 'APPROVE', candidate_revision, findings: [] });
+    const f = (fid: string, severity: string, claim: string) => ({ id: fid, severity, category: 'correctness', location: 'apps/calc.mjs:2', claim, evidence: `tests/mul.test.mjs:3 covers ${fid}`, suggested_validation: null });
+    if (how[id] === 'gone') return okResult({ verdict: 'APPROVE', candidate_revision, findings: [f(id, 'info', `${id} no longer holds`)] });
+    if (how[id] === 'other') return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [f('OTHER-1', 'high', 'add has no test either')] });
+    return okResult({ verdict: 'REPAIR_REQUIRED', candidate_revision, findings: [f(id, 'high', `${id} still holds`)] });
+  };
+}
+
+const USAGE = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
+const TURN_CAPPED = { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' } as const;
+
+/** Attempt n's candidate, from an implementer that ended with `outcome`, and a REPAIR_REQUIRED review of it raising `findings`. */
+async function repairAttempt(base: string, repo: { worktree: string }, n: number, outcome: Parameters<typeof finishWorker>[2], findings: IngestedFinding[] = []) {
+  writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), `export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // ${n}\n`);
+  const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: base, attempt: n, workerId: null });
+  lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: n }));
+  lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: c.id }));
+  addEvidence(lab, c);
+  const w = planWorker(lab.db, { id: `wrk-impl-${n}`, runId: lab.runId, role: 'implementer', provider: 'claude', attempt: n, workerDir: join(lab.base, `wi${n}`), cwd: lab.repo }, lab.clock, OWNER);
+  markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+  finishWorker(lab.db, w.id, outcome, lab.clock, OWNER);
+  record(c, 'REPAIR_REQUIRED', findings);
+  lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+  return c;
 }
 
 function record(cand: { id: string; treeHash: string }, verdict: 'APPROVE' | 'REPAIR_REQUIRED' | 'BLOCK', findings: IngestedFinding[] = [], provider = 'codex', id = `rev-${listReviews(lab.db, lab.runId, { includeInvalidated: true }).length + 1}`) {
@@ -132,20 +181,38 @@ describe('a review that is already recorded', () => {
     expect(moved.data_json).not.toMatch(/independent review cleared/);
   });
 
-  it('a same-provider review that cleared the tree without approving it is not recorded as an approval', async () => {
+  it('a same-provider review that cleared the tree without approving it is not recorded as an approval, and its advisory finding goes to repair (#130)', async () => {
     const { cand } = await setup();
     // REPAIR_REQUIRED whose only finding is advisory: the gate clears the tree, but nobody approved it.
     record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'claude');
-    await run();
+    expect(await run()).toEqual({ progressed: true });
     const gate = decisions('gate.independent_review')[0]!;
     expect(gate.data).toMatchObject({ status: 'pass', independent: false, approved: false });
     expect(gate.summary).not.toMatch(/approved/);
     expect(gate.summary).toMatch(/without an approval/);
     expect(gate.summary).toMatch(/not independent/);
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('repair.brief')[0]?.summary).toContain('STY-1 (review 1) (low)');
+  });
+
+  it('an independent REPAIR_REQUIRED review whose only open finding is advisory sends it to repair instead of blocking (#130)', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' }), finding('STY-2', { severity: 'info', claim: 'a different nit in the parser' })], 'codex');
+    expect(await run()).toEqual({ progressed: true });
+    // The gate clears the tree without an approval: delivery stays out of reach until a review of the repaired tree approves.
+    expect(decisions('gate.independent_review')[0]!.data).toMatchObject({ status: 'pass' });
+    expect(state()).toBe('REPAIRING');
+    const repairs = lab.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT);
+    expect(JSON.parse(repairs[0]!.data_json).findings.map((f: { external_id: string }) => f.external_id).sort()).toEqual(['STY-1', 'STY-2']);
+  });
+
+  it('an advisory finding of a REPAIR_REQUIRED review stops the run when no review round is left for the repaired tree (BLOCKED, offering the verified candidate: #169)', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [finding('STY-1', { severity: 'low' })], 'codex');
+    lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
+    await run();
     expect(state()).toBe('BLOCKED');
-    // The outcome does not call the same-provider review an independent one either.
-    expect(getRun(lab.db, lab.runId).outcomeReason).not.toMatch(/independent review does not clear/);
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review does not clear tree/);
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): STY-1 \(review 1\) \(low\)/);
   });
 
   it('a same-provider BLOCK review with an advisory finding does not call the block an independent review', async () => {
@@ -186,7 +253,7 @@ describe('a review that is already recorded', () => {
     const repairs = lab.db.all<{ data_json: string }>("SELECT data_json FROM events WHERE run_id = ? AND type = ?", lab.runId, REVIEW_REPAIR_EVENT);
     expect(repairs).toHaveLength(1);
     expect(JSON.parse(repairs[0]!.data_json)).toMatchObject({ attempt: 2, tree_hash: cand.treeHash, findings: [{ external_id: 'COR-1' }] });
-    expect(decisions('repair.brief')[0]?.summary).toContain('COR-1 (high)');
+    expect(decisions('repair.brief')[0]?.summary).toContain('COR-1 (review 1) (high)');
   });
 
   it('one-line finding text in the gate and the repair brief is cut at a word boundary with an ellipsis, never mid-word', async () => {
@@ -234,21 +301,24 @@ describe('a review that is already recorded', () => {
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('independent review does not clear tree');
   });
 
-  it('ends EXHAUSTED when no review round is left for the repaired tree, naming the open findings', async () => {
+  it('stops when no review round is left for the repaired tree, naming the open findings, BLOCKED with the verified candidate offered (#169)', async () => {
     const { cand } = await setup();
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
     lab.db.run("UPDATE budget_counters SET used = allowance WHERE counter = 'review_rounds'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): COR-1 \(high\)/);
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(\d+ of \d+\) with 1 open finding\(s\): COR-1 \(review 1\) \(high\)/);
+    // The candidate passed verification: the run that ran out offers it instead of ending EXHAUSTED.
+    expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!)).toMatchObject({ decided: 'EXHAUSTED', verified_candidate: { candidate_id: cand.id, commit: cand.commitSha } });
+    expect(getRun(lab.db, lab.runId).failureClass).toBe('review-dispute');
   });
 
-  it('ends EXHAUSTED when no implementation attempt is left under the hard cap', async () => {
+  it('stops when no implementation attempt is left under the hard cap (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand } = await setup();
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'implementation_attempts'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('implementation attempts hard cap reached');
   });
 
@@ -285,8 +355,8 @@ describe('a review that is already recorded', () => {
     record(cand, 'REPAIR_REQUIRED', [finding('BILL-1', { severity: 'high', category: 'billing', claim: 'The invoice total rounds a refund in an undecided way; the product decision on partial refunds is not specified', evidence: 'refund amount is ambiguous' })]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     expect(await run()).toMatchObject({ done: true });
-    expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(high\)/);
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 open finding\(s\): BILL-1 \(review \d+\) \(high\)/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
 
@@ -295,8 +365,8 @@ describe('a review that is already recorded', () => {
     record(cand, 'BLOCK', [finding('CLM-1', { severity: 'medium', category: 'correctness', claim: 'calc may overflow for very large operands in some environments', evidence: 'maybe' })]);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE counter = 'review_rounds'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
-    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1/);
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \((\d+) of \1\) with 1 review claim\(s\) still needing a discriminating test: CLM-1 \(review \d+\) \(/);
     expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'state.transition' AND to_state = 'INQUISITION'", lab.runId)).toEqual([]);
   });
 
@@ -384,6 +454,236 @@ describe('a review that is already recorded', () => {
     record(cand, 'REPAIR_REQUIRED', [finding('NIT-1', { severity: 'low', category: 'style', claim: 'a naming nit in calc', evidence: 'naming' })]);
     await run();
     expect(['BLOCKED', 'REPAIRING', 'INQUISITION']).toContain(state());
+  });
+
+  it('issue #168: review clearing the tree settles the attempt as verified', async () => {
+    const { cand } = await setup();
+    routed(1);
+    record(cand, 'APPROVE');
+    await run();
+    expect(state()).toBe('DELIVERING');
+    expect(routeOutcomes()).toEqual([{ attempt_key: 'attempt:1', outcome: 'verified', evidence_ref: `review-gate:${cand.treeHash}` }]);
+  });
+
+  it('issue #168: review sending the verified candidate to repair settles the attempt as rejected', async () => {
+    const { cand } = await setup();
+    routed(1);
+    record(cand, 'REPAIR_REQUIRED', [finding('COR-1')]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    expect(routeOutcomes()).toEqual([{ attempt_key: 'attempt:1', outcome: 'rejected', evidence_ref: `review-gate:${cand.treeHash}` }]);
+  });
+
+  // #156: three repairs of one carried test finding ran out of turns with no report; only the same tree stopped them.
+  it('a carried finding going to repair again after a repair whose implementer named no test for it ends as non-progress, not with another brief (BLOCKED, offering the verified candidate: #169)', async () => {
+    // Its one re-review (ADR 0015, amendment of 2026-11-16) finds it still present, as it was raised.
+    const { cand, repo } = await setup({ reviewer: answers() });
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    routed(1);
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    /** Attempt n's tree, from an implementer that ended with `outcome`, then a review that raises nothing new. */
+    const attempt = async (n: number, outcome: Parameters<typeof finishWorker>[2]) => {
+      writeFileSync(join(repo.worktree, 'apps', 'calc.mjs'), `export const add = (a, b) => a + b;\nexport const mul = (a, b) => a * b; // ${n}\n`);
+      const c = await snapshotCandidate({ db: lab.db, clock: lab.clock, repoRoot: lab.repo, worktree: repo.worktree, runId: lab.runId, baseRev: cand.parentSha, attempt: n, workerId: null });
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: n }));
+      lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: n, candidate_id: c.id }));
+      routed(n);
+      addEvidence(lab, c);
+      const w = planWorker(lab.db, { id: `wrk-impl-${n}`, runId: lab.runId, role: 'implementer', provider: 'claude', attempt: n, workerDir: join(lab.base, `wi${n}`), cwd: lab.repo }, lab.clock, OWNER);
+      markWorkerRunning(lab.db, w.id, { pid: 2_000_000_000, pgid: 2_000_000_000, procStart: 'x' }, lab.clock, OWNER);
+      finishWorker(lab.db, w.id, outcome, lab.clock, OWNER);
+      record(c, 'REPAIR_REQUIRED', []);
+      lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
+    };
+    const usage = { provider: 'claude', model: null, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, costUsd: null, costSource: 'unavailable' };
+    const named = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
+    // The first repair names a test for TEST-1, so sending it again is not yet non-progress. Carried, and settled by no
+    // test, TEST-1 first gets its one re-review, which finds it still present: the repair goes on.
+    await attempt(2, { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: named, text: null, error: null, exitCode: 0, usage, durationMs: 1 } });
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('review.finding-rereview')).toHaveLength(1);
+    expect(existsSync(briefPath(lab.ctx(), 3))).toBe(true);
+    // The second ends at its turn cap without a report: it named no test, and TEST-1 would go to repair unchanged. It had
+    // its one re-review, so none is asked.
+    await attempt(3, { state: 'FAILED', resultStatus: 'max_turns', error: 'reached the maximum number of turns' });
+    expect(await run()).toMatchObject({ done: true });
+    expect(state()).toBe('BLOCKED');
+    expect(decisions('review.finding-rereview')).toHaveLength(1);
+    expect(existsSync(briefPath(lab.ctx(), 4))).toBe(false);
+    expect(lab.db.all('SELECT 1 FROM events WHERE run_id = ? AND type = ?', lab.runId, REVIEW_REPAIR_EVENT)).toHaveLength(2);
+    expect(decisions('repair.non-progress')).toHaveLength(1);
+    const reason = getRun(lab.db, lab.runId).outcomeReason!;
+    expect(reason).toMatch(/^non-progress: the review repair brief of attempt 3 was sent TEST-1, and no implementer report since names a test for it \(the implementer of attempt 3 ended FAILED \(max_turns\) without a report\)/);
+    expect(reason).toMatch(/open findings: TEST-1 \(review \d+\) \(high\)/);
+    expect(JSON.parse(getRun(lab.db, lab.runId).outcomeJson!).open_findings.map((f: { external_id: string }) => f.external_id)).toEqual(['TEST-1']);
+    // Issue #168: every attempt review refused is settled as rejected, the last one on the non-progress path too.
+    expect(routeOutcomes().map((r) => [r.attempt_key, r.outcome])).toEqual([
+      ['attempt:1', 'rejected'],
+      ['attempt:2', 'rejected'],
+      ['attempt:3', 'rejected'],
+    ]);
+  });
+
+  it('an external id two briefed findings share does not count as naming either of them (#156)', async () => {
+    const { cand, repo } = await setup({ reviewer: answers() });
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 })]);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    const ambiguous = { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] };
+    const reported = { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: ambiguous, text: null, error: null, exitCode: 0, usage: USAGE, durationMs: 1 } } as Parameters<typeof finishWorker>[2];
+    // Both findings are carried and no test settles them: each gets its one re-review (ADR 0015, amended), which finds
+    // it still present, and the repair goes on.
+    await repairAttempt(cand.parentSha, repo, 2, reported);
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+    // Carried again, with no re-review left: a report that names only the id both share names neither, so the run stops.
+    await repairAttempt(cand.parentSha, repo, 3, reported);
+    expect(await run()).toMatchObject({ done: true });
+    expect(state()).toBe('BLOCKED');
+    expect(decisions('repair.non-progress')).toHaveLength(1);
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+  });
+});
+
+describe('a missing-test finding and the repository map (#144, #175)', () => {
+  const missing = finding('TEST-1', { category: 'missing-test', location: 'apps/calc.mjs', line: null, claim: 'apps/calc.mjs has no test' });
+
+  it('is refuted when a test of the candidate imports the file it names, and is not sent to repair', async () => {
+    const { cand } = await setup({ files: { 'tests/calc.test.mjs': "import { mul } from '../apps/calc.mjs';\n" } });
+    record(cand, 'REPAIR_REQUIRED', [missing]);
+    await run();
+    const [f] = listFindings(lab.db, lab.runId);
+    expect(f!.status).toBe('rejected');
+    expect(f!.resolution).toContain('tests/calc.test.mjs');
+    expect(state()).not.toBe('REPAIRING');
+  });
+
+  it('goes to repair as before when no test of the candidate covers the file', async () => {
+    const { cand } = await setup();
+    record(cand, 'REPAIR_REQUIRED', [missing]);
+    await run();
+    expect(listFindings(lab.db, lab.runId)[0]!.status).not.toBe('rejected');
+    expect(state()).toBe('REPAIRING');
+  });
+});
+
+describe("a carried finding's one re-review (ADR 0015, amendment of 2026-11-16)", () => {
+  /** Review 1 raises `first`; attempt 2 ends at its turn cap without a report; review 2 raises `second` on its tree. */
+  async function carried(first: IngestedFinding[], second: IngestedFinding[], o: Setup = {}) {
+    const { cand, repo } = await setup(o);
+    record(cand, 'REPAIR_REQUIRED', first);
+    await run();
+    expect(state()).toBe('REPAIRING');
+    return repairAttempt(cand.parentSha, repo, 2, TURN_CAPPED, second);
+  }
+  const TEST_2 = finding('TEST-2', { claim: 'a second, different claim about mul', location: 'apps/calc.mjs:1', line: 1 });
+  const evidenceRefs = (f: { resolutionJson: unknown }): unknown => (f.resolutionJson as { evidence_refs?: unknown } | null)?.evidence_refs;
+
+  it('two carried findings: the first is dropped, a pass after that keeps its record, and the second, still present, ends the run at the review round cap', async () => {
+    await carried([finding('TEST-1'), TEST_2], [finding('TEST-1'), TEST_2], { reviewer: answers({ 'TEST-1': 'gone' }), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 2) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^review_rounds hard cap reached \(2 of 2\) with 1 open finding\(s\): TEST-2/);
+    expect(decisions('review.finding-rereview')).toHaveLength(2);
+    const all = listFindings(lab.db, lab.runId);
+    for (const f of all.filter((x) => x.externalId === 'TEST-1')) {
+      expect(f.status).toBe('rejected');
+      expect(f.resolution).toMatch(/^dropped: its one re-review \S+ by codex of tree \w+, told it by id with the candidate's diff and evidence, found the defect gone: tests\/mul\.test\.mjs:3 covers TEST-1/);
+      expect(evidenceRefs(f)).toEqual([expect.stringMatching(/^rereview:/)]);
+    }
+    for (const f of all.filter((x) => x.externalId === 'TEST-2')) expect(f.status).toBe('claim_pending');
+  });
+
+  it('never approves the tree: once the finding is dropped, the low finding of the same review still goes to repair', async () => {
+    const low = finding('LOW-2', { severity: 'low', claim: 'mul has no doc comment' });
+    await carried([finding('TEST-1')], [finding('TEST-1'), low], { reviewer: answers({ 'TEST-1': 'gone' }) });
+    await settle();
+    expect(state()).toBe('REPAIRING');
+    expect(listReviews(lab.db, lab.runId).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'REPAIR_REQUIRED']);
+    const all = listFindings(lab.db, lab.runId);
+    expect(all.filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['rejected', 'rejected']);
+    const brief = JSON.parse(readFileSync(briefPath(lab.ctx(), 3), 'utf8')) as { refs: string[] };
+    expect(brief.refs).toEqual(all.filter((f) => f.externalId === 'LOW-2').map((f) => f.id));
+  });
+
+  it('a re-reviewer that fails is replaced by another that did not raise the finding, not by the one that raised it', async () => {
+    const reviewer = { command: 'codex', data_policy_eligible: true, model: 'gpt-6-astra', reasoning_effort: null, extra_args: [] };
+    await carried([finding('TEST-1')], [finding('TEST-1')], {
+      reviewer: answers({ 'TEST-1': 'gone' }),
+      tweak: (c) => {
+        c.providers['codex-b'] = reviewer;
+        c.providers['codex-c'] = reviewer;
+        c.review = { ...c.review, providers: ['codex', 'codex-b', 'codex-c'], when_unavailable: 'block' };
+      },
+    });
+    lab.deps.adapters = { ...lab.deps.adapters, 'codex-b': scriptedAdapter(lab, () => okResult(null, { status: 'failed', error: 'crashed' })), 'codex-c': scriptedAdapter(lab, answers({ 'TEST-1': 'gone' })) };
+    await settle(30);
+    const sessions = listWorkers(lab.db, { runId: lab.runId, role: 'reviewer' }).filter((w) => w.purpose?.startsWith('review-finding:'));
+    expect(sessions.map((w) => w.provider)).toEqual(['codex-b', 'codex-b', 'codex-c']);
+    expect(decisions('review.finding-rereview.select').map((d) => d.summary)).toEqual([
+      expect.stringMatching(/^re-reviewer of finding TEST-1: codex-b\/gpt-6-astra \(independent\), not codex, which raised it$/),
+      expect.stringMatching(/^re-reviewer of finding TEST-1: codex-c\/gpt-6-astra \(independent\), not codex, which raised it$/),
+    ]);
+    expect(listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['rejected', 'rejected']);
+  });
+
+  it("dropping the tree's only finding asks one full fresh review of the tree, and its APPROVE delivers", async () => {
+    const { cand, repo, reviewer } = await setup({ reviewer: answers({ 'TEST-1': 'gone' }) });
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    await repairAttempt(cand.parentSha, repo, 2, TURN_CAPPED, [finding('TEST-1')]);
+    await settle(20);
+    expect(state()).toBe('DELIVERING');
+    expect(decisions('review.fresh').map((d) => (d.data as { reason: string }).reason)).toEqual(['rereview']);
+    expect(listReviews(lab.db, lab.runId).map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'REPAIR_REQUIRED', 'APPROVE']);
+    // The fresh review is the normal review of the tree: told no finding, no note, nothing to follow.
+    const fresh = reviewer.specs.at(-1)!.prompt;
+    expect(fresh).not.toContain('This is a re-review');
+    expect(fresh).not.toContain('This is a fresh review');
+  });
+
+  it('a dropped finding the fresh review of the tree raises again is a new claim: it takes the normal paths, to repair', async () => {
+    const { IMPLEMENTER_OUTPUT } = await import('../../integration/controller/harness.ts');
+    // Attempt 2 names a test for TEST-1, so sending it to repair again is no non-progress (#156).
+    const named = { state: 'SUCCEEDED', resultStatus: 'succeeded', result: { status: 'succeeded', structured: { ...IMPLEMENTER_OUTPUT, evidence_refs: [{ criterion_id: null, ref: 'tests/test-1.test.mjs', note: 'validation for finding TEST-1' }] }, text: null, error: null, exitCode: 0, usage: USAGE, durationMs: 1 } } as Parameters<typeof finishWorker>[2];
+    const { cand, repo } = await setup({ reviewer: answers({ 'TEST-1': 'gone' }, [finding('TEST-1')]) });
+    record(cand, 'REPAIR_REQUIRED', [finding('TEST-1')]);
+    await run();
+    await repairAttempt(cand.parentSha, repo, 2, named, [finding('TEST-1')]);
+    await settle(20);
+    expect(decisions('review.fresh')).toHaveLength(1);
+    expect(state()).toBe('REPAIRING');
+    const test1 = listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1');
+    // Dropped as the re-review answered; raised again by the fresh review, the new finding is open and goes to repair.
+    expect(test1.map((f) => f.status)).toEqual(['rejected', 'rejected', 'claim_pending']);
+    const brief = JSON.parse(readFileSync(briefPath(lab.ctx(), 3), 'utf8')) as { refs: string[] };
+    expect(brief.refs).toContain(test1[2]!.id);
+  });
+
+  it("dropping the tree's only finding with no review round left ends BLOCKED offering the verified candidate", async () => {
+    await carried([finding('TEST-1')], [finding('TEST-1')], { reviewer: answers({ 'TEST-1': 'gone' }), tweak: (c) => void (c.scheduler.hard_limits.review_rounds = 1) });
+    await settle();
+    expect(state()).toBe('BLOCKED');
+    expect(decisions('review.fresh')).toEqual([]);
+    const run = getRun(lab.db, lab.runId);
+    expect(run.outcomeReason).toMatch(/no fresh review of the tree was started: review_rounds hard cap reached \(1 of 1\)/);
+    expect(run.outcomeReason).toMatch(/The run holds a verified candidate: candidate 2 \(commit \w+, ref refs\/orbit\/\S+\/candidates\/2\)/);
+    const outcome = JSON.parse(run.outcomeJson!) as { decided?: string; verified_candidate?: { seq: number } };
+    expect(outcome).toMatchObject({ decided: 'BLOCKED', verified_candidate: { seq: 2 } });
+  });
+
+  it('an answer that asks for repair without naming the finding keeps it: it is not read as gone', async () => {
+    await carried([finding('TEST-1')], [finding('TEST-1')], { reviewer: answers({ 'TEST-1': 'other' }) });
+    await settle();
+    expect(listFindings(lab.db, lab.runId).filter((f) => f.externalId === 'TEST-1').map((f) => f.status)).toEqual(['claim_pending', 'claim_pending']);
+    expect(listFindings(lab.db, lab.runId).some((f) => f.externalId === 'OTHER-1')).toBe(false);
+    expect(state()).toBe('REPAIRING');
   });
 });
 

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { makeSandbox, type Sandbox } from './helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const boxes: Sandbox[] = [];
 afterEach(() => boxes.splice(0).forEach((b) => b.close()));
@@ -14,7 +15,8 @@ const box = () => {
 const json = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
 
 describe('orbit shim', () => {
-  it('supervises a provider command and records how it ended', async () => {
+  it('supervises a provider command and records how it ended', async (ctx) => {
+    skipWithoutPs(ctx); // without ps the shim cannot list its group, so it kills the group, itself last, and exits by signal
     const b = box();
     const dir = join(b.base, 'worker');
     mkdirSync(dir, { recursive: true });

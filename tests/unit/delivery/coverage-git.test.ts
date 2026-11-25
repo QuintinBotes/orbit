@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { assertTaskBranch, createDeliveryCommit, fetchBranchContaining, gitEnv, lsRemoteBranch, pushBranch, remoteHost, resolveRemoteUrl } from '../../../src/delivery/git.ts';
+import { assertTaskBranch, createDeliveryCommit, fetchBranchContaining, githubRepoFromUrl, gitEnv, lsRemoteBranch, pushBranch, remoteHost, resolveRemoteUrl } from '../../../src/delivery/git.ts';
 import { git, makeLab, type Lab } from '../../integration/delivery/harness.ts';
 
 let lab: Lab;
@@ -51,6 +51,24 @@ describe('remoteHost on addresses that cannot be trusted', () => {
   it('refuses a URL that does not parse and a non-file URL that names no host', () => {
     expect(() => remoteHost('https://[::1')).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID', message: expect.stringContaining('cannot be parsed') }));
     expect(() => remoteHost('ssh:///srv/repo.git')).toThrow(expect.objectContaining({ code: 'CONFIG_INVALID', message: expect.stringContaining('names no host') }));
+  });
+});
+
+describe('githubRepoFromUrl: the one reading of a github.com remote (#195)', () => {
+  it('reads OWNER/REPO from the https, ssh and scp forms of a github.com remote, and from nothing else', () => {
+    for (const url of ['https://github.com/acme/app.git', 'https://github.com/acme/app/', 'https://github.com/acme/app.git/', 'https://GitHub.com/acme/app', 'https://www.github.com/acme/app', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app.git', 'https://x-access-token@github.com/acme/app.git']) {
+      expect(githubRepoFromUrl(url), url).toBe('acme/app');
+    }
+    for (const url of ['https://github.com.evil.test/acme/app.git', 'https://evil.test/github.com/acme/app.git', '/srv/github.com/acme/app.git', 'git@gitlab.com:acme/app.git', 'https://github.com/acme', 'https://github.com/acme/app/tree']) {
+      expect(githubRepoFromUrl(url), url).toBeNull();
+    }
+  });
+
+  it('runs in linear time on a hostile remote URL', () => {
+    const t0 = performance.now();
+    for (const url of ['github.com:'.repeat(20_000), `https://github.com/${'a'.repeat(200_000)}`, `git@github.com:a/${'b.git'.repeat(40_000)}x/y`, `${'@'.repeat(100_000)}github.com:`]) expect(githubRepoFromUrl(url)).toBeNull();
+    // The bound catches backtracking (minutes at this length), not a busy runner.
+    expect(performance.now() - t0).toBeLessThan(2_000);
   });
 });
 

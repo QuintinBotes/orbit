@@ -37,6 +37,107 @@ created and no model is called in that case; the message names the fix, and
 `orbit doctor` shows the same problems. A detached run is judged by the service's
 environment, not yours, so only the first two checks apply to it.
 
+### Running an issue
+
+`orbit run --issue 42` starts a run from an issue of this checkout's GitHub
+repository instead of a typed goal (ADR 0019). The body must be a spec in the
+Spec Kit spec template's format; `orbit spec check 42` (or `orbit spec check
+spec.md` for a file) says whether it is, without calling a model:
+
+- the headings User Scenarios & Testing, Requirements and Success Criteria;
+- for every user story a `(Priority: P1)`, `**Why this priority**:`,
+  `**Independent Test**:` and at least one Given/When/Then line;
+- requirement and criterion ids of the forms `FR-###` and `SC-###`;
+- no `[NEEDS CLARIFICATION ...]` marker;
+- at most 50 scenarios in all, one contract criterion each.
+
+Each problem is one line that names the story, id or marker; the exit code is
+4. A body or file over 16 000 characters is refused unchecked, as
+`orbit run --issue` refuses it. An issue labelled `bug` with a reproduction
+section ("Steps to reproduce", "Reproduction") needs no spec: it runs as a
+repair whose new test must fail on the base revision.
+
+A closed or locked issue, a pull request, an issue of another repository, an
+issue with an open blocking issue, and a body that is empty, over 16 000
+characters or not a spec are refused before a run exists or a model is called.
+The contract keeps one mandatory criterion per acceptance scenario, in the
+issue's wording, and records the issue number and the hash of its body. The
+run keeps the body it started with: later edits change nothing, and a second
+run of the same issue is refused while one is unfinished (a run that ended,
+`BLOCKED` included, does not count; continue a blocked one with
+`orbit resume`). A section headed
+"Implementation notes" goes to the planner as hints, apart from the spec. The
+issue text is untrusted: it describes the work and cannot change the policy,
+the checks, the scope or the budgets.
+
+The pull request of a delivered run starts with `Closes #<n>`. With
+`notifications.github_comment: true` the issue gets one comment when the run
+ends, in any terminal state: outcome, failure class, pull request, evidence
+report, spend and the status of each criterion and check, and a line saying so
+if the issue was edited during the run. With it off (the default) nothing is
+written to the issue and the same text is in `issue-comment.md` in the run
+directory. `orbit run --issue` and `orbit spec check` read the issue through
+`gh` with your own login or `GH_TOKEN`; the service reads and comments with
+`GH_TOKEN` only.
+
+### Working a backlog
+
+`orbit queue run` works a backlog of issues in dependency order, one issue at a
+time, each as `orbit run --issue <n> --foreground` would run it (ADR 0020).
+`orbit queue list` shows what it would do and writes nothing:
+
+```bash
+orbit queue list --parent 165 --base next
+orbit queue run --parent 165 --base next --mode autonomous-delivery --wait-minutes 240
+```
+
+- The backlog is the sub-issues of `--parent`, in the parent's order, or
+  without it every open issue carrying the label, oldest first. That order is
+  the priority.
+- The frontier is the open issues labelled `ready-for-agent` (`--label`), not
+  labelled `ready-for-human` (`--human-label`), with no open blocking issue in
+  GitHub's issue dependencies, and with no unfinished or delivered run of
+  their own (a pull request closed without merging gives an issue back). It is
+  read from GitHub again before every issue. Every other open
+  issue is listed with the reason it waits; issues that block one another are
+  reported as a cycle and none of them runs.
+- Before each issue the checkout, which must be on the base branch (`--base`,
+  default `repository.base_branch`) with a clean tree, is fast-forwarded to the
+  remote's base branch, so each issue starts after the last merge. A base
+  with commits the remote does not have stops the queue, since they would go
+  into every pull request. Every pull request targets that branch.
+- A dependant starts only once its blocker is closed. GitHub closes an issue
+  from `Closes #n` only for the default branch; for another base the queue
+  closes an issue itself, with a comment, once its pull request has merged.
+  When only issues waiting on a merge are left, the queue looks every minute
+  for up to `--wait-minutes` (default 60; 0 stops at once). In
+  `autonomous-delivery` that merge is a person's: the queue waits for it. A
+  `release` run merges its own pull request only when a person has approved
+  turning merge on for that run (every contract starts with `merge: false`),
+  so no mode yet works a blocking chain without a person.
+- An issue gets up to `--attempts` runs (default 2); a run waiting on an answer,
+  or one that stopped holding a verified candidate (`BLOCKED` with an offer to
+  deliver or discard it), is not tried again and counts as a failed run. An
+  issue whose runs did not deliver, or whose body fails
+  `orbit spec check`, is labelled `ready-for-human` with one comment that says
+  why, and its dependants wait.
+- The queue stops when the frontier is empty, at `--max-issues`, at
+  `--budget-usd` (each run is capped at what is left), after two runs in a
+  row, on one issue or across issues, end without a delivered change (a
+  delivered run resets the count; the issue still goes to a person as above),
+  or on Ctrl-C (the run is paused) or SIGTERM (`timeout`, a systemd or docker
+  stop: the run stops where it is, no failed run is counted and the issue keeps
+  its labels; continue it with `orbit resume <run> --foreground`). It prints what it
+  did and what is left, and keeps the same in `.orbit/queue/<id>.json`: per
+  issue the outcome, pull request and every attempt. Exit 0, 10 when an issue
+  went to a person, 20 when interrupted.
+
+The queue reads and writes issues (a label, a comment, a close) through `gh`
+with `GH_TOKEN` or your own login; a delivering mode needs `GH_TOKEN` for the
+runs, as `orbit run` does. The token (or login) needs Issues: read and write on
+the repository: without it GitHub refuses the label, the comment and the close
+that lets a dependant in, and the queue's message names that permission.
+
 A foreground run exits with a code that names the state it ended in: 0
 `SUCCEEDED`, 10 `BLOCKED`, 11 `EXHAUSTED`, 12 `IMPOSSIBLE`, 13 `CANCELLED`, 20
 paused. `orbit help exit-codes` prints the whole table.
@@ -48,8 +149,10 @@ orbit service install
 orbit service status
 ```
 
-Orbit writes no credentials into the service definition. The service process
-gets only `PATH` (copied from your shell at install time), `NODE_OPTIONS` and
+The service carries `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` from
+the shell that installs it, so rerun `orbit service install` after changing them.
+Orbit never writes an API key or token into the service definition. The service
+also gets `PATH` (copied from your shell at install time), `NODE_OPTIONS` and
 `ORBIT_HOME`, plus whatever launchd or systemd provides. Make the credentials
 it needs visible to the user manager, then restart the service:
 
@@ -77,8 +180,21 @@ per repository, running `orbit service run --repo <root>`. The label is
 | macOS | `~/Library/LaunchAgents/dev.orbit.controller.<key>.plist` | loaded with `launchctl bootstrap gui/<uid>` |
 | Linux | `~/.config/systemd/user/dev.orbit.controller.<key>.service` | `Restart=on-failure`, `KillMode=process`. Run `loginctl enable-linger <user>` or the service stops at logout. |
 
-The definition uses absolute paths for Node and the bundle, restarts only on
-failure, throttles restarts, and writes logs under `~/.orbit/logs`. Installing
+The definition starts `~/.orbit/bin/orbit`. The launcher records absolute paths
+for Node and the bundle. A command from the same installation refreshes them.
+Only a bundle under `plugins/cache/<marketplace>/orbit/<version>/` can take over
+by claiming a newer version. An installed bundle can also replace a missing
+entry, even when that entry claimed a newer version. A clone or development
+worktree needs `ORBIT_LAUNCHER_REPOINT=1` to take over another installation.
+
+The launcher records its plugin cache directory when it has one. If its entry
+is missing, it starts the newest cached version with `dist/orbit.mjs` and names
+that build on stderr. Versions are compared numerically. With no fallback, it
+exits with the missing path and the fix: run the installed plugin's `bin/orbit`,
+or `orbit service install`. `orbit doctor` also fails on a missing launcher entry.
+
+The service restarts only on failure, throttles restarts, and writes logs under
+`~/.orbit/logs`. Installing
 again reloads it. `orbit service uninstall` removes it and waits for the service
 manager to let go of the job; runs and state are untouched. A controller finishes
 its current step before it stops, so uninstall can report that the manager is
@@ -96,7 +212,11 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 |---|---|
 | `orbit doctor` | `--probe` makes live requests (a few cents) |
 | `orbit init` | none |
-| `orbit run` | `--goal <text>` (or `-` for stdin), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
+| `orbit run` | `--goal <text>` (or `-` for stdin) or `--issue <number \| #number \| owner/repo#number \| url>` (see [Running an issue](#running-an-issue)), `--mode supervised\|autonomous\|autonomous-delivery\|release`, `--environment <name>` (release mode: deploy only there), `--fail-before off\|advisory\|required` (raise `verification.fail_before` for this run, never lower it), `--policy <path>`, `--foreground`, `--detach` |
+| `orbit spec check <file \| issue>` | `--policy <path>` (read only to find the repository of an issue), `--json` |
+| `orbit queue list` | `--parent <issue>`, `--label <name>`, `--human-label <name>`, `--base <branch>`, `--policy <path>`, `--json` (see [Working a backlog](#working-a-backlog)) |
+| `orbit queue run` | the options of `queue list`, and `--mode <mode>`, `--max-issues <n>`, `--budget-usd <usd>`, `--attempts <n>` (default 2), `--wait-minutes <n>` (default 60) |
+| `orbit map build` / `orbit map query <path...>` | `--rev <rev>` (default `HEAD`); `map query` exits 3 when a path is not in the tree. See [repo_map](configuration.md#repo_map) |
 | `orbit status [run-id]` | `--all` lists every run, not the latest 10 |
 | `orbit timeline <run-id>` | `--follow` / `-f`, `--last <n>`, `--all` |
 | `orbit logs <run-id>` | `--follow` / `-f`, `--lines <n>`, `--controller`, `--workers`, `--worker <id>` |
@@ -104,12 +224,15 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit resume <run-id>` | `--foreground`, or `--detach` (leave it to the service); with neither it needs a live controller (the service, or the foreground controller that owns the run) and otherwise refuses without changing anything, or drives the run itself on a terminal. `--force`, `--policy <path>` |
 | `orbit cancel <run-id>` | `--wait <seconds>` |
 | `orbit report <run-id>` | `--interim`; `orbit report --learning` takes no run id |
+| `orbit export <run-id> --otel` | `--out <file>` (default: standard output); see [Exports and published schemas](#exports-and-published-schemas) |
 | `orbit questions <run-id>` | `--all` includes answered and withdrawn questions |
 | `orbit questions --pending` | the open questions of every unfinished run; `--quiet` prints nothing when there are none (what the plugin's SessionStart hook runs) |
 | `orbit decide <run-id> <question-id> <answer...>` | `--by <name>` (models and workers cannot decide) |
 | `orbit verify [run-id]` | see below |
 | `orbit repair <run-id \| description \| ->` | `--foreground` or `--detach`, `--mode <mode>`, `--policy <path>`; `-` reads the description from stdin |
-| `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w` |
+| `orbit stats` | `--since <when>`, `--until <when>`: an ISO date or time, or a span such as `90m`, `24h`, `7d`, `2w`; `--orbit-version <version>`: only runs that version started (`unknown` for runs from before the version was recorded) |
+| `orbit retro` | `--since <when>` (as for `orbit stats`), `--issue-repo <owner/repo>` (where an approved Orbit issue draft is filed, default `QuintinBotes/orbit`), `--json` (asks nothing, so applies and sends nothing); see spec section 16, Retro |
+| `orbit bench` | `--tier lab\|live`; lab: `--without <stage>`; live: `--budget <usd>` and `--approved-by <name>` (both required), `--baseline`, `--catalog <file>`; both: `--only <ids>`, `--false-dones <file>`, `--out <dir>`. See [Benchmark](#benchmark) |
 | `orbit gc` | `--keep-days <n>` (0 prunes every finished run now; default `retention.keep_runs_days`), `--dry-run` |
 | `orbit release resolve <run-id>` | `--deployed`, `--not-deployed`, `--environment <name>`, `--by <name>`; see [Release mode safeguards](#release-mode-safeguards) |
 | `orbit policy show <run-id>` | none |
@@ -118,12 +241,25 @@ Every command accepts `--repo <dir>`, `--json` and `--help`.
 | `orbit learn list` | `--status`, `--kind`, `--search <text>`, `--global`, `--limit <n>` (default 50); the other `learn` commands are in [the learning layer](learning.md) |
 | `orbit service install / uninstall / status / run` | `--entry <path>` on install |
 
+### doctor
+
+`orbit doctor` starts each check's executable and each toolchain inside the
+sandbox the check would get, in an empty scratch checkout, not the repository.
+It therefore cannot see a package manager the repository pins with
+`packageManager` in `package.json`: `pnpm --version` can pass there while the
+real check, which runs the pinned version, fails (#142). A run does not lose an
+attempt to that: a baseline whose checks all fail for one environment reason (a
+missing package, a refused package fetch) blocks at preflight and names that
+reason (#194).
+
 ### verify, repair, inquisition
 
 `orbit verify [run-id]` (default: the most recent run) re-runs the independent
 verification of the run's latest candidate: a clean checkout of the exact
 candidate tree, the frozen policy's checks, scope inspection and the evidence
-evaluation. It prints a verdict per contract criterion with the artifacts it
+evaluation. The dependency install always runs again in that checkout, even
+for a run that has ended, since a recorded install left its files in another
+one. It prints a verdict per contract criterion with the artifacts it
 rests on. It takes a short lease so it never runs beside a live controller and
 never changes the run's state. It uses the same evidence function as the
 VERIFYING step, so a waived finding gives the same verdict in both. Exit 0
@@ -231,6 +367,34 @@ COR-1", "unit passed on the repaired tree in the probe checkout: COR-1" and
 "unit failed on the pre-repair tree with the tests named for the
 finding (exit 1, 2 attempts): COR-1".
 
+A review repair, once one goes, is also briefed every unresolved finding a
+`REPAIR_REQUIRED` review of the tree raised, whatever its severity; what blocks
+the tree does not change.
+
+A blocking finding that was sent to repair from an earlier tree, is still open
+on the current verified candidate and that no check confirmed (an "add tests"
+finding whose test passes before and after the repair, say) gets one re-review
+before it goes to repair again (ADR 0015, amendment of 2026-11-16). A fresh
+reviewer session, of an independent provider that did not raise it while one is
+eligible, is told the finding by id with the candidate's review packet and
+answers only whether the defect is still present. It is no review of the tree:
+it never approves it. Gone, the finding is dropped with the re-reviewer's
+evidence (`review.finding-rereview.answer`, then `review.finding.rejected`) and
+the tree is decided on its own reviews without it; when that leaves no open
+finding and no approval, the tree gets one full fresh review (`review.fresh`),
+whose APPROVE alone clears it. Still present, it goes to
+repair within the budgets. A run asks one re-review per finding, at the cost of
+a review round.
+
+When every finding about to go to repair was in the previous review repair and
+no implementer report since names a test for any of them (an implementer that
+ended at its turn cap without a report names none), the run stops as
+non-progress (`repair.non-progress`) naming the open findings, since only such a
+test can close them and the same brief would end the same way; on a tree where
+a re-review found one of them still present, the repair goes on once more. The
+reviewed candidate passed verification, so the run ends `BLOCKED` and offers it
+(see below), unless the run delivered a candidate.
+
 `orbit repair <run-id>` hands the failure of a `BLOCKED` or paused run with FAIL
 evidence to a repair. A run id that does not qualify is refused with the
 reason. Given a description instead of a run id, it starts a new run with the
@@ -279,6 +443,34 @@ stays null until a branch exists, and `candidate_ref` carries the ref. In the de
 on exactly the reviewed tree, pushes the task branch and opens a pull request
 (draft by default).
 
+A run that runs out (a budget, a cap, non-progress: anything that would end it
+`EXHAUSTED`) while it holds a candidate that passed verification ends `BLOCKED`
+instead, and offers that candidate (issue #169). A run that stops `BLOCKED` for
+any other reason while it holds one offers it the same way (`decided: BLOCKED`
+in the outcome), beside the block's own way forward, which a resume still
+takes. A run that delivered a candidate, or pushed its delivery commit before
+the delivery failed, offers none: its branch holds that commit. A run that
+delivered ends `EXHAUSTED` as before: it has its pull request. A block on a
+policy snapshot that no longer verifies offers none either. The
+newest candidate whose standing evidence is PASS is the one offered. The outcome
+reason says why the run stopped, then names the candidate (its number, commit
+and ref, the checks it passed, and each open review finding with its review round,
+severity and status), then the way forward: deliver it or discard it. The report
+has a "Verified candidate" section and `verified_candidate` in `final.json` with
+the same facts and two commands. `deliver_command`, run from the repository root,
+pushes the candidate commit to `<repository.branch_prefix><run-id>` and opens a
+draft pull request whose body, `.orbit/runs/<run-id>/verified-candidate.md`,
+lists the checks it passed and every open finding, and says whether a review
+approved it; it needs `gh`, and you run it, because Orbit did not deliver it.
+Every value it takes from the policy (remote, branch, paths) is one shell word,
+quoted where needed, `git push` reads its arguments after `--`, and a value
+with a leading `-` is refused, so none can act as an option. `discard_command` is
+`orbit cancel <run-id>`. Orbit never delivers such a candidate itself, in any
+mode, and `orbit resume` would continue the run under the limits that stopped
+it. The failure
+class is the one the `EXHAUSTED` end would have had (ADR 0018), and
+`orbit stats` counts these runs on their own as well.
+
 ### The final report
 
 `orbit report <run-id>` prints `final.md`; `final.json` has the same content.
@@ -307,8 +499,23 @@ change, say) are listed once under that reason.
 
 ### stats and gc
 
-`orbit stats` prints success rate, cost, token and cache use, repair loops and
-time to green for this repository, read-only. `orbit gc` deletes the run
+`orbit stats` prints success rate, cost, token and cache use, the pass rate and
+cost per accepted task of each route, repair loops and
+time to green for this repository, read-only. It also says why runs ended: a
+count per failure class (`failure_classes` in `--json`), and pass rate and
+spend per accepted task per Orbit version (`by_version`). Every run that ends
+stores one class from the list in `schemas/failure-class.schema.json`
+(`environment`, `check-misconfigured`, `gate-deadlock`, `awaiting-decision`,
+`scope`, `budget`, `turn-cap`, `model`, `review-dispute`, `credentials`,
+`cancelled`), a second one when it had two causes, and the Orbit version that
+started it; a run that succeeded has no class. A run that waits for a decision
+you give with `orbit decide` is `awaiting-decision`, apart from the gates
+nothing can open (`gate-deadlock`). Runs that stopped holding a verified candidate (see
+[Where a run's result goes](#where-a-runs-result-goes)) are also counted on
+their own, in the header and as `runs.verified_undelivered` in `--json`. The rules are in
+[decision 0018](decisions/0018-run-end-record.md). `orbit report` and `orbit
+timeline` show the same fields for one run. Runs that ended before Orbit
+recorded them show no class and version `unknown`. `orbit gc` deletes the run
 directories and worktrees of finished runs that ended more than
 `retention.keep_runs_days` ago (`--keep-days 0`: every finished run now).
 Database rows stay and `BLOCKED` runs are never touched. A run whose worktrees
@@ -327,6 +534,59 @@ install a person approved once, filled; ADR 0009)
 alone, since every later run of the repository reads them. Remove that
 directory to start clean (`chmod -R u+w` it first: Go writes its module cache
 read-only); the next dependency install fills it again.
+
+### Benchmark
+
+`orbit bench` scores one Orbit version on a fixed set of goals and writes the
+scorecard to `docs/scorecards/orbit-<version>-<tier>.json` in the Orbit source
+checkout it runs from (`--out <dir>` writes it elsewhere). The file is stable
+JSON, so two versions diff line by line. It needs the source checkout
+(`examples/demo-app`, `tests/fakes` and the installed dependencies), not an
+installed plugin.
+
+```bash
+orbit bench --tier lab                                  # the regression suite: fake providers, no model
+orbit bench --tier lab --only advisory-finding-repaired # one scenario; writes no scorecard without --out
+orbit bench --tier lab --without diagnosis              # the same scenarios with a stage off, compared
+orbit bench --tier live --budget 40 --approved-by <owner> [--baseline]   # spends money
+```
+
+- **lab**: one scenario per issue Orbit fixed (`src/bench/scenarios.ts`),
+  replayed on the demo app with the fake providers and the real controller.
+  Each row gives pass or fail, the state and failure class the run ended
+  with, its attempts and its simulated spend. A failed scenario makes the
+  command exit 1 and name it with its issue; CI runs the whole lab.
+- **live**: the goals of `data/bench/live-goals.json` (`--catalog` for
+  another file), each pinned to a commit of one of the owner's repositories
+  where a real failure happened, with a held-out check: test files of the
+  accepted fix laid over the tree the run delivered, and a command that must
+  pass. A goal whose check does not fail on its commit and pass on the fix
+  is invalid and excluded. Each goal runs three times (Orbit in `autonomous`
+  mode, with the policy `orbit init` writes), and with `--baseline` three
+  times more as one plain `claude -p` session; every result is kept. Each
+  session works in a fresh repository that holds the pinned commit and its
+  history only, with no remote, so the accepted fix is not in it; it
+  is fetched only to grade. The report gives pass rate, cost per accepted task and time,
+  and the difference to the plain session. It refuses to start without
+  `--budget <usd>` (no default) and `--approved-by <name>`; each session is
+  capped at an equal share of the budget.
+- **--without <stage>** (lab): `diagnosis` (no verifier session; the repair
+  brief is the failure records as they are) or `fail-before` (new tests are
+  not run on the base revision). Scope, secrets and verification are gates
+  and cannot be turned off.
+
+The headline of every scorecard is the false-done rate of its version: runs
+reported done that were later found defective, over the runs reported done.
+Record each one by hand in `docs/scorecards/false-dones.json`
+(`--false-dones <file>` for another file); nothing is collected
+automatically:
+
+```json
+[{ "orbit_version": "0.4.0", "ref": "https://github.com/QuintinBotes/orbit/pull/300", "found_by": "revert", "link": "https://github.com/QuintinBotes/orbit/commit/<sha>" }]
+```
+
+`found_by` is one of `hidden-check`, `review-finding`, `reopened-issue` or
+`revert`; a malformed record stops the bench instead of being skipped.
 
 ## Using the native /goal command
 
@@ -348,6 +608,47 @@ candidate tree, and the evidence line above only reads that state. If `/goal`
 says the goal is met while `orbit status` says otherwise, or a session believes
 the work is done, trust `orbit status` and `orbit verify`. Do not use `/goal`
 to bypass a `BLOCKED` run: answer the question with `orbit decide` and resume.
+
+## Exports and published schemas
+
+Other tools can read a run without reading Orbit's database (issue #178).
+
+`orbit export <run-id> --otel` writes the run as OpenTelemetry traces: one
+OTLP/JSON request on one line, the form a collector's `otlpjsonfile` receiver
+reads and its OTLP/HTTP receiver accepts at `/v1/traces`, so no custom mapping
+is needed. The trace has a root span for the run (`orbit.run.id`,
+`orbit.run.state`, `orbit.run.mode`, `orbit.version`, `orbit.failure_class`)
+and one `invoke_agent <role>` span under it per worker, with:
+
+| Attribute | Value |
+|---|---|
+| `gen_ai.operation.name` | `invoke_agent` |
+| `gen_ai.provider.name` | `anthropic` (Claude), `openai` (Codex), `meta` (Muse) |
+| `gen_ai.agent.name`, `gen_ai.agent.id` | the worker's role and id |
+| `gen_ai.request.model` | the model the worker ran |
+| `gen_ai.usage.input_tokens` | every prompt token, cached ones included |
+| `gen_ai.usage.output_tokens` | output tokens |
+| `orbit.cost_usd`, `orbit.cost_source` | the cost and whether a provider reported it or Orbit estimated it; a cost no one measured is absent and `orbit.cost_source` is `unavailable`, never 0 |
+| `orbit.attempt`, `orbit.worker.state` | the attempt it served and how it ended; a failed or lost worker is an error span with `error.type` |
+
+The GenAI conventions are still in development, so the export pins one
+release, the OpenTelemetry semantic conventions **1.37.0**, and names it in
+every `schemaUrl` (`https://opentelemetry.io/schemas/1.37.0`). Moving to a
+later release is a deliberate change. The export never includes prompt or
+source text: no goal, no message, no worker error (which can quote provider
+output), only ids, roles, models, counts, states and times. There is no option
+to include them.
+
+Orbit's own documents have published, versioned JSON Schemas in `schemas/`.
+Each document names its version in its `schema` field; removing or retyping a
+field makes a new version and a new schema, while a nested object may gain a
+field within one.
+
+| Document | Schema | Version |
+|---|---|---|
+| The run report: `final.json`, `orbit report --json` | `schemas/run-report.schema.json` | `orbit.final/1` |
+| The spec check result: `orbit spec check --json` | `schemas/spec-check.schema.json` | `orbit.spec-check/1` |
+| The benchmark scorecard (issue #172) | `schemas/scorecard.schema.json` | `orbit.scorecard/1` |
 
 ## Release mode safeguards
 
@@ -755,7 +1056,12 @@ run is held by one owner lease with a 60 second lifetime, renewed on every
 tick. `orbit status` shows the heartbeat age and the last-progress time per run.
 
 The watchdog tells a stalled run from a busy one using last-progress time,
-worker log activity, step age and controller heartbeats. Defaults: a run with
+worker log activity, the output of the run's running checks and fail-before
+probes (a probe that has written nothing yet counts from its start), the time
+its latest check ended (between two checks of a long baseline none is running),
+step age and controller heartbeats. A check that hangs is still bounded by its own
+`timeout_seconds`. Each fail-before probe attempt also has started and finished
+lines on the timeline, so a long VERIFYING step shows what is running. Defaults: a run with
 no progress for 10 minutes is reported as stalled; a controller heartbeat older
 than 90 seconds is stale; a step that outlives its timeout (for example 60
 minutes for `IMPLEMENTING`, 15 for `RECOVERING`) is abandoned, its workers are
@@ -783,7 +1089,8 @@ Resuming a run that blocked on a worker failure you have since fixed (a login,
 a broken provider wrapper) starts a fresh series of attempts for that worker
 instead of replaying the stored failure. Each such restart spends one of
 `recovery_attempts`, so a loop of resumes is bounded, and with none left the
-run ends `EXHAUSTED`. A foreground `resume` after `kill -9` of the controller
+run ends `EXHAUSTED`, or `BLOCKED` when it holds a verified candidate (issue
+#169). A foreground `resume` after `kill -9` of the controller
 does not wait for the dead controller's lease to expire: when the owner is a
 controller of this machine whose process is gone, the lease is expired for you
 and recorded as a takeover.
@@ -800,6 +1107,13 @@ The state database is `<repo>/.orbit/state.sqlite` (WAL mode), with
 when Orbit opens the database, and the applied count is stored in
 `PRAGMA user_version`. `orbit doctor` shows it as `schema version N/M`.
 
+Before upgrading an existing schema, Orbit checks for unexpired run leases
+inside the same `BEGIN IMMEDIATE` transaction. Orbit refuses migration if any
+lease is unexpired and leaves `PRAGMA user_version` unchanged. The error names
+every run and owner. Let those runs finish, stop them, or use the same Orbit
+version that is driving them until their leases end. Expired leases from
+crashed controllers do not block migration. A fresh database migrates as before.
+
 To upgrade:
 
 1. `orbit service uninstall` (or stop foreground runs). Runs and workers keep their state.
@@ -807,7 +1121,7 @@ To upgrade:
    files that match, including the `-wal` and `-shm` files, with no controller running.
 3. Install the new Orbit, then run `orbit doctor`. The service definition
    starts the launcher `~/.orbit/bin/orbit`, not the bundle, and any `orbit`
-   command run from the new install repoints the launcher at it, so the service
+   command run from a new version of the same plugin repoints the launcher at it, so the service
    needs no reinstall. `orbit service status` shows the bundle the launcher runs
    and says when it is missing. A running controller keeps the old bundle until
    it restarts; `orbit service install` restarts it at once.

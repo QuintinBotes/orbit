@@ -26,8 +26,8 @@ import { archiveAttempt, handleFromWorkerDir, LAUNCH_FILE, readLogLines } from '
 import { LOG_FILE, readExitRecord } from '../adapters/shim.ts';
 import { renderSystemPrompt, ROLE_OUTPUT_KIND } from '../adapters/prompt.ts';
 import { MODEL_OUTPUT_SCHEMAS } from '../contract/model-outputs.ts';
-import { PROVIDER_HOSTS, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
-import { detectToolchains, prepareToolchainLayout, toolchainLayout } from '../isolation/toolchains.ts';
+import { PROVIDER_HOSTS, prepareWorkerTmpDir, profileForWorker, workerAllowedHosts, workerTmpDir } from '../isolation/profiles.ts';
+import { detectToolchains, freshWorkerScratch, prepareToolchainLayout, prepareWorkerScratch, toolchainLayout } from '../isolation/toolchains.ts';
 import { stopLaunch, stopWorker, WORKER_RESTART_EVENT } from '../recovery/reconcile.ts';
 import { route, toDecisionRecord } from '../routing/router.ts';
 import { allowMatch, fundedSessionCap, tierOf, worstCaseRequestUsd } from '../routing/registry.ts';
@@ -37,8 +37,10 @@ import { chargeBasis, dearestPricing, ROLE_COST_CEILING_USD, ROLE_WALL_CEILING_M
 import { marksCharges } from '../scheduling/accounting.ts';
 import { estimateCost, inputIncludesCacheRead } from '../routing/pricing.ts';
 import type { BudgetPhase } from '../scheduling/types.ts';
+import { ENV_TURN_CAP, ENV_TURN_REMIND_AT, reminderThreshold, turnCapBounds, turnCapFor } from '../scheduling/turn-cap.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, providerFamily } from '../policy/config.ts';
+import { DEFAULT_OUTPUT_BUDGETS, outputBudgets, partnerImplementers, providerFamily, routingLearning } from '../policy/config.ts';
+import { partnerFailures, skippedPartners } from './route-outcome.ts';
 import { homeOf, toolchainCacheRootFor, type RunContext } from './context.ts';
 import { assertLeaseHeld } from './run-store.ts';
 import { activeOverlayFor } from './knowledge-hooks.ts';
@@ -216,17 +218,24 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
   // (docs/decisions/0009-toolchain-profiles.md). The worker keeps the real HOME its provider CLI needs. The hosts its
   // sandbox allows decide whether NuGet's vulnerability audit can run there; a Codex or Muse worker, a read-only reviewer,
   // is confined to its provider's hosts by its adapter (codexReviewerProfile, museReviewerProfile).
+  // A Claude worker's build state goes in a fresh directory in its private temp directory, which Bash may write in both
+  // tiers; the claude-sandbox tier denies writing the worker directory (issue #140). A Codex or Muse reviewer's srt
+  // profile may write only its worker directory, so its build state stays there.
+  const fresh = provider === 'claude' ? freshWorkerScratch(prepareWorkerTmpDir(w.workerDir)) : null;
+  const scratchRoot = fresh?.root ?? join(w.workerDir, 'toolchains');
   const toolchains = toolchainLayout({
     toolchains: detectToolchains({ roots: [req.cwd] }),
     mode: 'worker',
     cacheRoot: toolchainCacheRootFor(ctx),
-    scratchRoot: join(w.workerDir, 'toolchains'),
+    scratchRoot,
     tmpDir: workerTmpDir(w.workerDir),
     hostHome: home,
     hostEnv: env,
     networkHosts: provider === 'claude' ? workerAllowedHosts(provider, policy.snapshot) : PROVIDER_HOSTS[provider],
   });
-  prepareToolchainLayout(toolchains);
+  // An earlier launch that may still run (spawn reattaches to it) keeps its build state; orbit gc removes it with the run.
+  if (fresh) prepareWorkerScratch(toolchains, fresh, { removeEarlier: !existsSync(join(w.workerDir, LAUNCH_FILE)) });
+  else prepareToolchainLayout(toolchains, scratchRoot);
   const sandbox = profileForWorker({
     worktree: req.cwd,
     workerDir: w.workerDir,
@@ -240,6 +249,7 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     timeoutMs,
     env,
   });
+  const turns = recordTurnCap(ctx, w);
   return {
     runId: ctx.run.id,
     workerId: w.id,
@@ -253,15 +263,41 @@ function taskSpec(ctx: RunContext, w: WorkerRecord, req: WorkerRequest): TaskSpe
     outputSchema: req.outputSchema ?? schemaFor(w.role),
     readOnly: req.readOnly,
     ...(req.experiments ? { experiments: true } : {}),
-    maxTurns: ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session,
+    maxTurns: turns.cap,
     timeoutMs,
     sandbox,
     policyPath: policy.path,
     policyHash: policy.hash,
-    env: toolchains.env,
+    // The guard hook reads these to tell the session how many turns it has left (issue #177).
+    env: { ...toolchains.env, [ENV_TURN_CAP]: String(turns.cap), [ENV_TURN_REMIND_AT]: String(turns.remindAt) },
     ...(outputCap === null ? {} : { outputTokens: outputCap }),
     ...(req.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: req.maxBudgetUsd }),
   };
+}
+
+/**
+ * The turn cap a new session of `role` starts with: the 75th percentile of the turns successful sessions of the same
+ * role and difficulty took, within the configured bounds, and never above the policy hard cap (issue #177).
+ */
+export function sessionTurnCap(ctx: Pick<RunContext, 'ledger' | 'snapshot' | 'db' | 'run'>, role: string): number {
+  const hard = ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  return Math.min(hard, turnCapFor(ctx.db, ctx.run.id, role, ctx.snapshot.config));
+}
+
+export const SESSION_TURN_CAP_EVENT = 'worker.turn-cap';
+
+/** Choose a session's turn cap and the turn its reminder starts at, and record both against the worker. */
+function recordTurnCap(ctx: RunContext, w: WorkerRecord): { cap: number; remindAt: number } {
+  const cap = sessionTurnCap(ctx, w.role);
+  const remindAt = reminderThreshold(cap, turnCapBounds(ctx.snapshot.config).reminderFraction);
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, SESSION_TURN_CAP_EVENT, ctx.ownerId, { worker_id: w.id, role: w.role, purpose: w.purpose, cap, remind_at: remindAt }, ctx.clock.now()));
+  return { cap, remindAt };
+}
+
+/** The turn cap and reminder turn recorded for a worker's latest launch; null when none was recorded. */
+export function recordedTurnCap(db: OrbitDb, runId: string, workerId: string): { cap: number; remindAt: number } | null {
+  const row = db.get<{ cap: number | null; remind_at: number | null }>("SELECT json_extract(data_json, '$.cap') AS cap, json_extract(data_json, '$.remind_at') AS remind_at FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.worker_id') = ? ORDER BY id DESC LIMIT 1", runId, SESSION_TURN_CAP_EVENT, workerId);
+  return typeof row?.cap === 'number' && typeof row.remind_at === 'number' ? { cap: row.cap, remindAt: row.remind_at } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,6 +1110,9 @@ export interface RouteChoice {
   decisionId: string;
 }
 
+/** The purpose prefix of an implementation attempt's route (`implement:<n>`): the only route measured outcomes move. */
+const IMPLEMENT_PURPOSE = 'implement:';
+
 /**
  * Route a work unit once and record why. The decision id is derived from the
  * purpose, so a retried step reuses the recorded route instead of routing
@@ -1088,9 +1127,17 @@ export function routeFor(ctx: RunContext, purpose: string, workKind: WorkKind, s
   }
   const config = ctx.snapshot.config;
   try {
-    const decision = route({ workKind, signals, registry: ctx.deps.registry, policy: config, outcomes: routeStats(ctx.db, { workKind }) });
+    // Measured outcomes of the same task class (work kind and difficulty) inside the learning window (issue #168). Only
+    // implementer attempts are measured, so only an implementation attempt reads them, and only the implementer's: a
+    // planner, a diagnosis or an inquisitor keeps the table. None at all when routing.learning.enabled is false.
+    const learning = routingLearning(config);
+    const learns = learning.enabled && purpose.startsWith(IMPLEMENT_PURPOSE);
+    const outcomes = learns ? routeStats(ctx.db, { workKind, role: 'implementer', difficulty: signals.difficulty, sinceMs: ctx.clock.now() - learning.window_days * 86_400_000 }) : [];
+    // Only an implementation attempt may go to a partner (issue #176), judged on this run's records: its failed candidates and its skips.
+    const partners = purpose.startsWith(IMPLEMENT_PURPOSE) && partnerImplementers(config).length > 0 ? { implementation: true, partnerFailures: partnerFailures(ctx), partnersSkipped: skippedPartners(ctx) } : {};
+    const decision = route({ workKind, signals: { ...signals, ...partners }, registry: ctx.deps.registry, policy: config, outcomes });
     const rec = toDecisionRecord(decision);
-    recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose } }, ctx.clock);
+    recordDecision(ctx.db, ctx.runDir, { id: decisionId, runId: ctx.run.id, kind: rec.kind, summary: `${purpose}: ${rec.summary}`.slice(0, 500), data: { ...rec.data, purpose, ...(learning.enabled ? {} : { learning_disabled: 'routing.learning.enabled is false: measured outcomes were not read' }) } }, ctx.clock);
     return { provider: decision.provider, model: decision.model, effort: decision.effort, workKind, decisionId };
   } catch (err) {
     if (!isOrbitError(err, 'PROVIDER_UNAVAILABLE')) throw err;

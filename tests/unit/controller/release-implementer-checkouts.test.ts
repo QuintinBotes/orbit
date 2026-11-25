@@ -8,7 +8,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { worktreeRootFor } from '../../../src/controller/context.ts';
 import { writeFinalReport } from '../../../src/controller/report.ts';
 import { acquireLease, getRun, transition } from '../../../src/controller/run-store.ts';
@@ -22,6 +22,7 @@ import { pruneExpiredRuns } from '../../../src/storage/retention.ts';
 import { finishWorker, getWorker, markWorkerRunning, planWorker } from '../../../src/storage/workers.ts';
 import { counters } from '../recovery/helpers.ts';
 import { makeUnitLab, OWNER, type UnitLab } from './coverage-helpers.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const DEAD = 2_000_000_000;
 
@@ -315,7 +316,8 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(existsSync(u1)).toBe(false);
   });
 
-  it('recovery does not record a running worker stopped when its group could not be signalled, and keeps its checkout', async () => {
+  it('recovery does not record a running worker stopped when its group could not be signalled, and keeps its checkout', async (ctx) => {
+    skipWithoutPs(ctx);
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     const { main } = await repoWithImplementer(lab);
     const proc = sleeper();
@@ -335,7 +337,8 @@ describe('a checkout whose writer may still run is never released', () => {
     expect(retainedEvents().at(-1)!.worktrees).toContain('implementer');
   });
 
-  it('recovery does not finish a lost worker whose provider outlived its shim and could not be stopped, and keeps its checkout', async () => {
+  it('recovery does not finish a lost worker whose provider outlived its shim and could not be stopped, and keeps its checkout', async (ctx) => {
+    skipWithoutPs(ctx);
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     const { main } = await repoWithImplementer(lab);
     const proc = sleeper();
@@ -537,6 +540,7 @@ describe('an implementer that committed in its checkout', () => {
 });
 
 describe('a worker whose shim was launched but has not written pid.json yet', () => {
+  beforeEach(skipWithoutPs);
   /** A PLANNED worker whose launch.json names `proc` (its shim, starting), with no pid.json. */
   function starting(l: UnitLab, id: string, cwd: string, proc: { pid: number; start: string }, requestedAt: number): void {
     const workerDir = join(l.base, 'workers', id);
@@ -593,7 +597,8 @@ describe('a worker whose shim was launched but has not written pid.json yet', ()
 });
 
 describe('a check still running in its checkout', () => {
-  it('the release keeps the checkout of an open check run, and a later controller start releases it once the check is closed', async () => {
+  it('the release keeps the checkout of an open check run, and a later controller start releases it once the check is closed', async (ctx) => {
+    skipWithoutPs(ctx);
     lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING'] });
     const { base, root } = await repoWithImplementer(lab);
     const chk = join(root, 'check-1');

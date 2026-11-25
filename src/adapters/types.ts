@@ -28,6 +28,8 @@ export interface ProviderCapabilities {
   detail: string;
   /** The CLI is fine but the configured tier cannot run here, so `available` is false for a reason `detail` names. */
   tierUnavailable?: boolean;
+  /** A partner provider (Codex, Muse): whether its writable worktree tier can implement here, and why not (issue #176). */
+  writable?: { ok: boolean; why: string };
 }
 
 export type CredentialState = 'valid' | 'missing' | 'expired' | 'invalid' | 'unknown';

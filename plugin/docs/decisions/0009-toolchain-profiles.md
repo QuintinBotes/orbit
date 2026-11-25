@@ -75,7 +75,9 @@ Maven and Gradle were not installed where this was measured.
    points at the user's own caches (`~/.cargo`, `~/go`, `~/.m2`,
    `~/.nuget/packages`, `~/Library/Caches/pip`).
    - They are written only by Orbit's dependency-install step
-     (`orbit-install`, and `orbit-install-scripts` after it): the install
+     (`orbit-install`, and `orbit-install-scripts` after it; in the
+     implementer's worktree at PREFLIGHT, `orbit-worktree-install` and
+     `orbit-worktree-install-scripts`): the install
      from the repository's lockfile (`npm ci`) or the configured
      `dependencies.install_command` (for example `cargo fetch --locked`).
      That step's sandbox has the detected toolchains' caches writable, and
@@ -93,7 +95,13 @@ Maven and Gradle were not installed where this was measured.
    home, Maven's local repository, NuGet's HTTP and plugin caches) go to a
    private directory per check attempt (`<check dir>/toolchains/`, writable,
    removed with the attempt's home and temp directory) or per worker
-   (`<worker dir>/toolchains/`). They are never shared between attempts, so a
+   (a fresh `toolchains-<random>/` per session in a Claude worker's private
+   temp directory, which Bash may write in both worker tiers, #140; it is built
+   in the temp root, which no worker may read or write, and renamed into place,
+   so a process the worker left running cannot make Orbit create a directory
+   through a link, and a restarted worker's build state is not reused;
+   `<worker dir>/toolchains/` for a Codex or Muse reviewer, whose `srt` profile
+   writes only its worker directory). They are never shared between attempts, so a
    compiled object or a cached test result from one candidate cannot reach
    another's evidence. Virtual environments belong in the checkout (the
    install step creates them there; `POETRY_VIRTUALENVS_IN_PROJECT` and

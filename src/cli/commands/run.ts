@@ -3,6 +3,9 @@ import { releaseEnvironmentProblem } from '../../contract/validate.ts';
 import { failBeforePolicy, raiseFailBefore, RUN_MODES } from '../../policy/index.ts';
 import { FAIL_BEFORE_MODES, type OrbitConfig } from '../../policy/types.ts';
 import { startRun, stateDbPath } from '../../controller/index.ts';
+import { listRuns } from '../../controller/run-store.ts';
+import { NON_TERMINAL } from '../../controller/states.ts';
+import { OrbitError } from '../../core/errors.ts';
 import { existsSync } from 'node:fs';
 import type { Args, OptionSpec } from '../args.ts';
 import { liveServiceController, openState, resolveRepo, type CliContext } from '../context.ts';
@@ -11,9 +14,16 @@ import { json, line } from '../io.ts';
 import { admitRun } from '../admission.ts';
 import { loadCommandPolicy } from '../policy-file.ts';
 import { driveForeground } from './drive.ts';
+import type { OrbitDb } from '../../storage/db.ts';
+import { join } from 'node:path';
+import { isOrbitError } from '../../core/errors.ts';
+import { orbitDir } from '../../controller/start.ts';
+import { intakeIssue, issueGoalText, parseIssueRef, readIssueGoal, type IssueGoal, type IssueRef } from '../../intake/issue.ts';
+import { issueReader } from './spec.ts';
 
 export const RUN_OPTIONS: OptionSpec = {
   goal: { type: 'string', description: 'the goal (or "-" to read it from stdin); the remaining arguments are appended', valueName: 'text' },
+  issue: { type: 'string', description: 'start from an issue of this repository instead of a typed goal: its number, #number, owner/repo#number or URL. Its body must pass "orbit spec check", or it is labelled bug and has a reproduction section', valueName: 'issue' },
   mode: { type: 'string', description: 'supervised, autonomous, autonomous-delivery or release; validated exactly as if the policy file said it', valueName: 'mode' },
   policy: { type: 'string', description: 'policy file (default: .orbit/config.yaml)', valueName: 'path' },
   environment: { type: 'string', description: 'release mode: deploy only to this environment of the release profile (refused when it is not defined or not allowed for the branch); default: every environment the branch is allowed for', valueName: 'name' },
@@ -22,15 +32,27 @@ export const RUN_OPTIONS: OptionSpec = {
   detach: { type: 'boolean', description: 'create the run and leave it to the service' },
 };
 
+export const RUN_USAGE = 'orbit run (--goal "<goal>" | --issue <number|url>) [--mode <mode>] [--environment <name>] [--fail-before <mode>] [--policy <path>] [--foreground | --detach]';
+
 export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
-  const usage = 'orbit run --goal "<goal>" [--mode <mode>] [--environment <name>] [--fail-before <mode>] [--policy <path>] [--foreground | --detach]';
+  const usage = RUN_USAGE;
   if (args.bool('foreground') && args.bool('detach')) throw new UsageError('--foreground and --detach cannot be combined', usage);
   const mode = args.oneOf('mode', RUN_MODES);
   let goal = args.str('goal') ?? '';
   if (goal === '-') goal = (await ctx.io.readStdin()).trim();
   const extra = args.positionals.join(' ').trim();
   goal = [goal, extra].filter(Boolean).join(' ').trim();
-  if (!goal) throw new UsageError('a goal is required: orbit run --goal "..."', usage);
+  // An issue is the whole goal: text typed beside it would be a second, unchecked one.
+  const issueArg = args.str('issue');
+  let issueRef: IssueRef | null = null;
+  if (issueArg !== undefined) {
+    if (goal) throw new UsageError('--issue cannot be combined with --goal or a goal typed after the options: the issue is the goal', usage);
+    try {
+      issueRef = parseIssueRef(issueArg);
+    } catch (err) {
+      throw new UsageError(`--issue: ${isOrbitError(err) ? err.message : String(err)}`, usage);
+    }
+  } else if (!goal) throw new UsageError('a goal is required: orbit run --goal "..." (or --issue <number>)', usage);
 
   const repo = await resolveRepo(ctx, args.str('repo'));
   const policy = args.str('policy');
@@ -51,6 +73,11 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
     if (why) throw new UsageError(`--environment ${environment}: ${why}`, usage);
   }
 
+  // The issue is read once, here, and judged before any state exists or any model is called: a closed, locked or
+  // blocked issue, a pull request, another repository's issue and a body that is not a spec are each refused in one line.
+  let issue: IssueGoal | null = null;
+  if (issueRef !== null) ({ issue, goal, config } = await issueRunInput(ctx, repo, config, issueRef));
+
   // Whether a service will pick the run up decides who drives it, and that decides what admission can judge.
   // Reading it must not create the state database: a refused run leaves no state behind.
   let service: ReturnType<typeof liveServiceController> = null;
@@ -68,23 +95,55 @@ export async function runCommand(args: Args, ctx: CliContext): Promise<number> {
 
   const db = openState(repo, { create: true });
   try {
+    refuseUnfinished(db, repo, goal, issue);
     // The policy is frozen (snapshot, hash, read-only) before the run row that names it exists.
-    const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...(environment !== undefined ? { environment } : {}) });
+    const run = startRun({ db, repoRoot: repo, goal, config, clock: ctx.clock, actor: `cli:${ctx.user}`, ...(environment !== undefined ? { environment } : {}), ...(issue ? { issue } : {}) });
+    const from = issue ? { issue: { repo: issue.repo, number: issue.number, kind: issue.kind, body_sha256: issue.body_sha256, updated_at: issue.updated_at } } : {};
+    const fromLine = issue ? `goal: issue ${issue.repo}#${issue.number} as it was at ${issue.updated_at || 'an unknown time'} (${issue.kind === 'bug' ? 'a bug with a reproduction, run as a repair' : `${issue.scenarios.length} acceptance scenario${issue.scenarios.length === 1 ? '' : 's'}`}; body sha256 ${issue.body_sha256.slice(0, 16)}). Later edits of the issue do not change this run.` : null;
     const asJson = args.bool('json');
     if (!foreground) {
-      if (asJson) json(ctx.io, { run_id: run.id, state: run.state, mode: run.mode, ...(run.environment ? { environment: run.environment } : {}), detached: true, service_running: service !== null });
+      if (asJson) json(ctx.io, { run_id: run.id, state: run.state, mode: run.mode, ...(run.environment ? { environment: run.environment } : {}), detached: true, service_running: service !== null, ...from });
       else {
         line(ctx.io, `run ${run.id} created (${run.mode}${run.environment ? `, environment ${run.environment}` : ''}), handed to the service`);
+        if (fromLine) line(ctx.io, fromLine);
         if (!service) ctx.io.err('warning: no service is running, so nothing is working on this run yet. Start one with "orbit service install" (or "orbit service run"), or drive the run here with "orbit resume ' + run.id + ' --foreground".\n');
         line(ctx.io, `follow it with: orbit status ${run.id}`);
       }
       return 0;
     }
-    if (!asJson) line(ctx.io, `run ${run.id} started (${run.mode}${run.environment ? `, environment ${run.environment}` : ''}, foreground; Ctrl-C pauses it, it does not cancel)`);
-    else ctx.io.out(`${JSON.stringify({ type: 'started', run_id: run.id, mode: run.mode, ...(run.environment ? { environment: run.environment } : {}) })}\n`);
+    if (!asJson) {
+      line(ctx.io, `run ${run.id} started (${run.mode}${run.environment ? `, environment ${run.environment}` : ''}, foreground; Ctrl-C pauses it, it does not cancel)`);
+      if (fromLine) line(ctx.io, fromLine);
+    } else ctx.io.out(`${JSON.stringify({ type: 'started', run_id: run.id, mode: run.mode, ...(run.environment ? { environment: run.environment } : {}), ...from })}\n`);
     const result = await driveForeground(ctx, { repoRoot: repo, config, db, runId: run.id, fromStart: true, json: asJson });
     return result.exitCode;
   } finally {
     db.close();
   }
+}
+
+/**
+ * Read the issue once and judge it before any state exists or any model is called (intake/issue.ts): a closed, locked
+ * or blocked issue, a pull request, another repository's issue and a body that is not a spec are each refused in one
+ * line (POLICY_DENIED). Returns the frozen issue goal, the run's goal text and the policy the run starts with.
+ */
+export async function issueRunInput(ctx: CliContext, repo: string, config: OrbitConfig, ref: IssueRef): Promise<{ issue: IssueGoal; goal: string; config: OrbitConfig }> {
+  const issue = await intakeIssue({ ref, reader: await issueReader(ctx, repo, config), now: ctx.clock.now() });
+  // A bug runs as a repair: its new test must fail on the base revision. Like --fail-before, this only raises the policy.
+  return { issue, goal: issueGoalText(issue), config: issue.kind === 'bug' ? (raiseFailBefore(config, 'required') ?? config) : config };
+}
+
+/** A goal, or an issue, that an unfinished run already has is refused (#139): it would start a second run beside the first. */
+export function refuseUnfinished(db: OrbitDb, repo: string, goal: string, issue: Pick<IssueGoal, 'repo' | 'number'> | null): void {
+  // shortcut: simultaneous submissions can race; move this check into run creation if atomic refusal is needed.
+  const unfinished = listRuns(db, { states: NON_TERMINAL, limit: -1 });
+  const existing = unfinished.find((r) => r.goal === goal);
+  if (existing) throw new OrbitError('POLICY_DENIED', `run ${existing.id} (${existing.state}) already has this goal. Check it with orbit status ${existing.id}, continue it with orbit resume ${existing.id}, or cancel it with orbit cancel ${existing.id}. No run was created.`);
+  if (!issue) return;
+  // One unfinished run per issue, whatever its body says now: an edit must not start a second run beside the first.
+  const taken = unfinished.find((r) => {
+    const g = readIssueGoal(join(orbitDir(repo), 'runs', r.id));
+    return g !== null && g.number === issue.number && g.repo.toLowerCase() === issue.repo.toLowerCase();
+  });
+  if (taken) throw new OrbitError('POLICY_DENIED', `run ${taken.id} (${taken.state}) was already started from issue ${issue.repo}#${issue.number}. Check it with orbit status ${taken.id}, continue it with orbit resume ${taken.id}, or cancel it with orbit cancel ${taken.id}. No run was created.`);
 }

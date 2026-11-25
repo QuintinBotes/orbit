@@ -7,12 +7,13 @@ import { join } from 'node:path';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { execCapture } from '../core/exec.ts';
 import { redact } from '../core/redact.ts';
-import { resolveRemoteUrl } from '../delivery/git.ts';
+import { githubRepoFromUrl, resolveRemoteUrl } from '../delivery/git.ts';
 import { notificationsPolicy } from '../policy/config.ts';
 import { hostAllowed } from '../policy/hosts.ts';
 import type { OrbitConfig } from '../policy/types.ts';
 import { commentBody, payloadText, payloadTitle, type NotificationPayload } from './payload.ts';
 import { FakeThreadClient, GhThreadClient, type ThreadClient } from './threads.ts';
+import type { IssueReader } from '../intake/github.ts';
 
 export type ChannelName = 'desktop' | 'webhook' | 'github_comment';
 export const CHANNELS: readonly ChannelName[] = ['desktop', 'webhook', 'github_comment'];
@@ -43,6 +44,8 @@ export interface NotifyDeps {
   fetch: NotifyFetch;
   /** The comment client for a repository under a policy. */
   threads: (repoRoot: string, config: OrbitConfig) => Promise<ThreadClient>;
+  /** Reads the issue a run was started from once more when the run ends, to say whether it was edited; default: gh with GH_TOKEN. */
+  issues?: (repoRoot: string, config: OrbitConfig) => Promise<IssueReader>;
 }
 
 export const DESKTOP_TIMEOUT_MS = 10_000;
@@ -77,9 +80,9 @@ export function defaultThreads(env: Readonly<Record<string, string | undefined>>
   return async (repoRoot, config) => {
     if (config.delivery.provider === 'fake') return new FakeThreadClient({ statePath: join(repoRoot, '.orbit', FAKE_THREADS_FILE) });
     const url = await resolveRemoteUrl(repoRoot, config.repository.remote);
-    const m = /github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(url);
-    if (!m) throw new OrbitError('CONFIG_INVALID', `remote ${config.repository.remote} is not a GitHub repository`);
-    return new GhThreadClient({ repo: `${m[1]}/${m[2]}`, env, cwd: repoRoot });
+    const repo = githubRepoFromUrl(url);
+    if (!repo) throw new OrbitError('CONFIG_INVALID', `remote ${config.repository.remote} is not a GitHub repository`);
+    return new GhThreadClient({ repo, env, cwd: repoRoot });
   };
 }
 

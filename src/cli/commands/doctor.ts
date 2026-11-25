@@ -20,7 +20,6 @@ import type { CredentialStatus, ProviderAdapter, ProviderCapabilities } from '..
 import { CLAUDE_SANDBOX_LIMITATIONS, CODEX_LIMITATIONS, CODEX_OS_SANDBOX_LIMITATIONS, compareVersions, claudeEnvCredential, codexEnvCredential, createAdapters, decideCodexTier, decideMuseTier, museEnvCredential, providerKind, MUSE_LIMITATIONS, MUSE_MIN_VERSION, MUSE_OS_SANDBOX_LIMITATIONS, MUSE_READS_NOT_CONFINED, type CodexTierDecision, type CodexTierSetting, type MuseTierDecision, type MuseTierSetting } from '../../adapters/index.ts';
 import { CONTAINER_LIMITATIONS, RESOURCE_LIMIT_FIX, SRT_LIMITATIONS, credentialDenyPaths, getIsolation, noIsolationLimitations, resourceLimitRefusals } from '../../isolation/index.ts';
 import { CHROMIUM_MACH_RENDEZVOUS_LIMITATION, SRT_VERIFIED_VERSION, type SandboxRuntimeIsolation } from '../../isolation/sandbox-runtime.ts';
-import { detectToolchains } from '../../isolation/toolchains.ts';
 import type { IsolationProvider, SandboxProfile } from '../../isolation/types.ts';
 import { safeBaseEnv } from '../../ui/env.ts';
 import { UI_SINGLE_SANDBOX, UI_SINGLE_SANDBOX_LIMITATION } from '../../ui/single-sandbox.ts';
@@ -36,7 +35,7 @@ import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus } from '../../co
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
-import { orbitInstallDir, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
+import { launcherPath, orbitInstallDir, readLauncher, serviceLabel, serviceStatus, stateDbPath } from '../../controller/index.ts';
 import type { Args, OptionSpec } from '../args.ts';
 import { controllers, gitEnv, resolveRepo, type CliContext } from '../context.ts';
 import { EXIT } from '../exit.ts';
@@ -50,7 +49,8 @@ import { workerPluginsCheck } from './doctor-plugins.ts';
 import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
-import { workerLoopbackCheck, workerToolchainsCheck } from './doctor-workers.ts';
+import { simplicityCheck } from './doctor-simplicity.ts';
+import { workerLoopbackCheck } from './doctor-workers.ts';
 import { loadCommandPolicy } from '../policy-file.ts';
 import { implementationAttemptWallTimeMinimum, implementationAttemptWallTimeProblem } from '../../scheduling/budget.ts';
 
@@ -387,6 +387,15 @@ const SRT_INSTALL = 'npm install --global @anthropic-ai/sandbox-runtime';
 function isolationFix(kind: IsolationProvider['kind'], detail: string): string {
   if (kind === 'container') return 'start the Docker daemon (for example "open -a Docker" on macOS, or "sudo systemctl start docker" on Linux); Orbit refuses to degrade to less isolation';
   if (/not found|install @anthropic-ai\/sandbox-runtime/i.test(detail)) return `${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
+  // Measured on ubuntu-26.04 (#181); .github/workflows/ci.yml applies these commands before its sandbox tests.
+  if (detail.includes('bwrap-userns-restrict')) {
+    return (
+      'give bubblewrap an AppArmor profile that grants it user namespaces in place of bwrap-userns-restrict (what bubblewrap starts gets capabilities in its user namespace again; other programs keep the restriction): ' +
+      'sudo ln -sf /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/; ' +
+      "printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile bwrap /usr/bin/bwrap flags=(unconfined) {\\n  userns,\\n}\\n' | sudo tee /etc/apparmor.d/bwrap; " +
+      'sudo apparmor_parser -r /etc/apparmor.d/bwrap; Orbit refuses to degrade to less isolation'
+    );
+  }
   return `fix the cause named above, or reinstall with: ${SRT_INSTALL}; Orbit refuses to degrade to less isolation`;
 }
 
@@ -969,6 +978,15 @@ function checkGitleaks(p: Probe): DoctorCheck {
 
 // -- service ------------------------------------------------------------------
 
+function checkLauncher(p: Probe): DoctorCheck[] {
+  const path = launcherPath(p.ctx.orbitHome);
+  if (!existsSync(path)) return [];
+  const target = readLauncher(path);
+  return [target && !existsSync(target.entry)
+    ? fail('service.launcher', 'service', `launcher entry is missing: ${target.entry}`, target.entry, "run the installed plugin's bin/orbit, or orbit service install")
+    : pass('service.launcher', 'service', `launcher at ${path} has no missing entry`)];
+}
+
 async function checkService(p: Probe): Promise<DoctorCheck> {
   const { repo, ctx } = p;
   if (!repo) return warn('service', 'service', 'no repository, so no service to check', 'a repository', null);
@@ -1104,15 +1122,16 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   await safely('checks.sandbox', 'checks', () =>
     checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) }),
   );
+  await safely('checks.simplicity', 'checks', () => (configLoaded ? simplicityCheck({ config, env: ctx.env, cwd: repo ?? ctx.cwd, files: tracked }) : []));
   await safely('checks.dotnet-tests', 'checks', () => (repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []));
   await safely('workers.loopback', 'isolation', () => (repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []));
-  await safely('workers.toolchains', 'isolation', () => (repo && configLoaded ? workerToolchainsCheck({ tier: claudeWorkerTier(isoFacts, ctx.env), toolchains: detectToolchains({ roots: [repo] }) }) : []));
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely('checks.dotnet-packages', 'checks', () => (nuget ? dotnetPackagesCheck(nuget) : []));
   await safely('checks.dotnet-audit', 'checks', () => (nuget ? dotnetAuditCheck(nuget) : []));
   await safely('delivery', 'delivery', () => checkDelivery(p));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));
+  await safely('service.launcher', 'service', () => checkLauncher(p));
   await safely('guard.terms', 'guard', () => checkGuard(p));
 
   const counts: Record<CheckStatus, number> = { pass: 0, warn: 0, fail: 0 };

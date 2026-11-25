@@ -11,15 +11,16 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { atomicWriteJson } from '../../core/fsx.ts';
-import { isOrbitError } from '../../core/errors.ts';
+import { isOrbitError, OrbitError } from '../../core/errors.ts';
 import { adminDirFor, git, resolveCommit, treeOf } from '../../evidence/git.ts';
-import { BASELINE_FILE, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
+import { withStagingView } from '../../evidence/candidate.ts';
+import { BASELINE_FILE, installDependencies, planInstall, runBaseline, type BaseFailureClassification, type BaselineReport } from '../../evidence/baseline.ts';
 import type { EnvironmentSignal } from '../../evidence/environment-failure.ts';
 import { raiseBaselineExceptionQuestions } from '../../inquisition/baseline-exception.ts';
 import { validateCredentials, type BlockedCredentialState, type CredentialCheck } from '../../recovery/credentials.ts';
 import { mandatoryReviewProvider, selectReviewer, selectionDecisionRecord, type ReviewerSelection } from '../../review/select.ts';
 import type { ProviderCapabilities, CredentialStatus } from '../../adapters/types.ts';
-import { homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
+import { checkRunnerFor, homeOf, runWorktreeRoot, toolchainCacheRootFor, type RunContext } from '../context.ts';
 import { baselineGate, environmentGate, intakeGate, type GateResult } from '../gates.ts';
 import { deliveryEnvironmentProblem } from '../delivery-env.ts';
 import { baselineBlockReason, baselineEnvironmentFailures, baselineIncompleteChecks, baselineMisconfiguredChecks, deniedLaunches, environmentFixSettings, misconfiguredRecord, type AmendedCheck, type BlockedCheck, type IncompleteBaselineCheck, type MisconfiguredBlock } from '../environment-block.ts';
@@ -27,8 +28,10 @@ import { MISSING_TARGET_KIND } from './baseline-questions.ts';
 import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from './common.ts';
 import { workerPluginsStep } from './worker-plugins.ts';
 import { messageOf } from '../workers.ts';
+import { skipPartner } from '../route-outcome.ts';
+import { partnerImplementers } from '../../policy/config.ts';
 
-/** The provider that implements. Routing only offers claude-cli models for implementation (spec section 8). */
+/** The provider that implements unless `routing.implementers` lets a partner take a bounded unit (issue #176); always the fallback. */
 export const IMPLEMENTER_PROVIDER = 'claude';
 
 export async function preflightStep(ctx: RunContext): Promise<StepResult> {
@@ -37,7 +40,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
 
   const intake = intakeGate({ run: ctx.run, snapshot: ctx.snapshot });
   recordGate(ctx, intake);
-  if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate: ${intake.reasons.join('; ')}`, { outcome: { gate: intake } });
+  if (!intake.passed) return finishRun(ctx, 'BLOCKED', `intake gate: ${intake.reasons.join('; ')}`, { outcome: { gate: intake }, cause: 'environment' });
 
   const env = await checkEnvironment(ctx);
   recordGate(ctx, env.gate);
@@ -46,6 +49,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     if (auth?.status) return blockOnAuth(ctx, auth.provider, auth.status.state as BlockedCredentialState, auth.status.detail);
     return finishRun(ctx, 'BLOCKED', `environment gate: ${env.gate.reasons.join('; ')}`, { outcome: { gate: env.gate } });
   }
+  skipUnusablePartners(ctx, env);
   // Issue #22: workers that would load a plugin the policy does not allow are all refused after they start, so the run is
   // refused here, before a base-revision check, a question or a worker costs anything.
   const plugins = await workerPluginsStep(ctx);
@@ -117,12 +121,36 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
   const { preExisting } = askAboutBaseFailures(ctx, found, { baseRevision: head, key: '' });
 
   const worktree = await ensureWorktree(repo, join(wtRoot, 'implementer'), head);
+  await preinstallWorktree(ctx, repo, worktree, head, baseTree);
+  const installed = await safePoint(ctx);
+  if (installed) return installed;
   const branch = `${ctx.snapshot.config.repository.branch_prefix}${ctx.run.id}`;
   const noted = [...(preExisting.length > 0 ? [`${preExisting.length} pre-existing failure(s)`] : []), ...(missingTargets.length > 0 ? [`${missingTargets.length} check(s) whose target does not exist yet (${missingTargets.map((m) => m.checkId).join(', ')})`] : [])];
   return move(ctx, 'CONTRACTING', `preflight passed at ${head.slice(0, 12)}${noted.length > 0 ? ` with ${noted.join(' and ')}` : ''}`, {
     patch: { baseRevision: head, baseTree, worktreePath: worktree, branch },
     data: { base_revision: head, base_tree: baseTree, worktree, environment: env.gate.notes },
   });
+}
+
+/**
+ * A partner `routing.implementers` names that cannot implement now (its CLI, its writable tier or its login) is skipped
+ * for the run, never a block: Claude implements instead (issue #176).
+ */
+function skipUnusablePartners(ctx: RunContext, env: EnvironmentCheck): void {
+  for (const p of partnerImplementers(ctx.snapshot.config)) {
+    const cap = env.capabilities[p];
+    const cred = env.credentials.find((c) => c.provider === p)?.status ?? null;
+    const why = !cap
+      ? `no adapter is configured for "${p}"`
+      : !cap.available
+        ? `it is not available: ${cap.detail || 'adapter reported unavailable'}`
+        : cap.writable?.ok !== true
+          ? `it has no writable tier here: ${cap.writable?.why ?? 'its adapter offers none'}`
+          : cred?.state !== 'valid'
+            ? `its credentials are ${cred?.state ?? 'not validated'}${cred?.detail ? ` (${cred.detail})` : ''}`
+            : null;
+    if (why) skipPartner(ctx, p, null, why);
+  }
 }
 
 /** What the base revision's failures are (ADR 0010), as PREFLIGHT or a baseline amendment (ADR 0012) classified them. */
@@ -400,6 +428,58 @@ export function dirtyStartRefusal(d: DirtySplit): { reason: string; fix: string 
       : `commit or stash the modified files${d.untracked.length > 0 ? ' (git stash -u takes the untracked ones too; plain git stash leaves them)' : ''}, or set repository.allow_dirty_start`;
   return { reason, fix };
 }
+
+/**
+ * Issue #132: workers run checks in the implementer's worktree, and their policy does not let them install, so the
+ * baseline's install plan runs there too. It is never evidence and never blocks the run: the baseline's install already
+ * passed. It runs only in a worktree git reports clean, and whatever it leaves that git does not ignore (an unignored
+ * dependency folder, a rewritten lockfile or .gitignore) is undone, so it cannot enter a candidate.
+ */
+async function preinstallWorktree(ctx: RunContext, repo: string, worktree: string, head: string, tree: string): Promise<void> {
+  if (planInstall(ctx.snapshot, worktree).skip) return;
+  const before = await worktreeChanges(worktree);
+  if (before.length > 0) {
+    decide(ctx, { id: `dec-${ctx.run.id}-worktree-install-dirty`, kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree because it already had changes git does not ignore (${listed(before)}); it was left as it was`, data: { paths: before.slice(0, 200) } });
+    return;
+  }
+  try {
+    const out = await installDependencies({ ...checkRunnerFor(ctx), checkoutDir: worktree, worktreeTree: tree });
+    if (!out.skipped && !out.ok) {
+      const last = out.results.at(-1);
+      const how = last ? `${last.checkId} ended ${last.status}${last.exitCode === null ? '' : ` (exit ${last.exitCode})`}` : 'the install did not run';
+      decide(ctx, { id: `dec-${ctx.run.id}-worktree-install-failed`, kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree: ${how}; workers may not be able to run checks that need them`, data: { results: out.results.map((r) => ({ check: r.checkId, status: r.status, log: r.logPath })) } });
+    }
+  } catch (err) {
+    if (isOrbitError(err, 'CANCELLED')) throw err;
+    decide(ctx, { kind: 'preflight.worktree-install', summary: `dependencies were not preinstalled in the implementer's worktree: ${messageOf(err)}` });
+  }
+  const left = await worktreeChanges(worktree);
+  if (left.length === 0) return;
+  // The worktree held no work before the install, so anything staging would take is the install's. Picking it apart
+  // misses shapes (nested ignore files, a cloned repository), so the worktree is made again from the base revision.
+  await git(repo, ['worktree', 'remove', '--force', '--force', worktree]).catch(() => rmSync(worktree, { recursive: true, force: true }));
+  await ensureWorktree(repo, worktree, head);
+  const still = await worktreeChanges(worktree);
+  if (still.length > 0) throw new OrbitError('INTERNAL', `the implementer's worktree was made again after the dependency install but still shows ${listed(still)}`);
+  decide(ctx, {
+    id: `dec-${ctx.run.id}-worktree-install-not-ignored`,
+    kind: 'preflight.worktree-install',
+    summary: `dependencies could not be preinstalled in the implementer's worktree because the install changed paths git does not ignore (${listed(left)}); the worktree was made again without them, so they cannot enter a candidate`,
+    data: { paths: left.slice(0, 200) },
+  });
+}
+
+/** The worktree as candidate staging sees it (evidence/candidate.ts), with every untracked file listed on its own. */
+async function worktreeStatus(dir: string): Promise<DirtySplit> {
+  return withStagingView(async (config) => parseDirtyStatus(await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'], { config })));
+}
+
+async function worktreeChanges(dir: string): Promise<string[]> {
+  const { changed, untracked } = await worktreeStatus(dir);
+  return [...changed, ...untracked].sort();
+}
+
+const listed = (paths: string[]): string => `${paths.slice(0, 5).join(', ')}${paths.length > 5 ? ', ...' : ''}`;
 
 /**
  * The implementer's worktree, detached at the base revision, outside the

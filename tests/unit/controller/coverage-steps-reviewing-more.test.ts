@@ -159,11 +159,12 @@ describe('findings that need the inquisition before any repair', () => {
 });
 
 describe('which findings block', () => {
-  it('with no blocking severities listed, a requested repair of a minor finding does not block or repair', async () => {
+  it('with no blocking severities listed, a requested repair of a minor finding does not block, and goes to repair since nothing approved the tree (#130)', async () => {
     const { cand } = await setup({ tweak: (c) => void (c.review.security = { block_severities: [], exceptions: [] } as never) });
     record(cand, 'REPAIR_REQUIRED', [finding('COR-1', { severity: 'low', category: 'style', claim: 'a naming nit in calc', evidence: 'naming' })]);
     await run();
-    expect(state()).toBe('BLOCKED');
+    expect(listDecisions(lab.db, lab.runId, { kind: 'gate.independent_review' })[0]!.data).toMatchObject({ status: 'pass' });
+    expect(state()).toBe('REPAIRING');
   });
 
   it('with no security block in the policy the default is critical and high', async () => {
@@ -309,10 +310,15 @@ describe('a repair that named its validation test', () => {
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.attempt', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2 }));
     lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 2, 'implementation.candidate', 'x', ?)", lab.runId, JSON.stringify({ attempt: 2, candidate_id: c2.id }));
     addEvidence(lab, c2, { attempt: 2 });
+    // The repair names a test for COR-1, so going back to repair is not non-progress (#156).
+    const w = planWorker(lab.db, { id: 'wrk-impl-2', runId: lab.runId, role: 'implementer', provider: 'claude', workerDir: join(lab.base, 'wi2'), cwd: repo.worktree, attempt: 2 }, lab.clock, OWNER);
+    const out = { summary: 's', changed_paths: [], tests_added: [], checks_run: [], evidence_refs: [{ criterion_id: null, ref: 'tests/mul.test.mjs', note: 'validation for finding COR-1' }], remaining_issues: [], next_action: { kind: 'request-verification', detail: 'd' } };
+    lab.db.run("UPDATE workers SET state = 'SUCCEEDED', result_json = ? WHERE id = ?", JSON.stringify({ structured: out }), w.id);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
     record(c2, 'APPROVE', []);
-    // No check run at all: nothing is proven by the repair.
-    await run();
+    // No check run at all: nothing is proven by the repair, so the carried COR-1 gets its one re-review (ADR 0015, amended)
+    // first, collected while the step runs again.
+    await settle();
     expect(['DELIVERING', 'BLOCKED', 'REPAIRING']).toContain(state());
     lab.db.run("INSERT INTO check_runs (id, run_id, candidate_id, check_id, kind, tree_hash, check_config_hash, policy_hash, command_json, cwd, isolation, status, exit_code, started_at) VALUES ('cr-2', ?, ?, 'unit', 'command', ?, 'c', 'p', '[]', '.', 'none', 'PASSED', 0, 1)", lab.runId, c2.id, c2.treeHash);
     lab.db.run("UPDATE runs SET state = 'REVIEWING' WHERE id = ?", lab.runId);
@@ -436,13 +442,13 @@ describe('parallel review units under pressure', () => {
     expect(workersCount()).toBe(1);
   });
 
-  it('a unit that cannot be funded ends the run EXHAUSTED', async () => {
+  it('a unit that cannot be funded stops the run (BLOCKED, offering the verified candidate: #169)', async () => {
     const { cand } = await setup({ ui: true, difficulty: sensitive });
     uiPaths(cand);
     // Review may spend up to the hard cap itself; with less than one worst-case request left, nothing can start.
     lab.db.run("UPDATE budget_counters SET used = hard_cap - 0.01 WHERE counter = 'cost_usd'");
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(reason()).toContain('unit cannot start: no model budget left for review under the hard cap');
     expect(workersCount()).toBe(0);
   });

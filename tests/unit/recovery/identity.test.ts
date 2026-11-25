@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { groupOwnership, startToEpochMs } from '../../../src/recovery/identity.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const kids: ChildProcess[] = [];
 afterEach(() => {
@@ -35,7 +36,8 @@ describe('startToEpochMs', () => {
 });
 
 describe('groupOwnership', () => {
-  it('a live leader that started when the record says is ours; one that started long before or after is a recycled pid', () => {
+  it('a live leader that started when the record says is ours; one that started long before or after is a recycled pid', (ctx) => {
+    skipWithoutPs(ctx);
     const pgid = leader();
     const now = Date.now();
     expect(groupOwnership(pgid, now)).toBe('ours');

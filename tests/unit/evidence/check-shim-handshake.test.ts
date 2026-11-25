@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { findProcesses, findProcessesWithEnv } from '../../../src/core/proc.ts';
 import { CHECK_TOKEN_ENV, ensureShim, readJsonFile, shimPath, type ShimExit, type ShimRegistration } from '../../../src/evidence/check-shim.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 let root: string;
 const marked: string[] = [];
@@ -59,7 +60,8 @@ describe('the check shim', () => {
     expect(readFileSync(shimPath(dir, 'output'), 'utf8')).toBe(`token=${token}`);
   });
 
-  it('stops its check and reports the error when pid.json cannot be written after the spawn, so nothing runs that no record names', async () => {
+  it('stops its check and reports the error when pid.json cannot be written after the spawn, so nothing runs that no record names', async (ctx) => {
+    skipWithoutPs(ctx);
     const marker = `CHECK-${randomBytes(6).toString('hex')}`;
     marked.push(marker);
     // A directory where pid.json goes: the rename after the spawn fails (an ENOSPC or EIO stand-in).
@@ -72,7 +74,8 @@ describe('the check shim', () => {
     expect(findProcessesWithEnv(CHECK_TOKEN_ENV, token)).toEqual([]);
   });
 
-  it('starts nothing, and says why, when it cannot register itself', async () => {
+  it('starts nothing, and says why, when it cannot register itself', async (ctx) => {
+    skipWithoutPs(ctx);
     const marker = `CHECK-${randomBytes(6).toString('hex')}`;
     marked.push(marker);
     const { dir, token } = await runShim([process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(join(tmpdir(), marker))}, 'ran')`], (d) => mkdirSync(join(d, 'registration.json', 'blocker'), { recursive: true }));

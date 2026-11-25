@@ -31,6 +31,7 @@ import { isTestPath } from '../policy/test-files.ts';
 import type { CheckDefinition, FailBeforeMode, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { listDecisions } from '../storage/decisions.ts';
+import { appendEvent } from '../storage/events.ts';
 import { cleanupCandidateCheckout, materializeCandidate, ORBIT_GIT_IDENTITY } from './candidate.ts';
 import { classifyProgramNotFound } from './check-misconfigured.ts';
 import { readJsonFile, shimPath, type ShimIntent } from './check-shim.ts';
@@ -38,6 +39,7 @@ import { settleCheckAttempt } from '../recovery/check-attempt.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentSignal } from './environment-failure.ts';
 import { git } from './git.ts';
 import { planInstall } from './baseline.ts';
+import { isSimplicityCheck } from './simplicity.ts';
 import { candidateEvidenceDir, configHashFor, runAttempt, type AttemptRecords, type CheckSubject, type RunnerContext } from './runner.ts';
 import type { CheckRunRecord, FinishedCheck, NewCheckRun } from './store.ts';
 import type { BaseComparison } from './report.ts';
@@ -85,7 +87,7 @@ export const REPAIR_PROBE_DECISION_KIND = 'review.repair-probe';
  */
 export interface ProbeFlavour {
   /** The directory under evidence/<seq>/ that keeps its attempts' logs, and its ref namespace under refs/orbit/<run>/. */
-  name: 'fail-before' | 'repair-probe';
+  name: 'fail-before' | 'repair-probe' | 'criterion-probe' | 'criterion-candidate';
   /** The decision a completed probe records, and whose decisive results a later probe of the same tree reuses. */
   decisionKind: string;
   /** The tree the probe starts from, as a reason names it. */
@@ -104,8 +106,15 @@ export const REPAIR_CONTROL: ProbeFlavour = Object.freeze({ name: 'repair-probe'
  * pass after in one place: a test that fails only for the probe checkout's path fails here too.
  */
 export const REPAIR_REPAIRED: ProbeFlavour = Object.freeze({ name: 'repair-probe', decisionKind: REPAIR_PROBE_DECISION_KIND, base: 'the pre-repair tree', where: 'on the repaired tree in the probe checkout' });
+/**
+ * A criterion's mapped tests, each run alone (its check's tests_command), on the base revision with the candidate's
+ * test-owned paths (issue #200, FR-003): a change criterion's tests must fail there, a keep criterion's must pass.
+ */
+export const CRITERION_PROBE: ProbeFlavour = Object.freeze({ name: 'criterion-probe', decisionKind: 'verification.criterion-probe', base: 'the base revision', where: 'on the base revision with the new tests' });
+/** The same commands on the candidate's own tree, where each mapped test must pass. */
+export const CRITERION_CANDIDATE: ProbeFlavour = Object.freeze({ name: 'criterion-candidate', decisionKind: 'verification.criterion-candidate', base: 'the base revision', where: 'on the candidate' });
 /** One flavour per evidence directory, for the cleanup of interrupted attempts. */
-const FLAVOURS: readonly ProbeFlavour[] = [FAIL_BEFORE_PROBE, REPAIR_PROBE];
+const FLAVOURS: readonly ProbeFlavour[] = [FAIL_BEFORE_PROBE, REPAIR_PROBE, CRITERION_PROBE, CRITERION_CANDIDATE];
 
 export interface ProbeAttempt {
   attempt: number;
@@ -285,9 +294,12 @@ export interface CriterionTestSupport {
   testPaths: string[];
 }
 
-/** A check the command probe runs: a command check of category test, never lint, typecheck, format or build. */
+/**
+ * A check the command probe runs: a command check of category test, never lint, typecheck, format or build, and never the
+ * simplicity gate: it compares the tree with a base revision, and a probe tree has no base of its own to compare with.
+ */
 export function isTestCommandCheck(def: CheckDefinition | undefined): def is CheckDefinition {
-  return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test';
+  return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test' && !isSimplicityCheck(def.id);
 }
 
 /** A browser check: one of kind playwright, or one of ui.journey_check_ids (the same checks the report reads journeys from). */
@@ -491,6 +503,7 @@ function toCheckRun(r: ProbeRow): CheckRunRecord {
     excerpt: r.excerpt,
     artifacts: [],
     limitations: [],
+    checkout: null,
     startedAt: r.started_at,
     endedAt: r.ended_at,
   };
@@ -502,6 +515,11 @@ function probeRow(db: OrbitDb, id: string): ProbeRow {
   const row = db.get<ProbeRow>('SELECT * FROM fail_before_probes WHERE id = ?', id);
   if (!row) throw new OrbitError('NOT_FOUND', `no fail-before probe attempt ${id}`);
   return row;
+}
+
+function probeEvent(db: OrbitDb, type: string, r: ProbeRow, at: number): void {
+  const finished = type === 'check.fail-before-probe-finished' ? { status: r.status, exit_code: r.exit_code } : {};
+  appendEvent(db, r.run_id, type, 'controller', { probe_attempt_id: r.id, probe_id: r.probe_id, check_id: r.check_id, tree_hash: r.probe_tree, attempt: r.attempt, candidate_id: r.candidate_id || null, ...finished }, at);
 }
 
 /** The runner's attempt records for one probe: rows of fail_before_probes, numbered per check within the probe. */
@@ -538,14 +556,17 @@ export function probeRecords(probeId: string): AttemptRecords {
         return toCheckRun(probeRow(db, id));
       });
     },
-    running: (db, id, pid, clock) => {
-      db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, clock.now(), id);
-      return toCheckRun(probeRow(db, id));
-    },
-    finish: (db, id, f: FinishedCheck) => {
-      db.run('UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN (\'PLANNED\', \'RUNNING\')', f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id);
-      return toCheckRun(probeRow(db, id));
-    },
+    running: (db, id, pid, clock) =>
+      db.tx(() => {
+        const now = clock.now();
+        if (db.run("UPDATE fail_before_probes SET status = 'RUNNING', pid = ?, started_at = ? WHERE id = ? AND status = 'PLANNED'", pid, now, id).changes === 1) probeEvent(db, 'check.fail-before-probe-started', probeRow(db, id), now);
+        return toCheckRun(probeRow(db, id));
+      }),
+    finish: (db, id, f: FinishedCheck) =>
+      db.tx(() => {
+        if (db.run('UPDATE fail_before_probes SET status = ?, exit_code = ?, log_path = ?, log_sha256 = ?, excerpt = ?, ended_at = ? WHERE id = ? AND status IN (\'PLANNED\', \'RUNNING\')', f.status, f.exitCode, f.logPath, f.logSha256, f.excerpt, f.endedAt, id).changes === 1) probeEvent(db, 'check.fail-before-probe-finished', probeRow(db, id), f.endedAt);
+        return toCheckRun(probeRow(db, id));
+      }),
   };
 }
 
@@ -576,7 +597,7 @@ export function listProbeAttempts(db: OrbitDb, runId: string, opts: { probeId?: 
 }
 
 /** Probe attempt directories by row id, from each attempt's intent.json (evidence/<seq>/<flavour>/<check>[~n]). */
-function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimIntent }> {
+export function probeDirs(runDir: string): Map<string, { dir: string; intent: ShimIntent }> {
   const found = new Map<string, { dir: string; intent: ShimIntent }>();
   const subdirs = (d: string): string[] => {
     try {
@@ -627,7 +648,10 @@ export async function closeInterruptedProbes(db: OrbitDb, runDir: string, runId:
         continue;
       }
     }
-    db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', clock.now(), row.id);
+    const ended = clock.now();
+    if (db.run("UPDATE fail_before_probes SET status = 'CANCELLED', excerpt = ?, ended_at = ? WHERE id = ? AND status IN ('PLANNED', 'RUNNING')", 'interrupted: a probe whose controller stopped is not established and runs again', ended, row.id).changes === 1) {
+      probeEvent(db, 'check.fail-before-probe-finished', probeRow(db, row.id), ended);
+    }
     out.closed.push(row.id);
   }
   return out;
@@ -666,6 +690,8 @@ export interface ProbeRequest {
   flavour?: ProbeFlavour;
   /** What tells this candidate's probes of the flavour apart in their ref (probeRef): a repair probe's attempt and tree. */
   refPart?: string;
+  /** Definitions of checks the policy does not name (a criterion's test run alone); the policy's own otherwise. */
+  definitions?: ReadonlyMap<string, CheckDefinition>;
 }
 
 export interface ProbeResult {
@@ -877,7 +903,7 @@ export async function runFailBeforeProbe(req: ProbeRequest): Promise<ProbeResult
   if ('refused' in built) return result(null, notEstablished(checkIds, 'refused-tree', (id) => `${id} was not probed: git refused the probe tree (${built.refused})`));
   const probeTree = built.tree;
 
-  const defs = new Map(checkIds.map((id) => [id, snapshot.config.checks[id]!] as const));
+  const defs = new Map(checkIds.map((id) => [id, req.definitions?.get(id) ?? snapshot.config.checks[id]!] as const));
   const configHashes = new Map(checkIds.map((id) => [id, configHashFor(snapshot, defs.get(id)!)] as const));
   const earlier = reusable(db, runner.run.id, flavour.decisionKind, probeTree, runner.run.policyHash, configHashes);
   const toRun = checkIds.filter((id) => !earlier.has(id));
@@ -983,6 +1009,11 @@ export interface FailBeforeEvidence {
   skipped: { cause: NotEstablishedCause; reason: string } | null;
   /** Criteria a person accepted without fail-before for this candidate's tree. */
   accepted: readonly { criterionId: string; questionId: string; by: string }[];
+  /**
+   * Under `required`, for a contract that maps tests to criteria: each criterion's own entry (criterionProofEntry), which
+   * replaces the check-wide judgement (issue #200, FR-003).
+   */
+  criteria?: ReadonlyMap<string, CriterionFailBefore>;
 }
 
 /**

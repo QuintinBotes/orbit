@@ -11,6 +11,8 @@ import { RUN_STATES, TERMINAL_STATES, isRunState, type RunState } from '../core/
 
 export { RUN_STATES, TERMINAL_STATES, isRunState, type RunState };
 
+export const NON_TERMINAL: RunState[] = RUN_STATES.filter((s) => !isTerminal(s));
+
 /** BLOCKED is terminal for the controller loop but resumable by an authorized decision. */
 export const RESUMABLE_STATES: ReadonlySet<RunState> = new Set(['BLOCKED']);
 
@@ -29,7 +31,8 @@ const EDGES: Record<RunState, RunState[]> = {
   // No VERIFYING -> SUCCEEDED edge: every successful run passes independent review.
   VERIFYING: ['REVIEWING', 'DIAGNOSING', 'INQUISITION', ...ALWAYS],
   REVIEWING: ['DELIVERING', 'REPAIRING', 'DIAGNOSING', 'INQUISITION', 'SUCCEEDED', ...ALWAYS],
-  DELIVERING: ['AWAITING_CI', 'SUCCEEDED', 'VERIFYING', ...ALWAYS],
+  // REPAIRING: a candidate the proof gate finds not done goes to repair before any delivery action (issue #200).
+  DELIVERING: ['AWAITING_CI', 'SUCCEEDED', 'VERIFYING', 'REPAIRING', ...ALWAYS],
   // VERIFYING: a task branch rebased onto a moved base branch is a new candidate (actions.rebase_task_branch).
   AWAITING_CI: ['SUCCEEDED', 'DIAGNOSING', 'VERIFYING', ...ALWAYS],
   INQUISITION: [...WORKING, 'IMPOSSIBLE', ...ALWAYS],

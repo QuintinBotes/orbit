@@ -25,7 +25,8 @@ function lab(): Lab {
       c.scheduler.hard_limits.implementation_attempts = 1;
       c.scheduler.initial_allowances = { simple_attempts: 1, medium_attempts: 1, complex_attempts: 1 };
       // A replayed run is capped at what is left of this, and a run needs headroom for one implementer ceiling.
-      c.knowledge = { ...c.knowledge, enabled: true, curator_budget_usd: 0, eval_budget_usd: 40, auto_adopt_overlays: true };
+      // Overlays in live prompts (opt-in since issue #173): the live runs below are judged as runs that carried the overlay.
+      c.knowledge = { ...c.knowledge, enabled: true, lessons_in_prompts: true, curator_budget_usd: 0, eval_budget_usd: 40, auto_adopt_overlays: true };
     },
   });
   labs.push(l);

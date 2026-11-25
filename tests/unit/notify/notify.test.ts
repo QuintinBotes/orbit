@@ -1,6 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { FakeIssueReader } from '../../../src/intake/github.ts';
+import { writeIssueGoal } from '../../../src/intake/issue.ts';
 import { answerQuestion } from '../../../src/inquisition/questions.ts';
 import { notifyOpenQuestions, notifyRunEnded, resolveNotifyDeps, sendTestNotification, type RunNotifyInput } from '../../../src/notify/notify.ts';
 import { RUN, addQuestion, fakeSystem, notifyConfig, setState, setup, type NotifyEnv } from './helpers.ts';
@@ -151,6 +153,23 @@ describe('notifying when a run ends', () => {
     const text = JSON.parse(sys2.fetchCalls[0]!.body).text as string;
     expect(text).not.toContain(`orbit/${RUN}`);
     expect(text).toContain(`Read orbit report ${RUN} for the reviewed candidate`);
+  });
+
+  it('#195: where the linked issue is the run\'s own issue, says the outcome comment there stands in for the notice', async () => {
+    const env = world();
+    setState(env, 'SUCCEEDED', 'all criteria supported', env.clock.now());
+    writeIssueGoal(env.runDir, { schema: 'orbit.issue-goal/1', kind: 'spec', repo: 'acme/app', number: 7, url: '', title: 't', body_sha256: 'ab'.repeat(32), body_chars: 1, updated_at: '2026-11-01T10:00:00Z', fetched_at: 0, labels: [], scenarios: [], requirements: [], success_criteria: [], reproduction: null, hints: null, spec: 's' });
+    const sys = fakeSystem({ env: ENV });
+    const issues = new FakeIssueReader({ statePath: join(env.dir, 'issues.json') });
+    issues.put({ number: 7, body: 'b' });
+    sys.deps.issues = async () => issues;
+    const out = await notifyRunEnded(input(env, sys, { config: allChannels(7) }));
+    expect(out!.filter((o) => o.channel === 'github_comment')).toEqual([
+      { channel: 'github_comment', status: 'skipped', detail: 'issue #7: the run outcome comment posted there replaces this notice' },
+      { channel: 'github_comment', status: 'sent', detail: 'issue #7 (run outcome)' },
+    ]);
+    expect(sys.threads.comments(7)).toHaveLength(1);
+    expect(events(env, 'notification.skipped').map((e) => e.detail)).not.toContain('the run has no pull request and no linked issue');
   });
 
   it('does nothing for a run that has not ended', async () => {

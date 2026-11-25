@@ -410,4 +410,41 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX fail_before_probes_candidate ON fail_before_probes(run_id, candidate_id, check_id);
   CREATE INDEX fail_before_probes_probe ON fail_before_probes(probe_id, check_id);
   `,
+  /* 7: why a run ended and which Orbit version started it (docs/decisions/0018-run-end-record.md) */ `
+  -- failure_class and failure_secondary hold a value of schemas/failure-class.schema.json, set in the transition that
+  -- ends the run; both are null while it runs and when it succeeded. Rows written before this migration keep null in
+  -- all three columns: they are shown with no class and version unknown, and are never classified after the fact.
+  ALTER TABLE runs ADD COLUMN failure_class TEXT;
+  ALTER TABLE runs ADD COLUMN failure_secondary TEXT;
+  ALTER TABLE runs ADD COLUMN orbit_version TEXT;
+  `,
+  /* 8: what a route outcome was recorded for (issue #168): the role, the effort, the difficulty class, and the attempt it settles */ `
+  ALTER TABLE route_outcomes ADD COLUMN role TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN effort TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN difficulty TEXT;
+  -- The attempt the outcome settles (its candidate id) and the record that settled it (an evidence report or a review
+  -- gate). One outcome per attempt of a run: a step retried after a crash finds the row and writes nothing.
+  ALTER TABLE route_outcomes ADD COLUMN attempt_key TEXT;
+  ALTER TABLE route_outcomes ADD COLUMN evidence_ref TEXT;
+  CREATE UNIQUE INDEX route_outcomes_attempt ON route_outcomes(run_id, attempt_key) WHERE attempt_key IS NOT NULL;
+  CREATE INDEX route_outcomes_class ON route_outcomes(work_kind, difficulty, ts);
+  `,
+  /* 9: what orbit retro proposed and what the person decided, so a proposal is not made twice (issue #174) */ `
+  -- One row per proposal, keyed by its kind, failure class and signature (never by wording). A row is written when a
+  -- proposal's draft is made ('drafted') and updated by the person's answer ('sent', 'applied', 'accepted',
+  -- 'declined'). A 'drafted' row is made again by the next retro; an answered one keeps the same proposal from being
+  -- made again. run_ids_json lists the runs that motivated it.
+  CREATE TABLE retro_decisions (
+    key            TEXT PRIMARY KEY,
+    kind           TEXT NOT NULL,
+    failure_class  TEXT NOT NULL,
+    signature      TEXT NOT NULL,
+    decision       TEXT NOT NULL,
+    run_ids_json   TEXT NOT NULL,
+    draft_path     TEXT,
+    decided_by     TEXT,
+    created_at     INTEGER NOT NULL,
+    decided_at     INTEGER
+  ) STRICT;
+  `,
 ];

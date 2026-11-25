@@ -15,6 +15,7 @@ import { verifySnapshot } from '../../../src/policy/snapshot.ts';
 import { makeFixture, waitFor, type Fixture } from '../adapters/helpers.ts';
 import { LOOPBACK_RUNNERS, XUNIT_PROJECT, dotnet, dotnetFirstRun, nugetGlobalPackages, type LoopbackRunner } from './loopback-runners.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * Issue #31: an implementer's own `dotnet test -m:1` built the project and then aborted with SocketException (13) at
@@ -30,7 +31,7 @@ import { runWrapped } from './run.ts';
  */
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srt = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await srt.available();
+const status = requiredOnCi(await srt.available());
 const darwin = process.platform === 'darwin';
 /** This machine's address on its network, the one another machine would connect to; null without one. */
 const lan = Object.values(networkInterfaces()).flat().find((a) => a !== undefined && a.family === 'IPv4' && !a.internal)?.address ?? null;
@@ -61,7 +62,7 @@ function workerSandbox(f: Fixture, files: Record<string, string>, timeoutMs: num
     toolchains: detectToolchains({ roots: [f.repo, ...Object.keys(files).filter((p) => p.includes('/')).map((p) => join(f.repo, dirname(p)))] }),
     mode: 'worker',
     cacheRoot,
-    scratchRoot: join(f.workerDir, 'toolchains'),
+    scratchRoot: join(tmpDir, 'toolchains'),
     tmpDir,
     hostHome: homedir(),
     hostEnv: process.env,

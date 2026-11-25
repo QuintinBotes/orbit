@@ -4,7 +4,7 @@
  * Hosted model weights never change. Orbit improves by
  *   1. retrieving lessons learned from verified run evidence into worker
  *      context (advisory, untrusted data; never authority),
- *   2. calibrating routing, allowances and difficulty from measured outcomes,
+ *   2. calibrating routing from measured route outcomes (routing/router.ts, routing.learning),
  *   3. distilling repeatedly confirmed lessons into versioned per-role prompt
  *      overlays, adopted automatically only when replay evals improve without
  *      regression, and rolled back automatically when live metrics regress.
@@ -59,6 +59,19 @@ export interface Provenance {
   generated_at: string;
 }
 
+/**
+ * Where a lesson came from (issue #173): the run, and the file and line, the check or the review finding it rests
+ * on. Retrieval re-checks the path and the check against the repository before the lesson may enter a prompt.
+ */
+export interface Citation {
+  run_id: string;
+  /** Repository-relative file, with the line when known. */
+  path: string | null;
+  line: number | null;
+  check_id: string | null;
+  finding_id: string | null;
+}
+
 export interface Lesson {
   schema: 'orbit.lesson/1';
   id: string;
@@ -77,6 +90,8 @@ export interface Lesson {
   /** Free of repository code, identifiers and paths; eligible for the global graph. */
   code_free: boolean;
   supersedes: string | null;
+  /** Absent on lessons stored before citations existed and on lessons from outside runs (seeds, ingest). */
+  citation?: Citation | null;
 }
 
 export const EDGE_TYPES = [
@@ -111,6 +126,8 @@ export interface RetrievalContext {
   languages: string[];
   /** Hard ceiling on the advisory block's size. */
   maxTokens: number;
+  /** When given, each lesson's citation and age are re-checked first, and a lesson that fails is skipped and marked stale. */
+  recheck?: { root: string; checkIds: readonly string[]; expiryDays: number };
 }
 
 export interface RetrievedLesson {

@@ -33,6 +33,14 @@ it wrote is shared by every worktree of the clone and lives outside this
 worktree; pass that on, since a person may not expect a worktree's init to
 write into the main checkout's git directory. Offer to help edit `.orbit/config.yaml`, then suggest `/orbit:doctor`.
 
+Init reads the repository's `AGENTS.md`, then `CLAUDE.md`, and prefers the
+commands they document over the ones it derives from manifests: say which
+files it read and which proposed checks came from them (their reason names the
+file and line). Relay the warning when init names `AGENTS.override.md`, which
+it does not read. Offer to compare the proposals with the commands documented
+there, using the instructions already loaded in this session. Explain any
+differences. Edit `.orbit/config.yaml` only with the person's agreement.
+
 Relay any warning that no scope or checks were derived, including the reason,
 the example scope paths that must be edited, and the marker files init looked
 for. Whenever git does not track `.orbit/config.yaml`, including a config that

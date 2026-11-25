@@ -50,7 +50,9 @@ repository:
 ```
 
 Orbit only pushes branches with the prefix, and the prefix may not match the
-base branch.
+base branch. `orbit queue run --base <branch>` sets `base_branch` for the runs
+it starts, validated as if this file said it
+([operations](operations.md#working-a-backlog)).
 
 ## scope
 
@@ -59,12 +61,22 @@ scope:
   allowed_paths: ["apps/**", "packages/**", "tests/**", "docs/**"]
   protected_paths: [".github/**", "infra/**", ".orbit/config.yaml", "**/.env*"]
   credential_paths: []
+  generated_paths: []
 ```
 
 `scope.credential_paths` (list of globs, default empty): files workers may never
 read, enforced by the OS read-deny list, the Read tool and the Bash read check,
 in addition to the built-in credential patterns. Use it for credentials whose
 names do not say so.
+
+`scope.generated_paths` (list of globs, default empty): committed generated
+files, such as a bundle a mandatory check rebuilds and compares. Their changed
+lines are reported apart (`generated_lines` in the scope report) and do not count
+against `scheduler.hard_limits.changed_lines`; the files still count against
+`changed_files` and still need `allowed_paths`. Only this list marks a file as
+generated, never a file in the candidate such as `.gitattributes`. List only
+files a check regenerates, since a worker's hand edits there are not counted
+either.
 
 The template's `allowed_paths` are examples (`apps/`, `packages/`, `tests/`,
 `docs/`) that match nothing in most repositories, and a worker can then change
@@ -76,7 +88,8 @@ in, because the tests a worker adds are changes too.
 A worker may change only `allowed_paths`; anything else fails the scope gate.
 A goal contract can narrow the scope but never widen it. Protected paths win
 over allowed ones. Built-in protections you cannot remove: `.orbit/**`, `.git`,
-nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, `**/.env*`,
+nested `.git` directories, `.claude/settings*.json`, `.mcp.json`, the partner
+CLIs' project config `.codex/**`, `.muse/**` and `.agents/**`, `**/.env*`,
 `**/*.pem`, SSH keys, `**/.npmrc` and `**/.netrc`.
 
 ## actions
@@ -232,6 +245,16 @@ the repository use (`proxy.golang.org`, `sum.golang.org`; `index.crates.io`,
 the Gradle portal; `api.nuget.org`). It is the only step that may write the
 repository's toolchain caches; see [Toolchain caches](#toolchain-caches-and-build-state).
 
+The same install runs at PREFLIGHT in the implementer's worktree, so workers
+can run the checks there; workers cannot install packages themselves. It is
+not evidence for any candidate, and a failure there is a decision in the
+report, never a block. It runs only when `git status` shows the worktree
+clean, and what it leaves that git does not ignore (including output hidden by
+an edited `.gitignore`, which is restored) is removed, so it cannot enter a
+candidate: ignore the install's output (`node_modules/`, `.venv/`) in a
+committed `.gitignore` for workers to get it. Parallel work units' worktrees
+get no install.
+
 `dependencies.audit` is the vulnerability and license policy of the baseline
 and dependency gates (npm lockfiles). When enabled, `npm audit --json
 --package-lock-only` runs inside isolation (registry network only, no
@@ -298,6 +321,16 @@ and say what it includes (`hard cap 8, including 4 for replaced reviewers`). Thi
 is bounded: a listed reviewer fails at most once until a resume, and resumes that
 start reviewers again spend `recovery_attempts`. The cost, wall-clock and every
 other hard limit stay as they are.
+
+`changed_files` and `changed_lines` bound each candidate against the base
+revision, counting every text line added or deleted, except the lines of
+files listed in `scope.generated_paths`.
+A candidate over either limit is denied before any check runs; the denial and
+the repair brief name the five files with the most changed lines. When a repair
+comes back with the same tree, the run blocks and names the limit instead of
+spending more attempts: if one of those files is a generated file the task
+requires, list it in `scope.generated_paths` (or raise the limit) and start a
+new run.
 `worker_turns_per_session` is passed to every Claude worker session as
 `--max-turns`; the curator also keeps its smaller six-turn cap. Every attempt
 is a new session, never a resumed one, so the cap applies to each session
@@ -316,6 +349,33 @@ the run's largest count. A session the cap ended, or one whose model requests
 went past the cap, adds a `budget.exhausted` event for the session. Missing
 counts are unavailable, never an assumed zero. The Codex adapter does not enforce this turn cap or
 report session turns.
+
+Within that hard cap, each session's `--max-turns` follows the task: it is the
+75th percentile of the model requests that earlier successful sessions of the
+same role and difficulty took in this repository, kept within
+`scheduler.turn_cap.floor` and `ceiling`, and `default` when there is no
+history. A session that ended at its cap, or asked to continue, counts as the
+ceiling: counting only the sessions that finished would lower the cap run after
+run, since none of them can have taken more turns than the cap allowed.
+Once a session of a role in a run has done so, the run's later sessions of that
+role (a retry of a planner or a review, the next implementation attempt) get the
+ceiling, since under the same cap they would stop again. Without a `turn_cap` section the floor is 10 and the ceiling and the
+default are `worker_turns_per_session`, so a repository with no history runs as
+before. Each session's cap is recorded as a `worker.turn-cap` event. From
+`reminder_fraction` (0.8) of its cap on, Orbit's guard hook tells the session
+before each tool call how many turns it has left. An implementer that returns
+`next_action` `continue-implementation` with what remains, after that point,
+gets one more session of the same attempt in the same worktree
+(`budget.turn-extension`), once per attempt, instead of having its unfinished
+work verified and diagnosed. The inquisitor and the curator keep their own caps.
+
+```yaml
+scheduler:
+  turn_cap: {floor: 10, ceiling: 30, default: 30, reminder_fraction: 0.8}
+```
+
+`floor <= default <= ceiling <= worker_turns_per_session`, and
+`reminder_fraction` lies strictly between 0 and 1.
 
 Once `review_rounds` is spent and the last review did not clear the candidate,
 the run ends `EXHAUSTED` at that point: neither a repair attempt nor an
@@ -466,13 +526,28 @@ providers Orbit has an adapter for can be listed: today that is `codex` and
 `muse` (or a second configuration of either, such as `codex-review`, defined
 under `providers`), in any order, for example `providers: [codex, muse]`.
 Any other id, such as `gemini`, is a configuration error that names the
-supported ones. Each listed id must be defined under `providers`. Muse is a
-reviewer only and needs Muse 1.4.11 or later; see
+supported ones. Each listed id must be defined under `providers`. Muse
+needs Muse 1.4.11 or later; see
 `providers.muse` under [isolation and providers](#isolation-and-providers)
-and [ADR 0017](decisions/0017-muse-reviewer.md).
+and [ADR 0017](decisions/0017-muse-reviewer.md), replaced by
+[ADR 0022](decisions/0022-partner-implementers.md).
+
+Independence is computed from who implemented in the run: when a partner
+(`routing.implementers`) implemented, Claude counts as an independent reviewer
+after the listed ones, and a tree two families wrote is reviewed independently
+only by a third. A risky change (the planning assessment classes it `complex`)
+gets a second review: after the cross-model review, the implementer's own
+family reviews it again in a fresh session, and the final report names it as
+the "Same-family review". The cross-model reviewer of a risky change must be its
+provider's top tier (a Claude model at the opus-class floor, or Codex's
+recommended model in its live catalog); with only a weaker one, the
+cross-model pass is skipped, the report says why under "Cross-model review
+skipped", and `when_unavailable` decides as for any review that is not
+independent.
 
 A reviewer that is selected but then fails at run time (a timeout, a non-zero
-exit, or a malformed answer once its regenerations are used) is recorded with
+exit, a malformed answer once its regenerations are used, or a used-up
+allowance, at once) is recorded with
 the reason as a `review.reviewer-failed` decision, and the selection runs again
 without it: the next listed reviewer reviews under its own name, and with none
 left `review.when_unavailable` applies. The final report's `Reviewer:` line
@@ -510,6 +585,16 @@ The keys this replaced still work and map onto `when_unavailable`:
 `claude`. Setting a legacy key next to a `when_unavailable` that says otherwise
 is a configuration error, and so is the legacy pair that contradicts itself. A
 legacy `preferred_provider` becomes the preference list.
+
+Delivery needs a review that returns `APPROVE`. A `REPAIR_REQUIRED` review
+whose open findings are all advisory (below the blocking severities, which
+can include a medium finding under the default policy) clears the gate without approving, so its advisory findings go to
+the repair loop like any other repair. The repaired tree is reviewed again and
+is delivered only when that review approves. A review that also raised a note
+under `evidence-classification` gets its one fresh review instead, as
+`verification.fail_before` describes. The `review_rounds` cap and the
+non-progress check apply as usual. A `BLOCK` review with only advisory
+findings still ends the run `BLOCKED`.
 
 ### Human policy decisions in auto mode
 
@@ -645,6 +730,7 @@ checks:
 | `flaky_reruns` | 0 to 5; reruns are used only to classify flakiness |
 | `kind` | `command` (default) or `playwright` |
 | `category` | what the check evidences: `test` (default), `lint`, `typecheck`, `build`, `sast`, `ui` (the default of a `playwright` check) or `other`. Only a command check of category `test` is run by the [fail-before probe](#verification) and by the repair probe, so only such a check can show that a test a repair wrote for a review finding tells the repaired tree from the one before; `sast` checks feed the static security gate |
+| `tests_command` | argv, run without a shell, that runs only the test files appended to it (one argument each, relative to `cwd`): `[node, --test]`, `[npx, vitest, run]`, `[pytest]`. Under `verification.fail_before: required` each criterion's mapped tests run alone with it, so that each criterion's fail-before is its own (issue #200). Without it, a criterion citing only this check cannot be probed on its own, and its fail-before is not established |
 
 Set `category` on every check that is not a test suite.
 A check without a category is treated as `test` and is probed: a lint or
@@ -710,6 +796,33 @@ proposed it and that the person should review it before the first run. It
 prints what it proposed and why, and `--json` carries the same in
 `checks.proposed` (id, ecosystem, command, category, timeout_seconds, reason)
 and `checks.not_proposed` (a declared tool that was not found, for example).
+Init also reads the repository's own instructions: the tracked root
+`AGENTS.md`, then `CLAUDE.md` (issue #178). A command either documents in a
+fenced code block or an inline code span is read as a check when it starts with
+a tool init knows (`npm`, `pnpm`, `yarn`, `npx`, `dotnet`, `pytest`, `python`,
+`ruff`, `mypy`, `uv`, `go`, `cargo` and the like), needs no shell (no pipe,
+redirection, quote, variable or leading `NAME=value`), and names a check
+(`test`, `vitest`, `pytest`, `lint`, `clippy`, `vet`, `typecheck`, `tsc`,
+`mypy`, `build`), and sets up nothing (`install`, `add`, `ci`, `sync` and the
+like mean it is no check). A tool name alone (`ruff`, `mypy`) is a mention, not
+a command, except `pytest`, which is a whole check. It takes the
+place of the command derived from the manifests for the same ecosystem and kind
+of check (for .NET projects without one solution, the one for the project it
+names), or is added when the manifests give none; the first one documented
+wins, so `AGENTS.md` comes before `CLAUDE.md`. A documented `dotnet` command
+gets `-m:1`, as the derived ones do. Two are left out: one that is only the
+leading part of the derived command (`go test` of `go test ./...`), which keeps
+the derived one, and a `cargo clippy` command where init found clippy is not
+installed.
+Its reason says where it was read (`documented in AGENTS.md line 7, in place of
+pnpm test from the manifests`), and init lists the files it read in its output
+and in `checks.read_docs` in `--json`. A documented command whose tool is not
+on `PATH` is named in `checks.not_proposed`. Prose is never parsed into a
+command. Init does not read Codex's `AGENTS.override.md`: when it proposes
+checks and git tracks one at the root, it names it in a warning and in
+`checks.unread_docs`, and `/orbit:init` offers to compare the commands
+documented there. It edits the config only with your agreement.
+
 An existing config is never touched: init proposes only for a config it
 writes, so checks you wrote or edited stay exactly as they are, and when it
 already defines checks init says so (`checks_defined` in `--json`) instead of
@@ -929,11 +1042,27 @@ The dependency caches are `<orbit home>/toolchains/<repo key>/<cache>`, one
 set per repository, never your own `~/.cargo`, `~/go`, `~/.m2` or
 `~/.nuget/packages`. Only the dependency install writes them; every other
 check and every worker reads them and cannot write them. Build state is
-created for each check attempt and removed with it (a worker has its own under
-its worker directory, which only the `os-sandbox` worker tier lets it write:
-in the `claude-sandbox` tier a worker cannot build Go, Rust or JVM code, as
-`orbit doctor` says under `workers.toolchains`), so `cargo build` and `cargo test` in two checks each
-compile. A check's `env` overrides any of these variables, for example
+created for each check attempt and removed with it, so `cargo build` and
+`cargo test` in two checks each compile. A Claude worker builds in a directory
+of its own in its private temp directory under the temp root, which it may
+write in either worker tier. The temp root is `/tmp/orbit-<uid>` for every
+Orbit process of a user, whatever its `$TMPDIR`, so a foreground run and the
+service agree on it. It is short so that socket paths below it stay under
+macOS's 104-byte limit. Only Orbit code running inside an Orbit check (its own
+test suite as a check) puts it in the check's private temp directory, the one
+temp location the check may write, when the root there is at most 46 bytes
+long. Read-denials and `orbit gc` cover `/tmp/orbit-<uid>` and `orbit-<uid>`
+in `$TMPDIR` both; inside an Orbit check that nests its root, only that root,
+since the check's own temp directory lies in `/tmp/orbit-<uid>` (#206). Orbit
+makes a new one for every session of the
+worker and removes the earlier one, so a restarted worker compiles again. No
+check and no other Claude worker can read it: their sandboxed commands are
+read-denied the whole temp root (but for a worker's own directory), and the
+guard hook denies a worker's Read tool anywhere in the root outside its own
+directory. A Codex or Muse reviewer under `srt` is read-denied it too; in the
+`codex-sandbox` or `muse-sandbox` tier its reads are not confined, so it can.
+`orbit gc` removes it with the run, and skips and reports a run whose temp root
+or worker temp directory is a link or not yours. A check's `env` overrides any of these variables, for example
 `CARGO_TARGET_DIR: target` to build inside the checkout. `orbit doctor`
 (`checks.sandbox`) lists each toolchain, whether it starts in the sandbox (for
 .NET: whether three generated projects build there) and where its caches live.
@@ -1148,9 +1277,10 @@ from the packet alone is visible; see
 
 `providers.muse` configures Muse as an independent reviewer
 ([ADR 0017](decisions/0017-muse-reviewer.md); the verified CLI surface is
-[interfaces/muse](interfaces/muse.md)). Muse never implements: the adapter
-runs read-only review tasks only and needs Muse 1.4.11 or later (last measured
-on 1.4.14). There is no
+[interfaces/muse](interfaces/muse.md)). The adapter runs read-only review
+tasks, and implements only when `routing.implementers` lists it, in the
+os-sandbox tier (`META_API_KEY` plus srt; [ADR 0022](decisions/0022-partner-implementers.md)).
+It needs Muse 1.4.11 or later (last measured on 1.4.14). There is no
 `muse` provider in the defaults; adding the block (under `muse`, or an id
 starting with `muse-` or `muse_`) creates it with the defaults shown above.
 The model is passed through unchanged (Muse has no model catalog command, so
@@ -1251,11 +1381,43 @@ routing:
     inquisitor: 6000
     curator: 8000
     explorer: 6000
+  learning:                               # measured outcomes may move work to a cheaper model
+    enabled: true                         # false: routing reads no outcomes; they are still recorded
+    min_samples: 20                       # judged outcomes of one model in one task class, 1 to 100000
+    min_pass_rate: 0.8                    # measured pass rate needed to displace the table's choice, 0 to 1
+    window_days: 90                       # older outcomes are not read, 1 to 3650
+  implementers: [claude]                  # who may implement, in order; partners off until a benchmark shows they help
 
 retention:
   keep_runs_days: 30
   redact_patterns: []                     # extra regular expressions redacted from logs and artifacts
 ```
+
+`learning` decides when the measured outcomes of earlier implementation
+attempts may displace the routing table's choice; the rules are in
+[the learning layer](learning.md#routing-from-measured-outcomes). It only
+chooses among `allowed_models`, and an entry in `overrides` always wins over
+it. The settings are read from the policy frozen at the start of a run, like
+every other setting.
+
+`implementers` lists the providers that may implement a bounded unit
+(routine coding and focused tests), in preference order (issue #176,
+[ADR 0022](decisions/0022-partner-implementers.md)). The default, `[claude]`,
+keeps partner implementers off: they stay off until a full benchmark shows they
+help. Each entry is `claude` or a Codex or Muse provider defined under
+`providers`, partners before `claude` (a partner listed after it is a config
+error); with `[codex, claude]` an attempt goes to Codex on
+`providers.codex.model` and `providers.codex.reasoning_effort`, in its own
+writable worktree, and Claude's verification decides whether its candidate is
+kept. Claude is always the fallback: once two of a partner's candidates in a
+run failed verification or review, for the rest of a run once its quota or
+login failed (classed `credentials`, recorded as `routing.partner-skipped`,
+and charged to no candidate: the attempt goes on with Claude), when its
+measured pass rate for the task class falls below `learning.min_pass_rate`, or
+when its data policy is not attested. Codex implements under its own
+`workspace-write` sandbox, or inside srt; Muse implements only inside srt
+(`META_API_KEY` plus srt), so without them preflight skips it. Independence of
+review is computed from who implemented, so Claude reviews a partner's work.
 
 `output_budgets` defaults follow the token-efficiency table in
 [the architecture](architecture.md); a partial map overrides only the roles it
@@ -1280,8 +1442,8 @@ never be applied.
 
 `keep_runs_days` is the artifact retention period. The retention pass
 (`orbit gc`; `pruneExpiredRuns` in `src/storage/retention.ts`) removes
-`.orbit/runs/<id>/` and the run's worktrees under `$ORBIT_HOME/worktrees/` for
-runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than
+`.orbit/runs/<id>/`, the run's worktrees under `$ORBIT_HOME/worktrees/` and its
+workers' private temp directories under the temp roots (`/tmp/orbit-<uid>`, and `orbit-<uid>` in `$TMPDIR`) for runs that ended (`SUCCEEDED`, `EXHAUSTED`, `IMPOSSIBLE` or `CANCELLED`) more than
 that many days ago. `orbit gc --keep-days 0` prunes every finished run now. The
 database rows stay and are marked with a `run.artifacts_pruned` event. A
 `BLOCKED` run is never pruned, and neither is a run whose controller still holds
@@ -1322,6 +1484,9 @@ knowledge:
   curator_budget_usd: 0.25
   eval_budget_usd: 0          # 0 disables replay evaluations and automatic overlay adoption
   auto_adopt_overlays: true
+  lessons_in_prompts: false   # lessons and overlays stay out of worker prompts until a full benchmark shows they help
+  max_prompt_lessons: 3       # with lessons_in_prompts: at most this many validated lessons per prompt
+  lesson_expiry_days: 28      # a lesson with no supporting run for this long is not eligible
 
 guard:
   terms_file: null            # null means ~/.config/publish-guard/terms.txt
@@ -1329,7 +1494,7 @@ guard:
 
 verification:
   allow_flaky_pass: false
-  fail_before: advisory
+  fail_before: required
   fail_before_timeout_seconds: 900
 ```
 
@@ -1342,7 +1507,7 @@ are described in [verification](#verification).
 ```yaml
 verification:
   allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
-  fail_before: advisory               # off | advisory | required
+  fail_before: required               # off | advisory | required
   fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
 ```
 
@@ -1380,8 +1545,22 @@ change", not "an assertion failed".
 | `fail_before` | What it does |
 |---|---|
 | `off` | No probe; `unverified` says it was not run. |
-| `advisory` (default) | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
-| `required` | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+| `advisory` | The probe runs and each criterion's `fail_before` entry in the report carries its outcome; `unverified` gains one line when a criterion's new tests passed on the base revision or could not be probed. Nothing else changes: the reviewer and the Inquisition are shown nothing of the probe. |
+| `required` (default) | failed-before supports the criterion, whatever the failure: a compile, collection or import failure of a new symbol counts and is not a review finding. The review packet shows the lines of each probe log that report a failure (the log is check-wide), and the reviewer reviews the new tests' quality only (a tautology, an assertion that cannot fail with any implementation). passed-before leaves it unverified and goes to repair; when the repair attempts run out, the run asks a person whether to accept the criterion without fail-before for that tree. Not established blocks the run with a question per criterion; an environment, `ERROR` or install cause is never offered for acceptance: fix it and `orbit resume` runs the probe again. |
+
+Under `required`, a plan that maps tests to criteria (every plan a planner
+writes since issue #200) is judged per criterion, not per check: each
+criterion's mapped test files run alone with their check's `tests_command`, on
+the probe tree, where a change criterion's tests must fail and a keep
+criterion's must pass, and on the candidate, where both must pass. One mapped
+test that does not leaves the criterion unproven, whatever the others showed. A
+UI criterion keeps the browser probe. Before delivery, the
+[proof gate](spec.md#completion-proof) then audits each criterion in a fresh
+reviewer session that sees only the criterion and its tests, checks each MUST of
+the goal against quoted lines of the candidate, and checks the pull request body
+and the changed documents against the candidate; an open result goes to repair,
+and nothing is delivered before it closes. Under `advisory` and `off` neither the
+per-criterion probe nor the proof gate runs.
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
@@ -1456,7 +1635,7 @@ addendum](decisions/0014-fail-before.md)).
 notifications:
   desktop: true               # Linux notify-send only; skipped on macOS (use the webhook)
   webhook: null               # or { url_env: ORBIT_WEBHOOK_URL }
-  github_comment: false       # comment on the run's pull request, else on remote_answers.issue
+  github_comment: false       # comment on the run's pull request, else on remote_answers.issue; and on the issue a run was started from
   remote_answers:
     enabled: false            # accept "/orbit answer <question-id> <choice>" comments
     issue: null               # an issue linked to every run started under this policy
@@ -1473,9 +1652,36 @@ a credential variable (`GH_TOKEN` and the like) is refused. The webhook must be
 `network.allowed_hosts`, and redirects are not followed. The body is JSON with
 a Slack-compatible `text` field and the payload under `orbit`. Comments and
 remote answers go through `GH_TOKEN`; with `delivery.provider: fake` they use
-`.orbit/fake-github-threads.json` instead. A run keeps the settings it started
+`.orbit/fake-github-threads.json` instead. A run started with
+`orbit run --issue` also posts its outcome on that issue when it ends, only
+with `github_comment: true`
+([operations](operations.md#running-an-issue)). A run keeps the settings it started
 with, like the rest of its policy; a run whose frozen policy no longer verifies
 notifies on the desktop only (Linux; nothing on macOS).
+
+## repo_map
+
+```yaml
+repo_map:
+  prompt_slice: false         # off until a full benchmark shows the slice helps
+  prompt_slice_tokens: 1500   # 100 to 8000
+  prompt_slice_min_files: 500 # repositories with fewer tracked files get no slice
+```
+
+The repository map (`orbit map build`, `orbit map query <path>`) lists a
+tree's files with their sizes, which are generated, which tests cover each
+source file, the imports of TypeScript, JavaScript, Python, Rust and Go files,
+and the paths each check names. It is built from git objects with no model
+call and cached by tree hash in the clone's git directory. Two gates always use
+it: scope inspection leaves files marked generated in both the base and the
+candidate tree out of `changed_lines` (mark a committed bundle with
+`dist/** linguist-generated` in `.gitattributes`; a TypeScript, JavaScript,
+Python, Rust or Go file up to 1 MiB may instead carry, in its first kilobyte,
+a comment line with an unquoted `@generated`, or a line that says both
+generated and `DO NOT EDIT`), and a review finding filed as `missing-test` is refuted
+when the map links a test in the candidate to its file. `prompt_slice` adds
+the map's slice for the files a goal names to the planner and reviewer
+prompts, and tells the implementer about `orbit map query`.
 
 ## Environment variables
 

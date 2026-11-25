@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import { isOrbitError } from '../../../src/core/errors.ts';
 import { sh } from '../../unit/evidence/fixtures.ts';
 import { nodeCheck, checkDef, write } from '../../unit/evidence/fixtures.ts';
 import { checkDirOf, pidGone, readText, recordingIsolation, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
+import { skipWithoutPs } from '../../support/ps.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH_TOKEN = `ghp_${'a1B2'.repeat(9)}`;
@@ -487,12 +488,15 @@ describe('reattach after the controller dies', () => {
     expect(fresh!.id).not.toBe(lost!.id);
   });
 
-  it('takes an unstarted intent with no process as a lost launch rather than waiting forever', async () => {
+  it('takes an unstarted intent with no process as a lost launch rather than waiting forever', async (ctx) => {
+    skipWithoutPs(ctx); // only a search of the process table shows that no process carries the token
     const e = await setup([nodeCheck('x', '')]);
     const { planCheckRun } = await import('../../../src/evidence/store.ts');
     const { atomicWriteJson } = await import('../../../src/core/fsx.ts');
     const row = planCheckRun(e.run.db, { runId: e.run.runId, candidateId: e.candidate.id, checkId: 'x', kind: 'command', treeHash: e.candidate.treeHash, checkConfigHash: e.run.snapshot.check_config_hashes.x!, policyHash: e.run.policyHash, command: ['node'], cwd: e.checkoutDir, isolation: 'none', limitations: [] }, e.ctx.clock);
-    atomicWriteJson(join(checkDirOf(e, 'x'), 'intent.json'), { token: 't', checkRunId: row.id, argv: ['node'], cwd: e.checkoutDir, timeoutMs: 1000, killGraceMs: 100, maxOutputBytes: 1000, writtenAt: Date.now() - 60_000 });
+    // The runner looks for the token as a word of any process's command line, so it must be as unique as a real one: a
+    // token of 't' matched another process on a busy machine (a local verify, 15 Nov 2026), and the launch read as live.
+    atomicWriteJson(join(checkDirOf(e, 'x'), 'intent.json'), { token: `tok-${randomUUID()}`, checkRunId: row.id, argv: ['node'], cwd: e.checkoutDir, timeoutMs: 1000, killGraceMs: 100, maxOutputBytes: 1000, writtenAt: Date.now() - 60_000 });
     const result = await reattachCheck(e.ctx, row.id);
     expect(result.status).toBe('ERROR');
     expect(statSync(result.logPath).isFile()).toBe(true);

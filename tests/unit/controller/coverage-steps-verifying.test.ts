@@ -27,7 +27,8 @@ const { PLANNER_FILE } = await import('../../../src/controller/steps/contracting
 const { getRun, requestCancel } = await import('../../../src/controller/run-store.ts');
 const { getCandidate, listFailures, currentEvidenceReport, listEvidenceReports } = await import('../../../src/evidence/store.ts');
 const { evaluateEvidence } = await import('../../../src/evidence/report.ts');
-const { listDecisions } = await import('../../../src/storage/decisions.ts');
+const { listDecisions, recordDecision } = await import('../../../src/storage/decisions.ts');
+const { implementRouteDecisionId } = await import('../../../src/controller/route-outcome.ts');
 const { planWorker, finishWorker, markWorkerRunning } = await import('../../../src/storage/workers.ts');
 const { setQuestionAnswer } = await import('../../../src/inquisition/store.ts');
 const { APPROVE_ONCE, DENY } = await import('../../../src/controller/authorization.ts');
@@ -100,6 +101,42 @@ describe('preconditions and fresh evidence', () => {
     expect(state()).toBe(to);
     expect(hooks.inspectScope).not.toHaveBeenCalled();
     if (verdict === 'INCOMPLETE') expect(getRun(lab.db, lab.runId).outcomeReason).toContain('mandatory verification is unavailable for candidate 1: SAST is unverified; a; b; c; d');
+  });
+
+  // Issue #190: the block's class says why verification could not prove the criteria, from the records alone.
+  describe('mandatory verification that is unavailable', () => {
+    const cls = () => getRun(lab.db, lab.runId).failureClass;
+    const noTest = 'criterion AC-1: unverified (no new evidence: unit already passed on the base revision and the candidate adds or changes no test)';
+    const capped = (attempt: number) => lab.db.run("INSERT INTO events (run_id, ts, type, actor, data_json) VALUES (?, 1, 'implementation.worker-ended', 'x', ?)", lab.runId, JSON.stringify({ attempt, status: 'max_turns', error: 'Reached maximum number of turns (30)' }));
+
+    it('run orb-20261119-081756-112901 (#172): every check ran, the candidate added no test, and both implementer sessions ended at their turn cap: turn-cap', async () => {
+      const { cand } = setup();
+      capped(1);
+      capped(2);
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', unverified: [noTest] });
+      await runStep();
+      expect(state()).toBe('BLOCKED');
+      expect(cls()).toBe('turn-cap');
+    });
+
+    it('the same gap with no session cut short is the work: model', async () => {
+      const { cand } = setup();
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', unverified: [noTest] });
+      await runStep();
+      expect(cls()).toBe('model');
+    });
+
+    it.each([
+      ['not executed', []],
+      ['ended without a result', [{ id: 'unit', status: 'ERROR' as const, exit_code: null, flaky: false, log: 'evidence/1/unit.log' }]],
+    ])('a mandatory check that %s is verification that could not run (#158): environment, turn cap or not', async (_, checks) => {
+      const { cand } = setup();
+      capped(1);
+      addEvidence(lab, cand, { verdict: 'INCOMPLETE', checks, unverified: ['check unit: no result'] });
+      await runStep();
+      expect(state()).toBe('BLOCKED');
+      expect(cls()).toBe('environment');
+    });
   });
 
   it('a green candidate that trips a proof-blocking trigger goes to inquiry, and an incomplete one with any trigger too', async () => {
@@ -391,5 +428,50 @@ describe('pendingTrigger', () => {
     await pendingTrigger(lab.ctx(), withDiff, ['repeated_failure']);
     expect(hooks.git).not.toHaveBeenCalled();
     expect((hooks.detectTriggers.mock.calls.at(-1)![0] as { testLayout?: unknown }).testLayout).toBeUndefined();
+  });
+});
+
+describe('route outcomes of a failed verification (issue #168)', () => {
+  type Check = import('../../../src/evidence/types.ts').EvidenceReport['checks'][number];
+  /** The route attempt 1 was given, as routeFor records it. */
+  function routed(): void {
+    recordDecision(lab.db, lab.ctx().runDir, { id: implementRouteDecisionId(lab.runId, 1), runId: lab.runId, kind: 'route', summary: 'implement:1', data: { purpose: 'implement:1', provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', work_kind: 'routine-code' } }, lab.clock);
+  }
+  const outcomes = () => lab.db.all<{ outcome: string; attempt_key: string; evidence_ref: string }>('SELECT outcome, attempt_key, evidence_ref FROM route_outcomes WHERE run_id = ?', lab.runId);
+  const check = (status: Check['status']): Check => ({ id: 'unit', status, exit_code: status === 'PASSED' ? 0 : 1, flaky: false, log: 'unit.log' });
+
+  it('a trusted check that ran on the candidate and failed settles the attempt as failed', async () => {
+    const { cand } = setup();
+    routed();
+    const ev = addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('FAILED')] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([{ outcome: 'failed', attempt_key: 'attempt:1', evidence_ref: ev.id }]);
+  });
+
+  it.each(['TIMEOUT', 'CANCELLED'] as const)('a check that only ended %s settles nothing: no check ran on the work to its end', async (status) => {
+    const { cand } = setup();
+    routed();
+    addEvidence(lab, cand, { verdict: 'FAIL', checks: [check(status)] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([]);
+  });
+
+  it('a required browser journey that failed settles the attempt as failed, though every command check passed', async () => {
+    const { cand } = setup();
+    routed();
+    const ev = addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('PASSED')], ui: [{ journey: 'checkout', status: 'FAILED', artifacts: [] }] });
+    await runStep();
+    expect(state()).toBe('DIAGNOSING');
+    expect(outcomes()).toEqual([{ outcome: 'failed', attempt_key: 'attempt:1', evidence_ref: ev.id }]);
+  });
+
+  it('a browser journey that only timed out settles nothing either', async () => {
+    const { cand } = setup();
+    routed();
+    addEvidence(lab, cand, { verdict: 'FAIL', checks: [check('PASSED')], ui: [{ journey: 'checkout', status: 'TIMEOUT', artifacts: [] }] });
+    await runStep();
+    expect(outcomes()).toEqual([]);
   });
 });

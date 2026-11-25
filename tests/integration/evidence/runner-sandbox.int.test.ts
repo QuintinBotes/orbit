@@ -6,6 +6,7 @@ import { runChecks } from '../../../src/evidence/runner.ts';
 import { SandboxRuntimeIsolation } from '../../../src/isolation/sandbox-runtime.ts';
 import { nodeCheck } from '../../unit/evidence/fixtures.ts';
 import { checkDirOf, pidGone, runnerEnv, waitFor, type RunnerEnv } from './harness.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The same runner through the real OS sandbox. Skipped, with the probe's
@@ -13,7 +14,7 @@ import { checkDirOf, pidGone, runnerEnv, waitFor, type RunnerEnv } from './harne
  */
 const installDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const provider = new SandboxRuntimeIsolation({ orbitInstallDir: installDir });
-const probe = await provider.available();
+const probe = requiredOnCi(await provider.available());
 
 const envs: RunnerEnv[] = [];
 afterEach(async () => {
@@ -82,6 +83,29 @@ server.listen(0,"127.0.0.1",()=>{
       expect(r!.status).toBe('PASSED');
       expect(readFileSync(r!.logPath, 'utf8')).toContain('loopback pong');
     }
+  });
+
+  // Issue #180: .NET SDK 11 builds through the MSBuild server unless MSBUILDUSESERVER, or else DOTNET_CLI_USE_MSBUILD_SERVER,
+  // turns it off. The server binds a named pipe under /tmp, which the sandbox refuses; it dies recording that in TMPDIR as a
+  // refused worker node does, the CLI builds in process instead, and the runner failed the check on the record (CI, SDK
+  // 11.0.100). This stand-in for that dotnet decides as SDK 11 does and binds the server's socket for real, under srt.
+  const SERVER_REPORT = 'UNHANDLED EXCEPTIONS FROM PROCESS 4242:\nSystem.Net.Sockets.SocketException (13): Permission denied\n   at System.IO.Pipes.NamedPipeServerStream..ctor()\n   at Microsoft.Build.BackEnd.NodeEndpointOutOfProcBase.InternalConstruct(String pipeName)\n';
+  const SDK11_DOTNET = `const fs=require("fs"),net=require("net"),path=require("path");
+const own=process.env.MSBUILDUSESERVER;
+const server=own?own==="1":!/^(0|false|no)$/i.test(process.env.DOTNET_CLI_USE_MSBUILD_SERVER??"");
+const built=()=>{console.log("Build succeeded.");process.exit(0)};
+if(!server)built();
+else{const s=net.createServer();
+s.on("error",()=>{const d=path.join(process.env.TMPDIR,"MSBuildTempacme");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(path.join(d,"MSBuild_pid-4242_9a2a6b744ce84a9a.failure.txt"),${JSON.stringify(SERVER_REPORT)});console.log("MSBuild server unavailable: could not connect to the server within the timeout window; the server may have failed to start. Falling back to an in-process build.");built()});
+s.listen("/tmp/MSBuildServer-orbit-"+process.pid,()=>s.close(built))}`;
+
+  it('passes a .NET SDK 11 build: a check runs with the MSBuild server off, whose pipe under /tmp the sandbox refuses (#180)', async () => {
+    const e = await setup(SDK11_DOTNET);
+    const [r] = await runChecks({ ...e.ctx, candidate: e.candidate, checkIds: ['sb'] });
+    const log = readFileSync(r!.logPath, 'utf8');
+    expect(log).toContain('Build succeeded.');
+    expect(log).not.toContain('MSBuild server unavailable');
+    expect(r).toMatchObject({ status: 'PASSED', exitCode: 0, isolation: 'sandbox-runtime' });
   });
 
   it('cancels a sandboxed check and leaves nothing running', async () => {

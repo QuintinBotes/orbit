@@ -162,7 +162,7 @@ describe.skipIf(!canStripTypes)('ClaudeAdapter + shim + fake-claude', () => {
     const f = fixture();
     writeScenario(f, { roles: { '*': [{ sleepMs: 2000, structured: IMPLEMENTER_OUTPUT }] } });
     const starter = fileURLToPath(new URL('./start-worker.ts', import.meta.url));
-    const child = spawn(process.execPath, ['--no-warnings', starter, JSON.stringify({ spec: implementerSpec(f), command: [process.execPath, FAKE_CLAUDE] })], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const child = spawn(process.execPath, ['--no-warnings', starter], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, ORBIT_TEST_START_WORKER: JSON.stringify({ spec: implementerSpec(f), command: [process.execPath, FAKE_CLAUDE] }) } });
     let out = '';
     child.stdout.on('data', (d) => (out += d));
     await waitFor(() => out.includes('started'), 20_000);

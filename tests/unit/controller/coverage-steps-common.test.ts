@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OrbitError } from '../../../src/core/errors.ts';
@@ -23,6 +24,8 @@ import {
   outcomeForError,
   policySummary,
   progress,
+  REPO_INSTRUCTIONS_EVENT,
+  repoInstructions,
   retryAfterHintMs,
   retryWait,
   safePoint,
@@ -35,6 +38,31 @@ let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
 const events = (type: string): { data_json: string | null }[] => lab.db.all('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', lab.runId, type);
+
+describe('repoInstructions (issue #178, FR-001)', () => {
+  it('reads AGENTS.md, then CLAUDE.md, at the base revision once, and again once a rebase moves the base', () => {
+    lab = makeUnitLab();
+    const ctx = lab.ctx();
+    const git = (...args: string[]): string => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', ...args], { cwd: lab.repo, encoding: 'utf8' }).trim();
+    git('init', '-q');
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'old rule\n');
+    writeFileSync(join(lab.repo, 'CLAUDE.md'), 'keep it pure\n');
+    git('add', 'AGENTS.md', 'CLAUDE.md');
+    git('commit', '-qm', 'one');
+    const first = git('rev-parse', 'HEAD');
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'new rule\n');
+    git('commit', '-qam', 'two');
+    const second = git('rev-parse', 'HEAD');
+
+    Object.assign(ctx.run, { baseRevision: first });
+    expect(repoInstructions(ctx)).toEqual([{ path: 'AGENTS.md', content: 'old rule\n' }, { path: 'CLAUDE.md', content: 'keep it pure\n' }]);
+    writeFileSync(join(lab.repo, 'AGENTS.md'), 'uncommitted\n');
+    expect(repoInstructions(ctx)[0]).toEqual({ path: 'AGENTS.md', content: 'old rule\n' });
+    Object.assign(ctx.run, { baseRevision: second });
+    expect(repoInstructions(ctx)[0]).toEqual({ path: 'AGENTS.md', content: 'new rule\n' });
+    expect(events(REPO_INSTRUCTIONS_EVENT).map((e) => JSON.parse(e.data_json!) as unknown)).toEqual([{ files: ['AGENTS.md', 'CLAUDE.md'], revision: first }, { files: ['AGENTS.md', 'CLAUDE.md'], revision: second }]);
+  });
+});
 
 describe('move, progress, note, decide', () => {
   it('moves the run, reports DONE for a terminal target and MOVED otherwise, and applies the patch and data', () => {
@@ -242,7 +270,7 @@ describe('outcomeForError', () => {
     expect(run.state).toBe('BLOCKED');
     // A tampered snapshot or invalid configuration is in the run's frozen policy: resuming cannot clear it, so the reason also names a new run (P12).
     if (code === 'POLICY_TAMPERED' || code === 'CONFIG_INVALID') {
-      expect(run.outcomeReason).toMatch(new RegExp(`^${code}: cannot proceed\. This comes from the run's frozen policy`));
+      expect(run.outcomeReason).toMatch(new RegExp(`^${code}: cannot proceed\\. This comes from the run's frozen policy`));
       expect(run.outcomeReason).toMatch(/start a new run/);
     } else expect(run.outcomeReason).toBe(`${code}: cannot proceed`);
     lab.cleanup();
@@ -311,6 +339,11 @@ describe('contract and policy helpers', () => {
     expect(ro).toContain('trusted checks (run by the controller, not you): none');
     const rw = policySummary(ctx, { readOnly: false });
     expect(rw).not.toContain('read-only');
+    // Issue #132: shell writes into files may be refused, and workers cannot install what they need.
+    expect(rw).toContain('change files with the Edit and Write tools, since shell redirection or heredocs into files may be refused');
+    expect(rw).toContain('dependencies are preinstalled from the lockfile when the policy allows, and you cannot install packages');
+    expect(ro).not.toContain('Edit and Write');
+    expect(ro).toContain('you cannot install packages');
     ctx.contract = { allowed_paths: ['apps/calc.mjs'] } as never;
     expect(policySummary(ctx, { readOnly: false })).toContain('you may edit only: apps/calc.mjs');
   });
@@ -395,6 +428,15 @@ describe('scheduleTransientRetry', () => {
     expect(await scheduleTransientRetry(ctx, failed('p1', null))).toBeNull();
     expect(ctx.ledger!.state('infrastructure_retries').used).toBe(before + 1);
     expect(JSON.parse(events(WORKER_RETRY_EVENT)[0]!.data_json!).retry_after_ms).toBeNull();
+  });
+
+  it('blocks the run as environment when the provider asks for a wait longer than Orbit waits for one request', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    expect(await scheduleTransientRetry(lab.ctx(), failed('p1', 'overloaded; retry after 3600 s'))).toEqual({ progressed: true, done: true });
+    const run = getRun(lab.db, lab.runId);
+    expect(run.state).toBe('BLOCKED');
+    expect(run.outcomeReason).toMatch(/^implementation 1: the provider kept failing transiently \(/);
+    expect(run.failureClass).toBe('environment');
   });
 
   it('ends the run EXHAUSTED when no infrastructure retry is left', async () => {
@@ -496,6 +538,18 @@ describe('handleWorkerFailure', () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     const out = await handleWorkerFailure(lab.ctx(), { provider: 'claude', status: 'auth_failed', error: 'rejected' }, opts);
     expect(out).toMatchObject({ retry: false, result: { done: true } });
+    expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
+  });
+
+  it('a session out of quota goes straight to the caller\'s outcome (a reviewer fails over), and blocks only without one (issue #176)', async () => {
+    lab = makeUnitLab({ path: ['PREFLIGHT'] });
+    const quota = { provider: 'codex', status: 'auth_failed', error: "out of quota: You've hit your usage limit", reason: 'quota' };
+    const failover = await handleWorkerFailure(lab.ctx(), quota, { ...opts, exhausted: async (f) => ({ progressed: true, waiting: `failed over: ${f.status}` }) });
+    expect(failover).toEqual({ retry: false, result: { progressed: true, waiting: 'failed over: auth_failed' } });
+    expect(getRun(lab.db, lab.runId).state).toBe('PREFLIGHT');
+    // A rejected login still blocks, whoever asked: logging in again is what fixes it.
+    const login = await handleWorkerFailure(lab.ctx(), { ...quota, reason: 'auth' }, { ...opts, exhausted: async () => ({ progressed: true, waiting: 'no' }) });
+    expect(login).toMatchObject({ retry: false, result: { done: true } });
     expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
   });
 

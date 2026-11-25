@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { KnowledgeStore } from '../../../src/knowledge/store.ts';
 import { completeEvaluation, createCandidateOverlay, distillOverlay, startEvaluation } from '../../../src/knowledge/overlays.ts';
@@ -14,8 +14,10 @@ import { makeUnitLab, type UnitLab } from './coverage-helpers.ts';
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
 
-const enabled = (c: { knowledge: { enabled: boolean } }): void => {
+/** Learning on, with lessons in prompts (issue #173: off by default). */
+const enabled = (c: { knowledge: { enabled: boolean; lessons_in_prompts?: boolean } }): void => {
   c.knowledge.enabled = true;
+  c.knowledge.lessons_in_prompts = true;
 };
 
 const metrics = (pass: number, attempts = 1, cost: number | null = 0.1, falsePass = 0): EvalMetrics => ({ verified_pass_rate: pass, mean_attempts: attempts, mean_cost_usd: cost, false_pass_rate: falsePass });
@@ -55,6 +57,72 @@ describe('knowledge hooks with learning off', () => {
     expect(activeOverlayFor(ctx, 'implementer')).toBeNull();
     expect(advisoryBlockFor(ctx, { role: 'implementer', workerId: 'w', paths: [], checkIds: [], fingerprints: [] })).toBe('');
     expect(existsSync(repoKnowledgePath(ctx))).toBe(false);
+  });
+});
+
+describe('lessons in prompts (issue #173)', () => {
+  const cited = (path: string) => makeLesson({ status: 'validated', evidence: [ev('r1'), ev('r2')], applicability: { roles: ['implementer'], check_ids: ['unit'] }, citation: { run_id: 'r1', path, line: 2, check_id: null, finding_id: null } });
+
+  it('are off by default: with learning on, a worker gets no advice and no overlay, and nothing is recorded as retrieved', () => {
+    lab = makeUnitLab({ tweak: (c) => void (c.knowledge.enabled = true) });
+    const ctx = lab.ctx();
+    expect(ctx.snapshot.config.knowledge.lessons_in_prompts).toBe(false);
+    expect(ctx.snapshot.config.knowledge.max_prompt_lessons).toBe(3);
+    expect(ctx.snapshot.config.knowledge.lesson_expiry_days).toBe(28);
+    withStore(repoKnowledgePath(ctx), (store) => {
+      adoptOverlay(store, metrics(0.5, 2), metrics(0.9));
+      store.upsertLesson(cited('apps/calc.mjs'));
+    });
+    expect(activeOverlayFor(ctx, 'implementer')).toBeNull();
+    expect(advisoryBlockFor(ctx, { role: 'implementer', workerId: 'w', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: [] })).toBe('');
+    expect(withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id))).toEqual([]);
+  });
+
+  it('skip and mark stale a lesson whose cited file is gone, and record the fingerprints a worker was repairing', () => {
+    lab = makeUnitLab({ tweak: enabled });
+    const ctx = lab.ctx();
+    mkdirSync(join(lab.repo, 'apps'), { recursive: true });
+    writeFileSync(join(lab.repo, 'apps', 'calc.mjs'), 'export const add = (a, b) => a + b;\nexport const sub = (a, b) => a - b;\n');
+    const id = withStore(repoKnowledgePath(ctx), (store) => store.upsertLesson(cited('apps/calc.mjs')).lesson.id);
+    const input = { role: 'implementer' as const, workerId: 'wrk-1', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: ['fp-1'] };
+    expect(advisoryBlockFor(ctx, input)).toContain(id);
+    expect(withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id))).toMatchObject([{ lesson_id: id, worker_id: 'wrk-1', fingerprints: ['fp-1'] }]);
+    rmSync(join(lab.repo, 'apps', 'calc.mjs'));
+    expect(advisoryBlockFor(ctx, { ...input, workerId: 'wrk-2' })).toBe('');
+    withStore(repoKnowledgePath(ctx), (store) => {
+      expect(store.freshness([id]).get(id)?.stale_reason).toBe('cited path apps/calc.mjs no longer exists');
+      expect(store.events(id).at(-1)).toMatchObject({ type: 'stale', data: { reason: 'cited path apps/calc.mjs no longer exists' } });
+    });
+  });
+
+  it('give a prompt at most max_prompt_lessons lessons, validated ones only', () => {
+    lab = makeUnitLab({ tweak: (c) => (enabled(c), void (c.knowledge.max_prompt_lessons = 2)) });
+    const ctx = lab.ctx();
+    mkdirSync(join(lab.repo, 'apps'), { recursive: true });
+    writeFileSync(join(lab.repo, 'apps', 'calc.mjs'), 'a\nb\n');
+    withStore(repoKnowledgePath(ctx), (store) => {
+      for (const statement of ['Keep each calculator operation in its own exported function.', 'Test every calculator operation with a negative number.', 'Name calculator tests after the operation they cover.']) {
+        store.upsertLesson({ ...cited('apps/calc.mjs'), statement, id: makeLesson({ statement }).id });
+      }
+      store.upsertLesson({ ...cited('apps/calc.mjs'), statement: 'Round calculator results only when they are shown.', id: makeLesson({ statement: 'Round calculator results only when they are shown.' }).id, status: 'candidate' });
+    });
+    advisoryBlockFor(ctx, { role: 'implementer', workerId: 'w', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: [] });
+    const rows = withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id).map((r) => store.getLesson(r.lesson_id)!.status));
+    expect(rows).toEqual(['validated', 'validated']);
+  });
+
+  it('leave a candidate out even when the prompt has room for it', () => {
+    lab = makeUnitLab({ tweak: enabled });
+    const ctx = lab.ctx();
+    mkdirSync(join(lab.repo, 'apps'), { recursive: true });
+    writeFileSync(join(lab.repo, 'apps', 'calc.mjs'), 'a\nb\n');
+    withStore(repoKnowledgePath(ctx), (store) => {
+      store.upsertLesson(cited('apps/calc.mjs'));
+      store.upsertLesson({ ...cited('apps/calc.mjs'), statement: 'Round calculator results only when they are shown.', id: makeLesson({ statement: 'Round calculator results only when they are shown.' }).id, status: 'candidate' });
+    });
+    advisoryBlockFor(ctx, { role: 'implementer', workerId: 'w', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: [] });
+    const rows = withStore(repoKnowledgePath(ctx), (store) => store.retrievalsForRun(ctx.run.id).map((r) => store.getLesson(r.lesson_id)!.status));
+    expect(rows).toEqual(['validated']);
   });
 });
 
@@ -101,7 +169,7 @@ describe('knowledge hooks with learning on', () => {
     lab = makeUnitLab({ tweak: enabled });
     const ctx = lab.ctx();
     withStore(repoKnowledgePath(ctx), (store) => {
-      store.upsertLesson(makeLesson({ status: 'validated', evidence: [ev('r1'), ev('r2')], applicability: { roles: ['implementer'], check_ids: ['unit'] } }));
+      store.upsertLesson(makeLesson({ status: 'validated', evidence: [ev('r1'), ev('r2')], applicability: { roles: ['implementer'], check_ids: ['unit'] }, citation: { run_id: 'r1', path: null, line: null, check_id: 'unit', finding_id: null } }));
     });
     const block = advisoryBlockFor(ctx, { role: 'implementer', workerId: 'wrk-1', paths: ['apps/calc.mjs'], checkIds: ['unit'], fingerprints: [] });
     expect(block).toContain('Add a negative test for every new validation rule.');

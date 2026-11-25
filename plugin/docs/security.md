@@ -49,7 +49,7 @@ in `network.allowed_hosts`.
 | Layer | Mechanism | Covers |
 |---|---|---|
 | Operating system | sandbox-runtime (Seatbelt or bubblewrap), or a Docker container; for the Codex reviewer, sandbox-runtime alone, or Codex's own read-only sandbox when it is unavailable | shell writes outside the worktree, network egress by host, credential reads; the container adds CPU, memory and pids limits |
-| Claude Code | `--settings` with permission rules, a permission mode that never prompts, the PreToolUse guard hook | Edit and Write paths, protected paths, dangerous commands |
+| Claude Code | `--settings` with permission rules, a permission mode that never prompts, the PreToolUse guard hook | Edit and Write paths, protected paths, dangerous commands, Read of credentials and of other workers' temp directories |
 | Environment | scrubbed worker environment: no `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` or cloud credentials | delivery credentials never reach a worker |
 | Controller | independent diff inspection of the candidate tree against scope, protected paths and test-weakening rules | anything the layers above missed, including indirect shell writes |
 | Evidence | trusted checks run by the controller; evidence bound to tree hash, check configuration hash and policy hash | success requires fresh passing evidence and an approving review of the same tree |
@@ -123,6 +123,29 @@ settings, including sandbox approval for writers and experiment workers.
   requests and CI. Remote answers and `notifications.github_comment` read
   comments and collaborator permissions, and post comments, through the same
   token.
+- An issue a run is started from (`orbit run --issue`, ADR 0019) is untrusted
+  text. It is read once with a GET, checked without a model, and frozen with
+  the run. The planner sees it in a marked block that says it is data; only
+  its acceptance scenarios (for a bug, its reproduction) enter the contract,
+  each as one line capped at 600 characters. Those criterion statements reach
+  every worker that is shown the contract, and the prompt says they are quoted
+  from the issue and are data, not instructions. The issue cannot change the
+  policy, checks, scope, paths or budgets, which stay enforced mechanically.
+  The spec check's problems quote the body without its control characters.
+  Orbit does not check who wrote the issue: the person who names it to
+  `orbit run --issue`, or who adds the label `orbit queue run` takes (on
+  GitHub, someone with triage access), chooses it. The comment Orbit posts
+  back holds controller records only: no issue text, model prose, paths or
+  logs.
+- `orbit queue run` (ADR 0020) runs each issue through the same intake. It
+  writes to issues of the backlog it was pointed at, and only three things: the
+  `ready-for-human` label and one comment of run records when an issue's runs
+  did not deliver (or the spec check's problems, which quote the issue), and a
+  comment and close when the issue's own pull request merged into the base
+  branch. Labels and dependencies decide what it takes; issue text never does.
+  It reads and writes with `GH_TOKEN` or the `gh` login of the person who
+  starts it, and moves the checked-out base branch only by fast-forward, with
+  repository hooks off.
 - Logs, reports and artifacts are redacted before storage or before they are
   sent to a provider. `retention.redact_patterns` adds your own patterns.
 - The secret scan uses gitleaks with Orbit's own configuration and

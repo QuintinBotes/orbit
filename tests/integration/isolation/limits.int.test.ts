@@ -9,6 +9,7 @@ import type { SandboxProfile } from '../../../src/isolation/types.ts';
 import type { IsolationLimits } from '../../../src/policy/types.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped } from './run.ts';
+import { requiredOnCi } from '../../support/skip.ts';
 
 /**
  * The ulimit wrapper on this host's real bash (macOS and Linux alike), and
@@ -32,8 +33,9 @@ describe.skipIf(!bash)('isolation.limits with the host bash', () => {
 
   it('sets CPU time, process count and file size as hard limits for the command', () => {
     // bash, not /bin/sh: dash (Ubuntu's /bin/sh) has no ulimit -u.
-    const argv = withResourceLimits(['/bin/bash', '-c', READ_BACK], LIMITS);
-    const r = spawnSync(argv[0]!, argv.slice(1), { encoding: 'utf8' });
+    // Spawned as the runner spawns a wrapped command (run.ts): file, then arguments.
+    const [file, ...args] = withResourceLimits(['/bin/bash', '-c', READ_BACK], LIMITS);
+    const r = spawnSync(file!, args, { encoding: 'utf8' });
     expect(r.status).toBe(0);
     // /bin/sh reports -f in its own unit (512- or 1024-byte blocks); either way it is 1 MB.
     const m = /^t=(\d+) u=(\d+) f=(\d+) H=(\d+)$/.exec(r.stdout.trim());
@@ -47,8 +49,8 @@ describe.skipIf(!bash)('isolation.limits with the host bash', () => {
 
   it('stops a write past max_file_mb and keeps the command from raising its limits', () => {
     const file = join(t.root, 'big.bin');
-    const argv = withResourceLimits(['/bin/sh', '-c', `head -c 3000000 /dev/zero > "$1"; echo "write=$?"; ulimit -t 1000 2>/dev/null; echo "raise=$?"`, 'sh', file], LIMITS);
-    const r = spawnSync(argv[0]!, argv.slice(1), { encoding: 'utf8' });
+    const [cmd, ...args] = withResourceLimits(['/bin/sh', '-c', `head -c 3000000 /dev/zero > "$1"; echo "write=$?"; ulimit -t 1000 2>/dev/null; echo "raise=$?"`, 'sh', file], LIMITS);
+    const r = spawnSync(cmd!, args, { encoding: 'utf8' });
     expect(r.stdout).not.toContain('write=0');
     expect(r.stdout).toMatch(/raise=[1-9]/);
     expect(existsSync(file) ? statSync(file).size : 0).toBeLessThanOrEqual(1024 * 1024);
@@ -57,7 +59,7 @@ describe.skipIf(!bash)('isolation.limits with the host bash', () => {
 
 const orbitInstallDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const srtProbe = new SandboxRuntimeIsolation({ orbitInstallDir });
-const status = await srtProbe.available();
+const status = requiredOnCi(await srtProbe.available());
 
 describe.skipIf(!status.ok || !bash)('isolation.limits under the real srt', () => {
   const t = status.ok ? tempRoot('orbit-limits-srt-') : { root: '/nonexistent-orbit-test', remove: () => {} };

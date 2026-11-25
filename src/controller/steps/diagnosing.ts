@@ -16,7 +16,7 @@ import { OrbitError } from '../../core/errors.ts';
 import { renderWorkerPrompt, type EvidenceRef } from '../../adapters/prompt.ts';
 import { validateModelOutput, type DiagnosisOutput } from '../../contract/model-outputs.ts';
 import { currentEvidenceReport, getEvidenceReport, listCheckRuns, listEvidenceReports, listFailures, type CandidateRecord, type FailureRecord } from '../../evidence/store.ts';
-import type { EvidenceReport, RepairBrief } from '../../evidence/types.ts';
+import type { EvidenceReport, RepairBrief, ScopeReport } from '../../evidence/types.ts';
 import { briefFromDiagnosis, nonProgress, nonProgressThreshold, progressSince, validateRepairBrief, type AttemptSnapshot, type NonProgressDecision } from '../../inquisition/repair.ts';
 import { eliminatedHypothesisIds, proposeHypothesis, toPrior } from '../../inquisition/hypotheses.ts';
 import { listHypotheses, listQuestions } from '../../inquisition/store.ts';
@@ -24,9 +24,10 @@ import { listDecisions } from '../../storage/decisions.ts';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
-import { routeFor } from '../workers.ts';
+import { recordedTurnCap, routeFor } from '../workers.ts';
+import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, safePoint, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, workerLimitCause, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
@@ -41,6 +42,10 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const next = currentAttempt(ctx) + 1;
   const config = ctx.snapshot.config;
 
+  // A repair that came back with the tree scope inspection denied for size: only a person can change the limit or the goal.
+  const stalled = stalledRepair(ctx, cand);
+  if (stalled && cand.scope && !cand.scope.within_size_limits) return blockOnSize(ctx, cand, cand.scope, stalled);
+
   // 1. Repeated non-progress ends the loop; more attempts, tokens or lines would not change it.
   const history = attemptHistory(ctx);
   const np = nonProgress(history, nonProgressThreshold(config.scheduler.repeated_failure_threshold));
@@ -53,7 +58,6 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   }
   // A repair that ended on a tree an earlier attempt produced, judged as it was then: the same evidence, diagnosis and
   // brief would follow, so no further attempt is dispatched on it (issue #32, ADR 0012), whatever the threshold says.
-  const stalled = stalledRepair(ctx, cand);
   if (stalled) {
     const outcome = { non_progress: stalled.decision };
     // An unanswered material question may be why nothing changed: a person's answer, not another attempt, moves it.
@@ -87,6 +91,8 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   if (existing) stored = existing;
   else if (primary?.source === 'worker' && primary.sourceId?.startsWith('scope:')) {
     stored = { attempt: next, source: 'scope', fingerprint, brief: scopeBrief(ctx, fingerprint, primary.excerpt ?? 'scope inspection denied the candidate') };
+  } else if (ctx.deps.withoutDiagnosis) {
+    stored = { attempt: next, source: 'failures', fingerprint, brief: failuresBrief(ctx, fingerprint, failures), refs: failures.map((f) => `failure:${f.id}`) };
   } else {
     const priors = listHypotheses(ctx.db, ctx.run.id).map(toPrior);
     const timeouts = timeoutContext(ctx, cand.id);
@@ -123,7 +129,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
         if (timeouts && raisesTimeout(brief.scoped_fix)) throw new OrbitError('MALFORMED_OUTPUT', `the scoped fix raises a timeout ("${brief.scoped_fix.slice(0, 200)}"); a timed-out check needs its cause found, not more time`);
         return { out, brief: timeouts ? withTimeoutHypothesis(brief, timeouts) : brief };
       },
-      exhausted: () => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`),
+      exhausted: (failed) => finishRun(ctx, 'EXHAUSTED', `diagnosis produced no valid repair brief within ${MAX_REGENERATIONS} attempts for ${fingerprint}`, { cause: workerLimitCause(failed.status) ?? 'model' }),
     });
     if (!got.ok) return got.step;
     const { out, brief } = got.value;
@@ -239,6 +245,29 @@ export function stalledRepair(ctx: RunContext, cand: CandidateRecord): StalledRe
   };
 }
 
+/**
+ * The same tree denied for size twice (issue #157): its weight is usually a file the task needs, such as a committed
+ * generated bundle, which another repair cannot shrink. The limit is the run's frozen policy, so a new run is how it changes.
+ */
+/** Whether the run could start another implementation attempt (a resume after the size block would need one). */
+function attemptsLeft(ctx: RunContext): boolean {
+  const c = ctx.ledger?.state('implementation_attempts');
+  return c !== undefined && c.used < c.hard_cap;
+}
+
+function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport, stalled: StalledRepair): Promise<StepResult> {
+  const limits = ctx.snapshot.config.scheduler.hard_limits;
+  const over = [
+    ...(scope.changed_lines > limits.changed_lines ? [{ setting: 'scheduler.hard_limits.changed_lines', text: `${scope.changed_lines} lines against a limit of ${limits.changed_lines}` }] : []),
+    ...(scope.changed_files > limits.changed_files ? [{ setting: 'scheduler.hard_limits.changed_files', text: `${scope.changed_files} files against a limit of ${limits.changed_files}` }] : []),
+  ];
+  const setting = over.map((o) => o.setting).join(', ') || 'scheduler.hard_limits.changed_lines';
+  const heavy = describeLargestChanges(scope);
+  const reason = `candidate ${cand.seq} is over ${setting} again (${over.map((o) => o.text).join('; ')}): attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied for size${heavy ? `. The largest changes: ${heavy}` : ''}. The limit may be too small for a generated file the task requires, so a person decides instead of another repair. ${setting} is in the run's frozen policy: to allow the change, raise it (or name a committed generated file in scope.generated_paths) in .orbit/config.yaml, cancel this run (orbit cancel ${ctx.run.id}) and start a new run with orbit run; ${attemptsLeft(ctx) ? `to have the implementer try a smaller change, resume with orbit resume ${ctx.run.id} --force.` : 'no implementation attempt is left for a smaller change in this run.'}`;
+  decide(ctx, { id: `dec-${ctx.run.id}-size-block-${stalled.attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, settings: over.map((o) => o.setting), largest_changes: scope.largest_changes ?? [] } });
+  return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
+}
+
 /** Distinct candidates that failed with this fingerprint. */
 function repeatedCount(ctx: RunContext, fingerprint: string): number {
   return new Set(listFailures(ctx.db, ctx.run.id, fingerprint).map((f) => f.candidateId ?? `row-${f.id}`)).size;
@@ -281,14 +310,39 @@ export function attemptHistory(ctx: RunContext): AttemptSnapshot[] {
 
 function scopeBrief(ctx: RunContext, fingerprint: string, why: string): RepairBrief {
   const contract = assertContract(ctx);
+  const scope = ctx.candidate?.scope ?? null;
+  const overSize = scope !== null && !scope.within_size_limits;
+  const sizeOnly = overSize && implementationScopeGate(scope, ctx.snapshot).reasons.length === 1;
+  const limits = ctx.snapshot.config.scheduler.hard_limits;
+  const heavy = scope ? describeLargestChanges(scope) || 'the changed files' : '';
+  const sizeHypothesis = { statement: `The change is over the size limits (${limits.changed_files} files, ${limits.changed_lines} lines); its largest changes are ${heavy}`, supporting: why };
+  const sizeFix = `Bring the change within ${limits.changed_files} files and ${limits.changed_lines} changed lines by shrinking the changes to ${heavy}; a generated file the task requires cannot be shrunk this way, so say so in your summary instead of rewriting it`;
+  const outOfScope = { statement: 'The change edits files outside the authorized scope or beyond the size limits', supporting: why };
+  const revert = `Revert the out-of-scope changes and keep the change inside ${contract.allowed_paths.join(', ')}`;
   return {
     fingerprint,
     evidence: [`scope inspection of the candidate: ${why}`],
-    hypotheses: [{ statement: 'The change edits files outside the authorized scope or beyond the size limits', supporting: why }],
-    experiment: 'Compare the candidate diff with the contract allowed paths and list each path outside them',
-    expected_observation: 'Every changed path outside the allowed paths is identified and none remain after the repair',
-    scoped_fix: `Revert the out-of-scope changes and keep the change inside ${contract.allowed_paths.join(', ')}`,
+    hypotheses: sizeOnly ? [sizeHypothesis] : overSize ? [outOfScope, sizeHypothesis] : [outOfScope],
+    experiment: sizeOnly ? 'Count the added and deleted lines of each changed file against the base revision and confirm which files carry the excess' : 'Compare the candidate diff with the contract allowed paths and list each path outside them',
+    expected_observation: sizeOnly ? `The listed files carry most of the changed lines, and after the repair the change is within ${limits.changed_files} files and ${limits.changed_lines} lines` : 'Every changed path outside the allowed paths is identified and none remain after the repair',
+    scoped_fix: sizeOnly ? sizeFix : overSize ? `${revert}. ${sizeFix}` : revert,
     post_fix_checks: contract.required_check_ids,
+    preserved_constraints: ['Do not edit protected paths, policy, CI configuration or check definitions', 'Keep the behaviour tests that prove the acceptance criteria'],
+  };
+}
+
+/** The brief with the diagnosis stage off (orbit bench --without diagnosis): the failure records as they are, no hypothesis tested. */
+function failuresBrief(ctx: RunContext, fingerprint: string, failures: FailureRecord[]): RepairBrief {
+  const evidence = failures.map((f) => `${f.sourceId ?? f.source}: ${(f.excerpt ?? 'no excerpt').slice(0, 500)}`);
+  const why = evidence[0] ?? `candidate ${ctx.candidate?.seq ?? '?'} failed verification`;
+  return {
+    fingerprint,
+    evidence: evidence.length > 0 ? evidence : [why],
+    hypotheses: [{ statement: 'The candidate change causes the recorded failures', supporting: why }],
+    experiment: 'Run the failing checks on the candidate',
+    expected_observation: 'The recorded failures reproduce',
+    scoped_fix: 'Change the candidate so that the failing checks pass and every criterion keeps its behaviour test, without weakening a test',
+    post_fix_checks: assertContract(ctx).required_check_ids,
     preserved_constraints: ['Do not edit protected paths, policy, CI configuration or check definitions', 'Keep the behaviour tests that prove the acceptance criteria'],
   };
 }
@@ -311,17 +365,33 @@ function diagnosisPrompt(ctx: RunContext, fingerprint: string, failures: Failure
     `Trusted check ids: ${Object.keys(ctx.snapshot.config.checks).join(', ') || 'none'}.`,
     priors.length > 0 ? `Hypotheses already recorded (a reworded one is not new): ${priors.map((h) => `[${h.status}] ${h.statement}`).join(' | ')}` : 'No earlier hypotheses.',
     ...(timeouts ? timeoutPromptLines(timeouts) : []),
+    ...sessionEndPromptLines(ctx),
   ].join('\n');
   return renderWorkerPrompt({
     role: 'verifier',
     task,
     contract,
     policySummary: policySummary(ctx, { readOnly: true }),
+    repoInstructions: repoInstructions(ctx),
     candidate: { revision: cand.commitSha, treeHash: cand.treeHash, base: ctx.run.baseRevision },
     evidenceRefs: refs,
     untrusted: failures.filter((f) => f.excerpt && !refs.length).slice(0, 3).map((f) => ({ label: `failure ${f.id} (${f.source})`, content: f.excerpt! })),
     advisoryBlock: advisoryBlockFor(ctx, { role: 'verifier', workerId, paths: contract.allowed_paths, checkIds: contract.required_check_ids, fingerprints: [fingerprint] }),
   });
+}
+
+/** The latest attempt's session stopped at its turn cap or timeout (IMPLEMENTING's worker-ended event), so its candidate may be unfinished work. */
+export function sessionEndPromptLines(ctx: RunContext): string[] {
+  const attempt = currentAttempt(ctx);
+  const row = ctx.db.get<{ status: string | null }>("SELECT json_extract(data_json, '$.status') AS status FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, WORKER_ENDED_EVENT, attempt);
+  if (row?.status !== 'max_turns' && row?.status !== 'timeout') return [];
+  // The cap the session ran under (issue #177: derived per role and task class), else the hard cap.
+  const last = ctx.db.get<{ id: string }>("SELECT id FROM workers WHERE run_id = ? AND role = 'implementer' AND attempt = ? ORDER BY created_at DESC, rowid DESC LIMIT 1", ctx.run.id, attempt);
+  const cap = (last && recordedTurnCap(ctx.db, ctx.run.id, last.id)?.cap) ?? ctx.ledger?.maxTurnsPerSession() ?? ctx.snapshot.config.scheduler.hard_limits.worker_turns_per_session;
+  return [
+    `Session end: the implementer session of attempt ${attempt} ended at ${row.status === 'max_turns' ? `its turn cap (${cap} model requests)` : 'its timeout'} before it finished, so the candidate may be unfinished.`,
+    'One competing hypothesis must be that the task did not fit one session, with the observation that would tell it apart from a defect in the work that was done.',
+  ];
 }
 
 // ---------------------------------------------------------------------------
