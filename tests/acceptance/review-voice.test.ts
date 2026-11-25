@@ -13,7 +13,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { OrbitConfig } from '../../src/policy/types.ts';
 import { listFindings, listReviews } from '../../src/review/store.ts';
 import { listDecisions } from '../../src/storage/decisions.ts';
@@ -27,7 +27,17 @@ const FALLBACK_KIND = 'review.review-voice-fallback';
 
 const labs: Lab[] = [];
 const dirs: string[] = [];
+// Review Voice counts as set up only when its data directory holds a database; a CI machine has none, so the tests give it one.
+const savedDataDir = process.env.REVIEW_VOICE_DATA_DIR;
+beforeEach(() => {
+  const data = mkdtempSync(join(tmpdir(), 'orbit-rv-data-'));
+  dirs.push(data);
+  writeFileSync(join(data, 'review-voice.db'), '');
+  process.env.REVIEW_VOICE_DATA_DIR = data;
+});
 afterEach(() => {
+  if (savedDataDir === undefined) delete process.env.REVIEW_VOICE_DATA_DIR;
+  else process.env.REVIEW_VOICE_DATA_DIR = savedDataDir;
   labs.splice(0).forEach((l) => l.close());
   dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true }));
 });
