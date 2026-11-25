@@ -37,12 +37,36 @@ suite.
 The repository root is the development workspace; the plugin is `plugin/`
 (docs/decisions/0006-plugin-packaging.md). `plugin/dist/orbit.mjs` is committed
 and is what the plugin and the `orbit` binary run. After changing anything
-under `src/` or `templates/config.yaml`, rebuild and commit it:
+under `src/` or `templates/config.yaml`, rebuild it to try it:
 
 ```bash
 npm run build
-npm run check:dist          # fails if the committed bundle is stale (CI runs this)
+npm run check:dist          # fails if the committed bundle is stale
 ```
+
+A pull request into `next` does not need to commit the bundle or the plugin
+copies of the documentation (`plugin/CHANGELOG.md`, `plugin/docs/`), so `next`
+may carry a stale bundle between releases. The release pull request rebuilds
+them (step 3 of Releasing), and `check:dist` runs on `main` (pushes and pull
+requests into it) and in `release.yml` on the tag.
+
+## Changelog and traceability fragments
+
+`CHANGELOG.md` and `docs/traceability.md` are not edited in a pull request, so
+parallel pull requests never conflict on them. Write one file per entry
+instead, named after your issue (`230-fragments.md`):
+
+- `changes/changelog/<name>.md`: line 1 `section: Changes` (or `Fixes`,
+  `Off by default`, `Security`), then the entry, written for readers of the
+  release page.
+- `changes/traceability/<name>.md`: line 1 `section: 15` (the number or title
+  of a `##` heading in `docs/traceability.md`), then one or more table rows.
+
+CI runs `node scripts/fragments.mjs check --base origin/next` on pull requests:
+it names any malformed fragment and fails a pull request that edits
+`CHANGELOG.md`, `docs/traceability.md` or their `plugin/` copies (a release,
+which bumps the version in `package.json`, may). Releasing folds the fragments
+into those files and deletes them (see below).
 
 ## Plugin validation
 
@@ -95,10 +119,14 @@ A release is a tag. Pushing a tag named `v*` runs
 1. Bump the version to the new one in all three places, in a pull request:
    `package.json`, `plugin/package.json` and `plugin/.claude-plugin/plugin.json`
    (and the matching `version` lines in the two lockfiles).
-2. In `CHANGELOG.md`, rename `## Unreleased` to `## X.Y.Z (YYYY-MM-DD)` and
-   start a fresh `## Unreleased` above it. That section is the text of the
-   release notes, so write it for readers of the release page.
-3. Rebuild the bundle (`npm run build`) if anything under `src/` changed. Run
+2. Run `node scripts/fragments.mjs fold X.Y.Z` (add `--date YYYY-MM-DD` to
+   change today's date). It writes the `## X.Y.Z (date)` section of
+   `CHANGELOG.md` from the changelog fragments (sections in a fixed order,
+   entries by file name; anything already under `## Unreleased` comes first),
+   adds the traceability rows to their tables and deletes the fragments, with a
+   fresh `## Unreleased` above. That section is the text of the release notes.
+3. Rebuild the bundle (`npm run build`), which also refreshes the plugin copies
+   of the changelog and traceability. Run
    `node plugin/dist/orbit.mjs bench --tier lab` and commit the scorecard it writes,
    `docs/scorecards/orbit-X.Y.Z-lab.json`, so every version keeps its own. Then merge.
 4. Tag the merge commit on `main` and push the tag:
