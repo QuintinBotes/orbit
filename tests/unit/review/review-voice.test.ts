@@ -162,10 +162,11 @@ describe('runReviewVoice against real children (a CLI that misbehaves must not h
     writeFileSync(f, body);
     return [process.execPath, f];
   };
-  const go = (command: string[], extra: { maxBuffer?: number } = {}) => runReviewVoice({ command, cwd: tmp(), base: 'b', head: COMMIT, timeoutMs: 400, env: { PATH: process.env.PATH ?? '' }, ...extra });
+  // A generous timeout: only the limit under test may end a child. The SIGTERM test alone waits for its (short) timeout.
+  const go = (command: string[], extra: { maxBuffer?: number; timeoutMs?: number } = {}) => runReviewVoice({ command, cwd: tmp(), base: 'b', head: COMMIT, timeoutMs: 60_000, env: { PATH: process.env.PATH ?? '' }, ...extra });
 
   it('kills a child that ignores SIGTERM and never exits, and gives up after the retry', async () => {
-    const r = await go(script("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"));
+    const r = await go(script("process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"), { timeoutMs: 400 });
     expect(r).toMatchObject({ ok: false, attempts: 2, reason: expect.stringMatching(/timed out/) });
   });
 
