@@ -1507,6 +1507,9 @@ knowledge:
   lessons_in_prompts: false   # lessons and overlays stay out of worker prompts until a full benchmark shows they help
   max_prompt_lessons: 3       # with lessons_in_prompts: at most this many validated lessons per prompt
   lesson_expiry_days: 28      # a lesson with no supporting run for this long is not eligible
+  # shared_memory:           # off when absent; see docs/learning.md, The shared memory store
+  #   enabled: true
+  #   command: [memory]
 
 guard:
   terms_file: null            # null means ~/.config/publish-guard/terms.txt

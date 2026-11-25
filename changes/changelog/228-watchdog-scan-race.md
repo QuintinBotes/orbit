@@ -1,0 +1,2 @@
+section: Fixes
+- **The watchdog no longer misses a log written while it scans (#228).** A pass read the time once at its start and discarded any worker, check or probe log stamped after it as "from the future", so a run that was still printing could be reported stalled or abandoned on a loaded machine. The stamp is now compared with the clock as it is when the log is read; a stamp ahead of that is still ignored.

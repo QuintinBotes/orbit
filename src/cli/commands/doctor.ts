@@ -47,6 +47,7 @@ import { orbitHint } from '../../core/invocation.ts';
 import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
 import { reviewVoiceCheck } from './doctor-review-voice.ts';
+import { sharedMemoryCheck } from './doctor-shared-memory.ts';
 import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
 import { checkSandboxCheck } from './doctor-sandbox.ts';
@@ -1136,6 +1137,7 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   await safely('service', 'service', () => checkService(p));
   await safely('service.launcher', 'service', () => checkLauncher(p));
   await safely('guard.terms', 'guard', () => checkGuard(p));
+  await safely('knowledge.memory', 'knowledge', () => (configLoaded ? sharedMemoryCheck({ config, cwd: repo ?? ctx.cwd }) : []));
 
   const counts: Record<CheckStatus, number> = { pass: 0, warn: 0, fail: 0 };
   for (const c of checks) counts[c.status]++;

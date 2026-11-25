@@ -253,10 +253,17 @@ describe('skills never leave a run idle or orphaned (P11, D11)', () => {
 });
 
 describe('plugin payload (ADR 0006, P9)', () => {
+  // A pull request into next does not commit the plugin copies of the documentation (CONTRIBUTING.md, The bundle check),
+  // so the committed copies may be stale there; `check:dist` enforces their content on main and in release.yml. What holds
+  // on every branch: the payload has every documentation path, and a fresh build of it equals the repository's files.
   it('ships the README, changelog and every documentation path from the repository', () => {
+    for (const path of DOCUMENTATION) expect(existsSync(join(plugin, path)), path).toBe(true);
+    const dir = mkTmp('orbit-payload-docs-');
+    const built = run('node', ['scripts/build.mjs'], { env: { ...process.env, ORBIT_BUILD_OUT: join(dir, 'dist', 'orbit.mjs'), ORBIT_BUILD_DOCS_DIR: join(dir, 'plugin') } });
+    expect(built.status, built.stdout + built.stderr).toBe(0);
     for (const path of DOCUMENTATION) {
-      expect(existsSync(join(plugin, path)), path).toBe(true);
-      expect(readFileSync(join(plugin, path)), path).toEqual(readFileSync(join(root, path)));
+      expect(existsSync(join(dir, 'plugin', path)), path).toBe(true);
+      expect(readFileSync(join(dir, 'plugin', path)), path).toEqual(readFileSync(join(root, path)));
     }
   });
 

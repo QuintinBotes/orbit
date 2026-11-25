@@ -429,6 +429,12 @@ export interface OrbitConfig {
     max_prompt_lessons?: number;
     /** A lesson with no support for this many days is not eligible for a prompt. */
     lesson_expiry_days?: number;
+    /**
+     * Issue #233: the shared memory store. Absent or `enabled: false` is Orbit exactly as without it. With it on (and
+     * lessons_in_prompts), recalled items join the advisory block, validated lessons are proposed to memory and a
+     * contradicted item is reported through its feedback call; Orbit never activates an item.
+     */
+    shared_memory?: { enabled: boolean; command: string[] };
   };
   /**
    * Notifications and remote answers (ADR 0008). Parsed configs always carry it; optional in the type so older

@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-- The simplicity gate (#232). A check whose id is exactly `simplicity` (or `simplicity-...`) and whose command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` fails a candidate that adds a new high-severity finding (an import cycle, a hub) compared with its base, and names each finding with its kind, location and evidence; findings the base already has never fail it. Orbit now sets `ORBIT_BASE_REVISION` (the candidate's parent, `HEAD` on the base revision) in every check's environment. With the check configured, `orbit doctor` reports `checks.simplicity` unavailable, and `orbit run` refuses to start, when unknot is missing or older than 0.4.0; the repository must also commit its unknot project (the .unknot directory, with its .gitignore); on a run from an issue labelled `simplify` the planner is also given unknot's findings for the allowed paths as untrusted advisory data. No model call. Off unless the policy defines the check; the starter config lists a commented example.
+## 0.4.1 (2026-11-25)
+
+v0.4.0 was tagged but never published: its release gate failed on GitHub's new `ubuntu-latest` (Ubuntu 26.04), whose AppArmor stops the sandbox. 0.4.1 carries everything 0.4.0 was to ship (see below) plus the runner pin.
+
+### Off by default
+
+- The simplicity gate (#244, issue #232). A check whose id is exactly `simplicity` (or `simplicity-...`) and whose command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` fails a candidate that adds a new high-severity finding (an import cycle, a hub) compared with its base, and names each finding with its kind, location and evidence; findings the base already has never fail it. Orbit now sets `ORBIT_BASE_REVISION` (the candidate's parent, `HEAD` on the base revision) in every check's environment. With the check configured, `orbit doctor` reports `checks.simplicity` unavailable, and `orbit run` refuses to start, when unknot is missing or older than 0.4.0; the repository must also commit its unknot project (the .unknot directory, with its .gitignore); on a run from an issue labelled `simplify` the planner is also given unknot's findings for the allowed paths as untrusted advisory data. No model call. Off unless the policy defines the check; the starter config lists a commented example.
+
+### Changes
+
+- **Changelog and traceability fragments (#230).** A pull request writes one file per entry under `changes/changelog/` and `changes/traceability/` instead of editing `CHANGELOG.md` and `docs/traceability.md`, so parallel pull requests stop conflicting on them. `node scripts/fragments.mjs check` (run by CI on pull requests) names a malformed fragment and a direct edit of a shared file; `node scripts/fragments.mjs fold X.Y.Z` folds them at release. `plugin/dist` is no longer committed by pull requests into `next`: the release pull request rebuilds it, CI checks it on `main` and the release workflow on the tag, and `next` may carry a stale bundle between releases.
+
+### Fixes
+
+- CI and the release workflow run on `ubuntu-24.04` instead of `ubuntu-latest`. `ubuntu-latest` now points at Ubuntu 26.04, whose stock AppArmor profile `bwrap-userns-restrict` stops srt's sandbox (`apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted ...)`), so the release gate failed on the v0.4.0 tag and four integration test files fail on any `ubuntu-latest` job. The `sandbox (ubuntu-26.04, stock AppArmor)` job is unchanged and keeps covering 26.04, with doctor's fix applied.
 
 ## [0.4.0] - 2026-11-24
 

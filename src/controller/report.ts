@@ -63,7 +63,7 @@ import { accountWorkerTurns, finishAndSettle, OUTPUT_CAP_CEILING, outcomeOf, out
 import { autoEvaluateOverlays } from './eval-runner.ts';
 import { PROOF_RESULT_KIND, type ProofResult } from '../review/proof.ts';
 import { notifyRunEnded, resolveNotifyDeps } from '../notify/notify.ts';
-import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath } from './knowledge-hooks.ts';
+import { checkLiveOverlays, globalKnowledgePath, repoKnowledgePath, shareWithMemory } from './knowledge-hooks.ts';
 
 export interface FinalReport {
   schema: 'orbit.final/1';
@@ -804,7 +804,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
   if (!k?.enabled) return;
   const run = ctx.refresh();
   const store = KnowledgeStore.open(repoKnowledgePath(ctx), { clock: ctx.clock });
-  const summary: { learn: LearnReport | null; skipped: string | null; observed: string | null; settled: unknown; rechecked: unknown; promoted: unknown; overlays: unknown } = { learn: null, skipped: null, observed: null, settled: null, rechecked: null, promoted: null, overlays: null };
+  const summary: { learn: LearnReport | null; skipped: string | null; observed: string | null; settled: unknown; rechecked: unknown; promoted: unknown; overlays: unknown; memory?: unknown } = { learn: null, skipped: null, observed: null, settled: null, rechecked: null, promoted: null, overlays: null };
   try {
     // Issue #173 FR-006: every run that did not succeed leaves an observation keyed by its failure class, before
     // anything that can be skipped (curation, the budget reserve) and without a model call.
@@ -838,6 +838,9 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
       const host = curatorHostFor(ctx);
       summary.learn = await learnFromRun({ store, runDb: ctx.db, runId: run.id, runDir: ctx.runDir, clock: ctx.clock, curatorModel: admitted.model ?? 'claude-default', runCurator: async (task) => (await runCurator(host, task, admitted.model)).output });
     }
+    // Issue #233: off unless knowledge.shared_memory is on; a cancelled run shares nothing, as it is not curated.
+    const shared = run.state === 'CANCELLED' ? null : await shareWithMemory(ctx, store, summary.learn);
+    if (shared) summary.memory = shared;
     if (summary.skipped !== null) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.curation-skipped', ctx.ownerId, { reason: summary.skipped }, ctx.clock.now()));
 
     if (k.share_globally) {

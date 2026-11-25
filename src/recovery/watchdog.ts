@@ -183,7 +183,7 @@ async function watchRun(opts: WatchdogOptions, cfg: WatchdogConfig, run: RunReco
   const stepStart = lastTransitionAt(db, run) ?? run.updatedAt;
   const lease = getLease(db, run.id);
   const workers = listWorkers(db, { runId: run.id, states: ['PLANNED', 'RUNNING'] });
-  const activity = [...workers.map((w) => workerActivity(opts, w, now)), ...checkActivity(db, run, now), ...probeActivity(db, run, now)].filter((t): t is number => t !== null);
+  const activity = [...workers.map((w) => workerActivity(opts, w)), ...checkActivity(db, run, clock), ...probeActivity(db, run, clock)].filter((t): t is number => t !== null);
   // Activity is the latest evidence of life for this run: progress recorded for it, a worker, a check or a fail-before probe still writing its log, or the step starting.
   // The owner controller's own last_progress_at is not used: it moves when any of its runs progresses, so it would hide a stuck one.
   const lastActivity = Math.max(stepStart, run.lastProgressAt ?? 0, ...activity);
@@ -221,7 +221,16 @@ function alreadyReported(db: OrbitDb, runId: string, lastActivity: number): bool
   return row?.ts != null && row.ts >= lastActivity;
 }
 
-function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): number | null {
+/**
+ * A timestamp from the future (a different clock) says nothing about activity under this one. It is read against the clock
+ * as it is now, not against the pass's start: a log written while the pass was scanning is newer than that start, and
+ * discarding it made a run that was printing look idle (#228).
+ */
+function notAhead(t: number | null, clock: Clock): number | null {
+  return t !== null && t <= clock.now() ? t : null;
+}
+
+function workerActivity(opts: WatchdogOptions, w: WorkerRecord): number | null {
   let t: number | null;
   if (opts.workerActivityAt) t = opts.workerActivityAt(w);
   else {
@@ -231,8 +240,7 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): nu
       t = null;
     }
   }
-  // A timestamp from the future (a different clock) says nothing about activity under this one.
-  return t !== null && t <= now ? t : null;
+  return notAhead(t, opts.clock);
 }
 
 /**
@@ -240,9 +248,9 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord, now: number): nu
  * ended: between two checks of a long baseline none is open, and the one that just ended is the evidence of life.
  * A hung check is bounded by its own timeout_seconds.
  */
-function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+function checkActivity(db: OrbitDb, run: RunRecord, clock: Clock): (number | null)[] {
   const ended = db.get<{ t: number | null }>('SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?', run.id)?.t ?? null;
-  const last = ended !== null && ended <= now ? [ended] : [];
+  const last = ended !== null && ended <= clock.now() ? [ended] : [];
   const open = db.all<{ id: string }>("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
   if (open.length === 0) return last;
   const dirs = findCheckDirs(dirname(run.policyPath));
@@ -250,8 +258,7 @@ function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null
     const found = dirs.get(c.id);
     if (!found) return null;
     try {
-      const t = statSync(shimPath(found.dir, 'output')).mtimeMs;
-      return t <= now ? t : null;
+      return notAhead(statSync(shimPath(found.dir, 'output')).mtimeMs, clock);
     } catch {
       return null;
     }
@@ -259,7 +266,7 @@ function checkActivity(db: OrbitDb, run: RunRecord, now: number): (number | null
 }
 
 /** When each fail-before probe of the run that is still PLANNED or RUNNING last wrote its output, or started when it has written none yet. */
-function probeActivity(db: OrbitDb, run: RunRecord, now: number): (number | null)[] {
+function probeActivity(db: OrbitDb, run: RunRecord, clock: Clock): (number | null)[] {
   const open = db.all<{ id: string; started_at: number }>("SELECT id, started_at FROM fail_before_probes WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
   if (open.length === 0) return [];
   const dirs = probeDirs(dirname(run.policyPath));
@@ -273,7 +280,7 @@ function probeActivity(db: OrbitDb, run: RunRecord, now: number): (number | null
         /* no output yet */
       }
     }
-    return t <= now ? t : null;
+    return notAhead(t, clock);
   });
 }
 
