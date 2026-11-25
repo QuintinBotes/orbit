@@ -81,6 +81,11 @@ export function advisoryBlockFor(ctx: RunContext, input: AdvisoryInput): string 
   });
 }
 
+/** Whether this run has already seen memory fail: the rest of the run does without it, so one run pays the timeout once. */
+function memorySeenDown(ctx: RunContext): boolean {
+  return ctx.db.get('SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? LIMIT 1', ctx.run.id, 'learning.memory-unavailable') !== undefined;
+}
+
 function memoryUnavailable(ctx: RunContext, operation: string, err: unknown): void {
   const error = redact(err instanceof Error ? err.message : String(err)).slice(0, 300);
   ctx.log.warn('shared memory unavailable', { operation, error });
@@ -94,7 +99,10 @@ function memoryUnavailable(ctx: RunContext, operation: string, err: unknown): vo
  */
 function sharedRowsFor(ctx: RunContext, input: AdvisoryInput, lessons: readonly RetrievedLesson[]): SharedRow[] {
   const config = ctx.snapshot.config.knowledge;
-  if (!sharedMemoryOn(config)) return [];
+  if (!sharedMemoryOn(config) || memorySeenDown(ctx)) return [];
+  // Shared rows count against max_prompt_lessons with the local lessons; with no room memory is not asked.
+  const room = (config.max_prompt_lessons ?? 3) - lessons.length;
+  if (room <= 0) return [];
   let rows: SharedRow[];
   try {
     rows = recallShared(config.shared_memory, ctx.run.repoRoot, { paths: input.paths, checkIds: input.checkIds, fingerprints: input.fingerprints, maxTokens: config.max_advisory_tokens });
@@ -102,6 +110,7 @@ function sharedRowsFor(ctx: RunContext, input: AdvisoryInput, lessons: readonly 
     memoryUnavailable(ctx, 'recall', err);
     return [];
   }
+  rows = rows.slice(0, room);
   while (rows.length > 0 && estimateTokens(renderAdvisoryBlock(lessons, rows)) > config.max_advisory_tokens) rows.pop();
   if (rows.length > 0) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.memory-recalled', ctx.ownerId, { worker_id: input.workerId, ids: rows.map((r) => r.id), fingerprints: input.fingerprints }, ctx.clock.now()));
   return rows;
@@ -116,10 +125,12 @@ const MEMORY_TYPE: Record<Lesson['kind'], string> = { practice: 'convention', 'f
  */
 export async function shareWithMemory(ctx: RunContext, store: KnowledgeStore, learn: LearnReport | null): Promise<{ proposed: string[]; reported: string[]; failed: number } | null> {
   const config = ctx.snapshot.config.knowledge;
-  if (!sharedMemoryOn(config)) return null;
+  if (!sharedMemoryOn(config) || memorySeenDown(ctx)) return null;
   const memory = config.shared_memory;
   const out = { proposed: [] as string[], reported: [] as string[], failed: 0 };
   const call = async (operation: string, name: 'memory_propose' | 'memory_feedback', args: Record<string, unknown>, done: string[], id: string): Promise<void> => {
+    // After the first failure the rest of this stage is skipped, so a down memory costs one timeout, not one per call.
+    if (out.failed > 0) return;
     try {
       await callMemoryTool(memory, ctx.run.repoRoot, name, args);
       done.push(id);
@@ -128,7 +139,9 @@ export async function shareWithMemory(ctx: RunContext, store: KnowledgeStore, le
       memoryUnavailable(ctx, operation, err);
     }
   };
-  for (const id of new Set([...(learn?.created ?? []), ...(learn?.merged ?? [])])) {
+  // Only a lesson this run made validated: one merely merged again was proposed when it first validated.
+  const firstValidated = new Set([...(learn?.created ?? []), ...(learn?.changes ?? []).filter((c) => c.to === 'validated').map((c) => c.lessonId)]);
+  for (const id of firstValidated) {
     const lesson = store.getLesson(id);
     if (lesson?.status !== 'validated') continue;
     await call('propose', 'memory_propose', { statement: lesson.statement, scope: 'repository', type: MEMORY_TYPE[lesson.kind], evidence: { source: `orbit run ${ctx.run.id}`, origin: 'agent' } }, out.proposed, id);

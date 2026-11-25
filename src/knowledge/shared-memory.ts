@@ -26,8 +26,23 @@ export interface RecallAsk {
 }
 
 const TIMEOUT_MS = 10_000;
+const MAX_BYTES = 1 << 20;
 const MAX_ITEMS = 3;
 const LIST_MAX = 20;
+
+export interface CallLimits {
+  timeoutMs?: number;
+  maxBytes?: number;
+}
+
+/**
+ * What the memory process may see: where to find itself and its data, and the locale. Orbit's own environment
+ * carries provider keys and delivery credentials, which memory has no use for.
+ */
+function memoryEnv(): NodeJS.ProcessEnv {
+  const keep = (k: string): boolean => ['PATH', 'HOME', 'MEMORY_DATA_DIR', 'CLAUDE_CONFIG_DIR', 'LANG'].includes(k) || k.startsWith('LC_');
+  return Object.fromEntries(Object.entries(process.env).filter(([k]) => keep(k)));
+}
 
 export function sharedMemoryOn(config: { shared_memory?: SharedMemoryConfig } | undefined): config is { shared_memory: SharedMemoryConfig } {
   const s = config?.shared_memory;
@@ -35,13 +50,13 @@ export function sharedMemoryOn(config: { shared_memory?: SharedMemoryConfig } | 
 }
 
 /** Up to three rows that start with an item id, from the command's output. Throws when the command fails. */
-export function recallShared(memory: SharedMemoryConfig, cwd: string, ask: RecallAsk): SharedRow[] {
+export function recallShared(memory: SharedMemoryConfig, cwd: string, ask: RecallAsk, limits: CallLimits = {}): SharedRow[] {
   const flags = (flag: string, values: readonly string[]) => values.slice(0, LIST_MAX).flatMap((v) => [flag, v]);
   const context = [...flags('--path', ask.paths), ...flags('--check', ask.checkIds), ...flags('--fingerprint', ask.fingerprints)];
   // Memory refuses a call with no context, and a worker with nothing to match has nothing to recall.
   if (context.length === 0) return [];
   const [bin, ...head] = memory.command as [string, ...string[]];
-  const out = execFileSync(bin, [...head, 'recall', '--orbit', ...context, '--max-tokens', String(ask.maxTokens)], { cwd, encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 20 });
+  const out = execFileSync(bin, [...head, 'recall', '--orbit', ...context, '--max-tokens', String(ask.maxTokens)], { cwd, env: memoryEnv(), encoding: 'utf8', timeout: limits.timeoutMs ?? TIMEOUT_MS, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: limits.maxBytes ?? MAX_BYTES });
   const rows: SharedRow[] = [];
   for (const line of out.split(/\r?\n/)) {
     const id = /^\[([^\]\s]{1,80})\]/.exec(line.trim())?.[1];
@@ -52,26 +67,31 @@ export function recallShared(memory: SharedMemoryConfig, cwd: string, ask: Recal
 }
 
 /** One tool call to memory's MCP server over stdio. Resolves with its text, rejects on a refusal, a failure or a timeout. */
-export function callMemoryTool(memory: SharedMemoryConfig, cwd: string, name: 'memory_propose' | 'memory_feedback', args: Record<string, unknown>): Promise<string> {
+export function callMemoryTool(memory: SharedMemoryConfig, cwd: string, name: 'memory_propose' | 'memory_feedback', args: Record<string, unknown>, limits: CallLimits = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const [bin, ...head] = memory.command as [string, ...string[]];
-    const child = spawn(bin, [...head, 'mcp'], { cwd, stdio: ['pipe', 'pipe', 'ignore'] });
+    const child = spawn(bin, [...head, 'mcp'], { cwd, env: memoryEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
+    const maxBytes = limits.maxBytes ?? MAX_BYTES;
+    let received = 0;
     let settled = false;
-    const timer = setTimeout(() => finish(new Error('memory timed out')), TIMEOUT_MS);
+    const timer = setTimeout(() => finish(new Error('memory timed out')), limits.timeoutMs ?? TIMEOUT_MS);
     function finish(err: Error | null, text = ''): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.kill();
+      child.kill('SIGKILL');
       if (err) reject(err);
       else resolve(text);
     }
     const send = (m: object): void => void child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...m })}\n`);
     child.on('error', (e) => finish(e));
     child.stdin.on('error', (e) => finish(e));
-    child.on('exit', (code) => finish(new Error(`memory exited with ${code}`)));
+    // 'close', not 'exit': a reply written just before the exit is still in the pipe at 'exit'.
+    child.on('close', (code) => finish(new Error(`memory exited with ${code}`)));
     let buf = '';
     child.stdout.on('data', (d: Buffer) => {
+      received += d.length;
+      if (received > maxBytes) return finish(new Error('memory output too large'));
       buf += d.toString('utf8');
       for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
         const line = buf.slice(0, i);
