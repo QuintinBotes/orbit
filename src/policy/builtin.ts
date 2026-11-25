@@ -115,6 +115,13 @@ export const BUILTIN_PROTECTIONS: readonly BuiltinProtection[] = Object.freeze([
   },
 ]);
 
+/**
+ * Files a later session in the worktree loads as instructions (issue #235). Not protected, because #178 reads and
+ * writes AGENTS.md: a partner's change to one is held for review instead (controller/gates.ts, review/packet.ts).
+ * Matched case-insensitively, like the protected paths. The list can grow here.
+ */
+export const INSTRUCTION_FILE_GLOBS: readonly string[] = Object.freeze(['**/AGENTS.md', '.claude/skills/**']);
+
 export const BUILTIN_PROTECTED_PATHS: readonly string[] = Object.freeze(BUILTIN_PROTECTIONS.map((p) => p.glob));
 
 /** Globs whose contents are secrets: the Read tool is denied on these, not just edits. */

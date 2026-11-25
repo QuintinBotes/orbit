@@ -329,3 +329,27 @@ describe('behaviour and UI gates', () => {
     expect(uiGate({ required: true, configured: true, result: { verdict: 'PASS', reasons: [], unverified: [], journeys: [] } })).toMatchObject({ status: 'pass', passed: true });
   });
 });
+
+describe('implementationScopeGate: instruction files (#235)', () => {
+  const instr = (over: Partial<ScopeReport>) => scope({ instruction_files_changed: ['AGENTS.md'], ...over });
+
+  it('holds a partner change to an instruction file the goal does not name, as a policy violation naming the file', () => {
+    const g = implementationScopeGate(instr({ out_of_scope_paths_changed: ['AGENTS.md'] }), snap(), { partner: true });
+    expect(g.passed).toBe(false);
+    expect(g.details.policyViolation).toBe(true);
+    expect(g.reasons.join(' ')).toMatch(/instruction files? .*AGENTS\.md.*held for review/);
+  });
+
+  it('lets a partner change to an instruction file the goal names through', () => {
+    const g = implementationScopeGate(instr({}), snap(), { partner: true });
+    expect(g.passed).toBe(true);
+    expect(g.details.policyViolation).toBe(false);
+  });
+
+  it('controls: a Claude change, or one without the partner option, is judged as before', () => {
+    const s = instr({ out_of_scope_paths_changed: ['AGENTS.md'] });
+    for (const g of [implementationScopeGate(s, snap()), implementationScopeGate(s, snap(), { partner: false })]) {
+      expect(g.details).toEqual({ policyViolation: false, repairable: [expect.stringMatching(/outside the authorized scope/)] });
+    }
+  });
+});

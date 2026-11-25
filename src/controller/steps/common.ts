@@ -15,6 +15,8 @@ import { clipAtWord } from '../../core/text.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { isSessionRefusal } from '../../adapters/types.ts';
 import { classifyFailure, decideRetry } from '../../recovery/backoff.ts';
+import { providerFamily } from '../../policy/config.ts';
+import { listWorkers } from '../../storage/workers.ts';
 import { appendEvent } from '../../storage/events.ts';
 import { recordDecision, type DecisionRecord } from '../../storage/decisions.ts';
 import { heartbeatController } from '../../storage/controllers.ts';
@@ -79,6 +81,11 @@ const CLOSING_STATES: ReadonlySet<RunState> = new Set(['REVIEWING', 'DELIVERING'
 export function budgetPhaseOf(state: RunState, resumeState: RunState | null = null): BudgetPhase {
   const stage = (state === 'INQUISITION' || state === 'RECOVERING') && resumeState !== null ? resumeState : state;
   return CLOSING_STATES.has(stage) ? 'final' : 'work';
+}
+
+/** Whether a non-Claude implementer worked in this run. A session that failed part way may have edited the tree, so any counts (issue #235). */
+export function partnerImplemented(ctx: RunContext): boolean {
+  return listWorkers(ctx.db, { runId: ctx.run.id, role: 'implementer' }).some((w) => providerFamily(w.provider) !== 'claude');
 }
 
 export function note(ctx: RunContext, type: string, data: unknown): void {

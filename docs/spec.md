@@ -532,6 +532,8 @@ Claude implements unless `routing.implementers` names a partner (ADR 0022). The 
 
 Partner output is untrusted and parsed against Orbit's own copy of the implementer schema. Codex's writable tier is its own `workspace-write` sandbox (or `srt` in the os-sandbox tier); Muse implements only inside `srt` (`META_API_KEY` plus `srt`), with `--worktree off`, `--contributor-mode off` and the shell disabled. Every route decision records why each listed partner was or was not chosen.
 
+Instruction files (issue #235). `AGENTS.md` at any depth and `.claude/skills/**` are files a later session in the worktree loads as instructions, so a partner's change to one is a prompt-injection route. They are not protected paths, because Orbit itself reads and writes `AGENTS.md`; instead the scope inspection lists them (`instruction_files_changed`, from `INSTRUCTION_FILE_GLOBS` beside the built-in protected paths, matched case-insensitively) and a partner's change is held. When a non-Claude implementer worked in the run (a session that failed part way counts), a change to an instruction file that the goal's scope does not name is a policy violation, held for review: the candidate is invalidated, the run blocks with a reason naming the file, and no later session starts on it. A change the goal's scope names is allowed, but the candidate always gets the cross-model review pass (the reviewer is chosen as for a risky change) and the review packet shows the instruction files' diffs first, with a line saying why. A Claude-only run is unchanged, and a partner that only reads these files is never flagged.
+
 ### Routing objective
 
 Optimize expected cost per verified accepted task, not the cheapest token price:

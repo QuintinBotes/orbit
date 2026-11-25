@@ -18,7 +18,7 @@ import { canonicalJson } from '../core/hash.ts';
 import type { ScopeReport } from '../evidence/types.ts';
 import type { PolicySnapshot } from './types.ts';
 import { buildRepoMap } from '../repomap/map.ts';
-import { BUILTIN_PROTECTED_PATHS } from './builtin.ts';
+import { BUILTIN_PROTECTED_PATHS, INSTRUCTION_FILE_GLOBS } from './builtin.ts';
 import { compileGlobs } from './globs.ts';
 import { gitTreeReader, loadTestLayout } from './test-files.ts';
 import { detectWeakening, type WeakeningInput } from './weakening.ts';
@@ -79,6 +79,8 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
   const baselineGlobs = input.uiBaselineGlobs ?? config.ui?.visual.baseline_globs ?? [];
   const isBaseline = compileGlobs(baselineGlobs, { nocase: false });
 
+  const isInstruction = compileGlobs(INSTRUCTION_FILE_GLOBS, { nocase: true });
+  const instructionFiles = changes.map((c) => c.path).filter(isInstruction).sort();
   const forbidden: string[] = [];
   const outOfScope: string[] = [];
   const visual: string[] = [];
@@ -143,6 +145,7 @@ export async function inspectScope(input: ScopeInput): Promise<ScopeReport> {
     symlinks_escaping: symlinks,
     weakening_signals: weakening,
     visual_baseline_changes: visual,
+    ...(instructionFiles.length > 0 ? { instruction_files_changed: instructionFiles } : {}),
   };
 }
 

@@ -1,0 +1,2 @@
+section: Off by default
+- **A partner's edit to an instruction file is held for review (#235).** Partner implementers stay off (`routing.implementers: [claude]`). When one is switched on, a change by a non-Claude implementer to `AGENTS.md` (at any depth) or a file under `.claude/skills/` that the goal's scope does not name blocks the run with the file named, so no later session loads it. One the scope names is allowed, always gets the cross-model review pass, and its diff comes first in the review packet. Claude-only runs are unchanged.

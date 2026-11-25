@@ -289,12 +289,19 @@ export function describeLargestChanges(scope: ScopeReport): string {
   return (scope.largest_changes ?? []).map((c) => `${safe(c.path)} (${c.lines} lines)`).join(', ');
 }
 
-export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnapshot): GateResult<ScopeGateDetails> {
+/**
+ * With `partner` (a non-Claude implementer worked in the run), a change to an instruction file the goal's scope does
+ * not name is held for review as a policy violation, so no later session starts on it (issue #235). One the scope names
+ * passes here and gets the cross-model review (controller/steps/reviewing.ts).
+ */
+export function implementationScopeGate(scope: ScopeReport, snapshot: PolicySnapshot, opts: { partner?: boolean } = {}): GateResult<ScopeGateDetails> {
   const reasons: string[] = [];
   const repairable: string[] = [];
   const deps = snapshot.config.dependencies;
   if (scope.forbidden_paths_changed.length > 0) reasons.push(`protected paths changed: ${scope.forbidden_paths_changed.join(', ')}`);
   if (scope.symlinks_escaping.length > 0) reasons.push(`symlinks escape the worktree: ${scope.symlinks_escaping.join(', ')}`);
+  const held = opts.partner ? (scope.instruction_files_changed ?? []).filter((p) => scope.out_of_scope_paths_changed.includes(p)) : [];
+  if (held.length > 0) reasons.push(`a partner changed instruction files the goal's scope does not name: ${held.join(', ')}; held for review`);
   const policyViolation = reasons.length > 0;
   const add = (why: string) => {
     reasons.push(why);
