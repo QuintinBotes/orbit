@@ -27,7 +27,7 @@ concurrency:
 jobs:
   verify:
     name: gate on the tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -95,7 +95,7 @@ jobs:
   release:
     name: archive, attest and publish
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write # create the release
@@ -144,7 +144,7 @@ jobs:
     needs: release
     # A prerelease is never offered to the catalog.
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: {}
     steps:
