@@ -27,11 +27,11 @@ jobs:
       # macOS runs on one line only.
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             node: '22'
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             node: '24'
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             node: '26'
           - os: macos-latest
             node: '24'
@@ -192,7 +192,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     env:
       ORBIT_RUN_QUARANTINED: '1'
     steps:
