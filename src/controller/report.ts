@@ -537,7 +537,8 @@ export function reviewerLine(r: ReportReviewer): string {
   const who = `${r.provider}/${r.model ?? 'default'}`;
   const tier = r.tier === undefined ? '' : `. Tier: ${r.tier}${r.tier_reason ? ` (${r.tier_reason})` : ''}${r.limitations?.length ? `. Limitations: ${r.limitations.join(' ')}` : ''}`;
   const tried = triedLines(r.failed_reviewers ?? []);
-  const pair = `${r.same_family_reviewer ? `\n- Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : ''}${r.cross_model_skipped ? `\n- Cross-model review skipped: ${r.cross_model_skipped}` : ''}`;
+  const familyLine = r.same_family_reviewer?.endsWith('/review-voice') ? `Review Voice review (its CLI, run by the controller on the candidate diff in place of a same-family session; the change is risky)` : r.same_family_reviewer ? `Same-family review: ${r.same_family_reviewer} (the implementer's family, in a fresh session; the change is risky)` : '';
+  const pair = `${familyLine ? `\n- ${familyLine}` : ''}${r.cross_model_skipped ? `\n- Cross-model review skipped: ${r.cross_model_skipped}` : ''}`;
   if (r.independent) return `Reviewer: ${who} (independent)${tier}${tried}${pair}`;
   return `Reviewer: ${who} (same provider, NOT independent: ${r.why_not_independent ?? 'no independent reviewer was usable'}${r.approved_by ? `; same-provider review approved by ${r.approved_by}` : ''})${tier}${tried}${pair}`;
 }

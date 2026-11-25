@@ -40,7 +40,8 @@ import { marksCharges } from '../../scheduling/accounting.ts';
 import { attemptHistory } from './diagnosing.ts';
 import { REVIEWER_FAILED_KIND, reviewerLabel, selectReviewer, selectionDecisionRecord, type ReviewerFailure, type ReviewerSelection } from '../../review/select.ts';
 import { failBeforePolicy, providerFamily } from '../../policy/config.ts';
-import { preferredReviewProvider } from '../../policy/review.ts';
+import { preferredReviewProvider, reviewMode } from '../../policy/review.ts';
+import { mapReviewVoiceOutput, REVIEW_VOICE_FALLBACK_KIND, REVIEW_VOICE_MODEL, reviewVoiceAvailability, runReviewVoice } from '../../review/review-voice.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { findingLabel, listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
@@ -115,6 +116,10 @@ async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepR
   const purposes = new Map(listWorkers(ctx.db, { runId: ctx.run.id, role: 'reviewer' }).map((w) => [w.id, w.purpose]));
   if (listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash }).some((r) => r.workerId !== null && purposes.get(r.workerId)?.startsWith(`${FAMILY_BASE}:`))) return null;
   if (listDecisions(ctx.db, ctx.run.id, { kind: FAMILY_PASS_FAILED_KIND }).some((d) => (d.data as { tree_hash?: unknown }).tree_hash === cand.treeHash)) return null;
+  // review.mode: review-voice (issue #231): Review Voice's CLI gives this pass, outside any worker; the default session runs only when it cannot.
+  if (reviewMode(ctx.snapshot.config.review) === 'review-voice' && (!reviewVoiceFellBack(ctx) || hasReviewVoiceReview(ctx, cand, same.provider))) {
+    if (await reviewVoicePass(ctx, cand, same.provider)) return null;
+  }
   const pass: SelectedReviewer = { ...sel, provider: same.provider, model: same.model, effort: same.effort, basis: same.basis, independent: false, sameFamily: null, reason: same.reason, alternatives: [] };
   return singleReview(ctx, cand, pass, {
     base: `${FAMILY_BASE}:${cand.id}`,
@@ -128,6 +133,56 @@ async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepR
 }
 
 type SelectedReviewer = Extract<ReviewerSelection, { decision: 'SELECT' }>;
+
+/** One Review Voice run is given this long; a timeout is retried once, then the default reviewer stands in. */
+const REVIEW_VOICE_TIMEOUT_MS = 15 * 60_000;
+
+function hasReviewVoiceReview(ctx: RunContext, cand: CandidateRecord, provider: string): boolean {
+  return listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, includeInvalidated: true }).some((r) => r.model === REVIEW_VOICE_MODEL && r.provider === provider);
+}
+
+/** After Review Voice failed once, it is not called again for the rest of the run (a later candidate goes straight to the default reviewer). */
+function reviewVoiceFellBack(ctx: RunContext): boolean {
+  return listDecisions(ctx.db, ctx.run.id, { kind: REVIEW_VOICE_FALLBACK_KIND }).length > 0;
+}
+
+/**
+ * The Review Voice pass of a risky change: its CLI on the exact candidate diff, recorded as a review of the tree. True when
+ * the review is recorded (now or earlier); false when it could not be had, with the reason recorded as a decision, so the
+ * default same-family session runs instead.
+ */
+async function reviewVoicePass(ctx: RunContext, cand: CandidateRecord, provider: string): Promise<boolean> {
+  if (hasReviewVoiceReview(ctx, cand, provider)) return true;
+  const settings = ctx.snapshot.config.review.review_voice;
+  const env = process.env;
+  const fallBack = (reason: string): false => {
+    decide(ctx, { id: `dec-${ctx.run.id}-review-voice-fallback-${cand.id}`, kind: REVIEW_VOICE_FALLBACK_KIND, summary: `Review Voice gave no review of tree ${cand.treeHash} (${clipAtWord(reason, 300)}); the default same-family reviewer stands in`, data: { tree_hash: cand.treeHash, candidate_id: cand.id, reason } });
+    return false;
+  };
+  const available = reviewVoiceAvailability(settings, env);
+  if (!available.ok) return fallBack(available.reason);
+  const ran = await runReviewVoice({ command: settings!.command, cwd: ctx.run.repoRoot, base: ctx.run.baseRevision!, head: cand.commitSha, timeoutMs: REVIEW_VOICE_TIMEOUT_MS, env: reviewVoiceEnv(env) });
+  if (!ran.ok) return fallBack(`${ran.reason} (after ${ran.attempts} attempts)`);
+  let mapped;
+  try {
+    mapped = mapReviewVoiceOutput(ran.output, cand.commitSha);
+  } catch (err) {
+    return fallBack(err instanceof Error ? err.message : String(err));
+  }
+  recordReview(
+    ctx.db,
+    { id: `rev-review-voice-${cand.id}`, runId: ctx.run.id, candidateId: cand.id, treeHash: cand.treeHash, round: listReviews(ctx.db, ctx.run.id, { includeInvalidated: true }).length + 1, provider, model: REVIEW_VOICE_MODEL, workerId: null, verdict: mapped.verdict, packetSha256: null, findings: mapped.findings },
+    ctx.clock,
+  );
+  return true;
+}
+
+/** What the CLI needs and nothing else: the controller's environment holds credentials Review Voice has no use for. */
+function reviewVoiceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && (['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'APPDATA'].includes(k) || k.startsWith('REVIEW_VOICE_'))) out[k] = v;
+  return out;
+}
 
 /** The reviewer for the candidate, or the step that blocks the run because none may review it (yet). */
 async function usableReviewer(ctx: RunContext, cand: CandidateRecord): Promise<{ ok: true; sel: SelectedReviewer } | { ok: false; step: StepResult }> {
