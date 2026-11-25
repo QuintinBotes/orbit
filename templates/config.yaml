@@ -474,6 +474,12 @@ knowledge:
   max_prompt_lessons: 3
   # A lesson with no supporting run for this many days is not put in a prompt.
   lesson_expiry_days: 28
+  # The owner's memory plugin as a shared store (docs/learning.md). Off when absent. With it on and
+  # lessons_in_prompts, recalled items join the advisory block, validated lessons are proposed to memory and
+  # a contradicted item is reported through its feedback call; Orbit never activates an item.
+  # shared_memory:
+  #   enabled: true
+  #   command: [memory]
 
 # Repository map (orbit map build|query): files, generated files, tests,
 # imports and check paths of a tree, built from git without a model. The

@@ -87,6 +87,30 @@ call, also when the run's budget reserve cannot pay for curation.
 it is not eligible), supporting and contradicting runs, and age;
 `orbit learn show` names its citation and why it is not eligible.
 
+## The shared memory store (off by default)
+
+The owner's memory plugin can be the one store of lessons across tools. Orbit
+keeps its own store either way; `knowledge.shared_memory` adds a bridge, and it
+is off until the benchmark (#172) shows no loss:
+
+```yaml
+knowledge:
+  lessons_in_prompts: true
+  shared_memory:
+    enabled: true
+    command: [memory]        # argv of the memory command; `recall` or `mcp` is appended
+```
+
+With it on, a worker's advisory block also carries up to three shared items
+(ids shown, same fence, same `max_advisory_tokens`), read with the plugin's
+`recall --orbit` run in the repository, which is how the plugin keeps another
+tenant's items out. At the end of a run Orbit proposes each lesson it left
+validated to memory (evidence: `orbit run <id>`) and reports a recalled item
+wrong when the run repeated the failure it was shown for. Orbit never activates
+an item; the owner approves proposals in memory. If memory cannot be reached the
+run goes on without it and the event `learning.memory-unavailable` records the
+operation. `orbit doctor` checks the command when the bridge is on.
+
 ## Routing from measured outcomes
 
 Every implementation attempt whose evidence settles records one row in the

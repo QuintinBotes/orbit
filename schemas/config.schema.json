@@ -435,7 +435,16 @@
         "auto_adopt_overlays": { "type": "boolean" },
         "lessons_in_prompts": { "type": "boolean" },
         "max_prompt_lessons": { "type": "integer", "minimum": 1, "maximum": 12 },
-        "lesson_expiry_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
+        "lesson_expiry_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+        "shared_memory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "command"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "command": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+          }
+        }
       }
     },
     "guard": {

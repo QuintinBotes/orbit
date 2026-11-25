@@ -4,6 +4,7 @@ import type { Lesson, LessonStats, RetrievalContext, RetrievedLesson } from './t
 import { visibleText } from './authority.ts';
 import { defang, estimateTokens, oneLine, truncate } from './text.ts';
 import { recheckLessons } from './recheck.ts';
+import type { SharedRow } from './shared-memory.ts';
 
 /**
  * Retrieval: pick the few lessons most likely to help one worker, and put
@@ -231,9 +232,12 @@ function renderEntry(index: number, r: RetrievedLesson): string {
  * so a prompt never carries an empty advisory fence. Lesson text is flattened
  * and defanged, so nothing inside can close the fence or forge a header.
  */
-export function renderAdvisoryBlock(lessons: readonly RetrievedLesson[]): string {
-  if (lessons.length === 0) return '';
-  return renderFrame(lessons.map((l, i) => `${renderEntry(i + 1, l)}\n`).join(''));
+export function renderAdvisoryBlock(lessons: readonly RetrievedLesson[], shared: readonly SharedRow[] = []): string {
+  if (lessons.length === 0 && shared.length === 0) return '';
+  const entries = lessons.map((l, i) => renderEntry(i + 1, l));
+  // Shared memory rows (issue #233) are as untrusted as lessons: flattened and defanged inside the same fence.
+  shared.forEach((r, i) => entries.push(`[${lessons.length + i + 1}] shared memory item ${safe(r.text, 300)}`));
+  return renderFrame(entries.map((e) => `${e}\n`).join(''));
 }
 
 /** Record which lessons went into which worker's prompt, for feedback when the run settles. */
