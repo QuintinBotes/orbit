@@ -40630,6 +40630,125 @@ var init_active_checks = __esm({
   }
 });
 
+// src/evidence/simplicity.ts
+function objectEnd(text2, start) {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text2.length; i++) {
+    const c = text2[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+function documentIn(body) {
+  const start = body.search(/^\{\s*"(?:schema_version|error|stats)"/m);
+  const end = start < 0 ? -1 : objectEnd(body, start);
+  if (end < 0) return null;
+  try {
+    const v = JSON.parse(body.slice(start, end + 1));
+    return v !== null && typeof v === "object" ? v : null;
+  } catch {
+    return null;
+  }
+}
+function judgeSimplicity(input) {
+  const { body, exitCode, status: status2 } = input;
+  if (status2 === "TIMEOUT") {
+    return { note: `simplicity gate: unknot did not finish mapping within ${input.timeoutSeconds} s; raise this check's timeout_seconds or map a smaller scope` };
+  }
+  if (status2 !== "PASSED" && status2 !== "FAILED") return null;
+  const doc = documentIn(body);
+  if (status2 === "PASSED") {
+    if (doc?.schema_version?.startsWith("1.")) return null;
+    return { status: "FAILED", note: `simplicity gate: the output is not unknot's schema 1.x document, so it compared nothing against the base; the gate needs unknot ${MIN_TEXT} or newer (${UNKNOT_INSTALL})` };
+  }
+  if (exitCode === 5 || doc?.error?.code === "UK_BASELINE_INVALID") return { note: `simplicity gate: the base could not be mapped: ${oneLine5(doc?.error?.message) || "unknot exited 5"}` };
+  if (exitCode === 1 && doc?.schema_version?.startsWith("1.") && Array.isArray(doc.findings)) {
+    const high = doc.findings.filter((f) => f.severity === "high");
+    const ordered2 = [...high, ...doc.findings.filter((f) => f.severity !== "high")];
+    const total = Math.max(typeof doc.baseline?.new === "number" ? doc.baseline.new : 0, ordered2.length);
+    const lines = ordered2.slice(0, LISTED).map((f) => {
+      const ev = evidenceOf(f);
+      return `- [${oneLine5(f.severity, 10) || "?"}] ${oneLine5(f.kind, 60)} ${oneLine5(f.location, 100) || "?"}: ${oneLine5(f.title)}${ev ? ` (evidence: ${ev})` : ""}`;
+    });
+    if (ordered2.length > LISTED) lines.push(`(${ordered2.length - LISTED} more)`);
+    const showing = ordered2.length < total ? `, showing ${ordered2.length}` : "";
+    return { note: [`simplicity gate: ${total} new finding${total === 1 ? "" : "s"} against the base (${high.length} high-severity)${showing}`, ...lines].join("\n") };
+  }
+  if (exitCode === 127 || exitCode === 126 || exitCode === null) return null;
+  return { note: `simplicity gate: unknot failed (exit ${exitCode ?? "none"}) with output that is unreadable as its schema 1.x document` };
+}
+function unknotVersionProblem(probe2) {
+  if (probe2.state === "missing") return "unknot is not installed";
+  if (probe2.state === "failed") return `unknot is installed but broken: --version exited ${probe2.exitCode === null ? "by signal" : `with exit ${probe2.exitCode}`}`;
+  const m = /(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?/.exec(probe2.output);
+  if (!m) return `cannot tell the version of unknot (--version printed ${JSON.stringify(oneLine5(probe2.output, 60))})`;
+  const got = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const at = MIN_UNKNOT.findIndex((n2, i) => got[i] !== n2);
+  const older = at !== -1 ? got[at] < MIN_UNKNOT[at] : m[4] !== void 0;
+  return older ? `unknot ${m[0]} is older than ${MIN_TEXT}, which ignores --baseline` : null;
+}
+function unknotProjectProblem(tracked) {
+  if (!tracked.some((f) => f.startsWith(".unknot/"))) return "the repository has no committed .unknot directory, so unknot diagnose fails with UK_NOT_INITIALIZED in every checkout";
+  if (!tracked.includes(".unknot/.gitignore")) return "the committed .unknot has no .unknot/.gitignore, so a check would write one into its checkout, and its state would show as a change";
+  return null;
+}
+async function probeUnknot(env, cwd) {
+  try {
+    const r = await execCapture(["unknot", "--version"], { cwd, env, timeoutMs: 15e3 });
+    return r.exitCode === 0 ? { state: "ok", output: oneLine5(r.stdout) } : { state: "failed", exitCode: r.exitCode };
+  } catch {
+    return { state: "missing" };
+  }
+}
+function simplifyFindingsBlock(text2, allowedPaths, limit) {
+  const doc = documentIn(text2);
+  if (!doc?.schema_version?.startsWith("1.") || !Array.isArray(doc.findings)) return null;
+  const inScope = compileGlobs(allowedPaths, { nocase: false });
+  const keep = doc.findings.filter((f) => inScope(oneLine5(f.location, 300).replace(/:\d+$/, ""))).slice(0, limit);
+  if (keep.length === 0) return null;
+  const head = "From unknot's map of the base revision, built for this plan (not the working copy), in unknot's rank order:\n";
+  return head + keep.map((f, i) => {
+    const fix = oneLine5(f.smallest_simplification, 240);
+    return `${i + 1}. [${oneLine5(f.severity, 10) || "?"}] ${oneLine5(f.kind, 60)} ${oneLine5(f.location, 100) || "?"}: ${oneLine5(f.title)}${fix ? `
+   smallest simplification: ${fix}` : ""}`;
+  }).join("\n");
+}
+async function unknotFindings(dir, scope, env, timeoutSeconds) {
+  try {
+    const opts = { cwd: dir, env, timeoutMs: timeoutSeconds * 1e3 };
+    if ((await execCapture(["unknot", "map"], opts)).exitCode !== 0) return null;
+    const r = await execCapture(["unknot", "diagnose", "--json", "--limit", "500", ...scope], opts);
+    return r.exitCode === 0 ? r.stdout : null;
+  } catch {
+    return null;
+  }
+}
+var SIMPLICITY_ID, isSimplicityCheck, MIN_UNKNOT, MIN_TEXT, LISTED, EVIDENCE_LISTED, UNKNOT_INIT, UNKNOT_INSTALL, oneLine5, evidenceOf, isSimplifyGoal;
+var init_simplicity = __esm({
+  "src/evidence/simplicity.ts"() {
+    "use strict";
+    init_exec();
+    init_globs();
+    SIMPLICITY_ID = /^simplicity(-.*)?$/;
+    isSimplicityCheck = (id2) => SIMPLICITY_ID.test(id2);
+    MIN_UNKNOT = [0, 4, 0];
+    MIN_TEXT = MIN_UNKNOT.join(".");
+    LISTED = 8;
+    EVIDENCE_LISTED = 3;
+    UNKNOT_INIT = "run /unknot:init in the repository and commit the .unknot directory, including .unknot/.gitignore";
+    UNKNOT_INSTALL = "claude plugin install unknot@quintinbotes, then node <plugin directory>/bin/unknot cli install (the launcher), or update with claude plugin update unknot@quintinbotes";
+    oneLine5 = (s, max = 200) => String(s ?? "").split("\n")[0].trim().slice(0, max);
+    evidenceOf = (f) => (f.evidence ?? []).slice(0, EVIDENCE_LISTED).map((e) => `${oneLine5(e.source_ref, 80)} ${oneLine5(e.summary, 100)}`.trim()).filter(Boolean).join("; ");
+    isSimplifyGoal = (issue) => issue?.labels.some((l) => l.trim().toLowerCase() === "simplify") ?? false;
+  }
+});
+
 // src/evidence/msbuild.ts
 import { closeSync as closeSync6, constants as constants5, fstatSync as fstatSync4, lstatSync as lstatSync8, opendirSync, openSync as openSync6, readSync as readSync3 } from "node:fs";
 import { basename as basename14, join as join27 } from "node:path";
@@ -41248,7 +41367,7 @@ async function runCheckSet(ctx, subject, defs) {
   return results.filter((r) => r !== null);
 }
 function candidateSubject(runDir2, candidate) {
-  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir2, candidate.seq), source: "check" };
+  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir2, candidate.seq), source: "check", baseRev: candidate.parentSha };
 }
 function baselineSubject(runDir2, baseTree, source = "baseline") {
   return { candidateId: null, bindingId: `baseline:${baseTree}`, treeHash: baseTree, evidenceDir: join29(runDir2, "baseline"), source };
@@ -41493,7 +41612,7 @@ async function launchAttempt(ctx, subject, def, configHash, rerunOf, checkout = 
   if (!ctx.snapshot.config.checks[def.id]) atomicWriteJson(join29(dirs.checkDir, DEFINITION_FILE), def, 384);
   const toolchains = checkToolchains(ctx, def, cwd, dirs, tmp);
   prepareToolchainLayout(toolchains);
-  const env = checkEnv(def, dirs, process.env.PATH, toolchains.env);
+  const env = { ORBIT_BASE_REVISION: subject.baseRev ?? "HEAD", ...checkEnv(def, dirs, process.env.PATH, toolchains.env) };
   const profile = profileForCheck({
     worktree: ctx.checkoutDir,
     check: def,
@@ -41870,6 +41989,11 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
     status2 = "ERROR";
     note3 = "the check process disappeared without writing an exit record (killed externally or the host restarted)";
   }
+  const simplicity = isSimplicityCheck(def.id) ? judgeSimplicity({ body, exitCode: exit?.exitCode ?? null, status: status2, timeoutSeconds: def.timeout_seconds }) : null;
+  if (simplicity) {
+    status2 = simplicity.status ?? status2;
+    note3 = simplicity.note;
+  }
   const denial = status2 === "CANCELLED" || status2 === "TIMEOUT" ? null : readDenial(dirs.checkDir);
   if (denial !== null) {
     status2 = "FAILED";
@@ -41899,7 +42023,8 @@ function finalize(ctx, def, row, dirs, exit, synthetic) {
       roots.push(realpathSync11(ctx.checkoutDir));
     } catch {
     }
-    const fp = fingerprintFailure(note3 ? `${body}
+    const fp = fingerprintFailure(simplicity ? `${simplicity.note}
+` : note3 ? `${body}
 ${note3}
 ` : body, def, { exitCode, timedOut: status2 === "TIMEOUT", roots });
     fingerprint = fp.fingerprint;
@@ -42012,6 +42137,7 @@ var init_runner = __esm({
     init_toolchains();
     init_snapshot();
     init_fingerprint();
+    init_simplicity();
     init_git2();
     init_dotnet_format();
     init_msbuild();
@@ -42507,7 +42633,7 @@ function testChangesUnder(base, def) {
   return base.changedPaths.filter((p) => underCheck(p, def) && isTestPath(p, base.testLayout, base.diffs?.get(p)));
 }
 function isTestCommandCheck(def) {
-  return def !== void 0 && def.kind === "command" && checkCategory(def) === "test";
+  return def !== void 0 && def.kind === "command" && checkCategory(def) === "test" && !isSimplicityCheck(def.id);
 }
 function isBrowserCheck(snapshot2, id2) {
   return snapshot2.config.checks[id2]?.kind === "playwright" || (snapshot2.config.ui?.journey_check_ids ?? []).includes(id2);
@@ -43051,6 +43177,7 @@ var init_fail_before = __esm({
     init_environment_failure();
     init_git2();
     init_baseline();
+    init_simplicity();
     init_runner();
     NEVER_ACCEPTED = /* @__PURE__ */ new Set(["environment", "error", "install"]);
     FAIL_BEFORE_DECISION_KIND = "verification.fail-before";
@@ -61931,11 +62058,11 @@ function environmentBlockReason(input) {
   const notExecuted = failures.filter((f) => f.fingerprint === null);
   const sentences2 = [];
   if (sameAsBase.length > 0) {
-    const causes = evidenceOf(sameAsBase.map((f) => ({ checkId: f.checkId, cause: f.cause, lines: f.lines.slice(0, 1) })));
+    const causes = evidenceOf2(sameAsBase.map((f) => ({ checkId: f.checkId, cause: f.cause, lines: f.lines.slice(0, 1) })));
     sentences2.push(`${named(sameAsBase)} ${sameAsBase.length > 1 ? "fail" : "fails"} on candidate ${candidateSeq} exactly as on the base revision, and the output shows an environment cause, not a defect in the change: ${causes}`);
   }
   if (notExecuted.length > 0) {
-    sentences2.push(`${named(notExecuted)} could not execute on candidate ${candidateSeq}, and the output shows an environment cause, not a defect in the change: ${evidenceOf(notExecuted)}`);
+    sentences2.push(`${named(notExecuted)} could not execute on candidate ${candidateSeq}, and the output shows an environment cause, not a defect in the change: ${evidenceOf2(notExecuted)}`);
   }
   sentences2.push("No repair attempt was spent, because changing the code cannot fix it");
   const answers = failures.filter((f) => f.questionId !== null).map((f) => `orbit decide ${runId} ${f.questionId} Approve`);
@@ -61955,7 +62082,7 @@ function named(items) {
 function joinSentences(sentences2) {
   return `${sentences2.join(". ")}.`;
 }
-function evidenceOf(items) {
+function evidenceOf2(items) {
   const groups = [];
   for (const it of items) {
     let g = groups.find((x) => x.cause === it.cause && x.lines.length === it.lines.length && x.lines.every((l, i) => l === it.lines[i]));
@@ -62315,7 +62442,7 @@ function baselineEnvironmentBlockReason(input) {
 }
 function environmentBaseSentences(baseRevision, failures, amended) {
   return [
-    `${named(failures)} could not run on the base revision ${baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf(failures)}`,
+    `${named(failures)} could not run on the base revision ${baseRevision.slice(0, 12)}, and the output shows an environment cause, not a pre-existing failure: ${evidenceOf2(failures)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${failures.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: the check never got as far as the repository's code, so accepting its failure would let a run pass with a check that never ran`,
     `Fix: ${environmentFix(failures) ?? ENVIRONMENT_FALLBACK_FIX}`
@@ -62326,7 +62453,7 @@ function afterEnvironmentFix(runId, settings) {
   return `${policyFixClause(settings).replace(/^t/, "T")}, so resuming would run the same check again: cancel this run (orbit cancel ${runId}) and start a new run with orbit run`;
 }
 function incompleteBaseSentence(baseRevision, failures) {
-  return `${named(failures)} did not complete on the base revision ${baseRevision.slice(0, 12)}: ${evidenceOf(failures)}`;
+  return `${named(failures)} did not complete on the base revision ${baseRevision.slice(0, 12)}: ${evidenceOf2(failures)}`;
 }
 function incompleteExceptionSentence(failures) {
   return `${failures.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: the check did not produce a result, so accepting its failure would let a run pass with a check that did not complete`;
@@ -62362,12 +62489,12 @@ function baselineBlockReason(input) {
     ]);
   }
   const sentences2 = [
-    `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf(misconfigured)}`,
+    `${named(misconfigured)} ${misconfigured.length > 1 ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} the tool rejected the command line the check runs before it ran anything of the repository: ${evidenceOf2(misconfigured)}`,
     ...amended.length > 0 ? [amendmentSentence(amended)] : [],
     `${misconfigured.length > 1 ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: a check whose command is wrong never tested anything, so accepting its failure would let a run pass with a check that never ran`
   ];
   if (environment.length > 0) {
-    sentences2.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf(environment)}`);
+    sentences2.push(`${named(environment)} could not run on the base revision either, and the output shows an environment cause: ${evidenceOf2(environment)}`);
     sentences2.push(`Fix for ${environment.length > 1 ? "them" : "it"}: ${environmentFix(environment) ?? ENVIRONMENT_FALLBACK_FIX}`);
   }
   if (incomplete.length > 0) {
@@ -62381,7 +62508,7 @@ function missingTargetBlockReason(input) {
   const { checks } = input;
   const many = checks.length > 1;
   return joinSentences([
-    `${named(checks)} ${many ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} ${many ? "their commands name" : "the check's command names"} something that does not exist, and the contract does not name ${many ? "them" : "it"} as the proof of any criterion, so the goal is not expected to create it: ${evidenceOf(checks)}`,
+    `${named(checks)} ${many ? "are" : "is"} misconfigured, not a pre-existing failure: on the base revision ${input.baseRevision.slice(0, 12)} ${many ? "their commands name" : "the check's command names"} something that does not exist, and the contract does not name ${many ? "them" : "it"} as the proof of any criterion, so the goal is not expected to create it: ${evidenceOf2(checks)}`,
     `${many ? "They are" : "It is"} not recorded as a pre-existing failure and no baseline exception is offered: a check whose target does not exist tests nothing, so accepting its failure would make a meaningless check green`
   ]);
 }
@@ -64778,12 +64905,12 @@ ${body.endsWith("\n") ? body : `${body}
 `;
 }
 function bullet(items, max = MAX_LIST_ITEMS, itemMax = 500) {
-  const shown3 = items.slice(0, max).map((s) => `- ${oneLine5(s, itemMax)}`);
+  const shown3 = items.slice(0, max).map((s) => `- ${oneLine6(s, itemMax)}`);
   if (items.length > max) shown3.push(`- ... ${items.length - max} more not shown`);
   return shown3.length === 0 ? "- none\n" : `${shown3.join("\n")}
 `;
 }
-function oneLine5(s, max) {
+function oneLine6(s, max) {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max)}...` : t;
 }
@@ -64985,9 +65112,9 @@ Reply with only JSON matching the provided review output schema, and echo candid
 `);
   sec.push(`## Goal
 
-${red(oneLine5(contract.original_goal, 4e3))}
+${red(oneLine6(contract.original_goal, 4e3))}
 
-Objective: ${red(oneLine5(contract.objective, 2e3))}
+Objective: ${red(oneLine6(contract.objective, 2e3))}
 
 ### Acceptance criteria
 ${bullet(
@@ -65027,9 +65154,9 @@ ${security.exceptions.length > 0 ? `- security exceptions listed in policy (stil
 ### Checks
 ${bullet(ev.checks.map((c) => `${c.id}: ${c.status}, exit ${c.exit_code === null ? "none" : c.exit_code}${c.flaky ? ", flaky (passed only on rerun)" : ""}`), 60, 200)}
 ### Test weakening signals
-${bullet(scope.weakening_signals.map((w) => `${red(w.path)}: ${w.signal} ${red(oneLine5(w.detail, 200))}`), 30, 400)}
+${bullet(scope.weakening_signals.map((w) => `${red(w.path)}: ${w.signal} ${red(oneLine6(w.detail, 200))}`), 30, 400)}
 ### Acceptance evidence
-${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.note ? ` (${red(oneLine5(a.note, 200))})` : ""}`), MAX_LIST_ITEMS, 400)}
+${bullet(ev.acceptance_evidence.map((a) => `${a.criterion_id}: ${a.status}${a.note ? ` (${red(oneLine6(a.note, 200))})` : ""}`), MAX_LIST_ITEMS, 400)}
 ### UI
 ${bullet(ev.ui.map((u) => `${u.journey}: ${u.status}`), 20, 200)}
 ### Not verified
@@ -65066,7 +65193,7 @@ function failBeforeSection(ev, logs, red, mode) {
   if (entries.length === 0) return "";
   const lines = entries.map((a) => {
     const fb = a.fail_before;
-    return `${a.criterion_id} (${fb.mode}): ${fb.outcome}${fb.accepted ? `, accepted without fail-before by ${red(fb.accepted.by)}` : ""}. ${red(oneLine5(fb.reason, 300))}${fb.test_paths.count > 0 ? `; new tests: ${red(fb.test_paths.paths.slice(0, 5).join(", "))}${fb.test_paths.count > 5 ? ` and ${fb.test_paths.count - 5} more` : ""}` : ""}`;
+    return `${a.criterion_id} (${fb.mode}): ${fb.outcome}${fb.accepted ? `, accepted without fail-before by ${red(fb.accepted.by)}` : ""}. ${red(oneLine6(fb.reason, 300))}${fb.test_paths.count > 0 ? `; new tests: ${red(fb.test_paths.paths.slice(0, 5).join(", "))}${fb.test_paths.count > 5 ? ` and ${fb.test_paths.count - 5} more` : ""}` : ""}`;
   });
   const shown3 = [];
   for (const a of entries) {
@@ -65098,7 +65225,7 @@ function engineeringPracticesSection(contract, red = (s) => s) {
   const lines = ENGINEERING_PRACTICES.map((practice) => {
     const s = selection.find((x) => x.practice === practice);
     if (!s) return `- ${practice}: NOT ACCOUNTED FOR (neither selected nor justified as omitted)`;
-    return `- ${practice} [${s.applicable ? "applicable" : "OMITTED"}]: ${red(oneLine5(s.justification, 300))}`;
+    return `- ${practice} [${s.applicable ? "applicable" : "OMITTED"}]: ${red(oneLine6(s.justification, 300))}`;
   });
   return `## Engineering practices
 
@@ -65970,6 +66097,7 @@ async function contractingStep(ctx) {
   const route2 = routeFor(ctx, "plan", "routine-code", { difficulty: "medium", attempt: 1, repeatedFingerprints: 0 });
   const named2 = [ctx.run.goal, issue?.spec, issue?.hints].filter((t) => typeof t === "string").join("\n");
   const slice = ctx.run.baseRevision ? await goalSlice(ctx.run.repoRoot, ctx.run.baseRevision, named2, ctx.snapshot.config) : null;
+  const findings = await simplifyFindings(ctx, issue);
   const got = await obtain(ctx, {
     base: "plan",
     maxAttempts: MAX_REGENERATIONS,
@@ -65982,7 +66110,7 @@ async function contractingStep(ctx) {
       effort: route2.effort,
       cwd: worktreeOf(ctx),
       readOnly: true,
-      prompt: (workerId) => plannerPrompt(ctx, workerId, slice)
+      prompt: (workerId) => plannerPrompt(ctx, workerId, slice, findings)
     }),
     accept: (r) => {
       const out = validateModelOutput("planner", r.structured);
@@ -66041,7 +66169,14 @@ function worktreeOf(ctx) {
   if (!ctx.run.worktreePath) throw new OrbitError("INTERNAL", `run ${ctx.run.id} has no worktree; preflight did not finish`);
   return ctx.run.worktreePath;
 }
-function plannerPrompt(ctx, workerId, slice) {
+async function simplifyFindings(ctx, issue) {
+  const gate = Object.values(ctx.snapshot.config.checks).find((c) => isSimplicityCheck(c.id));
+  if (!gate || !isSimplifyGoal(issue)) return null;
+  const scope = ctx.snapshot.config.scope.allowed_paths;
+  const out = await unknotFindings(worktreeOf(ctx), scope, { ...ctx.deps.hostEnv ?? process.env, ...gate.env.PATH ? { PATH: gate.env.PATH } : {} }, gate.timeout_seconds);
+  return out === null ? null : simplifyFindingsBlock(out, scope, SIMPLIFY_FINDINGS_LIMIT);
+}
+function plannerPrompt(ctx, workerId, slice, findings) {
   const issue = readIssueGoal(ctx.runDir);
   const checks = Object.values(ctx.snapshot.config.checks).map((c) => `${c.id}${c.mandatory ? " (mandatory)" : ""}`);
   const baseline = readJsonIfExists(join66(ctx.runDir, BASELINE_FILE));
@@ -66061,7 +66196,11 @@ function plannerPrompt(ctx, workerId, slice) {
     // An issue's text is never written into the task: it follows as marked, untrusted blocks.
     ...issue ? issuePlannerTask(issue) : [`Goal (from the user): ${ctx.run.goal}`]
   ].join("\n");
-  const blocks = [...issue ? issuePromptBlocks(issue) : [], ...slice ? [{ label: "repository map", content: slice }] : []];
+  const blocks = [
+    ...issue ? issuePromptBlocks(issue) : [],
+    ...slice ? [{ label: "repository map", content: slice }] : [],
+    ...findings ? [{ label: "unknot findings for the goal scope advisory input", content: findings, ref: "unknot diagnose" }] : []
+  ];
   return renderWorkerPrompt({
     role: "planner",
     task,
@@ -66083,7 +66222,7 @@ function storedPlan(ctx) {
     return null;
   }
 }
-var PLANNER_FILE;
+var PLANNER_FILE, SIMPLIFY_FINDINGS_LIMIT;
 var init_contracting = __esm({
   "src/controller/steps/contracting.ts"() {
     "use strict";
@@ -66097,6 +66236,7 @@ var init_contracting = __esm({
     init_map2();
     init_gates();
     init_workers2();
+    init_simplicity();
     init_knowledge_hooks();
     init_common();
     init_baseline_questions();
@@ -66104,6 +66244,7 @@ var init_contracting = __esm({
     init_preflight();
     init_issue();
     PLANNER_FILE = "planner.json";
+    SIMPLIFY_FINDINGS_LIMIT = 10;
   }
 });
 
@@ -74735,6 +74876,38 @@ ${r.stderr}`.trim() };
   }
 });
 
+// src/cli/commands/doctor-simplicity.ts
+async function problemOf(input) {
+  const ids = Object.keys(input.config.checks).filter(isSimplicityCheck);
+  if (ids.length === 0) return { ids, problem: null, fix: null, version: null };
+  const checkPath = ids.map((id2) => input.config.checks[id2].env.PATH).find((p) => typeof p === "string");
+  const env = checkPath ? { ...input.env, PATH: checkPath } : input.env;
+  const probe2 = await (input.probe ?? ((e) => probeUnknot(e, input.cwd)))(env);
+  const versionProblem = unknotVersionProblem(probe2);
+  if (versionProblem !== null) return { ids, problem: versionProblem, fix: UNKNOT_INSTALL, version: null };
+  const projectProblem = unknotProjectProblem(input.files);
+  if (projectProblem !== null) return { ids, problem: projectProblem, fix: UNKNOT_INIT, version: null };
+  return { ids, problem: null, fix: null, version: probe2.state === "ok" ? probe2.output : null };
+}
+async function simplicityCheck(input) {
+  const { ids, problem, fix, version } = await problemOf(input);
+  if (ids.length === 0) return [];
+  const id2 = "checks.simplicity";
+  const area = "checks";
+  if (problem === null) return [{ id: id2, area, status: "pass", summary: `unknot ${version} runs the simplicity check (${ids.join(", ")})`, details: [], missing: null, fix: null }];
+  return [{ id: id2, area, status: "fail", summary: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, details: [], missing: "unknot 0.4.0 or newer on the checks' PATH, in a repository with a committed .unknot", fix }];
+}
+async function simplicityRefusal(input) {
+  const { ids, problem, fix } = await problemOf(input);
+  return problem === null ? null : { reason: `the simplicity check (${ids.join(", ")}) is unavailable: ${problem}`, fix };
+}
+var init_doctor_simplicity = __esm({
+  "src/cli/commands/doctor-simplicity.ts"() {
+    "use strict";
+    init_simplicity();
+  }
+});
+
 // src/cli/commands/doctor-workers.ts
 import { basename as basename22 } from "node:path";
 function workerLoopbackCheck(input) {
@@ -75631,6 +75804,7 @@ async function runDoctor(ctx, opts) {
     "checks",
     () => checkSandboxCheck({ config, repo, provider: isoFacts.provider, available: isoFacts.available, env: ctx.env, homeDir: ctx.homeDir, orbitHome: ctx.orbitHome, platform: ctx.platform, nugetPackages: repo !== null && hasNugetPackages(repo, tracked) })
   );
+  await safely("checks.simplicity", "checks", () => configLoaded ? simplicityCheck({ config, env: ctx.env, cwd: repo ?? ctx.cwd, files: tracked }) : []);
   await safely("checks.dotnet-tests", "checks", () => repo && configLoaded ? dotnetTestsCheck({ config, repo, files: tracked }) : []);
   await safely("workers.loopback", "isolation", () => repo && configLoaded ? workerLoopbackCheck({ config, files: tracked, platform: ctx.platform }) : []);
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
@@ -75710,6 +75884,7 @@ var init_doctor = __esm({
     init_doctor_policy_note();
     init_doctor_dotnet();
     init_doctor_sandbox();
+    init_doctor_simplicity();
     init_doctor_workers();
     init_policy_file();
     init_budget();
@@ -76618,6 +76793,15 @@ checks:
 #     kind: playwright
 #     category: ui
 #     timeout_seconds: 1200
+#   # The simplicity gate (needs unknot 0.4.0 or newer): fails a candidate that adds
+#   # a new high-severity finding (an import cycle, a hub) compared with its base.
+#   # Off unless defined. On a goal labelled simplify it also gives the planner
+#   # unknot's findings for the allowed paths.
+#   simplicity:
+#     command: 'unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json'
+#     shell: true
+#     category: other
+#     timeout_seconds: 600
 # example-checks:end
 
 # UI verification (spec section 13). null turns it off. Example:
@@ -78358,6 +78542,7 @@ var init_admission = __esm({
     init_git2();
     init_preflight();
     init_review_fix();
+    init_doctor_simplicity();
     init_invocation();
     init_budget();
     ENVIRONMENT_CODES = /* @__PURE__ */ new Set(["AUTH_EXPIRED", "AUTH_MISSING", "PROVIDER_UNAVAILABLE", "ISOLATION_UNAVAILABLE", "POLICY_DENIED"]);
@@ -78383,6 +78568,11 @@ var init_admission = __esm({
       if ((config.ui !== null || Object.values(config.checks).some((c) => c.kind === "playwright")) && !playwrightInstalled(repo)) {
         cheap.push("the policy has a ui section or a playwright check, but @playwright/test is not installed in this repository");
         fixes.push("npm install -D @playwright/test, then npx playwright install (or remove the ui section and the playwright check from .orbit/config.yaml)");
+      }
+      const simplicity = await simplicityRefusal({ config, env: ctx.env, cwd: repo, files: hasCommits ? (await git2(repo, ["ls-files", "-z", "--", ".unknot"])).split("\0").filter(Boolean) : [] });
+      if (simplicity !== null) {
+        cheap.push(simplicity.reason);
+        fixes.push(simplicity.fix);
       }
       const credentialProblems = await gitCredentialProblems(repo);
       if (credentialProblems.length > 0) {

@@ -39,6 +39,7 @@ import { settleCheckAttempt } from '../recovery/check-attempt.ts';
 import { classifyCouldNotRun, classifyNotExecuted, type EnvironmentSignal } from './environment-failure.ts';
 import { git } from './git.ts';
 import { planInstall } from './baseline.ts';
+import { isSimplicityCheck } from './simplicity.ts';
 import { candidateEvidenceDir, configHashFor, runAttempt, type AttemptRecords, type CheckSubject, type RunnerContext } from './runner.ts';
 import type { CheckRunRecord, FinishedCheck, NewCheckRun } from './store.ts';
 import type { BaseComparison } from './report.ts';
@@ -293,9 +294,12 @@ export interface CriterionTestSupport {
   testPaths: string[];
 }
 
-/** A check the command probe runs: a command check of category test, never lint, typecheck, format or build. */
+/**
+ * A check the command probe runs: a command check of category test, never lint, typecheck, format or build, and never the
+ * simplicity gate: it compares the tree with a base revision, and a probe tree has no base of its own to compare with.
+ */
 export function isTestCommandCheck(def: CheckDefinition | undefined): def is CheckDefinition {
-  return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test';
+  return def !== undefined && def.kind === 'command' && checkCategory(def) === 'test' && !isSimplicityCheck(def.id);
 }
 
 /** A browser check: one of kind playwright, or one of ui.journey_check_ids (the same checks the report reads journeys from). */

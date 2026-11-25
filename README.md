@@ -133,6 +133,8 @@ without a marketplace:
 claude --plugin-dir ./plugin
 ```
 
+The bundle (`plugin/dist`) is current on `main` and at every release tag; a clone of `next` may carry a stale one between releases, so run `npm run build` first.
+
 ## Quickstart
 
 Follow these steps in order, in the git repository you want Orbit to work on.

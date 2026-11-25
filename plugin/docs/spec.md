@@ -691,6 +691,16 @@ If creating a commit changes only Git metadata, retain the tested tree identity 
 }
 ```
 
+### Simplicity gate
+
+A check whose id is exactly `simplicity` or starts `simplicity-` (case-sensitive) is the model-free simplicity gate (issue #232). Its command is `unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json` run through a shell in the candidate's checkout. Orbit sets `ORBIT_BASE_REVISION` in every check's environment: the candidate's parent revision, or `HEAD` on the base revision itself, where nothing is new, so the baseline run passes at once.
+
+- **Fails on what the candidate adds.** Unknot exits 1 for a new finding at the severity (an import cycle or a hub is `high` by default). The check fails and its failure note says how many new findings Unknot counts (`baseline.new`) and how many it lists, then names each (high severity first, lower ones after, at most eight, then a count) with its kind, location, title and evidence, which is what the repair brief carries. A finding the base already has is never new, so a clean change passes on a base that has findings.
+- **Cannot compare, says so.** A base Unknot cannot map (exit 5) fails with that reason, not as a finding. A check over its `timeout_seconds` fails as a timeout and says the scope was too large to map in that time. An Unknot older than 0.4.0 ignores `--baseline`, prints no `schema_version` and exits 0, so a pass whose output is not a schema 1.x document is turned into a failure naming the version needed.
+- **Unavailable Unknot.** With the check configured, `orbit doctor` fails `checks.simplicity` when `unknot` (probed with the PATH the check gets) is not installed, is broken, prints no readable version, is older than 0.4.0 (a prerelease of 0.4.0 included), or when the repository has no committed `.unknot` with its `.unknot/.gitignore` (so every candidate would fail with UK_NOT_INITIALIZED, or a check would write into its checkout), and prints the step, and `orbit run` refuses to start, as it does for other problems it can see before a run exists.
+- **Planner input.** On a run started from an issue labelled `simplify`, with the check configured, the planner's prompt carries the output of `unknot map` and `unknot diagnose --json <allowed paths>` run in the run's own worktree (never the user's checkout; the state stays in the ignored `.unknot/state`), limited to findings in `scope.allowed_paths` (at most ten, in Unknot's rank order), as a marked untrusted block that is advisory: it grants nothing, and the contract and the checks decide. If Unknot gives nothing the prompt is unchanged.
+- **Off by default.** No simplicity check is defined unless the policy defines one (the starter lists a commented example); the planner input needs both that check and the label. The fail-before probe never runs the gate: a probe tree has no base of its own to compare with. No model is called by either.
+
 ### Completion proof
 
 Every mandatory criterion needs explicit evidence. Passing unit tests alone does not prove an entire user journey. Model review cannot replace reproducible checks. Missing execution evidence must be labeled unverified.
@@ -861,6 +871,10 @@ Authorized delivery may commit verified trees, push only configured task branche
 Before every external action: validate policy, target, revision, and evidence; persist intent; execute; store receipt; reconcile uncertainty before retry.
 
 Merge is opt-in and requires exact candidate, branch checks, review policy, and no blockers. Revalidate after candidate changes. Deployment uses a separate release profile with environment-specific safeguards.
+
+### Change fragments (Orbit's own repository)
+
+A pull request into `next` records its changelog entries and traceability rows as one file each under `changes/changelog/` and `changes/traceability/`, and does not edit `CHANGELOG.md`, `docs/traceability.md` or their `plugin/` copies; a malformed fragment fails the pull request check with its file named, as does a direct edit of those files outside a release. The release step folds the fragments into the shared files in a stable order (by file name) and deletes them. `plugin/dist` and the plugin copies of the documentation are current on `main` and at every release tag: a pull request into `next` does not commit them, the release pull request rebuilds them (`npm run build`) together with the version bump and the fold, and CI runs `check:dist` on `main` and the release workflow on the tag. Between releases `next` may carry a stale bundle.
 
 ## 16. Observability
 
