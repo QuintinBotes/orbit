@@ -19,7 +19,7 @@ import { listFindings, listReviews } from '../../src/review/store.ts';
 import { listDecisions } from '../../src/storage/decisions.ts';
 import { listWorkers } from '../../src/storage/workers.ts';
 import { drive, makeLab, ORBIT_ROOT, READY, startLabRun, writeScenario, type Lab } from './helpers/lab.ts';
-import { GOAL, GOOD_IMPLEMENTATION, implementer, NOT_FOUND_TEXT, planner, scenario, type Edit } from './helpers/scenarios.ts';
+import { APPROVE, GOAL, GOOD_IMPLEMENTATION, implementer, NOT_FOUND_TEXT, planner, review, scenario, type Edit } from './helpers/scenarios.ts';
 import { assertRunInvariants, transitions } from './helpers/invariants.ts';
 
 const FAKE_RV = join(ORBIT_ROOT, 'tests', 'fakes', 'fake-review-voice.mjs');
@@ -38,7 +38,7 @@ interface RvScript {
 }
 
 /** A lab whose Codex implementer makes the change risky, with Review Voice's command pointing at the fake (or at `command`). */
-function rvLab(script: RvScript, opts: { mode?: 'default' | 'review-voice'; command?: string[] } = {}): { l: Lab; log: () => { base: string; head: string; cwd: string }[] } {
+function rvLab(script: RvScript, opts: { mode?: 'default' | 'review-voice'; command?: string[]; timeoutS?: number; reviewRounds?: number } = {}): { l: Lab; log: () => { base: string; head: string; cwd: string }[] } {
   const dir = mkdtempSync(join(tmpdir(), 'orbit-rv-'));
   dirs.push(dir);
   const scriptPath = join(dir, 'script.json');
@@ -47,7 +47,8 @@ function rvLab(script: RvScript, opts: { mode?: 'default' | 'review-voice'; comm
     tweak(c: OrbitConfig) {
       c.routing.implementers = ['codex', 'claude'];
       c.review.mode = opts.mode ?? 'review-voice';
-      c.review.review_voice = { command: opts.command ?? [process.execPath, FAKE_RV, '--script', scriptPath] };
+      if (opts.reviewRounds !== undefined) c.scheduler.hard_limits.review_rounds = opts.reviewRounds;
+      c.review.review_voice = { command: opts.command ?? [process.execPath, FAKE_RV, '--script', scriptPath], ...(opts.timeoutS !== undefined ? { timeout_s: opts.timeoutS } : {}) };
     },
   });
   labs.push(l);
@@ -93,23 +94,27 @@ describe.skipIf(!READY)('acceptance: Review Voice as the same-family review pass
     expect(rv!.workerId).toBeNull();
     const findings = listFindings(l.db(), run.id).filter((f) => f.reviewId === rv!.id);
     expect(findings.map((f) => [f.externalId, f.severity, f.location]).sort()).toEqual([
-      ['rv_01', 'low', 'src/server.ts:1'],
-      ['rv_02', 'low', 'tests/unit/server.test.ts:1'],
+      ['RV-1', 'low', 'src/server.ts:1'],
+      ['RV-2', 'low', 'tests/unit/server.test.ts:1'],
     ]);
     assertRunInvariants(l, run.id);
   }, 300_000);
 
   it('US1 scenario 2: a blocking finding sends the run to repair, as with Orbit\'s own reviewer', async () => {
-    const { l } = rvLab({ calls: [{ findings: [{ severity: 'blocking', path: 'tests/unit/server.test.ts', line: 20, category: 'correctness', text: 'Only one unknown path is asserted. A nested one is not covered.' }] }, { findings: [] }] });
-    writeScenario(l, scenario({ planner: [RISKY], implementer: [GOOD_IMPLEMENTATION(), implementer([REPAIR], { refs: [{ criterion_id: null, ref: 'tests/unit/server.test.ts', note: 'validation for rv_01' }] })] }));
+    const { l, log } = rvLab({ calls: [{ findings: [{ severity: 'blocking', path: 'tests/unit/server.test.ts', line: 20, category: 'correctness', text: 'Only one unknown path is asserted. A nested one is not covered.' }] }, { findings: [] }] });
+    writeScenario(l, scenario({ planner: [RISKY], implementer: [GOOD_IMPLEMENTATION(), implementer([REPAIR], { refs: [{ criterion_id: null, ref: 'tests/unit/server.test.ts', note: 'validation for finding RV-1' }] })] }));
     const run = startLabRun(l, GOAL);
     const done = await drive(l, run.id);
     expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
     const reviews = rvReviews(l, run.id);
     expect(reviews.map((r) => r.verdict)).toEqual(['REPAIR_REQUIRED', 'APPROVE']);
     const first = listFindings(l.db(), run.id).filter((f) => f.reviewId === reviews[0]!.id);
-    expect(first.map((f) => [f.externalId, f.severity, f.location])).toEqual([['rv_01', 'high', 'tests/unit/server.test.ts:20']]);
+    expect(first.map((f) => [f.externalId, f.severity, f.location])).toEqual([['RV-1', 'high', 'tests/unit/server.test.ts:20']]);
     expect(transitions(l.db(), run.id)).toContain('REPAIRING');
+    // Each pass reviews its own candidate's commit against the run's base: the repaired candidate is not reviewed as the first.
+    const commits = l.db().all<{ commit_sha: string }>('SELECT commit_sha FROM candidates WHERE run_id = ? ORDER BY seq', run.id).map((c) => c.commit_sha);
+    expect(commits).toHaveLength(2);
+    expect(log().map((c) => [c.base, c.head])).toEqual(commits.map((c) => [done.baseRevision, c]));
     assertRunInvariants(l, run.id);
   }, 300_000);
 
@@ -181,5 +186,47 @@ describe.skipIf(!READY)('acceptance: Review Voice as the same-family review pass
     expect(listDecisions(twice.l.db(), run2.id, { kind: FALLBACK_KIND })).toHaveLength(1);
     expect(rvReviews(twice.l, run2.id)).toEqual([]);
     expect(reviewerWorkers(twice.l, run2.id).filter((w) => w.purpose?.startsWith('review-family:') === true).map((w) => w.provider)).toEqual(['codex']);
+  }, 400_000);
+
+  it('a document that is not a review-output falls back without a retry, and the decision names why', async () => {
+    const { l, log } = rvLab({ calls: [{ raw: '{"nope":true}' }] });
+    writeScenario(l, scenario({ planner: [RISKY], implementer: [GOOD_IMPLEMENTATION()] }));
+    const run = startLabRun(l, GOAL);
+    expect((await drive(l, run.id)).state).toBe('SUCCEEDED');
+    expect(log()).toHaveLength(1);
+    expect(listDecisions(l.db(), run.id, { kind: FALLBACK_KIND }).map((d) => (d.data as { reason: string }).reason)).toEqual([expect.stringMatching(/review-output/)]);
+    expect(rvReviews(l, run.id)).toEqual([]);
+    expect(reviewerWorkers(l, run.id).filter((w) => w.purpose?.startsWith('review-family:') === true).map((w) => w.provider)).toEqual(['codex']);
+  }, 300_000);
+
+  it('a CLI that never answers and ignores SIGTERM is killed at review.review_voice.timeout_s, retried once, and the run falls back', async () => {
+    const { l, log } = rvLab({ calls: [{ hang: true }] }, { timeoutS: 1 });
+    writeScenario(l, scenario({ planner: [RISKY], implementer: [GOOD_IMPLEMENTATION()] }));
+    const run = startLabRun(l, GOAL);
+    expect((await drive(l, run.id)).state).toBe('SUCCEEDED');
+    expect(log()).toHaveLength(2);
+    expect(listDecisions(l.db(), run.id, { kind: FALLBACK_KIND }).map((d) => (d.data as { reason: string }).reason)).toEqual([expect.stringMatching(/timed out after 1 s/)]);
+  }, 300_000);
+
+  it('after the first candidate fell back, the repaired candidate makes no CLI call and goes to the default reviewer', async () => {
+    const LOW = { id: 'COR-1', severity: 'low', category: 'correctness', location: 'tests/unit/server.test.ts:20', claim: 'The new text is asserted for one unknown path only; a nested unknown path is not covered.', evidence: "The unit test calls handle('/nope') and no other unknown path.", suggested_validation: "Assert the text for handle('/nope/deeper') as well." };
+    const { l, log } = rvLab({ calls: [{ fail: true }] }, { reviewRounds: 6 });
+    writeScenario(
+      l,
+      scenario({
+        planner: [RISKY],
+        implementer: [GOOD_IMPLEMENTATION(), implementer([REPAIR], { refs: [{ criterion_id: null, ref: 'tests/unit/server.test.ts', note: 'validation for finding COR-1' }] })],
+        // Candidate 1: the cross-model review asks for repair, the fallback same-family session approves; candidate 2: both approve.
+        reviewer: [review('REPAIR_REQUIRED', [LOW]), APPROVE, APPROVE, APPROVE],
+      }),
+    );
+    const run = startLabRun(l, GOAL);
+    const done = await drive(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').toBe('SUCCEEDED');
+    expect(l.db().all('SELECT id FROM candidates WHERE run_id = ?', run.id)).toHaveLength(2);
+    // The two calls of candidate 1 (one retry); none for candidate 2.
+    expect(log()).toHaveLength(2);
+    expect(listDecisions(l.db(), run.id, { kind: FALLBACK_KIND })).toHaveLength(1);
+    expect(reviewerWorkers(l, run.id).filter((w) => w.purpose?.startsWith('review-family:') === true)).toHaveLength(2);
   }, 400_000);
 });

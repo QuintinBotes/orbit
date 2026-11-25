@@ -41,7 +41,7 @@ import { attemptHistory } from './diagnosing.ts';
 import { REVIEWER_FAILED_KIND, reviewerLabel, selectReviewer, selectionDecisionRecord, type ReviewerFailure, type ReviewerSelection } from '../../review/select.ts';
 import { failBeforePolicy, providerFamily } from '../../policy/config.ts';
 import { preferredReviewProvider, reviewMode } from '../../policy/review.ts';
-import { mapReviewVoiceOutput, REVIEW_VOICE_FALLBACK_KIND, REVIEW_VOICE_MODEL, reviewVoiceAvailability, runReviewVoice } from '../../review/review-voice.ts';
+import { mapReviewVoiceOutput, REVIEW_VOICE_FALLBACK_KIND, REVIEW_VOICE_MODEL, reviewVoiceAvailability, reviewVoiceEnv, reviewVoiceRange, reviewVoiceTimeoutMs, runReviewVoice } from '../../review/review-voice.ts';
 import { sameProviderApproval } from './review-approval.ts';
 import type { CredentialStatus } from '../../adapters/types.ts';
 import { findingLabel, listReviews, loadResolverState, markReviewInvalidated, persistResolution, recordReview } from '../../review/store.ts';
@@ -134,9 +134,6 @@ async function familyPass(ctx: RunContext, cand: CandidateRecord): Promise<StepR
 
 type SelectedReviewer = Extract<ReviewerSelection, { decision: 'SELECT' }>;
 
-/** One Review Voice run is given this long; a timeout is retried once, then the default reviewer stands in. */
-const REVIEW_VOICE_TIMEOUT_MS = 15 * 60_000;
-
 function hasReviewVoiceReview(ctx: RunContext, cand: CandidateRecord, provider: string): boolean {
   return listReviews(ctx.db, ctx.run.id, { treeHash: cand.treeHash, includeInvalidated: true }).some((r) => r.model === REVIEW_VOICE_MODEL && r.provider === provider);
 }
@@ -161,13 +158,26 @@ async function reviewVoicePass(ctx: RunContext, cand: CandidateRecord, provider:
   };
   const available = reviewVoiceAvailability(settings, env);
   if (!available.ok) return fallBack(available.reason);
-  const ran = await runReviewVoice({ command: settings!.command, cwd: ctx.run.repoRoot, base: ctx.run.baseRevision!, head: cand.commitSha, timeoutMs: REVIEW_VOICE_TIMEOUT_MS, env: reviewVoiceEnv(env) });
+  const range = reviewVoiceRange(ctx.run, cand);
+  if (!range.ok) return fallBack(range.reason);
+  let changed: Set<string>;
+  try {
+    changed = new Set((await git(ctx.run.repoRoot, ['diff', '--name-only', '-z', '--no-renames', range.base, range.head, '--'])).split('\0').filter((p) => p.length > 0));
+  } catch (err) {
+    return fallBack(`the changed files could not be listed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const ran = await runReviewVoice({ command: settings!.command, cwd: ctx.run.repoRoot, base: range.base, head: range.head, timeoutMs: reviewVoiceTimeoutMs(settings), env: reviewVoiceEnv(env), signal: ctx.signal });
+  // An aborted step (lease lost, step timeout, shutdown) is no failure of Review Voice: the CLI is already killed, and nothing is recorded.
+  ctx.signal.throwIfAborted();
   if (!ran.ok) return fallBack(`${ran.reason} (after ${ran.attempts} attempts)`);
   let mapped;
   try {
-    mapped = mapReviewVoiceOutput(ran.output, cand.commitSha);
+    mapped = mapReviewVoiceOutput(ran.output, cand.commitSha, changed);
   } catch (err) {
     return fallBack(err instanceof Error ? err.message : String(err));
+  }
+  if (mapped.warnings.length > 0) {
+    decide(ctx, { id: `dec-${ctx.run.id}-review-voice-dropped-${cand.id}`, kind: 'review.review-voice-dropped', summary: `Review Voice findings dropped on tree ${cand.treeHash}: ${clipAtWord(mapped.warnings.join('; '), 400)}`, data: { tree_hash: cand.treeHash, candidate_id: cand.id, warnings: mapped.warnings } });
   }
   recordReview(
     ctx.db,
@@ -175,13 +185,6 @@ async function reviewVoicePass(ctx: RunContext, cand: CandidateRecord, provider:
     ctx.clock,
   );
   return true;
-}
-
-/** What the CLI needs and nothing else: the controller's environment holds credentials Review Voice has no use for. */
-function reviewVoiceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(env)) if (v !== undefined && (['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'APPDATA'].includes(k) || k.startsWith('REVIEW_VOICE_'))) out[k] = v;
-  return out;
 }
 
 /** The reviewer for the candidate, or the step that blocks the run because none may review it (yet). */

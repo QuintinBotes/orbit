@@ -328,7 +328,7 @@ export interface OrbitConfig {
     /** `review-voice` runs Review Voice's CLI as the same-family pass of a risky change (issue #231). Absent in older snapshots, which read as `default`. */
     mode?: ReviewMode;
     /** The Review Voice CLI: the command Orbit runs, with `--base <rev> --head <rev> --json` appended. Required by `mode: review-voice`. */
-    review_voice?: { command: string[] };
+    review_voice?: { command: string[]; /** One run's time in seconds (1 to 1200, default 900); two attempts must fit the 45 minute step timeout. */ timeout_s?: number };
     /**
      * Independent review providers, in preference order (docs/decisions/0007-reviewer-availability.md). Parsed
      * configs always carry it; optional in the type so older snapshots, which have only preferred_provider, still

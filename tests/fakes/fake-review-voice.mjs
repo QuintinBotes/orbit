@@ -5,7 +5,8 @@
  *
  *   { "declined": ["path:line"], "calls": [ { "fail": true } | { "fromDiff": "blocking", "findings": [...] } ] }
  *
- * Call n answers with calls[n] (the last entry repeats). `fromDiff` adds one finding of that severity, at line 1, for each
+ * Call n answers with calls[n] (the last entry repeats). `fail` exits 1, `hang` never answers and ignores SIGTERM, and
+ * `raw` prints that text as the whole answer. `fromDiff` adds one finding of that severity, at line 1, for each
  * file the diff changes, read with git in the working directory, so the output proves the exact diff was reviewed. A finding
  * at a path:line in `declined` is held back, as Review Voice holds back what its owner declined. Every call is appended to
  * `<script>.log` as one JSON line.
@@ -28,7 +29,14 @@ appendFileSync(log, `${JSON.stringify({ base, head, cwd: process.cwd(), args })}
 
 const calls = script.calls ?? [];
 const call = calls[Math.min(n, calls.length - 1)] ?? {};
-if (call.fail) {
+if (call.hang) {
+  // Never answers and ignores SIGTERM: only SIGKILL stops it.
+  process.on('SIGTERM', () => {});
+  await new Promise(() => setInterval(() => {}, 1000));
+} else if (call.raw !== undefined) {
+  process.stdout.write(`${call.raw}\n`);
+  process.exit(0);
+} else if (call.fail) {
   process.stderr.write('fake review-voice: failing as scripted\n');
   process.exit(1);
 }

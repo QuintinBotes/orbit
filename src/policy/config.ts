@@ -180,7 +180,6 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       allow_managed_plugins: false,
     },
     review: {
-      mode: 'default',
       // Decision 0007: Codex reviews independently when it is usable; otherwise Claude reviews in a separate
       // session and every report says the review was not independent and why.
       providers: ['codex'],

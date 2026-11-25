@@ -202,6 +202,12 @@ review:
   #   block   the run blocks until an independent reviewer is usable.
   when_unavailable: claude
   block_unresolved_high_impact_findings: true
+  # Off by default. review-voice makes Review Voice's CLI the same-family review
+  # pass of a risky change (see docs/configuration.md).
+  # mode: review-voice
+  # review_voice:
+  #   command: [review-voice, review-diff]
+  #   timeout_s: 900   # 1 to 1200; the CLI is tried twice
 
 # Secret-scan and SAST findings (static security gate). Findings at a listed
 # severity block; the others are reported as advisory. An exception waives

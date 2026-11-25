@@ -267,7 +267,10 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["command"],
-          "properties": { "command": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "description": "The Review Voice CLI; Orbit appends --base <rev> --head <rev> --json and reads a review-output document from stdout." } }
+          "properties": {
+            "command": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 1000 }, "description": "The Review Voice CLI; Orbit appends --base <rev> --head <rev> --json and reads a review-output document from stdout." },
+            "timeout_s": { "type": "integer", "minimum": 1, "maximum": 1200, "description": "Seconds one run of the CLI may take before it is killed (default 900). A run is tried twice, and both must fit the 45 minute step timeout." }
+          }
         },
         "when_unavailable": { "enum": ["claude", "ask", "block"], "description": "What happens when no independent reviewer is usable." },
         "preferred_provider": { "$ref": "#/$defs/providerId", "description": "Legacy: replaced by providers." },
