@@ -17,6 +17,9 @@ const entry = process.env.ORBIT_BUILD_ENTRY ?? join(root, 'src/cli/main.ts');
 const outfile = process.env.ORBIT_BUILD_OUT ?? join(root, 'plugin/dist/orbit.mjs');
 const check = process.argv.includes('--check');
 const defaultPluginBuild = process.env.ORBIT_BUILD_ENTRY === undefined && process.env.ORBIT_BUILD_OUT === undefined;
+// Where the documentation copies go: plugin/ on the default build, or ORBIT_BUILD_DOCS_DIR (the plugin test builds the
+// payload's documentation into a temp dir). Null on a custom entry or output, which ships no documentation.
+const docsDir = process.env.ORBIT_BUILD_DOCS_DIR ?? (defaultPluginBuild ? join(root, 'plugin') : null);
 
 function filesBelow(dir) {
   const out = [];
@@ -36,7 +39,7 @@ const DOCUMENTATION_FILES = [
 
 function documentationProblem() {
   for (const [name, source] of DOCUMENTATION_FILES) {
-    const target = join(root, 'plugin', name);
+    const target = join(docsDir, name);
     if (!existsSync(target) || readFileSync(target, 'utf8') !== readFileSync(source, 'utf8')) return `${target} does not match ${source}`;
   }
   return null;
@@ -114,7 +117,7 @@ if (check) {
       process.exit(1);
     }
   }
-  const docs = defaultPluginBuild ? documentationProblem() : null;
+  const docs = docsDir !== null ? documentationProblem() : null;
   if (docs !== null) {
     console.error(`plugin documentation is stale: ${docs}. Run npm run build.`);
     process.exit(1);
@@ -127,9 +130,10 @@ mkdirSync(dirname(outfile), { recursive: true });
 writeFileSync(outfile, built);
 chmodSync(outfile, 0o755);
 for (const [name, source] of shipped) writeFileSync(join(dirname(outfile), name), readFileSync(source, 'utf8'), { mode: 0o644 });
-if (defaultPluginBuild) {
-  for (const [name, source] of DOCUMENTATION_FILES.slice(0, 2)) writeFileSync(join(root, 'plugin', name), readFileSync(source, 'utf8'));
-  const pluginDocs = join(root, 'plugin', 'docs');
+if (docsDir !== null) {
+  mkdirSync(docsDir, { recursive: true });
+  for (const [name, source] of DOCUMENTATION_FILES.slice(0, 2)) writeFileSync(join(docsDir, name), readFileSync(source, 'utf8'));
+  const pluginDocs = join(docsDir, 'docs');
   rmSync(pluginDocs, { recursive: true, force: true });
   cpSync(join(root, 'docs'), pluginDocs, { recursive: true });
 }
