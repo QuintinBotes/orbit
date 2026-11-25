@@ -46,6 +46,7 @@ import { proposeScope, trackedFiles } from '../layout.ts';
 import { orbitHint } from '../../core/invocation.ts';
 import { allReviewPrerequisites, reviewFix } from '../review-fix.ts';
 import { workerPluginsCheck } from './doctor-plugins.ts';
+import { reviewVoiceCheck } from './doctor-review-voice.ts';
 import { sharedMemoryCheck } from './doctor-shared-memory.ts';
 import { HUMAN_POLICY_CONFIG_NOTE, withHumanPolicyConfigNote } from './doctor-policy-note.ts';
 import { dotnetAuditCheck, dotnetPackagesCheck, dotnetTestsCheck, hasNugetPackages } from './doctor-dotnet.ts';
@@ -564,6 +565,8 @@ async function checkProviders(p: Probe, iso: IsolationFacts, registry: ModelRegi
 
   // Who reviews: judged exactly as a run would judge it, in every review.when_unavailable mode (decision 0007).
   checks.push(reviewCheck(config, facts, registry));
+  const reviewVoice = reviewVoiceCheck(config, ctx.env);
+  if (reviewVoice) checks.push(reviewVoice);
   return { checks, facts };
 }
 

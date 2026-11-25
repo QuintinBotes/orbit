@@ -515,8 +515,28 @@ agents:
 review:
   providers: [codex]          # independent reviewers, in preference order
   when_unavailable: claude    # claude | ask | block
+  mode: default               # default | review-voice
+  review_voice:               # needed by mode: review-voice
+    command: [review-voice, review-diff]   # prints a review-output document for --base/--head
+    timeout_s: 900            # 1 to 1200 seconds per run; the CLI is tried twice
   block_unresolved_high_impact_findings: true
 ```
+
+`review.mode: review-voice` (off by default) makes Review Voice the same-family
+review pass of a risky change. The controller runs `review.review_voice.command`
+with `--base <base revision> --head <candidate commit> --json` appended, on the
+exact candidate diff and outside any worker, and records the `review-output`
+findings it prints (blocking is high, important medium, minor low, nit and
+question info). The reviewer workers stay read-only and Review Voice's corpus
+never enters a worker session. The cross-model pass is unchanged. When the CLI is
+not installed, not set up, or fails twice, the default same-family session runs
+instead and a `review.review-voice-fallback` decision records why. Each run of
+the CLI is killed after `timeout_s` (default 900, at most 1200): it is tried
+twice and both tries must fit the 45 minute step timeout. The output is
+untrusted: at most 100 findings, text up to 1000 characters, and a finding on a
+file the candidate did not change (or at an unsafe path) is dropped and named in
+a `review.review-voice-dropped` decision. Orbit numbers the findings `RV-n`.
+`orbit doctor` reports it (`review.review-voice`).
 
 `review.providers` lists the independent reviewers (a provider family other than
 the one that wrote the change) in preference order. The first that is installed,
