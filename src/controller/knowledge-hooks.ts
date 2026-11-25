@@ -15,6 +15,12 @@ import { KnowledgeStore } from '../knowledge/store.ts';
 import { applyLiveCheck } from '../knowledge/overlays.ts';
 import { recordRetrieval, renderAdvisoryBlock, retrieve } from '../knowledge/retrieve.ts';
 import { DEFAULT_LESSON_EXPIRY_DAYS } from '../knowledge/recheck.ts';
+import { callMemoryTool, recallShared, sharedMemoryOn, type SharedRow } from '../knowledge/shared-memory.ts';
+import { contradictedLessons } from '../knowledge/extract.ts';
+import { estimateTokens } from '../knowledge/text.ts';
+import type { LearnReport } from '../knowledge/learn.ts';
+import type { Lesson, RetrievedLesson } from '../knowledge/types.ts';
+import type { RetrievalRow } from '../knowledge/store.ts';
 import type { RunContext } from './context.ts';
 import { liveWindow } from './eval-runner.ts';
 
@@ -71,8 +77,82 @@ export function advisoryBlockFor(ctx: RunContext, input: AdvisoryInput): string 
       recheck: { root: ctx.run.repoRoot, checkIds: Object.keys(ctx.snapshot.config.checks), expiryDays: config.lesson_expiry_days ?? DEFAULT_LESSON_EXPIRY_DAYS },
     }, { maxLessons: config.max_prompt_lessons ?? 3, maxCandidates: 0 });
     recordRetrieval(store, { runId: ctx.run.id, workerId: input.workerId, fingerprints: input.fingerprints }, lessons);
-    return renderAdvisoryBlock(lessons);
+    return renderAdvisoryBlock(lessons, sharedRowsFor(ctx, input, lessons));
   });
+}
+
+/** Whether this run has already seen memory fail: the rest of the run does without it, so one run pays the timeout once. */
+function memorySeenDown(ctx: RunContext): boolean {
+  return ctx.db.get('SELECT 1 AS x FROM events WHERE run_id = ? AND type = ? LIMIT 1', ctx.run.id, 'learning.memory-unavailable') !== undefined;
+}
+
+function memoryUnavailable(ctx: RunContext, operation: string, err: unknown): void {
+  const error = redact(err instanceof Error ? err.message : String(err)).slice(0, 300);
+  ctx.log.warn('shared memory unavailable', { operation, error });
+  ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.memory-unavailable', ctx.ownerId, { operation, error }, ctx.clock.now()));
+}
+
+/**
+ * Issue #233: shared items for a worker's prompt, asked of the run's repository (memory resolves the tenant from it)
+ * and trimmed, whole rows, so the block stays within max_advisory_tokens after the lessons. Empty when the adapter is
+ * off; a failure is recorded and costs the worker the rows, never the step. The ids shown are recorded per worker.
+ */
+function sharedRowsFor(ctx: RunContext, input: AdvisoryInput, lessons: readonly RetrievedLesson[]): SharedRow[] {
+  const config = ctx.snapshot.config.knowledge;
+  if (!sharedMemoryOn(config) || memorySeenDown(ctx)) return [];
+  // Shared rows count against max_prompt_lessons with the local lessons; with no room memory is not asked.
+  const room = (config.max_prompt_lessons ?? 3) - lessons.length;
+  if (room <= 0) return [];
+  let rows: SharedRow[];
+  try {
+    rows = recallShared(config.shared_memory, ctx.run.repoRoot, { paths: input.paths, checkIds: input.checkIds, fingerprints: input.fingerprints, maxTokens: config.max_advisory_tokens });
+  } catch (err) {
+    memoryUnavailable(ctx, 'recall', err);
+    return [];
+  }
+  rows = rows.slice(0, room);
+  while (rows.length > 0 && estimateTokens(renderAdvisoryBlock(lessons, rows)) > config.max_advisory_tokens) rows.pop();
+  if (rows.length > 0) ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, 'learning.memory-recalled', ctx.ownerId, { worker_id: input.workerId, ids: rows.map((r) => r.id), fingerprints: input.fingerprints }, ctx.clock.now()));
+  return rows;
+}
+
+const MEMORY_TYPE: Record<Lesson['kind'], string> = { practice: 'convention', 'failure-pattern': 'failure-pattern', 'repair-recipe': 'repair-recipe', convention: 'convention', hazard: 'hazard' };
+
+/**
+ * Issue #233, at the learning stage: each lesson this run left validated is proposed to memory with the run as its
+ * evidence (never activated: the owner approves in memory), and each recalled item whose failure came back in the
+ * run is reported wrong through memory's feedback call. Orbit's own store is not touched. Never throws.
+ */
+export async function shareWithMemory(ctx: RunContext, store: KnowledgeStore, learn: LearnReport | null): Promise<{ proposed: string[]; reported: string[]; failed: number } | null> {
+  const config = ctx.snapshot.config.knowledge;
+  if (!sharedMemoryOn(config) || memorySeenDown(ctx)) return null;
+  const memory = config.shared_memory;
+  const out = { proposed: [] as string[], reported: [] as string[], failed: 0 };
+  const call = async (operation: string, name: 'memory_propose' | 'memory_feedback', args: Record<string, unknown>, done: string[], id: string): Promise<void> => {
+    // After the first failure the rest of this stage is skipped, so a down memory costs one timeout, not one per call.
+    if (out.failed > 0) return;
+    try {
+      await callMemoryTool(memory, ctx.run.repoRoot, name, args);
+      done.push(id);
+    } catch (err) {
+      out.failed++;
+      memoryUnavailable(ctx, operation, err);
+    }
+  };
+  // Only a lesson this run made validated: one merely merged again was proposed when it first validated.
+  const firstValidated = new Set([...(learn?.created ?? []), ...(learn?.changes ?? []).filter((c) => c.to === 'validated').map((c) => c.lessonId)]);
+  for (const id of firstValidated) {
+    const lesson = store.getLesson(id);
+    if (lesson?.status !== 'validated') continue;
+    await call('propose', 'memory_propose', { statement: lesson.statement, scope: 'repository', type: MEMORY_TYPE[lesson.kind], evidence: { source: `orbit run ${ctx.run.id}`, origin: 'agent' } }, out.proposed, id);
+  }
+  const shown: RetrievalRow[] = [];
+  for (const e of ctx.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id', ctx.run.id, 'learning.memory-recalled')) {
+    const d = JSON.parse(e.data_json) as { worker_id: string; ids: string[]; fingerprints: string[] };
+    for (const itemId of d.ids) shown.push({ run_id: ctx.run.id, worker_id: d.worker_id, lesson_id: itemId, ts: 0, score: null, outcome: null, attempts: null, fingerprints: d.fingerprints });
+  }
+  for (const id of contradictedLessons(ctx.db, ctx.run.id, shown)) await call('feedback', 'memory_feedback', { id, signal: 'wrong' }, out.reported, id);
+  return out;
 }
 
 export interface LiveOverlayCheck {
