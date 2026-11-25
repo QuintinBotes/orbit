@@ -72,6 +72,19 @@ describe('watchdog', () => {
     expect(rep2.findings[0]?.kind).toBe('stuck-step');
   });
 
+  it('a log written while the pass is scanning still counts as activity (issue #228)', async () => {
+    const { db, clock } = setup();
+    makeRun(db, clock, 'r1', 'ctl-1');
+    planWorker(db, { id: 'w1', runId: 'r1', role: 'implementer', provider: 'claude', workerDir: '/w1', cwd: '/wt' }, clock);
+    markWorkerRunning(db, 'w1', { pid: 4242, pgid: 4242, procStart: 'x' }, clock);
+    clock.advance(DEFAULT_WATCHDOG.stepTimeoutMs.IMPLEMENTING! + MIN);
+    acquireLease(db, 'r1', 'ctl-1', 60_000, clock);
+    // The worker writes after the pass took its reading of the time.
+    const rep = await watchdogTick({ db, clock, ownerId: 'ctl-1', adapters: {}, workerActivityAt: () => (clock.advance(20), clock.now()) });
+    expect(rep.findings).toEqual([]);
+    expect(getRun(db, 'r1').state).toBe('IMPLEMENTING');
+  });
+
   it('a check still writing its output counts as activity, so a long baseline is neither stalled nor abandoned (issue #141)', async () => {
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', 'ctl-1', ['PREFLIGHT']);
