@@ -282,6 +282,15 @@ checks:
 #     kind: playwright
 #     category: ui
 #     timeout_seconds: 1200
+#   # The simplicity gate (needs unknot 0.4.0 or newer): fails a candidate that adds
+#   # a new high-severity finding (an import cycle, a hub) compared with its base.
+#   # Off unless defined. On a goal labelled simplify it also gives the planner
+#   # unknot's findings for the allowed paths.
+#   simplicity:
+#     command: 'unknot diagnose --baseline "$ORBIT_BASE_REVISION" --fail-on new:high --json'
+#     shell: true
+#     category: other
+#     timeout_seconds: 600
 # example-checks:end
 
 # UI verification (spec section 13). null turns it off. Example:

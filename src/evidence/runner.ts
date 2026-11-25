@@ -17,6 +17,7 @@ import { checkConfigHash, snapshotHash } from '../policy/snapshot.ts';
 import type { CheckDefinition, PolicySnapshot } from '../policy/types.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { fingerprintFailure } from './fingerprint.ts';
+import { isSimplicityCheck, judgeSimplicity } from './simplicity.ts';
 import { checkoutId, git } from './git.ts';
 import { buildHostDenialNote, buildHostFix, FORMAT_PROBE_LOST_NOTE, formatLoadedNoProject, formatProbeLost, nodeDenialFix, sdkFormatsInProcess } from './dotnet-format.ts';
 import { findMsbuildNodeDenial, msbuildNodeDenialNote, type MsbuildFixWhere, type MsbuildNodeDenial } from './msbuild.ts';
@@ -157,6 +158,8 @@ export interface CheckSubject {
   treeHash: string;
   evidenceDir: string;
   source: Extract<FailureSource, 'check' | 'baseline' | 'install'>;
+  /** The revision a check compares the tree against, as ORBIT_BASE_REVISION: a candidate's parent; absent, the checkout's own HEAD (the base revision, where nothing is new). */
+  baseRev?: string;
 }
 
 export function candidateEvidenceDir(runDir: string, seq: number): string {
@@ -243,7 +246,7 @@ export async function runCheckSet(ctx: RunnerContext, subject: CheckSubject, def
 }
 
 export function candidateSubject(runDir: string, candidate: Candidate): CheckSubject {
-  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir, candidate.seq), source: 'check' };
+  return { candidateId: candidate.id, bindingId: candidate.id, treeHash: candidate.treeHash, evidenceDir: candidateEvidenceDir(runDir, candidate.seq), source: 'check', baseRev: candidate.parentSha };
 }
 
 export function baselineSubject(runDir: string, baseTree: string, source: 'baseline' | 'install' = 'baseline'): CheckSubject {
@@ -647,7 +650,7 @@ async function launchAttempt(ctx: RunnerContext, subject: CheckSubject, def: Che
 
   const toolchains = checkToolchains(ctx, def, cwd, dirs, tmp);
   prepareToolchainLayout(toolchains);
-  const env = checkEnv(def, dirs, process.env.PATH, toolchains.env);
+  const env: Record<string, string> = { ORBIT_BASE_REVISION: subject.baseRev ?? 'HEAD', ...checkEnv(def, dirs, process.env.PATH, toolchains.env) };
   const profile = profileForCheck({
     worktree: ctx.checkoutDir,
     check: def,
@@ -1190,6 +1193,12 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
     status = 'ERROR';
     note = 'the check process disappeared without writing an exit record (killed externally or the host restarted)';
   }
+  // The simplicity gate (issue #232) names its new findings, and fails a pass that compared nothing against the base.
+  const simplicity = isSimplicityCheck(def.id) ? judgeSimplicity({ body, exitCode: exit?.exitCode ?? null, status, timeoutSeconds: def.timeout_seconds }) : null;
+  if (simplicity) {
+    status = simplicity.status ?? status;
+    note = simplicity.note;
+  }
   // A denial recorded while the check ran, or by the final exit scan, is a failure, never a pass (srt exits 0 on
   // SIGTERM), unless it was cancelled or timed out first.
   const denial = status === 'CANCELLED' || status === 'TIMEOUT' ? null : readDenial(dirs.checkDir);
@@ -1228,7 +1237,8 @@ function finalize(ctx: RunnerContext, def: CheckDefinition, row: CheckRunRecord,
       /* checkout already removed */
     }
     // The check's own output plus Orbit's note, but not the footer: its "status=FAILED" would count as an error line in every log and give unrelated silent failures one fingerprint.
-    const fp = fingerprintFailure(note ? `${body}\n${note}\n` : body, def, { exitCode, timedOut: status === 'TIMEOUT', roots });
+    // The gate's note is the failure: unknot's document is data, not a log of errors.
+    const fp = fingerprintFailure(simplicity ? `${simplicity.note}\n` : note ? `${body}\n${note}\n` : body, def, { exitCode, timedOut: status === 'TIMEOUT', roots });
     fingerprint = fp.fingerprint;
     excerpt = fp.excerpt;
   }

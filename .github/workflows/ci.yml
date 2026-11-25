@@ -38,6 +38,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # A pull request needs the history to diff against its base (the fragments check below). The 0 is quoted: an
+          # unquoted 0 is falsy in an expression, so `cond && 0 || 1` always gave 1 and the base ref was never fetched.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -87,8 +90,17 @@ jobs:
 
       # Before any test: the plugin integration test rebuilds plugin/dist, so a check after the tests always passed and a
       # stale committed bundle reached main (0.3.1).
+      # Pull requests into next do not commit the bundle (#230): next may carry a stale one between releases, so it is not
+      # checked there. It is checked where it ships: on main (pushes and pull requests into it) and on release tags.
       - name: Committed bundle matches the sources
+        if: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
         run: npm run check:dist
+
+      - name: Fragments are well formed and no shared file is edited
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/fragments.mjs check --base "origin/$BASE_REF"
 
       - name: Typecheck
         run: npm run typecheck

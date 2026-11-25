@@ -108,7 +108,7 @@ describe('defaults', () => {
   it('keeps the template examples valid when uncommented', () => {
     const raw = { ...(parse(TEMPLATE) as object), ...(parse(`checks:\n${exampleBlock('checks')}`) as object), ...(parse(exampleBlock('ui')) as object) };
     const c = validateConfig(raw);
-    expect(Object.keys(c.checks).sort()).toEqual(['build', 'lint', 'sast', 'typecheck', 'ui-journeys', 'unit-tests']);
+    expect(Object.keys(c.checks).sort()).toEqual(['build', 'lint', 'sast', 'simplicity', 'typecheck', 'ui-journeys', 'unit-tests']);
     expect(c.checks.build).toMatchObject({ shell: true, command: ['npm run build && test -f dist/index.js'] });
     expect(c.checks.lint).toMatchObject({ shell: false, cwd: '.', mandatory: true, timeout_seconds: 300, kind: 'command', category: 'lint' });
     expect(c.checks['ui-journeys']?.category).toBe('ui');
