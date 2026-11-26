@@ -1132,7 +1132,8 @@ export async function runDoctor(ctx: CliContext, opts: { repoFlag?: string; poli
   const nuget = repo && configLoaded ? { config, repo, files: tracked, provider: isoFacts.provider, available: isoFacts.available, platform: ctx.platform, orbitHome: ctx.orbitHome } : null;
   await safely('checks.dotnet-packages', 'checks', () => (nuget ? dotnetPackagesCheck(nuget) : []));
   await safely('checks.dotnet-audit', 'checks', () => (nuget ? dotnetAuditCheck(nuget) : []));
-  await safely('delivery', 'delivery', () => checkDelivery(p));
+  // Without a config the default policy delivers, but no run starts without one: the config check already says what to do (#259).
+  await safely('delivery', 'delivery', () => (configLoaded ? checkDelivery(p) : []));
   await safely('gitleaks', 'security', () => checkGitleaks(p));
   await safely('service', 'service', () => checkService(p));
   await safely('service.launcher', 'service', () => checkLauncher(p));
