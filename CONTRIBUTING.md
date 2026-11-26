@@ -160,9 +160,10 @@ Step 5 needs the repository secret `CATALOG_PR_TOKEN`: a fine-grained personal
 access token with access to `QuintinBotes/claude-plugins` and the permissions
 Contents (read and write) and Pull requests (read and write). Set it once with
 `gh secret set CATALOG_PR_TOKEN --repo QuintinBotes/orbit`. Without it the
-release still completes; the job prints a notice and a step summary saying the
-catalog was not updated, and you set the ref by hand or re-run the job after
-adding the secret.
+GitHub release is still created, but the catalog job fails with an error and a
+step summary saying the catalog was not moved: until it is, every install and
+update stays on the old version. Add the secret and re-run the job, or set the
+ref by hand. A release is finished only when that job is green.
 
 If the gate fails, fix the problem on `main`, delete the tag (`git push --delete
 origin vX.Y.Z` and `git tag -d vX.Y.Z`) and tag again. Every action in the

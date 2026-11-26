@@ -91,7 +91,7 @@ describe('release workflow', () => {
     expect(String(release.steps[attestAt]?.with?.['subject-path'])).toMatch(/orbit-plugin-/);
   });
 
-  it('opens the catalog pull request only with CATALOG_PR_TOKEN, and says so when it is absent', () => {
+  it('opens the catalog pull request with CATALOG_PR_TOKEN, and fails the job when it is absent (#256)', () => {
     const catalog = wf.jobs.catalog as Job;
     expect(catalog.needs).toBe('release');
     expect(catalog.permissions).toEqual({});
@@ -100,10 +100,14 @@ describe('release workflow', () => {
     expect(body).toContain('QuintinBotes/claude-plugins');
     expect(body).toContain('scripts/bump-catalog-ref.mjs');
     expect(body).toContain('gh pr create');
-    expect(body).toContain('::notice::$msg');
-    expect(body).toMatch(/the CATALOG_PR_TOKEN secret is not set/);
     expect(body).toContain('GITHUB_STEP_SUMMARY');
-    expect(body).toContain('exit 0');
+    // v0.4.0 and v0.4.1 shipped with the catalog on v0.3.1 because a missing token was a green notice.
+    const missing = body.slice(body.indexOf('if [ -z "$CATALOG_PR_TOKEN" ]'), body.indexOf('gh auth setup-git'));
+    expect(missing).toMatch(/the CATALOG_PR_TOKEN secret is not set/);
+    expect(missing).toContain('::error::$msg');
+    expect(missing).toContain('exit 1');
+    expect(missing).not.toContain('exit 0');
+    expect(missing).not.toContain('::notice::');
     // A prerelease is never offered to the catalog.
     expect(text).toMatch(/prerelease/);
   });
