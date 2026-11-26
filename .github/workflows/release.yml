@@ -10,9 +10,10 @@ name: Release
 #   3. the GitHub release is created with that CHANGELOG section as its notes;
 #   4. a pull request on QuintinBotes/claude-plugins points the orbit entry's ref at
 #      the tag. It needs the repository secret CATALOG_PR_TOKEN (a token that can
-#      push a branch and open a pull request there); without it the job fails, so
-#      a release whose catalog was not moved is red (#256). A prerelease tag
-#      (v1.2.3-rc.1) skips the catalog entirely.
+#      push a branch and open a pull request there); without it the job fails
+#      (#256). A green job means the catalog pull request is open, or the catalog
+#      already pointed at the tag: installs move only once that pull request is
+#      merged. A prerelease tag (v1.2.3-rc.1) skips the catalog entirely.
 # The process is described in CONTRIBUTING.md ("Releasing").
 
 on:
@@ -163,7 +164,7 @@ jobs:
           GH_TOKEN: ${{ secrets.CATALOG_PR_TOKEN }}
         run: |
           if [ -z "$CATALOG_PR_TOKEN" ]; then
-            msg="The plugin catalog still points orbit at an older tag: the CATALOG_PR_TOKEN secret is not set, so nothing was opened on QuintinBotes/claude-plugins and installs stay on the old version. Add the secret (CONTRIBUTING.md, Releasing) and re-run this job, or set the orbit entry's ref to $GITHUB_REF_NAME there by hand."
+            msg="The plugin catalog still points orbit at an older tag: the CATALOG_PR_TOKEN secret is not set, so nothing was opened on QuintinBotes/claude-plugins and installs stay on the old version. Add the secret (CONTRIBUTING.md, Releasing) and re-run this job. If you set the orbit entry's ref to $GITHUB_REF_NAME there by hand first, the re-run finds it already there and passes."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
             exit 1

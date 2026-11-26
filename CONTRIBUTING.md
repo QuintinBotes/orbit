@@ -162,8 +162,11 @@ Contents (read and write) and Pull requests (read and write). Set it once with
 `gh secret set CATALOG_PR_TOKEN --repo QuintinBotes/orbit`. Without it the
 GitHub release is still created, but the catalog job fails with an error and a
 step summary saying the catalog was not moved: until it is, every install and
-update stays on the old version. Add the secret and re-run the job, or set the
-ref by hand. A release is finished only when that job is green.
+update stays on the old version. Add the secret and re-run the job. Setting the
+ref by hand moves installs, but the job stays red until the secret is added and
+the job re-run; the re-run then finds the catalog already at the tag and passes.
+A green job means the catalog pull request is open: a release is finished when
+that pull request is merged.
 
 If the gate fails, fix the problem on `main`, delete the tag (`git push --delete
 origin vX.Y.Z` and `git tag -d vX.Y.Z`) and tag again. Every action in the
