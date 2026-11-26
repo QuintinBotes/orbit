@@ -7,7 +7,6 @@ import type { SandboxProfile, WrappedCommand } from '../../../src/isolation/type
 import { which } from '../../../src/isolation/util.ts';
 import { tempRoot } from '../../unit/isolation/fixtures.ts';
 import { runWrapped, type RunResult } from './run.ts';
-import { QUARANTINED } from '../../support/quarantine.ts';
 
 /**
  * Real containers on the local engine (OrbStack here). Uses the small
@@ -101,8 +100,7 @@ describe.skipIf(!status.ok)(status.ok ? 'container isolation (real docker)' : `c
     expect(r.stdout).toMatch(/NoNewPrivs:\s+1/);
   });
 
-  // Quarantined (issue #61): once on CI `docker run` printed nothing at all; the cause is not established.
-  it.skipIf(QUARANTINED)('hides denied paths inside the worktree and mounts readable paths read-only', async () => {
+  it('hides denied paths inside the worktree and mounts readable paths read-only', async () => {
     const profile = {
       ...base,
       denyReadPaths: [join(worktree, 'secrets'), join(worktree, '.env')],

@@ -1,0 +1,2 @@
+section: Fixes
+- Three tests are out of quarantine and run in the required CI jobs again: the container read-only mount test (#61), the re-recorded visual baseline test (#185) and browser isolation (b) under srt (#186). Each passed 50 runs in a row, 4 at a time, and none failed in the quarantined CI job from 16 to 26 Nov except on a dependency bump that broke srt for every test. The quarantined CI job is removed while no test is quarantined.
