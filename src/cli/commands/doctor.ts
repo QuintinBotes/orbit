@@ -29,7 +29,7 @@ import { describeReviewPolicy, reviewFallback, reviewProviderOrder } from '../..
 import { LOGIN_COMMANDS, validateCredentials } from '../../recovery/index.ts';
 import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
-import { DELIVERY_MODES } from '../../policy/config.ts';
+import { checkParallelism, DELIVERY_MODES } from '../../policy/config.ts';
 import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
 import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus, staleStart } from '../../controller/steps/preflight.ts';
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
@@ -382,6 +382,8 @@ function checkConfiguredChecks(p: Probe): DoctorCheck {
     }
     details.push(`${c.id}: ${word} -> ${found}`);
   }
+  const atOnce = checkParallelism(config);
+  if (atOnce > 1) details.push(`runs ${atOnce} checks at once (verification.check_parallelism): they share the machine and the checkout, so a timing-sensitive suite may need it at 1`);
   const cannot = details.filter((d) => /not found|not defined|no command/.test(d)).length;
   const fromInstall = details.filter((d) => d.endsWith(FROM_INSTALL)).length;
   if (status !== 'pass' && cannot === 0 && fromInstall > 0) {

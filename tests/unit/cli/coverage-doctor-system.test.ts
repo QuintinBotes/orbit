@@ -463,6 +463,21 @@ describe('configured checks', () => {
     ]);
   });
 
+  it('says when checks run several at once, and that a timing-sensitive suite may need them one at a time (#266)', async () => {
+    const w = world();
+    exe(w.bin, 'acme-lint');
+    const one = await doctor(w, { config: cfg((x) => (x.checks = { lint: check('lint', { command: ['acme-lint'] }) })) });
+    expect(one.checks!.details.join('\n')).not.toMatch(/check_parallelism/);
+    const many = await doctor(w, {
+      config: cfg((x) => {
+        x.checks = { lint: check('lint', { command: ['acme-lint'] }) };
+        x.verification.check_parallelism = 3;
+      }),
+    });
+    expect(many.checks).toMatchObject({ status: 'pass' });
+    expect(many.checks!.details).toContain('runs 3 checks at once (verification.check_parallelism): they share the machine and the checkout, so a timing-sensitive suite may need it at 1');
+  });
+
   it('fails for a mandatory check whose command is missing and only warns for an optional one, naming the working directory', async () => {
     const w = world();
     mkdirSync(join(w.repo, 'web'));

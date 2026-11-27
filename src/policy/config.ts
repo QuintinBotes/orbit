@@ -188,7 +188,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
       security: { block_severities: ['critical', 'high'], exceptions: [] },
     },
     delivery: { provider: 'github', pull_request: 'draft', max_ci_repair_cycles: 3, ci_timeout_minutes: 60, require_ci: false },
-    verification: { allow_flaky_pass: false, fail_before: 'required', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS },
+    verification: { allow_flaky_pass: false, fail_before: 'required', fail_before_timeout_seconds: DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS, check_parallelism: 1 },
     checks: {},
     ui: null,
     isolation: { provider: 'sandbox-runtime', allow_unisolated: false, container: null, limits: defaultIsolationLimits(), require_resource_limits: false },
@@ -393,6 +393,11 @@ export function dependencyAuditPolicy(config: Pick<OrbitConfig, 'dependencies'>)
 
 /** The one wall-clock bound of a fail-before probe when the config sets none (ADR 0014). */
 export const DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS = 900;
+
+/** How many checks run at once (verification.check_parallelism, issue #266); a snapshot from before the key reads 1. */
+export function checkParallelism(config: Pick<OrbitConfig, 'verification'>): number {
+  return config.verification.check_parallelism ?? 1;
+}
 
 /**
  * The fail-before policy (docs/decisions/0014-fail-before.md). A snapshot written before the key existed reads as `off`:

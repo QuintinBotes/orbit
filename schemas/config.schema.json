@@ -319,11 +319,12 @@
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allow_flaky_pass", "fail_before", "fail_before_timeout_seconds"],
+      "required": ["allow_flaky_pass", "fail_before", "fail_before_timeout_seconds", "check_parallelism"],
       "properties": {
         "allow_flaky_pass": { "type": "boolean" },
         "fail_before": { "enum": ["off", "advisory", "required"] },
-        "fail_before_timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 }
+        "fail_before_timeout_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
+        "check_parallelism": { "type": "integer", "minimum": 1, "maximum": 16, "description": "How many of the policy's checks run at once, in verification and the baseline (issue #266)." }
       }
     },
     "checks": { "type": "object", "maxProperties": 200, "propertyNames": { "$ref": "#/$defs/checkId" }, "additionalProperties": { "$ref": "#/$defs/check" } },

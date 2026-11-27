@@ -20,6 +20,7 @@ import { getIsolation } from '../isolation/index.ts';
 import { checkoutBelowDenied } from '../isolation/profiles.ts';
 import { toolchainCacheRoot } from '../isolation/toolchains.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
+import { checkParallelism } from '../policy/config.ts';
 import { verifySnapshot } from '../policy/snapshot.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { validateContract } from '../contract/validate.ts';
@@ -321,6 +322,7 @@ export function checkRunnerFor(ctx: RunContext): Omit<RunnerContext, 'checkoutDi
     detachSignal: ctx.signal,
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
+    parallelism: checkParallelism(ctx.snapshot.config),
     homeDir: homeOf(ctx.deps),
     toolchainCacheRoot: toolchainCacheRootFor(ctx),
   };

@@ -410,6 +410,16 @@ describe('runChecks: parallelism', () => {
     expect(x1).toBeGreaterThan(x0);
   });
 
+  // Review of #266: checks launched together all pass the launch-time tree check before any of them writes, so a check
+  // that rewrites a tracked file during a parallel set must still void the set's evidence, as it does serially.
+  it('refuses the evidence of a parallel set in which a check rewrote a tracked file, as a serial run does', async () => {
+    const rewrite = nodeCheck('fmt', 'const f=require("child_process").execSync("git ls-files",{encoding:"utf8"}).split("\\n")[0];require("fs").appendFileSync(f,"\\n// rewritten\\n")');
+    for (const parallelism of [2, 1]) {
+      const e = await setup([rewrite, sleeper('slow')]);
+      await expect(run(e, ['fmt', 'slow'], { parallelism }), `parallelism ${parallelism}`).rejects.toSatisfy((err) => isOrbitError(err, 'STALE_EVIDENCE'));
+    }
+  });
+
   it('returns results in request order and surfaces a launch error after the others settle', async () => {
     const e = await setup([nodeCheck('z', ''), nodeCheck('a', 'process.exit(1)')]);
     const results = await run(e, ['z', 'a', 'z'], { parallelism: 2 });

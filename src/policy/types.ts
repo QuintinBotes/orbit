@@ -411,6 +411,12 @@ export interface OrbitConfig {
     fail_before?: FailBeforeMode;
     /** The one wall-clock bound of a whole fail-before probe. Parsed configs always carry it (default 900). */
     fail_before_timeout_seconds?: number;
+    /**
+     * How many of the policy's checks run at once, in verification and the baseline (issue #266); fail-before probes stay serial. Checks
+     * read no other check's output, so they may run together; they still share the machine and the checkout. Parsed
+     * configs always carry it (default 1); optional so older snapshots still read (read it through `checkParallelism`).
+     */
+    check_parallelism?: number;
   };
   /** Learning layer (ADR 0002). Nothing here can widen authority. */
   knowledge: {

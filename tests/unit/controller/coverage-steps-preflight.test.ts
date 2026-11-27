@@ -68,8 +68,16 @@ describe('preflightStep', () => {
     expect(decisions('gate.intake')).toHaveLength(1);
     expect(decisions('gate.environment')).toHaveLength(1);
     expect(decisions('gate.baseline')).toHaveLength(1);
-    expect(hooks.runBaseline.mock.calls[0]![0]).toMatchObject({ baseRev: 'b'.repeat(40), pollMs: 20, killGraceMs: 50 });
+    expect(hooks.runBaseline.mock.calls[0]![0]).toMatchObject({ baseRev: 'b'.repeat(40), pollMs: 20, killGraceMs: 50, parallelism: 1 });
     expect(existsSync(join(lab.ctx().runDir, 'environment.json'))).toBe(true);
+  });
+
+  it('runs the baseline checks as many at once as verification.check_parallelism says (#266)', async () => {
+    setup((c) => {
+      c.verification.check_parallelism = 3;
+    });
+    await preflightStep(lab.ctx());
+    expect(hooks.runBaseline.mock.calls[0]![0]).toMatchObject({ parallelism: 3 });
   });
 
   it('stops at a safe point, before and after the baseline', async () => {
