@@ -4,6 +4,7 @@ import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { appendEvent } from '../storage/events.ts';
 import { transition, getRun, type RunRecord } from '../controller/run-store.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
+import { removeSpendFiles } from '../controller/spend-files.ts';
 
 /**
  * Recovery has a budget (spec section 14: "Recovery itself has a budget",
@@ -98,7 +99,7 @@ export function exhaustRecovery(db: OrbitDb, clock: Clock, input: { runId: strin
   const run = getRun(db, input.runId);
   if (TERMINAL_STATES.has(run.state) || run.cancelRequested) return null;
   const reason = `recovery_attempts exhausted: ${input.why}`;
-  return transition(
+  const ended = transition(
     db,
     {
       runId: run.id,
@@ -112,6 +113,9 @@ export function exhaustRecovery(db: OrbitDb, clock: Clock, input: { runId: strin
     },
     clock,
   );
+  // A spend request written just before a crash names a run that has now ended (issue #288).
+  removeSpendFiles(db, run.id);
+  return ended;
 }
 
 export type EnterRecoveryOutcome =
@@ -185,6 +189,7 @@ export function enterRecovery(db: OrbitDb, clock: Clock, input: EnterRecoveryInp
       },
       clock,
     );
+    removeSpendFiles(db, run.id);
     return { outcome: 'exhausted', run: ended, error: err };
   }
 }

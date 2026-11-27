@@ -9,8 +9,8 @@
  * whoever ends the wait, whatever their environment says. An approval is a decision record the budget ledger adds to
  * the cap (scheduling/budget.ts); the frozen policy and the contract never change.
  */
-import { chmodSync, mkdirSync, rmSync } from 'node:fs';
-import { basename, isAbsolute, join } from 'node:path';
+import { chmodSync, mkdirSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { atomicWriteJson } from '../core/fsx.ts';
 import { sha256 } from '../core/hash.ts';
@@ -24,7 +24,9 @@ import { appendEvent } from '../storage/events.ts';
 import { shellQuote } from '../ui/runner.ts';
 import { homeOf, type RunContext } from './context.ts';
 
-export const SPEND_REQUEST_EVENT = 'budget.spend-requested';
+import { removeSpendFiles, SPEND_REQUEST_EVENT } from './spend-files.ts';
+
+export { removeSpendFiles, SPEND_REQUEST_EVENT };
 export const SPEND_APPROVE = 'approve';
 export const SPEND_REFUSE = 'refuse';
 const EPS = 1e-9;
@@ -105,17 +107,6 @@ export function spendHeld(db: OrbitDb, runId: string): SpendRequest | null {
 }
 
 /** Remove every inbox file the run's requests wrote. Missing files are fine. */
-export function removeSpendFiles(db: OrbitDb, runId: string): void {
-  for (const r of spendRequests(db, runId)) {
-    // Only a file this module names for this run is ever removed.
-    if (!basename(r.file).startsWith(`orbit-${runId}-`) || !r.file.endsWith('.json')) continue;
-    try {
-      rmSync(r.file, { force: true });
-    } catch {
-      /* an inbox that cannot be changed never changes the run's outcome */
-    }
-  }
-}
 
 /**
  * Apply the person's answer to the run's newest request: an approval is recorded as the decision that raises the cap,
