@@ -1,0 +1,26 @@
+# Review Voice (https://github.com/QuintinBotes/review-voice). The CI review
+# reads this file from a pull request's base commit, so a pull request cannot
+# change the settings it is reviewed under. Everything not set here takes the
+# defaults of templates/config.example.yaml in the Review Voice plugin.
+
+identity:
+  owner_reviewer: QuintinBotes
+
+repositories:
+  # Whose review history the local sync may read (consent given 27 Nov 2026).
+  include:
+    - QuintinBotes/orbit
+    - QuintinBotes/claude-stack
+    - QuintinBotes/review-voice
+    - QuintinBotes/unknot
+
+review:
+  mode: auto
+
+verdict:
+  # Trial: reviews post findings and may request changes, but never approve,
+  # so a review cannot stand in for the owner's approval of a pull request.
+  never_approve: true
+
+writes:
+  github_posting_enabled: true
