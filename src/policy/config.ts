@@ -109,7 +109,7 @@ export function defaultConfig(mode: RunMode = DEFAULT_MODE): OrbitConfig {
   return {
     version: 1,
     mode,
-    repository: { base_branch: 'main', branch_prefix: 'orbit/', allow_dirty_start: false, remote: 'origin' },
+    repository: { base_branch: 'main', branch_prefix: 'orbit/', allow_dirty_start: false, allow_stale_start: false, remote: 'origin' },
     scope: {
       allowed_paths: ['apps/**', 'packages/**', 'tests/**', 'docs/**'],
       protected_paths: ['.github/**', 'infra/**', '.orbit/config.yaml', '**/.env*'],

@@ -77,6 +77,11 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     }
     decide(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: 'preflight.dirty-start', summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
+  const stale = await staleStart(repo, head, ctx.snapshot.config.repository.base_branch);
+  if (stale !== null) {
+    if (!ctx.snapshot.config.repository.allow_stale_start) return finishRun(ctx, 'BLOCKED', `${stale.reason}; ${stale.fix}`, { outcome: { stale_start: stale.data } });
+    decide(ctx, { id: `dec-${ctx.run.id}-stale-start`, kind: 'preflight.stale-start', summary: `stale start allowed by policy; ${stale.reason}`, data: stale.data });
+  }
 
   // The baseline checkout lives with the run's other checkouts, outside the repository.
   const wtRoot = runWorktreeRoot(ctx);
@@ -416,6 +421,29 @@ export function parseDirtyStatus(out: string): DirtySplit {
  * as uncommitted although the run starts from HEAD and never sees them, and `git stash` leaves them in place, so a tree
  * with only untracked files is told how to clear them instead (issue #110).
  */
+/**
+ * Issue #273: whether the commit a run starts from lacks commits of the base branch it delivers into (behind it, or
+ * diverged from it). Such a run would build and verify on code the base branch has moved past. Null when the start
+ * contains the base branch's tip, and when the base branch cannot be read (doctor reports a missing one).
+ */
+export async function staleStart(repo: string, head: string, base: string): Promise<{ reason: string; fix: string; data: { head: string; base: string; base_tip: string; missing: number } } | null> {
+  let tip: string;
+  let missing: number;
+  try {
+    tip = (await git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}^{commit}`])).trim();
+    if (!/^[0-9a-f]{40}$/.test(tip)) return null;
+    missing = Number((await git(repo, ['rev-list', '--count', `${head}..${tip}`])).trim());
+  } catch {
+    return null;
+  }
+  if (!Number.isInteger(missing) || missing <= 0) return null;
+  return {
+    reason: `the run starts from ${head.slice(0, 7)}, which lacks ${missing} commit(s) of ${base} (${tip.slice(0, 7)}): it would build and verify on code ${base} has moved past, then deliver into ${base}`,
+    fix: `check out ${base}, or start from a worktree of it, or set repository.allow_stale_start`,
+    data: { head, base, base_tip: tip, missing },
+  };
+}
+
 export function dirtyStartRefusal(d: DirtySplit): { reason: string; fix: string } | null {
   const total = d.changed.length + d.untracked.length;
   if (total === 0) return null;

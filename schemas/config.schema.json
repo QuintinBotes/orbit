@@ -36,11 +36,12 @@
     "repository": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["base_branch", "branch_prefix", "allow_dirty_start", "remote"],
+      "required": ["base_branch", "branch_prefix", "allow_dirty_start", "allow_stale_start", "remote"],
       "properties": {
         "base_branch": { "$ref": "#/$defs/refName" },
         "branch_prefix": { "$ref": "#/$defs/refName" },
         "allow_dirty_start": { "type": "boolean" },
+        "allow_stale_start": { "type": "boolean", "description": "Start a run from a commit that lacks commits of base_branch (issue #273)." },
         "remote": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
       }
     },

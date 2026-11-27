@@ -250,6 +250,23 @@ describe('git', () => {
     expect(c['git.repo']).toMatchObject({ status: 'pass', summary: `repository ${w.repo}; worktrees supported`, details: [] });
   });
 
+  it('warns when the checked-out commit is behind the base branch, which a run would start from (#273)', async () => {
+    const w = world();
+    // next is main plus two commits; the checkout stays on main.
+    w.git('checkout', '-q', '-b', 'next');
+    for (const n of ['a', 'b']) {
+      writeFileSync(join(w.repo, `${n}.txt`), `${n}\n`);
+      w.git('add', '-A');
+      w.git('commit', '-q', '-m', n);
+    }
+    w.git('checkout', '-q', 'main');
+    const c = await doctor(w, { config: cfg((x) => void (x.repository.base_branch = 'next')) });
+    expect(c['git.repo']?.status).toBe('warn');
+    expect(c['git.repo']?.details).toContain('the checked-out commit lacks 2 commit(s) of next: a run started here would build on code next has moved past');
+    w.git('checkout', '-q', 'next');
+    expect((await doctor(w, { config: cfg((x) => void (x.repository.base_branch = 'next')) }))['git.repo']?.status).toBe('pass');
+  });
+
   it('fails when git cannot be found, and warns about one that is too old', async () => {
     const w = world();
     const gone = await doctor(w, { config: cfg(), ctx: { env: { PATH: '/nonexistent-dir', HOME: w.home } } });

@@ -245,6 +245,11 @@ export interface OrbitConfig {
     base_branch: string;
     branch_prefix: string;
     allow_dirty_start: boolean;
+    /**
+     * Start a run from a commit that lacks commits of base_branch (issue #273). Off by default: such a run builds and
+     * verifies on code the base branch has moved past. Parsed configs always carry it; optional so older snapshots read.
+     */
+    allow_stale_start?: boolean;
     remote: string;
   };
   scope: {

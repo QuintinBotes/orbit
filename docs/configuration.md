@@ -46,8 +46,19 @@ repository:
   base_branch: main
   branch_prefix: orbit/        # task branches are orbit/<run-id>
   allow_dirty_start: false
+  allow_stale_start: false     # refuse to start from a commit behind base_branch
   remote: origin
 ```
+
+A run starts from the commit checked out when it starts and delivers into
+`base_branch`. When that commit lacks commits of `base_branch` (it is behind
+it, or diverged from it), PREFLIGHT refuses the run before any model spend,
+naming both commits: it would build and verify on code the base branch has
+moved past. Check out `base_branch`, or start from a worktree of it; set
+`allow_stale_start: true` to start anyway (the run then records a
+`preflight.stale-start` decision). A commit ahead of `base_branch` (a branch
+on top of it) starts as before. `orbit doctor` warns about a checkout behind
+`base_branch`.
 
 Orbit only pushes branches with the prefix, and the prefix may not match the
 base branch. `orbit queue run --base <branch>` sets `base_branch` for the runs

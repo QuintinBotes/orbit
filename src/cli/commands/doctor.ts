@@ -202,6 +202,14 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
   if (base.exitCode !== 0) {
     problems.push({ missing: `base branch ${config.repository.base_branch}`, fix: `create it, or set repository.base_branch to an existing branch`, severity: 'warn' });
     details.push(`repository.base_branch "${config.repository.base_branch}" does not exist locally`);
+  } else {
+    // Issue #273: a run starts from what is checked out, so a checkout behind the base branch builds on stale code.
+    const behind = await g(['rev-list', '--count', `HEAD..refs/heads/${config.repository.base_branch}`]);
+    const missing = Number(behind.stdout.trim());
+    if (behind.exitCode === 0 && Number.isInteger(missing) && missing > 0) {
+      problems.push({ missing: `the ${missing} newest commit(s) of ${config.repository.base_branch} in the checked-out commit`, fix: `check out ${config.repository.base_branch} (or run from a worktree of it) before starting a run; a run started here is refused unless repository.allow_stale_start`, severity: 'warn' });
+      details.push(`the checked-out commit lacks ${missing} commit(s) of ${config.repository.base_branch}: a run started here would build on code ${config.repository.base_branch} has moved past`);
+    }
   }
   const needsRemote = config.actions.push_task_branch && DELIVERY_MODES.has(config.mode);
   if (needsRemote) {
