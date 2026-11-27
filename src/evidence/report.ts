@@ -7,7 +7,7 @@ import { checkCategory, failBeforePolicy } from '../policy/config.ts';
 import { snapshotHash } from '../policy/snapshot.ts';
 import type { TestLayout } from '../policy/test-files.ts';
 import type { PolicySnapshot } from '../policy/types.ts';
-import { criterionFailBefore, isBrowserCheck as isConfiguredBrowserCheck, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
+import { criterionFailBefore, isBrowserCheck as isConfiguredBrowserCheck, missingTestsReason, newTestSupport, testChangesUnder, type CriterionTestSupport, type FailBeforeEvidence } from './fail-before.ts';
 import { statesCheckRunsTests, statesFailBefore, unknownNamedChecks } from './fail-before-statements.ts';
 import type { OrbitDb } from '../storage/db.ts';
 import { candidateEvidenceDir } from './runner.ts';
@@ -262,6 +262,13 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   if (fb !== undefined) for (const [id, s] of support) failBeforeOf.set(id, criterionFailBefore(s, fb));
   // Per criterion (issue #200): a contract that maps tests to criteria is judged by each criterion's own tests.
   for (const [id, e] of fb?.criteria ?? []) failBeforeOf.set(id, e);
+  // A mapped test that is not in the candidate (issue #261), in every mode: not established, and never accepted.
+  for (const [id, paths] of fb?.missing ?? []) {
+    const e = failBeforeOf.get(id);
+    if (e === undefined || paths.length === 0) continue;
+    const { accepted: _never, ...rest } = e;
+    failBeforeOf.set(id, { ...rest, outcome: 'not-established', cause: 'missing', reason: missingTestsReason(id, paths) });
+  }
   const restsOnNewTests = (e: CriterionFailBefore | undefined): e is CriterionFailBefore => e !== undefined && e.outcome !== 'not-applicable';
   const advisoryGaps: string[] = [];
   const notRun: string[] = [];
@@ -370,9 +377,15 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
         } else {
           status = 'supported';
           const entry = failBeforeOf.get(c.id);
-          if (restsOnNewTests(entry)) ({ status, why } = judgeFailBefore(c.id, entry, status));
+          if (restsOnNewTests(entry) && entry.cause !== 'missing') ({ status, why } = judgeFailBefore(c.id, entry, status));
         }
       }
+    }
+    // Whatever its checks showed, a criterion with a mapped test the candidate does not have is not supported.
+    const mapped = failBeforeOf.get(c.id);
+    if (mapped?.cause === 'missing') {
+      if (status === 'supported') status = 'unverified';
+      why = why ? `${why}; ${mapped.reason}` : mapped.reason;
     }
     // A criterion that states its tests fail on the base revision takes supported from the probe alone, never from the
     // passing log that would otherwise support it (ADR 0016, item 1): wording only selects it, and only to be stricter.

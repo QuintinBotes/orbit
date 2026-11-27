@@ -296,6 +296,24 @@ describe.skipIf(!canStripTypes)('fail-before evidence through the controller', (
     expect(existsSync(join(l.repo, '.orbit', 'runs', run.id, 'evidence', '1', 'fail-before'))).toBe(false);
   }, 240_000);
 
+  // Issue #261: the contract maps AC-1 to a test the candidate never writes.
+  it.each(['required', 'advisory', 'off'] as const)('issue #261 under %s: a mapped test that is not in the candidate is never asked about or counted as support', async (mode) => {
+    const gone = 'tests/acceptance/x.test.mjs';
+    const planner = { ...PLANNER_OUTPUT, criteria: [{ ...PLANNER_OUTPUT.criteria[0]!, tests: [gone] }] };
+    const l = lab(mode);
+    writeScenario(l, baseScenario({ planner: [{ structured: planner }], implementer: [implementMul('*'), PRODUCTION_ONLY], ...PROOF_PASSES }));
+    const run = startLabRun(l);
+    await drive(l, run.id);
+
+    const done = runState(l, run.id);
+    expect(done.state, done.outcomeReason ?? '').not.toBe('SUCCEEDED');
+    expect(listQuestions(l.db(), run.id).filter((q) => q.id.startsWith('q-fail-before-'))).toEqual([]);
+    expect(listDecisions(l.db(), run.id, { kind: 'verification.fail-before-request' })).toEqual([]);
+    const report = reportOf(l, run.id, 1);
+    expect(report.verdict).toBe('INCOMPLETE');
+    expect(report.acceptance_evidence[0]).toMatchObject({ criterion_id: 'AC-1', status: 'unverified', note: `AC-1's test ${gone} is not in the candidate`, fail_before: { mode, outcome: 'not-established', cause: 'missing' } });
+  }, 240_000);
+
   it('off: no probe runs, and unverified says so', async () => {
     const l = lab('off');
     writeScenario(l, baseScenario({ implementer: [implementTautology()] }));

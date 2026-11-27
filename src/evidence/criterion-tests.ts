@@ -10,12 +10,13 @@
  * - person: no test can prove it; it is never probed and never counts as proven by a test.
  *
  * A criterion with no mapped test, or a test no check can run alone, is not established: only a person may accept it.
+ * One mapped to a test that is not in the candidate is not established either, and no person may accept it (issue #261).
  */
 import { sha256 } from '../core/hash.ts';
 import type { AcceptanceCriterion, CriterionKind, GoalContract } from '../contract/types.ts';
 import { safeTestPath } from '../contract/validate.ts';
 import type { CheckDefinition, FailBeforeMode, PolicySnapshot } from '../policy/types.ts';
-import { acceptableCause, checkDir, isTestCommandCheck, listedPaths, underCheck, type CheckProbe, type NotEstablishedCause } from './fail-before.ts';
+import { acceptableCause, checkDir, isTestCommandCheck, listedPaths, missingTestsReason, underCheck, type CheckProbe, type NotEstablishedCause } from './fail-before.ts';
 import type { CriterionFailBefore } from './types.ts';
 
 export function criterionKind(c: Pick<AcceptanceCriterion, 'kind'>): CriterionKind {
@@ -34,6 +35,8 @@ export interface CriterionTest {
   /** The id the test's run alone is recorded under (unitIdFor); null when it cannot run. */
   unitId: string | null;
   problem: string | null;
+  /** Set when the path is not a file in the candidate's commit. */
+  missing?: true;
 }
 
 export interface CriterionTests {
@@ -47,12 +50,16 @@ export function unitIdFor(checkId: string, path: string): string {
   return `${checkId.slice(0, 40)}.t-${sha256(path).slice(0, 12)}`;
 }
 
-/** Each criterion's mapped tests, with the check that runs each alone. Person-checked criteria have none to run. */
-export function criterionTests(contract: Pick<GoalContract, 'acceptance_criteria'>, snapshot: Pick<PolicySnapshot, 'config'>, isTestOwned: (path: string) => boolean): CriterionTests[] {
+/**
+ * Each criterion's mapped tests, with the check that runs each alone. Person-checked criteria have none to run. A path
+ * `inCandidate` says is not a file in the candidate is marked missing and never run.
+ */
+export function criterionTests(contract: Pick<GoalContract, 'acceptance_criteria'>, snapshot: Pick<PolicySnapshot, 'config'>, isTestOwned: (path: string) => boolean, inCandidate: (path: string) => boolean = () => true): CriterionTests[] {
   return contract.acceptance_criteria.map((c) => {
     const kind = criterionKind(c);
     if (kind === 'person') return { criterionId: c.id, kind, tests: [] };
     const tests = [...new Set(c.tests ?? [])].map((path): CriterionTest => {
+      if (!inCandidate(path)) return { path, checkId: null, unitId: null, problem: missingTestsReason(c.id, [path]), missing: true };
       if (!safeTestPath(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a repository-relative path` };
       if (!isTestOwned(path)) return { path, checkId: null, unitId: null, problem: `${path} is not a test file, so it cannot prove ${c.id} on its own` };
       const runners = (c.check_ids ?? []).filter((id) => {
@@ -100,6 +107,8 @@ const onTree = (p: CheckProbe | undefined): TestOutcome => (p === undefined || p
  * A criterion's own fail-before entry: failed-before (change) or kept (keep) when each mapped test did what its kind
  * needs on both trees; passed-before when one decisively did not (a change test passed on the base tree or failed on the
  * candidate, a keep test failed on either), which goes to repair; otherwise not established, which only a person may accept.
+ * With a mapped test missing from the candidate it is not established whatever the others did, for the cause no person
+ * may accept; the others are still listed with their runs.
  */
 export function criterionProofEntry(c: CriterionTests, p: CriterionProbes): CriterionFailBefore {
   const accepted = p.accepted.find((a) => a.criterionId === c.criterionId);
@@ -140,6 +149,8 @@ export function criterionProofEntry(c: CriterionTests, p: CriterionProbes): Crit
     }
     tests.push({ path: t.path, check_id: t.checkId, base: onBase, candidate: onCandidate, reason });
   }
+  const absent = c.tests.filter((t) => t.missing).map((t) => t.path);
+  if (absent.length > 0) return { ...base, outcome: 'not-established', cause: 'missing', checks, tests, reason: missingTestsReason(c.criterionId, absent) };
   if (decisive.length > 0) return { ...base, outcome: 'passed-before', checks, tests, reason: `the mapped tests do not show ${c.criterionId}: ${decisive.join('; ')}`, ...acceptance };
   if (open.length > 0) {
     const cause = open.map((o) => o.cause).find((x) => !acceptableCause(x)) ?? open[0]!.cause;

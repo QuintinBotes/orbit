@@ -26,6 +26,7 @@ import { newId } from '../core/ids.ts';
 import { redact } from '../core/redact.ts';
 import { TERMINAL_STATES, type RunState } from '../core/run-states.ts';
 import type { GoalContract } from '../contract/types.ts';
+import { safeTestPath } from '../contract/validate.ts';
 import { checkCategory } from '../policy/config.ts';
 import { isTestPath } from '../policy/test-files.ts';
 import type { CheckDefinition, FailBeforeMode, PolicySnapshot } from '../policy/types.ts';
@@ -49,7 +50,8 @@ export type FailBeforeOutcome = 'failed-before' | 'passed-before' | 'not-establi
 
 /**
  * Why an outcome is not established. An environment cause, an ERROR or a failed install is the environment's, never
- * offered to a person for acceptance (ADR 0010): it is fixed, and `orbit resume` runs the probe again.
+ * offered to a person for acceptance (ADR 0010): it is fixed, and `orbit resume` runs the probe again. Nor is `missing`
+ * (issue #261): a mapped test that is not a file in the candidate is nothing to accept, and a repair adds it.
  */
 export type NotEstablishedCause =
   | 'environment'
@@ -67,9 +69,10 @@ export type NotEstablishedCause =
   | 'not-acceptable'
   | 'unscanned'
   | 'base-failed'
-  | 'not-probed';
+  | 'not-probed'
+  | 'missing';
 
-const NEVER_ACCEPTED: ReadonlySet<NotEstablishedCause> = new Set<NotEstablishedCause>(['environment', 'error', 'install']);
+const NEVER_ACCEPTED: ReadonlySet<NotEstablishedCause> = new Set<NotEstablishedCause>(['environment', 'error', 'install', 'missing']);
 
 /** Whether a person may accept a criterion without fail-before when the probe is not established for this cause. */
 export function acceptableCause(cause: NotEstablishedCause): boolean {
@@ -380,6 +383,18 @@ async function objectTypes(repoRoot: string, rev: string, paths: readonly string
     out.set(p, line.endsWith(' missing') || line === '' ? null : line);
   });
   return out;
+}
+
+/** Which of `paths` are files in `rev`: an absent path, a directory, a gitlink or a path that cannot be read is not. */
+export async function filesIn(repoRoot: string, rev: string, paths: readonly string[]): Promise<Set<string>> {
+  const asked = paths.filter((p) => safeTestPath(p) && !p.includes('\n'));
+  const types = await objectTypes(repoRoot, rev, asked);
+  return new Set(asked.filter((p) => types.get(p) === 'blob'));
+}
+
+/** What is said of a criterion's mapped tests that are not in the candidate (issue #261). */
+export function missingTestsReason(criterionId: string, paths: readonly string[]): string {
+  return paths.length === 1 ? `${criterionId}'s test ${paths[0]} is not in the candidate` : `${criterionId}'s tests ${paths.join(', ')} are not in the candidate`;
 }
 
 /**
@@ -1014,6 +1029,11 @@ export interface FailBeforeEvidence {
    * replaces the check-wide judgement (issue #200, FR-003).
    */
   criteria?: ReadonlyMap<string, CriterionFailBefore>;
+  /**
+   * By criterion, its mapped tests that are not files in the candidate's commit (issue #261): in every mode such a
+   * criterion is never supported, and no person's acceptance counts for it.
+   */
+  missing?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
