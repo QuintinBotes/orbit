@@ -278,15 +278,18 @@ export interface ScopeGateDetails {
   repairable: string[];
 }
 
+/**
+ * A path as a reason or a brief names it. It is the candidate's own text: control characters are dropped (no terminal
+ * escapes) and it is clipped so the reason keeps its instructions within its length cap.
+ */
+export function safePath(p: string): string {
+  const plain = p.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+  return plain.length > 120 ? `...${plain.slice(-117)}` : plain;
+}
+
 /** The heaviest files of a candidate over the size limits, as `path (N lines)`, heaviest first. */
 export function describeLargestChanges(scope: ScopeReport): string {
-  // A path is the candidate's own text: control characters are dropped (no terminal escapes) and each is clipped so the
-  // reason keeps its instructions within its length cap.
-  const safe = (p: string): string => {
-    const plain = p.replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
-    return plain.length > 120 ? `...${plain.slice(-117)}` : plain;
-  };
-  return (scope.largest_changes ?? []).map((c) => `${safe(c.path)} (${c.lines} lines)`).join(', ');
+  return (scope.largest_changes ?? []).map((c) => `${safePath(c.path)} (${c.lines} lines)`).join(', ');
 }
 
 /**

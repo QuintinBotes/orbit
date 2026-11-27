@@ -2,6 +2,9 @@
  * DIAGNOSING (spec sections 7 and 14): from the failure records of the
  * current candidate to a repair brief for the next attempt.
  *
+ *   0. paths outside the authorized scope (a denial that is not a policy violation, issue #280): one a criterion needs
+ *      blocks the run, and so does a repair that came back with the denied tree; otherwise they are restored to the
+ *      base revision in the implementer's worktree before anything else is dispatched on it (controller/repair.ts)
  *   1. non-progress: attempts that keep failing without measurable progress end the run (EXHAUSTED, scenario 6), and so
  *      does a repair that ended on a tree an earlier attempt produced, judged as it was then (stalledRepair)
  *   2. repeated equivalent failures call the Inquisition (diagnose mode), once per condition
@@ -24,10 +27,13 @@ import { listDecisions } from '../../storage/decisions.ts';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
+import type { GoalContract } from '../../contract/types.ts';
+import { compileGlobs } from '../../policy/globs.ts';
 import { recordedTurnCap, routeFor } from '../workers.ts';
-import { describeLargestChanges, implementationScopeGate } from '../gates.ts';
+import { describeLargestChanges, implementationScopeGate, safePath } from '../gates.ts';
+import { filesOfRevision, listPaths, neededPaths, restoreToBase, type NeededPath } from '../repair.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
-import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, policySummary, repoInstructions, safePoint, workerLimitCause, type StepResult } from './common.ts';
+import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, partnerImplemented, policySummary, repoInstructions, safePoint, workerLimitCause, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
 import { ATTEMPT_EVENT, attemptCandidateId, briefPath, currentAttempt, WORKER_ENDED_EVENT, type StoredBrief } from './implementing.ts';
 import { pendingTrigger } from './verifying.ts';
@@ -42,8 +48,17 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const next = currentAttempt(ctx) + 1;
   const config = ctx.snapshot.config;
 
-  // A repair that came back with the tree scope inspection denied for size: only a person can change the limit or the goal.
+  // A path outside the scope that a criterion needs: no repair inside the scope can meet it, so none is spent.
+  const outside = outOfScopePaths(ctx, cand, contract);
+  if (outside.length > 0) {
+    const needed = neededPaths(outside, contract, await filesOfRevision(ctx.run.repoRoot, ctx.run.baseRevision!));
+    if (needed.length > 0) return blockOnNeededPaths(ctx, cand, outside, needed, next);
+  }
+
+  // A repair that came back with the tree scope inspection denied: for paths outside the scope, which were restored
+  // before it, or for size, only a person can change the scope, the limit or the goal.
   const stalled = stalledRepair(ctx, cand);
+  if (stalled && outside.length > 0) return blockOnScope(ctx, cand, outside, stalled);
   if (stalled && cand.scope && !cand.scope.within_size_limits) return blockOnSize(ctx, cand, cand.scope, stalled);
 
   // 1. Repeated non-progress ends the loop; more attempts, tokens or lines would not change it.
@@ -78,6 +93,13 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
     return finishRun(ctx, 'EXHAUSTED', `implementation attempts hard cap reached (${att.used} of ${att.hard_cap}); the last failure was ${fingerprint}`, { outcome: { fingerprint } });
   }
 
+  // The next attempt, and any inquiry before it, starts from a worktree without the out-of-scope changes. The candidate
+  // keeps them, and running this again changes nothing.
+  if (outside.length > 0) {
+    await restoreToBase({ repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath!, base: ctx.run.baseRevision!, paths: outside });
+    decide(ctx, { id: `dec-${ctx.run.id}-scope-restore-${next}`, kind: 'repair.scope-restore', summary: `restored to the base revision in the implementer's worktree before attempt ${next}: ${listPaths(outside, 10)}`, data: { attempt: next, candidate_id: cand.id, base: ctx.run.baseRevision, paths: outside } });
+  }
+
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).
   const existing = readJsonIfExists<StoredBrief>(briefPath(ctx, next));
   if (!existing) {
@@ -90,7 +112,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   let hypothesisIsNew = true;
   if (existing) stored = existing;
   else if (primary?.source === 'worker' && primary.sourceId?.startsWith('scope:')) {
-    stored = { attempt: next, source: 'scope', fingerprint, brief: scopeBrief(ctx, fingerprint, primary.excerpt ?? 'scope inspection denied the candidate') };
+    stored = { attempt: next, source: 'scope', fingerprint, brief: scopeBrief(ctx, fingerprint, primary.excerpt ?? 'scope inspection denied the candidate', outside) };
   } else if (ctx.deps.withoutDiagnosis) {
     stored = { attempt: next, source: 'failures', fingerprint, brief: failuresBrief(ctx, fingerprint, failures), refs: failures.map((f) => `failure:${f.id}`) };
   } else {
@@ -268,6 +290,35 @@ function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport,
   return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, frozen_policy: { setting }, largest_changes: scope.largest_changes ?? [] } });
 }
 
+/**
+ * The paths the candidate changed outside the authorized scope, when that denial is a repairable one. A policy violation
+ * names none: it blocks, and only a person's resume restores that worktree (steps/verifying.ts). The candidate's scope
+ * report is from its verification; a path an approved amendment has since allowed is in scope now, and stays.
+ */
+function outOfScopePaths(ctx: RunContext, cand: CandidateRecord, contract: GoalContract): string[] {
+  if (!cand.scope || cand.status === 'INVALIDATED') return [];
+  if (implementationScopeGate(cand.scope, ctx.snapshot, { partner: partnerImplemented(ctx) }).details.policyViolation) return [];
+  const policyAllowed = compileGlobs(ctx.snapshot.config.scope.allowed_paths, { nocase: false });
+  const contractAllowed = compileGlobs(contract.allowed_paths, { nocase: false });
+  return cand.scope.out_of_scope_paths_changed.filter((p) => !(policyAllowed(p) && contractAllowed(p)));
+}
+
+function blockOnNeededPaths(ctx: RunContext, cand: CandidateRecord, outside: string[], needed: NeededPath[], next: number): Promise<StepResult> {
+  const what = needed.slice(0, 10).map((n) => `${safePath(n.path)} (needed by ${n.criteria.join(', ')})`).join(', ');
+  const reason = `candidate ${cand.seq} was denied for paths outside the authorized scope that the contract's criteria need: ${what}${needed.length > 10 ? ` and ${needed.length - 10} more` : ''}. No repair inside the scope can meet them, so nothing is restored and no further attempt is dispatched. The run's scope does not change: cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover these paths.`;
+  const data = { out_of_scope_paths: outside, needed };
+  decide(ctx, { id: `dec-${ctx.run.id}-scope-needed-${next}`, kind: 'repair.scope-needed', summary: reason, data: { candidate_id: cand.id, ...data } });
+  return finishRun(ctx, 'BLOCKED', reason, { outcome: { scope: data } });
+}
+
+/** The same tree denied for paths outside the scope twice (issue #280): another repair would start where this one did. */
+function blockOnScope(ctx: RunContext, cand: CandidateRecord, outside: string[], stalled: StalledRepair): Promise<StepResult> {
+  const size = cand.scope && !cand.scope.within_size_limits ? ` It is also over the size limits (${cand.scope.changed_files} files, ${cand.scope.changed_lines} lines).` : '';
+  const reason = `candidate ${cand.seq} changes paths outside the authorized scope again: ${listPaths(outside, 10)}. Attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied, so no further attempt is dispatched on it.${size} If the task needs these paths, cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover them; ${attemptsLeft(ctx) ? `to try one more repair without them, resume with orbit resume ${ctx.run.id}.` : 'no implementation attempt is left for another repair in this run.'}`;
+  decide(ctx, { id: `dec-${ctx.run.id}-scope-block-${stalled.attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, out_of_scope_paths: outside } });
+  return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, scope: { out_of_scope_paths: outside } } });
+}
+
 /** Distinct candidates that failed with this fingerprint. */
 function repeatedCount(ctx: RunContext, fingerprint: string): number {
   return new Set(listFailures(ctx.db, ctx.run.id, fingerprint).map((f) => f.candidateId ?? `row-${f.id}`)).size;
@@ -308,7 +359,7 @@ export function attemptHistory(ctx: RunContext): AttemptSnapshot[] {
   return out;
 }
 
-function scopeBrief(ctx: RunContext, fingerprint: string, why: string): RepairBrief {
+function scopeBrief(ctx: RunContext, fingerprint: string, why: string, restored: readonly string[]): RepairBrief {
   const contract = assertContract(ctx);
   const scope = ctx.candidate?.scope ?? null;
   const overSize = scope !== null && !scope.within_size_limits;
@@ -318,10 +369,12 @@ function scopeBrief(ctx: RunContext, fingerprint: string, why: string): RepairBr
   const sizeHypothesis = { statement: `The change is over the size limits (${limits.changed_files} files, ${limits.changed_lines} lines); its largest changes are ${heavy}`, supporting: why };
   const sizeFix = `Bring the change within ${limits.changed_files} files and ${limits.changed_lines} changed lines by shrinking the changes to ${heavy}; a generated file the task requires cannot be shrunk this way, so say so in your summary instead of rewriting it`;
   const outOfScope = { statement: 'The change edits files outside the authorized scope or beyond the size limits', supporting: why };
-  const revert = `Revert the out-of-scope changes and keep the change inside ${contract.allowed_paths.join(', ')}`;
+  const named = listPaths(restored, 50);
+  const done = restored.length > 0 ? ` (Orbit has already restored ${named} to the base revision in this worktree: do not change them again)` : '';
+  const revert = `Revert the out-of-scope changes${done} and keep the change inside ${contract.allowed_paths.join(', ')}`;
   return {
     fingerprint,
-    evidence: [`scope inspection of the candidate: ${why}`],
+    evidence: [`scope inspection of the candidate: ${why}`, ...(restored.length > 0 ? [`restored to the base revision by Orbit (a file the base does not have is removed): ${named}`] : [])],
     hypotheses: sizeOnly ? [sizeHypothesis] : overSize ? [outOfScope, sizeHypothesis] : [outOfScope],
     experiment: sizeOnly ? 'Count the added and deleted lines of each changed file against the base revision and confirm which files carry the excess' : 'Compare the candidate diff with the contract allowed paths and list each path outside them',
     expected_observation: sizeOnly ? `The listed files carry most of the changed lines, and after the repair the change is within ${limits.changed_files} files and ${limits.changed_lines} lines` : 'Every changed path outside the allowed paths is identified and none remain after the repair',
