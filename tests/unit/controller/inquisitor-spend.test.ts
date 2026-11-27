@@ -287,7 +287,7 @@ describe('inquisitor spend', () => {
       expect(ev).toEqual([expect.objectContaining({ purpose: 'inquisition:risk-review:k:1', cap_usd: cap })]);
     });
 
-    it('with nothing left under the work limit no inquisitor starts, and the run ends EXHAUSTED saying why', async () => {
+    it('with nothing left under the work limit no inquisitor starts, and the run, having spent, asks for more spend saying why (#254)', async () => {
       setup();
       const ledger = lab.ctx().ledger!;
       const cap = ledger.state('cost_usd').hard_cap;
@@ -300,7 +300,9 @@ describe('inquisitor spend', () => {
       expect(err).toMatchObject({ code: 'BUDGET_EXHAUSTED', message: expect.stringMatching(/^inquisitor not started: /) });
       expect(lab.db.all("SELECT 1 FROM events WHERE run_id = ? AND type = 'worker.spend-cap'", lab.runId)).toEqual([]);
       await outcomeForError(lab.ctx(), err);
-      expect(getRun(lab.db, lab.runId).state).toBe('EXHAUSTED');
+      // Money stopped it after spending, and the cap could fund a session: the owner is asked (the owner's decision on #254).
+      expect(getRun(lab.db, lab.runId).state).toBe('BLOCKED');
+      expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^inquisitor not started: .*Waiting for a person to approve more model spend/);
     });
 
     it('a second attempt is admitted against what the first one spent', async () => {
