@@ -300,15 +300,17 @@ describe('a lost implementer', () => {
     expect(events(LOST_RESTART_EVENT)).toEqual([]);
   });
 
-  it('a restart that finds no funded session left ends EXHAUSTED', async () => {
+  it('a restart that finds no funded session left, with money spent, blocks and asks for more spend (#254)', async () => {
     await setup({ script: () => okResult(null, { status: 'lost', usage: { provider: 'claude', model: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: null, cacheWriteTokens: null, costUsd: 0, costSource: 'reported' } }) });
     await run();
     // Spend right up to the line the closing reserve draws under the hard cap.
     const reserve = lab.ctx().ledger!.reserve().cost_usd;
     lab.db.run("UPDATE budget_counters SET used = hard_cap - ? WHERE counter = 'cost_usd'", reserve + 0.01);
     await run();
-    expect(state()).toBe('EXHAUSTED');
+    // Money stopped it, and the cap could fund a session: the owner is asked (the owner's decision on #254).
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toContain('not restarted: no model budget left');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toContain('Waiting for a person to approve more model spend');
   });
 });
 

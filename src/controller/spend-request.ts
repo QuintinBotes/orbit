@@ -146,14 +146,18 @@ export function applySpendAnswer(input: { db: OrbitDb; clock: Clock; runDir: str
 }
 
 /**
- * Whether the run's charged cost has reached what its phase may spend. Nothing charged is never "reached": a cap too
- * small for the first session ends the run as it always did.
+ * Whether money stops the run, so it asks for more: its charged cost has reached what its phase may spend, or (a
+ * `refusal`) the next session could not be funded from what is left. Sessions are funded below the limit, holding back
+ * one worst-case request, so a refusal usually comes before charged cost reaches it. Nothing charged is never a reason
+ * to ask: a cap too small for the first session ends the run as it always did (the owner's decision on #254).
  */
-export function atCostCap(ctx: RunContext, phase: BudgetPhase): boolean {
+export function atCostCap(ctx: RunContext, phase: BudgetPhase, opts: { refusal?: boolean } = {}): boolean {
   if (!ctx.ledger || !ctx.policyVerified || ctx.deps.spendRequests === false) return false;
   const cost = ctx.ledger.state('cost_usd');
+  if (cost.used <= 0) return false;
+  if (opts.refusal === true) return true;
   const limit = phase === 'final' ? cost.hard_cap : cost.hard_cap - ctx.ledger.reserve().cost_usd;
-  return cost.used > 0 && cost.used >= limit - EPS;
+  return cost.used >= limit - EPS;
 }
 
 /**

@@ -1002,7 +1002,9 @@ check definition, then start a new run.
 
 ## Spend requests
 
-A run that reaches its model cost cap waits `BLOCKED` on a question that names
+A run that money stops (its charged cost reaches the cap, or its next session
+cannot be funded from what is left, once something is charged) waits `BLOCKED`
+on a question that names
 what it spent, the cap, the amount it asks for (its original cap) and the new
 total. Only a person answers it:
 
@@ -1012,6 +1014,9 @@ total. Only a person answers it:
 - `orbit decide <run> <question> refuse` ends the run `EXHAUSTED` (or offers a
   verified candidate it holds) and removes the file.
 - `orbit cancel <run>` removes the file too.
+
+Only an answer to the request the run is waiting on releases it: running an
+old approve line again changes nothing and says so.
 
 Any other answer is rejected, and `orbit resume --force` without an approval
 blocks again before a session starts. The request is also written to

@@ -7,7 +7,7 @@ import { getRun, listRuns, transition, type RunRecord } from '../../controller/r
 import { loadRunContext } from '../../controller/context.ts';
 import { resumeTarget } from '../../controller/resume.ts';
 import { holdForSpend } from '../../controller/steps/common.ts';
-import { applySpendAnswer, spendRequests, SPEND_APPROVE, SPEND_REFUSE, type SpendRequest } from '../../controller/spend-request.ts';
+import { applySpendAnswer, currentSpend, spendRequests, SPEND_APPROVE, SPEND_REFUSE, type SpendRequest } from '../../controller/spend-request.ts';
 import { cliLeaseDeps } from './control.ts';
 import { declinesLedger } from '../../controller/undecided-ledger.ts';
 import { stateDbPath } from '../../controller/start.ts';
@@ -135,13 +135,17 @@ async function decideSpend(args: Args, ctx: CliContext, input: { db: OrbitDb; re
   const word = input.answer.toLowerCase();
   if (word !== SPEND_APPROVE && word !== SPEND_REFUSE) throw new UsageError(`question ${request.question_id} asks for more model spend: answer "${SPEND_APPROVE}" or "${SPEND_REFUSE}"`, 'orbit decide <run-id> <question-id> approve|refuse');
   const runDir = dirname(run.policyPath);
+  // Only an answer to the request the run is waiting on releases it. Repeating an old approve (from shell history, say)
+  // records nothing new and must not lift a block that has another cause: that is resume's to decide, with its checks.
+  const before = currentSpend(db, run.id);
+  const waitingOnThis = before !== null && before.status === 'open' && before.request.question_id === request.question_id;
   const result = answerQuestion(db, runDir, request.question_id, word, by, ctx.clock);
   const approved = word === SPEND_APPROVE;
   applySpendAnswer({ db, clock: ctx.clock, runDir }, run.id);
 
   let ownedElsewhere = false;
   const current = getRun(db, run.id);
-  if (current.state === 'BLOCKED' && !current.cancelRequested) {
+  if (waitingOnThis && current.state === 'BLOCKED' && !current.cancelRequested) {
     try {
       await withCliLease(ctx, db, run.id, async (ownerId) => {
         // Loaded first: a run whose policy no longer verifies is left BLOCKED.
@@ -164,10 +168,14 @@ async function decideSpend(args: Args, ctx: CliContext, input: { db: OrbitDb; re
 
   const after = getRun(db, run.id);
   if (args.bool('json')) {
-    json(ctx.io, { run_id: run.id, question_id: request.question_id, answer: word, decision_id: result.decision.id, cap_usd: approved ? request.total_usd : request.cap_usd, run_state: after.state });
+    json(ctx.io, { run_id: run.id, question_id: request.question_id, answer: word, decision_id: result.decision.id, applied: waitingOnThis, cap_usd: approved && waitingOnThis ? request.total_usd : request.cap_usd, run_state: after.state });
     return EXIT.OK;
   }
   line(ctx.io, `recorded ${result.decision.id}: ${word} by ${by}`);
+  if (!waitingOnThis) {
+    line(ctx.io, `question ${request.question_id} is not the spend request run ${run.id} waits on, so this changes nothing: run ${run.id} is ${after.state}${after.outcomeReason ? `: ${oneLine(after.outcomeReason, 600)}` : ''}`);
+    return EXIT.OK;
+  }
   if (approved) line(ctx.io, `the cost cap of run ${run.id} is now $${request.total_usd.toFixed(2)} (was $${request.cap_usd.toFixed(2)}); the spend request file is removed`);
   else line(ctx.io, `no more model spend for run ${run.id}; the spend request file is removed`);
   if (ownedElsewhere) line(ctx.io, 'A controller holds the run and applies the answer at its next safe point.');

@@ -137,7 +137,7 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   if (costEnd && !ctx.run.cancelRequested) {
     const named = opts.data?.phase;
     const phase: BudgetPhase = named === 'work' || named === 'final' ? named : budgetPhaseOf(ctx.run.state, ctx.run.resumeState);
-    if (atCostCap(ctx, phase)) {
+    if (atCostCap(ctx, phase, { refusal: opts.costRefusal === true || opts.data?.cost_refusal === true })) {
       const request = requestSpend(ctx, phase);
       advice = spendWaitingSentence(request);
       reason = withSentence(reason, advice);

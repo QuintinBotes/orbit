@@ -40,7 +40,7 @@ import { budgetAdmission } from '../../scheduling/scheduler.ts';
 import type { DifficultyClass, WorkUnit } from '../../scheduling/types.ts';
 import { CANDIDATE_EVENT, machineAdmission, schedulerFor, type RunContext } from '../context.ts';
 import { blockingQuestions } from '../gates.ts';
-import { ensureWorker, raiseOutputCap, recordedTurnCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, type RouteChoice } from '../workers.ts';
+import { ensureWorker, raiseOutputCap, recordedTurnCap, recordSpendCap, routeFor, sessionSpendCap, unfundedSessionReason, capFundsOneSession, type RouteChoice } from '../workers.ts';
 import { attemptRouteDecision, skippedPartners, skipPartner } from '../route-outcome.ts';
 import { recordedUnits, recordUnits, runParallelUnits, serializedUnits, splitAttempt } from '../parallel-writers.ts';
 import type { WorkUnitPlan } from '../../scheduling/work-units.ts';
@@ -134,7 +134,7 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
     if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why }, costRefusal: /cost exceeds/.test(why) });
     return WAIT(`attempt ${n} deferred: ${why}`);
   }
-  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`, { costRefusal: true });
+  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`, { costRefusal: capFundsOneSession(ctx, route.model, 'implementer') });
 
   // A fresh attempt whose criteria map to disjoint files runs as parallel writers in their own worktrees (G14).
   const units = splitAttempt(ctx, assertContract(ctx), n === 1 && !existsSync(briefPath(ctx, n)));
@@ -435,7 +435,7 @@ async function restartLostImplementer(ctx: RunContext, lost: WorkerRecord, n: nu
   const cap = sessionSpendCap(ctx, model, 'implementer');
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
   if (cap.capUsd !== null) {
-    if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, 'implementer')}`, { costRefusal: true });
+    if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, 'implementer')}`, { costRefusal: capFundsOneSession(ctx, model, 'implementer') });
     recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
   }
   return null;

@@ -501,11 +501,13 @@ the run stops saying why. Before PLANNING creates the budget there is
 nothing to admit against, and an inquisitor then runs without a spend cap, as
 the contracting planner does.
 
-A run whose charged cost reaches `model_cost_usd` (less the reserve outside the
-closing phase) does not end: it waits `BLOCKED` for a person to approve more
-spend (docs/operations.md, "Spend requests"). A cap too small for the first
-session, or a refusal while charged cost is below the limit, still ends the run
-`EXHAUSTED`. An approval adds the run's original `model_cost_usd` to that run's
+A run that money stops does not end: once something is charged, a run whose
+charged cost reaches `model_cost_usd` (less the reserve outside the closing
+phase), or whose next session cannot be funded from what is left, waits
+`BLOCKED` for a person to approve more spend (docs/operations.md, "Spend
+requests"). Sessions are funded below that limit, so the second is the usual
+case. A cap too small to fund even one session, less the reserve, still ends
+the run `EXHAUSTED`, as does a run with nothing charged. An approval adds the run's original `model_cost_usd` to that run's
 cap only, and the reserve is the same fraction of the raised cap. No setting
 controls this, and the other limits end a run as before.
 
