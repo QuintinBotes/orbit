@@ -66,8 +66,11 @@ function isNegated(text: string, index: number): boolean {
  */
 function describesMerge(text: string, index: number, word: string): boolean {
   if (word.toLowerCase() !== 'merged') return false;
-  if (/^\s+(?:PRs?|pull[- ]requests?|commits?|#\d)/i.test(text.slice(index + word.length, index + word.length + 24))) return true;
-  return /\b(?:was|were|been|is|are|already)\s+$/i.test(text.slice(Math.max(0, index - 16), index));
+  // A noun right after it, on the same line: "merged PR #55", "the merged commit" (not "merged promptly", "merged prior to").
+  if (/^[ \t]+(?:(?:PRs?|pull[- ]requests?|commits?)\b|#\d)/i.test(text.slice(index + word.length, index + word.length + 24))) return true;
+  // Only past tense before it: "was merged", "already (been) merged". "is merged" and "are merged" also state a wanted
+  // end ("make sure the PR is merged"), so they still count as a request.
+  return /\b(?:was|were|already(?:\s+been)?)\s+$/i.test(text.slice(Math.max(0, index - 24), index));
 }
 
 const MODE_WORDS = '(autonomous[- ]delivery|release|supervised|autonomous)';

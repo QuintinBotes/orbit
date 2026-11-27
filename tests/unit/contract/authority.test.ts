@@ -71,7 +71,18 @@ describe('reconcileAuthority', () => {
   });
 
   it('still flags a request to have the work merged (#276)', () => {
-    for (const goal of ['Get this merged once CI is green.', 'Merge it when the checks pass.', 'Open the PR and have it merged.']) {
+    for (const goal of [
+      'Get this merged once CI is green.',
+      'Merge it when the checks pass.',
+      'Open the PR and have it merged.',
+      // Review of #277: requests that look like descriptions.
+      'Make sure the PR is merged once CI passes.',
+      'Ensure all three PRs are merged.',
+      'Get this merged promptly once green.',
+      'Get it merged prior to the 2.0 release.',
+      'Ensure it has been merged before deploy.',
+      'Have it merged\n- PR description lists the change',
+    ]) {
       expect(reconcileAuthority(goal, config()).map((m) => m.subject), goal).toContain('actions.merge');
     }
   });
