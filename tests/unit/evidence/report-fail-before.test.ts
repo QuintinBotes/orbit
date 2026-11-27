@@ -5,7 +5,7 @@
 // blocks it, unless a person accepted the criterion without fail-before for this tree.
 import { describe, expect, it } from 'vitest';
 import { contractAssumptionsHash, evaluateEvidence, type BuildReportInput } from '../../../src/evidence/report.ts';
-import { otherwiseAcceptable, type CheckProbe, type FailBeforeEvidence, type ProbeResult } from '../../../src/evidence/fail-before.ts';
+import { acceptableCause, otherwiseAcceptable, type CheckProbe, type FailBeforeEvidence, type ProbeResult } from '../../../src/evidence/fail-before.ts';
 import { statesCheckRunsTests, statesFailBefore, unknownNamedChecks } from '../../../src/evidence/fail-before-statements.ts';
 import type { FailBeforeMode } from '../../../src/policy/types.ts';
 import { CANDIDATE, CLEAN_SCOPE, contract, fakeSnapshot, result } from './report-fixtures.ts';
@@ -287,6 +287,21 @@ describe('fail_before per criterion, by mode', () => {
     const snapshot = withMode('required');
     const e = evaluateEvidence({ contract: lintOnly, candidate: CANDIDATE, checkResults: [result(snapshot, 'lint')], scope: CLEAN_SCOPE, snapshot, base: { treeHash: 'tree-base', checks: [{ checkId: 'lint', status: 'PASSED' }], changedPaths: ['tests/mul.test.mjs'] }, failBefore: { mode: 'required', probe: null, skipped: null, accepted: [] } });
     expect(e.report.acceptance_evidence[0]).toMatchObject({ status: 'blocked', fail_before: { outcome: 'not-established', cause: 'not-probed' } });
+  });
+
+  // Issue #261: a mapped test that is not in the candidate, in every mode.
+  it.each(['required', 'advisory', 'off'] as const)('%s: a criterion whose mapped test is not in the candidate is unverified, names the file and takes no acceptance', (mode) => {
+    const e = judge(mode, { probe: probe({}), skipped: null, accepted: [{ criterionId: 'AC-1', questionId: 'q-fb-1', by: 'acme-dev' }], missing: new Map([['AC-1', ['tests/acceptance/x.test.ts']]]) });
+    const entry = e.report.acceptance_evidence[0]!;
+    expect(entry).toMatchObject({ status: 'unverified', note: "AC-1's test tests/acceptance/x.test.ts is not in the candidate", fail_before: { mode, outcome: 'not-established', cause: 'missing' } });
+    expect(entry.fail_before!.accepted).toBeUndefined();
+    expect(e.report.verdict).toBe('INCOMPLETE');
+    expect(acceptableCause('missing')).toBe(false);
+  });
+
+  it('names a missing mapped test beside whatever else keeps the criterion from support', () => {
+    const e = judge('advisory', { probe: null, skipped: null, accepted: [], missing: new Map([['AC-1', ['tests/x.test.mjs']]]) }, { base: { treeHash: 'tree-base', checks: [{ checkId: 'unit', status: 'PASSED' }], changedPaths: ['apps/calc.mjs'] } });
+    expect(e.report.acceptance_evidence[0]).toMatchObject({ status: 'unverified', note: "no new evidence: unit already passed on the base revision and the candidate adds or changes no test; AC-1's test tests/x.test.mjs is not in the candidate" });
   });
 
   it('without the fail-before input (a caller with no probe) the report has no fail_before entries', () => {

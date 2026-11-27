@@ -311,7 +311,10 @@ test of its own failed. The probe's logs are under
 revision with the new tests (exit 1, 2 attempts): AC-1". Under `required`, a
 question about accepting a criterion without fail-before is answered with
 `orbit decide <run-id> <question-id> accept` (or `decline`), bound to the tree
-it names, and `orbit resume` judges the candidate again. Only under `required`
+it names, and `orbit resume` judges the candidate again. No such question is
+asked about a criterion whose mapped test is not a file in the candidate: in
+every mode its report line is unverified, with the cause `missing` and each
+absent file named, and a repair that adds the file is the way on. Only under `required`
 does the reviewer see the probe: the review packet shows the lines of each
 probe log that report a failure (the log is check-wide), says that a compile,
 collection or import failure of a new symbol counts and is not a finding, and

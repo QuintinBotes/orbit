@@ -1608,6 +1608,18 @@ and the changed documents against the candidate; an open result goes to repair,
 and nothing is delivered before it closes. Under `advisory` and `off` neither the
 per-criterion probe nor the proof gate runs.
 
+In every mode, `off` included, a criterion mapped to a test that is not a file
+in the candidate's commit is never supported (issue #261). Its `fail_before`
+entry is not established with the cause `missing`, the report leaves it
+unverified and names each such file ("AC-1's test tests/acceptance/x.test.ts is
+not in the candidate"), and no person is asked to accept it: a repair that adds
+the file is the way on. Under `required`, the other mapped tests of such a
+criterion are still run alone as any mapped test is: only when a check can run
+one alone, the candidate is otherwise acceptable and it changes no dependency
+manifest or lockfile outside test-owned paths. A UI criterion's mapped tests are
+never run alone. A person-checked criterion has no test, so this does not apply
+to it.
+
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
 `required`) and is refused when it would lower it. It is frozen in the run's

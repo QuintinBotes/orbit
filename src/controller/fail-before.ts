@@ -9,6 +9,9 @@
  * - not established blocks the run with the cause and the same question, except for an environment, ERROR or install
  *   cause, which is fixed and never accepted (ADR 0010): `orbit resume` then runs the probe again.
  *
+ * A criterion mapped to a test that is not a file in the candidate is neither (issue #261): in every mode the report
+ * leaves it unverified, naming the file, nothing is asked, and the run goes on as for any unproven criterion.
+ *
  * Only a person's `accept` counts, bound to the candidate tree it was asked for, and the report lists it in `unverified`.
  * Under `advisory` nothing here changes the run: the report carries the outcome.
  *
@@ -18,8 +21,8 @@
  */
 import { join } from 'node:path';
 import { hashObject } from '../core/hash.ts';
-import { acceptableCause, changesBetween, CRITERION_CANDIDATE, CRITERION_PROBE, isBrowserCheck, isTestCommandCheck, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeFlavour, type ProbeResult } from '../evidence/fail-before.ts';
-import { criterionProofEntry, criterionTestDefinition, criterionTests, mapsTests, type CriterionProbes } from '../evidence/criterion-tests.ts';
+import { acceptableCause, changesBetween, CRITERION_CANDIDATE, CRITERION_PROBE, filesIn, isBrowserCheck, isTestCommandCheck, newTestSupport, otherwiseAcceptable, REPAIR_CONTROL, REPAIR_PROBE, REPAIR_REPAIRED, runFailBeforeProbe, type FailBeforeEvidence, type NotEstablishedCause, type ProbeChange, type ProbeFlavour, type ProbeResult } from '../evidence/fail-before.ts';
+import { criterionKind, criterionProofEntry, criterionTestDefinition, criterionTests, mapsTests, type CriterionProbes } from '../evidence/criterion-tests.ts';
 import { runUiFailBeforeProbe, type UiRunner } from './fail-before-ui.ts';
 import { git } from '../evidence/git.ts';
 import type { BaseComparison } from '../evidence/report.ts';
@@ -63,12 +66,15 @@ export interface CollectFailBeforeInput {
 export async function collectFailBefore(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput): Promise<FailBeforeEvidence> {
   const { mode, timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
   const accepted = acceptedWithoutFailBefore(ctx, cand.treeHash);
+  // In every mode, before anything is probed (issue #261): the mapped tests the candidate does not have.
+  const missing = await missingMappedTests(ctx.run.repoRoot, cand.commitSha, input.contract);
+  const absent = new Set([...missing.values()].flat());
   // Under required, a plan that maps tests to criteria has each criterion judged by its own tests (issue #200); a UI
   // criterion keeps the browser probe of ADR 0016, which no tests_command runs.
   const own = mode === 'required' && mapsTests(input.contract) ? input.contract.acceptance_criteria.filter((c) => c.ui !== true) : [];
-  const criteria = own.length > 0 ? await collectCriterionProbes(ctx, cand, input, { ...input.contract, acceptance_criteria: own }, accepted) : null;
+  const criteria = own.length > 0 ? await collectCriterionProbes(ctx, cand, input, { ...input.contract, acceptance_criteria: own }, accepted, absent) : null;
   const ownIds = new Set(own.map((c) => c.id));
-  const evidence = (probe: FailBeforeEvidence['probe'], skipped: FailBeforeEvidence['skipped'] = null): FailBeforeEvidence => ({ mode, probe: probe ?? criteria?.probe ?? null, skipped, accepted, ...(criteria ? { criteria: criteria.entries } : {}) });
+  const evidence = (probe: FailBeforeEvidence['probe'], skipped: FailBeforeEvidence['skipped'] = null): FailBeforeEvidence => ({ mode, probe: probe ?? criteria?.probe ?? null, skipped, accepted, ...(criteria ? { criteria: criteria.entries } : {}), ...(missing.size > 0 ? { missing } : {}) });
   if (mode === 'off') return evidence(null);
   const resting = newTestSupport(input.contract, ctx.snapshot, input.base).filter((s) => !ownIds.has(s.criterionId) && s.flips.length === 0 && s.withTests.length > 0);
   const byCheck = new Map<string, string[]>();
@@ -130,18 +136,28 @@ function acceptable(ctx: RunContext, input: CollectFailBeforeInput): boolean {
   return input.installOk && otherwiseAcceptable(input.results, required, allowFlaky, exceptions);
 }
 
+/** By criterion, the mapped tests that are not files in `commit`. A person-checked criterion is proven by no test. */
+async function missingMappedTests(repoRoot: string, commit: string, contract: GoalContract): Promise<Map<string, string[]>> {
+  const tested = contract.acceptance_criteria.filter((c) => criterionKind(c) !== 'person');
+  const present = await filesIn(repoRoot, commit, [...new Set(tested.flatMap((c) => c.tests ?? []))]);
+  return new Map(tested.flatMap((c) => {
+    const paths = [...new Set(c.tests ?? [])].filter((p) => !present.has(p));
+    return paths.length > 0 ? [[c.id, paths] as const] : [];
+  }));
+}
+
 /**
  * Each criterion's own fail-before (issue #200, FR-003): every mapped test run alone (its check's tests_command) on the
  * base tree with the candidate's test-owned paths and on the candidate, each probe within the policy's one bound. A
  * candidate that changes a dependency manifest is not probed on the base tree, as ADR 0014 says.
  */
-async function collectCriterionProbes(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput, contract: GoalContract, accepted: CriterionProbes['accepted']): Promise<{ entries: Map<string, CriterionFailBefore>; probe: ProbeResult | null }> {
+async function collectCriterionProbes(ctx: RunContext, cand: CandidateRecord, input: CollectFailBeforeInput, contract: GoalContract, accepted: CriterionProbes['accepted'], absent: ReadonlySet<string>): Promise<{ entries: Map<string, CriterionFailBefore>; probe: ProbeResult | null }> {
   const { mode, timeoutSeconds } = failBeforePolicy(ctx.snapshot.config);
   const baseRev = ctx.run.baseRevision!;
   const changes = await probeChanges(ctx.run.repoRoot, baseRev, cand.commitSha);
   const mapped = contract.acceptance_criteria.flatMap((c) => c.tests ?? []);
   const layout = await loadTestLayout(gitTreeReader((args) => git(ctx.run.repoRoot, args)), baseRev, cand.commitSha, [...new Set([...changes.all.map((c) => c.path), ...mapped])], { allDotnetOwners: true });
-  const units = criterionTests(contract, ctx.snapshot, (p) => isTestOwnedPath(p, layout));
+  const units = criterionTests(contract, ctx.snapshot, (p) => isTestOwnedPath(p, layout), (p) => !absent.has(p));
   const entries = (p: Omit<CriterionProbes, 'mode' | 'accepted'>): Map<string, CriterionFailBefore> => new Map(units.map((u) => [u.criterionId, criterionProofEntry(u, { ...p, mode, accepted })] as const));
   const skip = (cause: NotEstablishedCause, reason: string) => ({ entries: entries({ base: null, candidate: null, skipped: { cause, reason } }), probe: null });
   const runnable = new Map<string, { checkId: string; path: string; criteria: string[] }>();
@@ -370,7 +386,8 @@ export function failBeforeGaps(ctx: RunContext, report: EvidenceReport): Criteri
 export function failBeforeStale(ctx: RunContext, cand: CandidateRecord, record: EvidenceReportRecord): boolean {
   const accepted = new Map(acceptedWithoutFailBefore(ctx, cand.treeHash).map((a) => [a.criterionId, a.questionId] as const));
   for (const e of record.report.acceptance_evidence) {
-    if (e.fail_before === undefined) continue;
+    // A missing test takes no acceptance, so one recorded for its tree never makes the report stale.
+    if (e.fail_before === undefined || e.fail_before.cause === 'missing') continue;
     if ((e.fail_before.accepted?.question_id ?? null) !== (accepted.get(e.criterion_id) ?? null)) return true;
   }
   const open = record.report.acceptance_evidence.some((e) => e.fail_before?.mode === 'required' && e.fail_before.outcome === 'not-established');
