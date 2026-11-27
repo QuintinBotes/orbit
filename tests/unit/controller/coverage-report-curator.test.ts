@@ -157,6 +157,16 @@ describe('runCurator as a recorded worker of the run', () => {
     expect(w?.error).not.toContain('abcdefghijklmnopqrstuvwxyz');
   });
 
+  it('a task that cannot be built (no role prompt) finishes the worker FAILED, so no PLANNED row holds a slot', async () => {
+    const a = adapter();
+    lab = makeUnitLab({ path: ['PREFLIGHT'], adapters: { claude: a } });
+    const h = host({ deps: { ...host().deps, adapters: { claude: a }, agentsDir: join(lab.base, 'no-agents') } }, true);
+    await expect(runCurator(h, { prompt: 'p' }, null)).rejects.toThrow('role prompt not found');
+    expect(a.specs).toHaveLength(0);
+    const [w] = listWorkers(lab.db, { runId: lab.runId, role: 'curator' });
+    expect(w).toMatchObject({ state: 'FAILED', resultStatus: 'failed' });
+  });
+
   it('a failed result is recorded and its cost still charged; a cost that cannot be charged is logged, not thrown', async () => {
     const cap = capturingLogger();
     const a = adapter({ collect: async () => ok({ status: 'failed', error: 'x' }) });

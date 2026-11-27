@@ -1002,30 +1002,30 @@ export async function runCurator(
     mkdirSync(workerDir, { recursive: true, mode: 0o700 });
   }
 
-  const spec: TaskSpec & { maxBudgetUsd: number } = {
-    runId: host.runId,
-    workerId,
-    role: 'curator',
-    model,
-    effort: null,
-    cwd,
-    workerDir,
-    prompt: task.prompt,
-    systemPrompt: renderSystemPrompt('curator', host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
-    outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
-    readOnly: true,
-    maxTurns: Math.min(CURATOR_MAX_TURNS, host.snapshot.config.scheduler.hard_limits.worker_turns_per_session),
-    timeoutMs,
-    sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
-    policyPath: host.policyPath,
-    policyHash: host.policyHash,
-    env: {},
-    maxBudgetUsd: host.budgetUsd,
-    ...(outputTokens === undefined ? {} : { outputTokens }),
-  };
-
   let handle: TaskHandle;
   try {
+    // Built inside the try: a missing role prompt or sandbox profile must settle the planned row, or it holds a slot.
+    const spec: TaskSpec & { maxBudgetUsd: number } = {
+      runId: host.runId,
+      workerId,
+      role: 'curator',
+      model,
+      effort: null,
+      cwd,
+      workerDir,
+      prompt: task.prompt,
+      systemPrompt: renderSystemPrompt('curator', host.deps.agentsDir ? { agentsDir: host.deps.agentsDir } : {}),
+      outputSchema: MODEL_OUTPUT_SCHEMAS.curator,
+      readOnly: true,
+      maxTurns: Math.min(CURATOR_MAX_TURNS, host.snapshot.config.scheduler.hard_limits.worker_turns_per_session),
+      timeoutMs,
+      sandbox: profileForWorker({ worktree: cwd, workerDir, snapshot: host.snapshot, provider: 'claude', claudeConfigDir: env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), homeDir: home, policyPath: host.policyPath, readablePaths: [host.deps.orbitInstallDir], env }),
+      policyPath: host.policyPath,
+      policyHash: host.policyHash,
+      env: {},
+      maxBudgetUsd: host.budgetUsd,
+      ...(outputTokens === undefined ? {} : { outputTokens }),
+    };
     handle = await adapter.startTask(spec);
   } catch (err) {
     if (ctx && row) finishWorker(ctx.db, row.id, { state: 'FAILED', resultStatus: 'failed', error: redact(err instanceof Error ? err.message : String(err)).slice(0, 2000) }, ctx.clock, ctx.ownerId);
