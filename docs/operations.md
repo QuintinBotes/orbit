@@ -985,6 +985,25 @@ once (`repair.non-progress`), not after more diagnoses and attempts on the same
 tree, unless its session stopped before it finished (max turns, a timeout) or
 a person resumed the run or asked for the repair with `orbit repair` since.
 
+A candidate scope inspection denies for paths outside the authorized scope
+(not a policy violation, whatever else the denial lists) is not left for the
+implementer to revert. Before the next attempt, Orbit restores each of those
+paths to the base revision in the implementer's worktree with git, removing a
+file the base does not have; in-scope edits stay, the candidate itself keeps
+the change, and the repair brief and a `repair.scope-restore` decision name the
+paths. The run ends `BLOCKED` instead, naming the paths:
+
+- when a criterion needs one of them (its mapped tests, or a change the plan
+  lists for it; not a `keep` criterion's test the base already has). Nothing is
+  restored and no repair attempt is spent (`repair.scope-needed`). The run's
+  scope does not change, so cancel it and start a new run that covers the path;
+- when a repair ends on the denied tree again, judged as before, also when the
+  candidate is over the size limits too. `orbit resume <run-id> --force`
+  restores the paths and tries once more.
+
+A protected-path denial is a policy violation: it blocks as before, and
+nothing is restored until a person resumes the run.
+
 PREFLIGHT asks the baseline-exception question for every pre-existing failure
 and every missing target. When the goal is to make that check pass (the
 contract's criteria name the check as their proof), the failure is expected to
