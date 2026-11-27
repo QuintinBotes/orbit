@@ -378,56 +378,55 @@ describe('an explicit tier overrides the login type', () => {
     expect(text).toMatch(/providers\.codex\.tier/);
   });
 
-  it('keeps the guard in every combination: danger-full-access appears exactly when srt wraps the command', async () => {
-    const isolations: [string, () => IsolationProvider | null][] = [
-      ['null', () => null],
-      ['none', () => other('none')],
-      ['container', () => other('container')],
-      ['srt-down', () => srt({ available: async () => ({ ok: false, detail: 'no' }) })],
-      ['srt', () => srt()],
-    ];
-    const keys: [string, Record<string, string>][] = [['chatgpt', {}], ['api-key', { OPENAI_API_KEY: ACME_KEY }]];
-    const seen: Record<string, string> = {};
-    let n = 0;
-    for (const setting of ['auto', 'os-sandbox', 'codex-sandbox'] as const) {
-      for (const [isoName, make] of isolations) {
-        for (const [keyName, env] of keys) {
-          const f = fixture();
-          const label = `${setting}/${isoName}/${keyName}`;
-          const outcome = await adapter(f, make(), env, setting)
-            .startTask(spec(f))
-            .then(
-              (h) => {
-                const argv = launched(n++).argv;
-                const dangerous = argv.includes('danger-full-access');
-                expect(dangerous, label).toBe(argv[0] === SRT);
-                return `${h.tier}:${dangerous ? 'danger-full-access' : sandboxFlag(argv)}`;
-              },
-              (e: { code?: string }) => e.code ?? 'error',
-            );
-          seen[label] = outcome;
-        }
-      }
-    }
-    const srtRuns = 'os-sandbox:danger-full-access';
-    const bare = 'codex-sandbox:read-only';
-    expect(seen).toEqual({
-      'auto/null/chatgpt': bare, 'auto/null/api-key': bare,
-      'auto/none/chatgpt': bare, 'auto/none/api-key': bare,
-      'auto/container/chatgpt': bare, 'auto/container/api-key': bare,
-      'auto/srt-down/chatgpt': bare, 'auto/srt-down/api-key': bare,
-      'auto/srt/chatgpt': bare, 'auto/srt/api-key': srtRuns,
-      'os-sandbox/null/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/null/api-key': 'ISOLATION_UNAVAILABLE',
-      'os-sandbox/none/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/none/api-key': 'ISOLATION_UNAVAILABLE',
-      'os-sandbox/container/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/container/api-key': 'ISOLATION_UNAVAILABLE',
-      'os-sandbox/srt-down/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/srt-down/api-key': 'ISOLATION_UNAVAILABLE',
-      'os-sandbox/srt/chatgpt': srtRuns, 'os-sandbox/srt/api-key': srtRuns,
-      'codex-sandbox/null/chatgpt': bare, 'codex-sandbox/null/api-key': bare,
-      'codex-sandbox/none/chatgpt': bare, 'codex-sandbox/none/api-key': bare,
-      'codex-sandbox/container/chatgpt': bare, 'codex-sandbox/container/api-key': bare,
-      'codex-sandbox/srt-down/chatgpt': bare, 'codex-sandbox/srt-down/api-key': bare,
-      'codex-sandbox/srt/chatgpt': bare, 'codex-sandbox/srt/api-key': bare,
-    });
+  // One test per combination (issue #279): 30 launches in one test overran its 60 s budget on a busy machine.
+  const isolations: Record<string, () => IsolationProvider | null> = {
+    null: () => null,
+    none: () => other('none'),
+    container: () => other('container'),
+    'srt-down': () => srt({ available: async () => ({ ok: false, detail: 'no' }) }),
+    srt: () => srt(),
+  };
+  const keys: Record<string, Record<string, string>> = { chatgpt: {}, 'api-key': { OPENAI_API_KEY: ACME_KEY } };
+  const srtRuns = 'os-sandbox:danger-full-access';
+  const bare = 'codex-sandbox:read-only';
+  const expected: Record<string, string> = {
+    'auto/null/chatgpt': bare, 'auto/null/api-key': bare,
+    'auto/none/chatgpt': bare, 'auto/none/api-key': bare,
+    'auto/container/chatgpt': bare, 'auto/container/api-key': bare,
+    'auto/srt-down/chatgpt': bare, 'auto/srt-down/api-key': bare,
+    'auto/srt/chatgpt': bare, 'auto/srt/api-key': srtRuns,
+    'os-sandbox/null/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/null/api-key': 'ISOLATION_UNAVAILABLE',
+    'os-sandbox/none/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/none/api-key': 'ISOLATION_UNAVAILABLE',
+    'os-sandbox/container/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/container/api-key': 'ISOLATION_UNAVAILABLE',
+    'os-sandbox/srt-down/chatgpt': 'ISOLATION_UNAVAILABLE', 'os-sandbox/srt-down/api-key': 'ISOLATION_UNAVAILABLE',
+    'os-sandbox/srt/chatgpt': srtRuns, 'os-sandbox/srt/api-key': srtRuns,
+    'codex-sandbox/null/chatgpt': bare, 'codex-sandbox/null/api-key': bare,
+    'codex-sandbox/none/chatgpt': bare, 'codex-sandbox/none/api-key': bare,
+    'codex-sandbox/container/chatgpt': bare, 'codex-sandbox/container/api-key': bare,
+    'codex-sandbox/srt-down/chatgpt': bare, 'codex-sandbox/srt-down/api-key': bare,
+    'codex-sandbox/srt/chatgpt': bare, 'codex-sandbox/srt/api-key': bare,
+  };
+
+  it('covers every combination of tier setting, isolation and login', () => {
+    const all = (['auto', 'os-sandbox', 'codex-sandbox'] as const).flatMap((t) => Object.keys(isolations).flatMap((i) => Object.keys(keys).map((k) => `${t}/${i}/${k}`)));
+    expect(all.sort()).toEqual(Object.keys(expected).sort());
+  });
+
+  it.each(Object.entries(expected))('keeps the guard for %s: danger-full-access appears exactly when srt wraps the command', async (label, want) => {
+    const [setting, isoName, keyName] = label.split('/') as [CodexTierSetting, string, string];
+    const f = fixture();
+    const outcome = await adapter(f, isolations[isoName]!(), keys[keyName]!, setting)
+      .startTask(spec(f))
+      .then(
+        (h) => {
+          const argv = launched(0).argv;
+          const dangerous = argv.includes('danger-full-access');
+          expect(dangerous, label).toBe(argv[0] === SRT);
+          return `${h.tier}:${dangerous ? 'danger-full-access' : sandboxFlag(argv)}`;
+        },
+        (e: { code?: string }) => e.code ?? 'error',
+      );
+    expect(outcome).toBe(want);
   });
 });
 
