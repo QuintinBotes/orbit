@@ -12,7 +12,7 @@ import { cleanupCandidateCheckout, materializeCandidate, snapshotCandidate } fro
 import { INSTALL_CHECK_ID, WORKTREE_INSTALL_IDS } from '../../../src/evidence/runner.ts';
 import { getCandidate, listCheckRuns } from '../../../src/evidence/store.ts';
 import { defaultCheck } from '../../../src/policy/config.ts';
-import { giveRepository, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
+import { giveRepository, makeUnitLab, pacedClock, setContract, type UnitLab } from './coverage-helpers.ts';
 
 const labs: UnitLab[] = [];
 afterEach(() => {
@@ -29,6 +29,9 @@ async function installLab(checks: Record<string, string>): Promise<UnitLab> {
       c.checks = Object.fromEntries(Object.entries(checks).map(([id, script]) => [id, { ...defaultCheck(id), command: sh(script), timeout_seconds: 60 }]));
     },
   });
+  // The runner supervises real check processes: pace the lab clock so simulated time cannot pass a check's timeout
+  // before the check has exited (issue #129). Unpaced, a slow machine recorded the marker check as TIMEOUT (#262).
+  lab.clock.sleep = pacedClock(lab.clock).sleep;
   labs.push(lab);
   const { base, worktree } = await giveRepository(lab, { 'apps/calc.mjs': 'export const add = (a, b) => a + b;\n', 'apps/.gitignore': 'deps/\n', 'tests/add.test.mjs': 'export {};\n' });
   const ids = Object.keys(checks);
