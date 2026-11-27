@@ -149,6 +149,22 @@ describe('watchdog', () => {
     expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common, dryRun: true })).findings.map((f) => f.kind)).toEqual(['stalled-run']);
   });
 
+  it('a running check that has written nothing yet counts as activity from its start, and a silent one still stalls (issue #286)', async () => {
+    const { db, clock } = setup();
+    makeRun(db, clock, 'r1', 'ctl-1', ['PREFLIGHT']);
+    const runDir = mkdtempSync(join(tmpdir(), 'orbit-watchdog-'));
+    db.run('UPDATE runs SET policy_path = ? WHERE id = ?', join(runDir, 'policy.json'), 'r1');
+    clock.advance(DEFAULT_WATCHDOG.stallMs);
+    const row = planCheckRun(db, { runId: 'r1', candidateId: null, checkId: 'build', kind: 'command', treeHash: 't', checkConfigHash: 'c', policyHash: 'sha256:x', command: ['node', 'build.js'], cwd: '/repo', isolation: 'none', limitations: [] }, clock);
+    markCheckRunning(db, row.id, 4242, clock);
+    clock.advance(MIN);
+    // The step began long ago; the check started a minute ago and has no output file (no check directory) yet.
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common, dryRun: true })).findings).toEqual([]);
+    // Still nothing written once the stall limit has passed since it started: that is a stall.
+    clock.advance(DEFAULT_WATCHDOG.stallMs);
+    expect((await watchdogTick({ db, clock, ownerId: 'ctl-1', ...common, dryRun: true })).findings.map((f) => f.kind)).toEqual(['stalled-run']);
+  });
+
   it('exhausts the run when the recovery budget is spent, instead of abandoning forever', async () => {
     const { db, clock } = setup();
     makeRun(db, clock, 'r1', 'ctl-1');

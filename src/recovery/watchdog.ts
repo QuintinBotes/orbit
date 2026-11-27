@@ -251,17 +251,22 @@ function workerActivity(opts: WatchdogOptions, w: WorkerRecord): number | null {
 function checkActivity(db: OrbitDb, run: RunRecord, clock: Clock): (number | null)[] {
   const ended = db.get<{ t: number | null }>('SELECT MAX(ended_at) AS t FROM check_runs WHERE run_id = ?', run.id)?.t ?? null;
   const last = ended !== null && ended <= clock.now() ? [ended] : [];
-  const open = db.all<{ id: string }>("SELECT id FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
+  const open = db.all<{ id: string; started_at: number | null }>("SELECT id, started_at FROM check_runs WHERE run_id = ? AND status IN ('PLANNED', 'RUNNING')", run.id);
   if (open.length === 0) return last;
   const dirs = findCheckDirs(dirname(run.policyPath));
+  // A check that has written nothing yet (on a loaded machine its first line can take seconds) counts from its start,
+  // as a fail-before probe does (issue #286); one silent past the stall limit is still a stall.
   return [...last, ...open.map((c) => {
+    let t = c.started_at;
     const found = dirs.get(c.id);
-    if (!found) return null;
-    try {
-      return notAhead(statSync(shimPath(found.dir, 'output')).mtimeMs, clock);
-    } catch {
-      return null;
+    if (found) {
+      try {
+        t = statSync(shimPath(found.dir, 'output')).mtimeMs;
+      } catch {
+        /* no output yet */
+      }
     }
+    return notAhead(t, clock);
   })];
 }
 
