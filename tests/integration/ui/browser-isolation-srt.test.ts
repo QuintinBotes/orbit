@@ -34,7 +34,6 @@ import type { UiRunResult } from '../../../src/ui/types.ts';
 import { chromiumAvailable, copyExample } from '../../../scripts/demo/lib/example.ts';
 import { browserIsolationCheck } from '../../../src/cli/commands/doctor.ts';
 import { freePort } from './helpers.ts';
-import { QUARANTINED } from '../../support/quarantine.ts';
 import { requiredOnCi } from '../../support/skip.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -176,8 +175,7 @@ describe.skipIf(!ready)(ready ? 'browser journeys of the demo app under the real
     expect(result.checks[0]!.isolationAdjustments).toEqual([]);
   }, 300_000);
 
-  // Quarantined (issue #186): on the macOS CI runner one journey now and then reaches its 20 s limit.
-  it.skipIf(QUARANTINED)('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
+  it('(b) with the rules all 8 journeys pass on desktop and mobile, twice, and the evidence says what was adjusted', async () => {
     for (let round = 1; round <= 2; round++) {
       const result = await runUi(srt);
       expect(result.verdict, `round ${round}: ${result.reasons.join('\n')}`).toBe('PASS');
