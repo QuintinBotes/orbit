@@ -19,7 +19,7 @@
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { Clock } from '../core/clock.ts';
 import { OrbitError, isOrbitError } from '../core/errors.ts';
 import { newId } from '../core/ids.ts';
@@ -388,8 +388,9 @@ async function objectTypes(repoRoot: string, rev: string, paths: readonly string
 /** Which of `paths` are files in `rev`: an absent path, a directory, a gitlink or a path that cannot be read is not. */
 export async function filesIn(repoRoot: string, rev: string, paths: readonly string[]): Promise<Set<string>> {
   const asked = paths.filter((p) => safeTestPath(p) && !p.includes('\n'));
-  const types = await objectTypes(repoRoot, rev, asked);
-  return new Set(asked.filter((p) => types.get(p) === 'blob'));
+  // git looks a path up as written, so a contract's `tests/./a.test.ts` is asked for as the tree names it.
+  const types = await objectTypes(repoRoot, rev, [...new Set(asked.map((p) => posix.normalize(p)))]);
+  return new Set(asked.filter((p) => types.get(posix.normalize(p)) === 'blob'));
 }
 
 /** What is said of a criterion's mapped tests that are not in the candidate (issue #261). */
