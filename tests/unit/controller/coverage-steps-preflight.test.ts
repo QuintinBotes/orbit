@@ -131,9 +131,14 @@ describe('preflightStep', () => {
     await preflightStep(lab.ctx());
     expect(state()).toBe('BLOCKED');
     const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
-    expect(reason).toContain(`the run starts from ${'b'.repeat(7)}, which lacks 8 commit(s) of next (${'c'.repeat(7)})`);
-    expect(reason).toMatch(/check out next, or start from a worktree of it, or set repository\.allow_stale_start/);
+    expect(reason).toContain(`the run starts from ${'b'.repeat(7)}, which lacks 8 commit(s) of origin/next (${'c'.repeat(7)})`);
+    expect(reason).toMatch(/check out next, or start from a worktree of it, or set repository\.allow_stale_start in \.orbit\/config\.yaml and start a new run/);
     expect(hooks.runBaseline).not.toHaveBeenCalled();
+    // It reads the remote-tracking base and the local one, and counts the base's commits missing from the start.
+    const calls = hooks.git.mock.calls.map((c) => (c[1] as string[]).join(' '));
+    expect(calls).toContain('rev-parse --verify --quiet refs/remotes/origin/next^{commit}');
+    expect(calls).toContain('rev-parse --verify --quiet refs/heads/next^{commit}');
+    expect(calls).toContain(`rev-list --count ${'b'.repeat(40)}..${'c'.repeat(40)}`);
     lab.cleanup();
     setup((c) => {
       c.repository.base_branch = 'next';

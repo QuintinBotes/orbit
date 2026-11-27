@@ -30,7 +30,7 @@ import { mandatoryReviewProvider, selectReviewer, type ReviewerSelection } from 
 import { defaultControllerDeps, environmentGate, orbitInstallDir, stateDbPath } from '../controller/index.ts';
 import { deliveryEnvironmentProblem } from '../controller/delivery-env.ts';
 import { git } from '../evidence/git.ts';
-import { IMPLEMENTER_PROVIDER, dirtyPathSplit, dirtyStartRefusal, gitCredentialProblems } from '../controller/steps/preflight.ts';
+import { IMPLEMENTER_PROVIDER, dirtyPathSplit, dirtyStartRefusal, gitCredentialProblems, staleStart } from '../controller/steps/preflight.ts';
 import type { RunRecord } from '../controller/run-store.ts';
 import type { CliContext } from './context.ts';
 import { reviewFix } from './review-fix.ts';
@@ -111,6 +111,12 @@ export const checkAdmission: AdmissionCheck = async (ctx, input) => {
   if (refusal !== null && !config.repository.allow_dirty_start) {
     cheap.push(refusal.reason);
     fixes.push(`${refusal.fix.replace(/repository\.allow_dirty_start$/, 'repository.allow_dirty_start in .orbit/config.yaml')}, then run again`);
+  }
+  // Issue #273: refused here, before a run exists, so the fix (a checkout of the base branch, or allow_stale_start) applies.
+  const stale = hasCommits && !config.repository.allow_stale_start ? await staleStart(repo, (await git(repo, ['rev-parse', 'HEAD'])).trim(), config.repository.base_branch, config.repository.remote) : null;
+  if (stale !== null) {
+    cheap.push(stale.reason);
+    fixes.push(stale.fix.replace(/ and start a new run$/, ', then run again'));
   }
   if (cheap.length > 0) return { reasons: cheap, code: 'POLICY_DENIED', fix: fixes.join('; ') };
 
