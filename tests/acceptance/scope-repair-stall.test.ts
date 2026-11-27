@@ -27,7 +27,9 @@ describe('acceptance: a repair that writes the out-of-scope path again blocks (i
 
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toContain('changes paths outside the authorized scope again: build/output.txt.');
-    expect(done.outcomeReason).toContain(`orbit resume ${run.id}.`);
+    // The allowance (2) is spent, so a resume could not run another attempt: the block says so instead of offering one.
+    expect(done.outcomeReason).toContain('no implementation attempt is left for another repair in this run');
+    expect(done.outcomeReason).not.toContain('orbit resume');
     expect(done.outcomeReason!.includes('It is also over the size limits')).toBe(changedLines === 100);
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
     expect(new Set(listCandidates(db, run.id).map((c) => c.treeHash)).size).toBe(1);

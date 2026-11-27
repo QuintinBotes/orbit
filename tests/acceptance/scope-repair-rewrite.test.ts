@@ -15,7 +15,8 @@ afterEach(() => labs.splice(0).forEach((l) => l.close()));
 
 describe('acceptance: a repair that rewrites the restored out-of-scope path with a new tree blocks (issue #300)', () => {
   it('BLOCKED naming the path after the second implementer session; a third never runs', async () => {
-    const l = makeLab();
+    // Room for more attempts, so without the fix a third session would run.
+    const l = makeLab({ tweak: (c) => void (c.scheduler.initial_allowances.simple_attempts = 4) });
     labs.push(l);
     const outside = (n: number) => ({ op: 'write' as const, path: 'build/output.txt', content: `bundle build ${n}\n` });
     const inScope = (n: number) => ({ op: 'write' as const, path: 'tests/unit/notes.txt', content: `note ${n}\n` });
@@ -26,7 +27,7 @@ describe('acceptance: a repair that rewrites the restored out-of-scope path with
 
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toContain('changes paths outside the authorized scope again: build/output.txt.');
-    expect(done.outcomeReason).toContain('Orbit restored exactly these paths before attempt 2, and the attempt wrote them again');
+    expect(done.outcomeReason).toContain('Orbit restored these paths before attempt 2, and the attempt wrote them again');
     expect(done.outcomeReason).toContain(`orbit resume ${run.id}.`);
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
     expect(new Set(listCandidates(db, run.id).map((c) => c.treeHash)).size).toBe(2);
