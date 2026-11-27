@@ -30,7 +30,6 @@ import type { RunContext } from '../context.ts';
 import { recordedTurnCap, routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate, safePath } from '../gates.ts';
 import { filesOfRevision, listPaths, neededPaths, restoreToBase, type NeededPath } from '../repair.ts';
-import { storedPlan } from './contracting.ts';
 import { advisoryBlockFor } from '../knowledge-hooks.ts';
 import { assertContract, blockOnOpenQuestions, decide, finishRun, MAX_REGENERATIONS, move, partnerImplemented, policySummary, repoInstructions, safePoint, workerLimitCause, type StepResult } from './common.ts';
 import { obtain } from './obtain.ts';
@@ -50,7 +49,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   // A path outside the scope that a criterion needs: no repair inside the scope can meet it, so none is spent.
   const outside = outOfScopePaths(ctx, cand);
   if (outside.length > 0) {
-    const needed = neededPaths(outside, contract, storedPlan(ctx), await filesOfRevision(ctx.run.repoRoot, ctx.run.baseRevision!));
+    const needed = neededPaths(outside, contract, await filesOfRevision(ctx.run.repoRoot, ctx.run.baseRevision!));
     if (needed.length > 0) return blockOnNeededPaths(ctx, cand, outside, needed, next);
   }
 

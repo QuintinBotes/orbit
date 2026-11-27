@@ -7,7 +7,6 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OrbitError } from '../core/errors.ts';
-import type { PlannerOutput } from '../contract/model-outputs.ts';
 import type { GoalContract } from '../contract/types.ts';
 import { adminDirFor, git, resolveCommit } from '../evidence/git.ts';
 import { safePath } from './gates.ts';
@@ -64,16 +63,15 @@ export interface NeededPath {
 }
 
 /**
- * The paths of `denied` a criterion needs: one of its mapped tests, or a change the stored planner output plans for it
- * (planner criterion n is AC-n, contract/draft). A keep criterion's test the base already has is not needed changed:
- * restoring it is what that criterion asks for.
+ * The paths of `denied` a criterion needs: one of the tests the contract maps to it. A path only the planner's output
+ * names is not needed (that is model text, never checked against the scope; a rebuilt bundle it mentions is restored).
+ * A keep criterion's test the base already has is not needed changed: restoring it is what that criterion asks for.
  */
-export function neededPaths(denied: readonly string[], contract: GoalContract, plan: PlannerOutput | null, onBase: ReadonlySet<string>): NeededPath[] {
+export function neededPaths(denied: readonly string[], contract: GoalContract, onBase: ReadonlySet<string>): NeededPath[] {
   const plain = (p: string): string => p.trim().replace(/^\.\//, '');
   const named = contract.acceptance_criteria.map((c) => {
     const tests = (c.tests ?? []).map(plain).filter((p) => !(c.kind === 'keep' && onBase.has(p)));
-    const planned = plan?.criteria.find((_, i) => `AC-${i + 1}` === c.id)?.changes.map((x) => plain(x.path)) ?? [];
-    return { id: c.id, paths: new Set([...tests, ...planned]) };
+    return { id: c.id, paths: new Set(tests) };
   });
   return denied.flatMap((path) => {
     const criteria = named.filter((n) => n.paths.has(path)).map((n) => n.id);

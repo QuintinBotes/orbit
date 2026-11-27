@@ -993,8 +993,9 @@ file the base does not have; in-scope edits stay, the candidate itself keeps
 the change, and the repair brief and a `repair.scope-restore` decision name the
 paths. The run ends `BLOCKED` instead, naming the paths:
 
-- when a criterion needs one of them (its mapped tests, or a change the plan
-  lists for it; not a `keep` criterion's test the base already has). Nothing is
+- when a criterion needs one of them (a test the contract maps to it; not a
+  `keep` criterion's test the base already has, and not a path only the
+  planner's output names, which is restored like any other). Nothing is
   restored and no repair attempt is spent (`repair.scope-needed`). The run's
   scope does not change, so cancel it and start a new run that covers the path;
 - when a repair ends on the denied tree again, judged as before, also when the

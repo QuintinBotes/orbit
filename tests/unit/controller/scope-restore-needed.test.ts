@@ -44,11 +44,9 @@ async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: s
 }
 
 describe('a denied out-of-scope path a criterion needs', () => {
-  it.each([
-    ['a mapped test', { criterion: { tests: ['docs/new.md'] } }, 'docs/new.md (needed by AC-1)'],
-    ['a planned change', { planned: 'docs/guide.md' }, 'docs/guide.md (needed by AC-1)'],
-  ])('as %s blocks the run naming it, restores nothing and writes no brief', async (_what, options, named) => {
-    const r = await denied(options);
+  it('as a mapped test blocks the run naming it, restores nothing and writes no brief', async () => {
+    const named = 'docs/new.md (needed by AC-1)';
+    const r = await denied({ criterion: { tests: ['docs/new.md'] } });
     expect(r.run.state).toBe('BLOCKED');
     expect(r.run.outcomeReason).toContain(named);
     expect(r.run.outcomeReason).toContain(`orbit cancel ${lab.runId}`);
@@ -61,6 +59,13 @@ describe('a denied out-of-scope path a criterion needs', () => {
 });
 
 describe('a denied out-of-scope path nothing needs', () => {
+  it('includes one only the planner output names: it is restored, not a block (the contract alone says what is needed)', async () => {
+    const r = await denied({ planned: 'docs/guide.md' });
+    expect(r.run.state).toBe('REPAIRING');
+    expect(r.guide()).toBe('guide\n');
+    expect(r.added()).toBe(false);
+  });
+
   it('is restored before the repair, and the brief names it', async () => {
     const r = await denied();
     expect(r.run.state).toBe('REPAIRING');

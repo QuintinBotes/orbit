@@ -12,7 +12,6 @@ import { diagnosingStep } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { listDecisions } from '../../../src/storage/decisions.ts';
 import { addCandidate, cleanScope, gitIn, giveRepository, initLedger, makeUnitLab, setContract, validContract, type UnitLab } from './coverage-helpers.ts';
-import type { PlannerOutput } from '../../../src/contract/model-outputs.ts';
 
 let lab: UnitLab;
 afterEach(() => lab?.cleanup());
@@ -159,9 +158,7 @@ describe('a protected-path denial', () => {
 });
 
 describe('neededPaths', () => {
-  const plan = (...changes: string[][]) => ({ criteria: changes.map((paths) => ({ changes: paths.map((path) => ({ path, summary: 's' })) })) }) as unknown as PlannerOutput;
-
-  it('names a denied path a criterion maps a test or a planned change to, but not a kept test the base has', () => {
+  it('names a denied path a criterion maps a test to, but not a kept test the base has', () => {
     lab = makeUnitLab();
     const contract = validContract(lab, {
       acceptance_criteria: [
@@ -170,11 +167,9 @@ describe('neededPaths', () => {
       ],
     });
     const denied = ['spec/new.test.mjs', 'spec/old.test.mjs', 'spec/absent.test.mjs', 'docs/guide.md', 'other.md'];
-    expect(neededPaths(denied, contract, plan([], ['./docs/guide.md']), new Set(['spec/old.test.mjs']))).toEqual([
+    expect(neededPaths(denied, contract, new Set(['spec/old.test.mjs']))).toEqual([
       { path: 'spec/new.test.mjs', criteria: ['AC-1'] },
       { path: 'spec/absent.test.mjs', criteria: ['AC-2'] },
-      { path: 'docs/guide.md', criteria: ['AC-2'] },
     ]);
-    expect(neededPaths(['docs/guide.md'], contract, null, new Set())).toEqual([]);
   });
 });
