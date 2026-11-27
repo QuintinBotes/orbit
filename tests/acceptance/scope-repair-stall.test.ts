@@ -27,7 +27,7 @@ describe('acceptance: a repair that writes the out-of-scope path again blocks (i
 
     expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toContain('changes paths outside the authorized scope again: build/output.txt.');
-    expect(done.outcomeReason).toContain(`orbit resume ${run.id} --force`);
+    expect(done.outcomeReason).toContain(`orbit resume ${run.id}.`);
     expect(done.outcomeReason!.includes('It is also over the size limits')).toBe(changedLines === 100);
     expect(listWorkers(db, { runId: run.id, role: 'implementer' })).toHaveLength(2);
     expect(new Set(listCandidates(db, run.id).map((c) => c.treeHash)).size).toBe(1);

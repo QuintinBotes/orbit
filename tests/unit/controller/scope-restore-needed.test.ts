@@ -4,7 +4,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { atomicWriteJson } from '../../../src/core/fsx.ts';
 import { recordFailure, setCandidateScope } from '../../../src/evidence/store.ts';
 import { getRun } from '../../../src/controller/run-store.ts';
@@ -22,7 +22,7 @@ afterEach(() => lab?.cleanup());
 
 const CRITERION: AcceptanceCriterion = { id: 'AC-1', statement: 'mul(a, b) returns the product', proof: ['a test'], mandatory: true, check_ids: ['unit'] };
 
-async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: string; scope?: Partial<ScopeReport> } = {}) {
+async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: string; scope?: Partial<ScopeReport>; write?: Record<string, string> } = {}) {
   lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'DIAGNOSING'] });
   const repo = await giveRepository(lab, { 'apps/calc.mjs': 'export {};\n', 'docs/guide.md': 'guide\n' });
   setContract(lab, { baseline_revision: repo.base, acceptance_criteria: [{ ...CRITERION, ...o.criterion }] });
@@ -39,6 +39,10 @@ async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: s
   recordFailure(lab.db, { runId: lab.runId, candidateId: cand.id, source: 'worker', sourceId: `scope:${cand.id}`, fingerprint: 'scope:abc', excerpt: 'paths outside the authorized scope changed: docs/guide.md, docs/new.md' }, lab.clock);
   writeFileSync(join(repo.worktree, 'docs/guide.md'), 'rewritten\n');
   writeFileSync(join(repo.worktree, 'docs/new.md'), 'added\n');
+  for (const [path, text] of Object.entries(o.write ?? {})) {
+    mkdirSync(dirname(join(repo.worktree, path)), { recursive: true });
+    writeFileSync(join(repo.worktree, path), text);
+  }
   await diagnosingStep(lab.ctx());
   return { ...repo, run: getRun(lab.db, lab.runId), guide: () => readFileSync(join(repo.worktree, 'docs/guide.md'), 'utf8'), added: () => existsSync(join(repo.worktree, 'docs/new.md')) };
 }
@@ -59,6 +63,16 @@ describe('a denied out-of-scope path a criterion needs', () => {
 });
 
 describe('a denied out-of-scope path nothing needs', () => {
+  it('is kept when the scope now allows it (an amendment since the candidate was inspected), and the rest is restored', async () => {
+    // Inspected under a contract scope of apps/** only; the contract now also allows tests/**, as an approved amendment would.
+    const r = await denied({ scope: { out_of_scope_paths_changed: ['tests/helper.mjs', 'docs/new.md'] }, write: { 'tests/helper.mjs': 'helper\n' } });
+    expect(r.run.state).toBe('REPAIRING');
+    expect(readFileSync(join(r.worktree, 'tests/helper.mjs'), 'utf8')).toBe('helper\n');
+    expect(r.added()).toBe(false);
+    const { brief } = JSON.parse(readFileSync(briefPath(lab.ctx(), 2), 'utf8')) as { brief: { evidence: string[] } };
+    expect(brief.evidence.join('\n')).not.toContain('tests/helper.mjs');
+  });
+
   it('includes one only the planner output names: it is restored, not a block (the contract alone says what is needed)', async () => {
     const r = await denied({ planned: 'docs/guide.md' });
     expect(r.run.state).toBe('REPAIRING');

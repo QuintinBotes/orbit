@@ -999,8 +999,11 @@ paths. The run ends `BLOCKED` instead, naming the paths:
   restored and no repair attempt is spent (`repair.scope-needed`). The run's
   scope does not change, so cancel it and start a new run that covers the path;
 - when a repair ends on the denied tree again, judged as before, also when the
-  candidate is over the size limits too. `orbit resume <run-id> --force`
-  restores the paths and tries once more.
+  candidate is over the size limits too. `orbit resume <run-id>` restores the
+  paths and tries once more.
+
+The paths come from the candidate's scope inspection, read against the scope as
+it is now: a path an approved contract amendment has since allowed is kept.
 
 A protected-path denial is a policy violation: it blocks as before, and
 nothing is restored until a person resumes the run.

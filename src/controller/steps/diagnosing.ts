@@ -27,6 +27,8 @@ import { listDecisions } from '../../storage/decisions.ts';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { extensionDecisionRecord } from '../../scheduling/budget.ts';
 import type { RunContext } from '../context.ts';
+import type { GoalContract } from '../../contract/types.ts';
+import { compileGlobs } from '../../policy/globs.ts';
 import { recordedTurnCap, routeFor } from '../workers.ts';
 import { describeLargestChanges, implementationScopeGate, safePath } from '../gates.ts';
 import { filesOfRevision, listPaths, neededPaths, restoreToBase, type NeededPath } from '../repair.ts';
@@ -47,7 +49,7 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   const config = ctx.snapshot.config;
 
   // A path outside the scope that a criterion needs: no repair inside the scope can meet it, so none is spent.
-  const outside = outOfScopePaths(ctx, cand);
+  const outside = outOfScopePaths(ctx, cand, contract);
   if (outside.length > 0) {
     const needed = neededPaths(outside, contract, await filesOfRevision(ctx.run.repoRoot, ctx.run.baseRevision!));
     if (needed.length > 0) return blockOnNeededPaths(ctx, cand, outside, needed, next);
@@ -290,11 +292,15 @@ function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport,
 
 /**
  * The paths the candidate changed outside the authorized scope, when that denial is a repairable one. A policy violation
- * names none: it blocks, and only a person's resume restores that worktree (steps/verifying.ts).
+ * names none: it blocks, and only a person's resume restores that worktree (steps/verifying.ts). The candidate's scope
+ * report is from its verification; a path an approved amendment has since allowed is in scope now, and stays.
  */
-function outOfScopePaths(ctx: RunContext, cand: CandidateRecord): string[] {
+function outOfScopePaths(ctx: RunContext, cand: CandidateRecord, contract: GoalContract): string[] {
   if (!cand.scope || cand.status === 'INVALIDATED') return [];
-  return implementationScopeGate(cand.scope, ctx.snapshot, { partner: partnerImplemented(ctx) }).details.policyViolation ? [] : cand.scope.out_of_scope_paths_changed;
+  if (implementationScopeGate(cand.scope, ctx.snapshot, { partner: partnerImplemented(ctx) }).details.policyViolation) return [];
+  const policyAllowed = compileGlobs(ctx.snapshot.config.scope.allowed_paths, { nocase: false });
+  const contractAllowed = compileGlobs(contract.allowed_paths, { nocase: false });
+  return cand.scope.out_of_scope_paths_changed.filter((p) => !(policyAllowed(p) && contractAllowed(p)));
 }
 
 function blockOnNeededPaths(ctx: RunContext, cand: CandidateRecord, outside: string[], needed: NeededPath[], next: number): Promise<StepResult> {
@@ -308,7 +314,7 @@ function blockOnNeededPaths(ctx: RunContext, cand: CandidateRecord, outside: str
 /** The same tree denied for paths outside the scope twice (issue #280): another repair would start where this one did. */
 function blockOnScope(ctx: RunContext, cand: CandidateRecord, outside: string[], stalled: StalledRepair): Promise<StepResult> {
   const size = cand.scope && !cand.scope.within_size_limits ? ` It is also over the size limits (${cand.scope.changed_files} files, ${cand.scope.changed_lines} lines).` : '';
-  const reason = `candidate ${cand.seq} changes paths outside the authorized scope again: ${listPaths(outside, 10)}. Attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied, so no further attempt is dispatched on it.${size} If the task needs these paths, cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover them; ${attemptsLeft(ctx) ? `to try one more repair without them, resume with orbit resume ${ctx.run.id} --force.` : 'no implementation attempt is left for another repair in this run.'}`;
+  const reason = `candidate ${cand.seq} changes paths outside the authorized scope again: ${listPaths(outside, 10)}. Attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied, so no further attempt is dispatched on it.${size} If the task needs these paths, cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover them; ${attemptsLeft(ctx) ? `to try one more repair without them, resume with orbit resume ${ctx.run.id}.` : 'no implementation attempt is left for another repair in this run.'}`;
   decide(ctx, { id: `dec-${ctx.run.id}-scope-block-${stalled.attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, out_of_scope_paths: outside } });
   return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, scope: { out_of_scope_paths: outside } } });
 }
