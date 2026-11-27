@@ -586,8 +586,13 @@ describe('build script', () => {
 });
 
 describe.skipIf(!hasEntry)('bundle', () => {
+  // A fresh build into a copy of the payload. The default build rewrites the committed bundle and documentation copies,
+  // which a pull request into next does not commit, so testing in place dirtied every checkout it ran in (#282).
+  const plugin = mkTmp('orbit-bundle-plugin-');
+  const buildEnv = { ...process.env, ORBIT_BUILD_OUT: join(plugin, 'dist', 'orbit.mjs'), ORBIT_BUILD_DOCS_DIR: plugin };
   beforeAll(() => {
-    const r = run('node', ['scripts/build.mjs']);
+    cpSync(join(root, 'plugin'), plugin, { recursive: true });
+    const r = run('node', ['scripts/build.mjs'], { env: buildEnv });
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
@@ -595,7 +600,7 @@ describe.skipIf(!hasEntry)('bundle', () => {
     expect(readFileSync(join(plugin, 'dist/orbit.mjs'), 'utf8').startsWith('#!/usr/bin/env node\n')).toBe(true);
     expect(readFileSync(join(plugin, 'dist/srt-chromium-preload.mjs'), 'utf8')).toBe(readFileSync(join(root, 'src/isolation/srt-chromium-preload.mjs'), 'utf8'));
     expect(existsSync(join(root, 'dist'))).toBe(false);
-    expect(run('node', ['scripts/build.mjs', '--check']).status).toBe(0);
+    expect(run('node', ['scripts/build.mjs', '--check'], { env: buildEnv }).status).toBe(0);
   });
 
   it('runs --version and doctor --json in a temp repo', () => {
