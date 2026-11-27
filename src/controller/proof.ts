@@ -34,7 +34,7 @@ import { readIssueGoal } from '../intake/issue.ts';
 import { failBeforePolicy } from '../policy/config.ts';
 import { isLockfilePath } from '../policy/scope.ts';
 import { gitTreeReader, isTestOwnedPath, loadTestLayout } from '../policy/test-files.ts';
-import { changedLines, enclosingFunction, judgeProof, parseRange, PROOF_RESULT_KIND, proofResultId, type ProofAnswer, type ProofResult } from '../review/proof.ts';
+import { changedLines, enclosingFunction, judgeProof, narrowTestFile, parseRange, PROOF_RESULT_KIND, proofResultId, type ProofAnswer, type ProofResult } from '../review/proof.ts';
 import { cleanupCandidateCheckout, materializeCandidate } from '../evidence/candidate.ts';
 import { appendEvent } from '../storage/events.ts';
 import { getDecision } from '../storage/decisions.ts';
@@ -267,6 +267,16 @@ async function auditPacket(ctx: RunContext, cand: CandidateRecord, c: Acceptance
   const layout = await loadTestLayout(gitTreeReader((args) => git(ctx.run.repoRoot, args)), ctx.run.baseRevision!, cand.commitSha, tests, { allDotnetOwners: true });
   const { files, missing, truncated } = await auditFiles(ctx.run.repoRoot, cand.commitSha, tests, (p) => isTestOwnedPath(p, layout));
   if (missing.length > 0) return { missing: `the mapped test ${missing.join(', ')} is not in the candidate, so it cannot be audited` };
+  // A mapped test file that existed at the base is cut to the cases the candidate added or changed (issue #284): those are
+  // the criterion's proof, and a long existing file would otherwise put the whole packet over the auditor's limit.
+  const changed = await changedFiles(ctx, cand);
+  for (const path of tests) {
+    const text = files.get(path);
+    const lines = changed.get(path);
+    if (text === undefined || lines === undefined || (await show(ctx.run.repoRoot, ctx.run.baseRevision!, path)) === null) continue;
+    const narrowed = narrowTestFile(text, lines);
+    if (narrowed !== null) files.set(path, narrowed);
+  }
   if (truncated) return { missing: `the mapped tests and their helpers are more than ${AUDIT_MAX_FILES} files, over the auditor's limit, so ${c.id} cannot be audited` };
   const size = [...files.values()].reduce((n, t) => n + t.length, 0);
   if (size > AUDIT_MAX_CHARS) return { missing: `the mapped tests and their helpers are ${size} characters, over the auditor's limit of ${AUDIT_MAX_CHARS}, so ${c.id} cannot be audited` };
@@ -284,7 +294,7 @@ async function auditPacket(ctx: RunContext, cand: CandidateRecord, c: Acceptance
       'Answer one question: would these tests still pass if the criterion were false? Imagine an implementation for which the criterion does not hold (the behaviour is missing, wrong, or done by someone else, such as a person, a fixture or a mock) and judge whether every mapped test would still pass on it. A test that asserts nothing about the criterion, asserts a fixture or a mock it set up itself, performs the very step the criterion says does not happen, or tests a paraphrase that differs in what is counted, a number or a negation, would still pass.',
       `If yes, answer REPAIR_REQUIRED with exactly one finding: id ${'AUDIT-1'}, severity high, category criterion-audit, location the test file and line, claim one sentence saying why the tests would still pass, evidence the lines that show it.`,
       `If no, answer APPROVE with exactly one finding: id ${'AUDIT-1'}, severity info, category criterion-audit, claim one sentence saying which assertion would fail, evidence those lines. Report no other finding.`,
-      'The files are below and in this directory; read nothing else.',
+      'The files are below and in this directory; read nothing else. In a test file that existed before this change, the test cases it did not change are left out and marked; judge the cases that are there.',
     ],
     blocks: [{ label: `criterion ${c.id}`, content: c.statement }, ...[...files].map(([path, text]) => ({ label: `${tests.includes(path) ? 'mapped test' : 'test helper'} ${path}`, content: text }))],
   };
