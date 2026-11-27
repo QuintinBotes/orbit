@@ -96,10 +96,12 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   }
 
   // The next attempt, and any inquiry before it, starts from a worktree without the out-of-scope changes. The candidate
-  // keeps them, and running this again changes nothing.
-  if (outside.length > 0) {
+  // keeps them, and running this again changes nothing. Coming back here after the Inquisition, the restore is done; an
+  // amendment there may have shrunk the set, and recording it again with other paths would conflict.
+  const restoreId = `dec-${ctx.run.id}-scope-restore-${next}`;
+  if (outside.length > 0 && !listDecisions(ctx.db, ctx.run.id, { kind: 'repair.scope-restore' }).some((d) => d.id === restoreId)) {
     await restoreToBase({ repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath!, base: ctx.run.baseRevision!, paths: outside });
-    decide(ctx, { id: `dec-${ctx.run.id}-scope-restore-${next}`, kind: 'repair.scope-restore', summary: `restored to the base revision in the implementer's worktree before attempt ${next}: ${listPaths(outside, 10)}`, data: { attempt: next, candidate_id: cand.id, base: ctx.run.baseRevision, paths: outside } });
+    decide(ctx, { id: restoreId, kind: 'repair.scope-restore', summary: `restored to the base revision in the implementer's worktree before attempt ${next}: ${listPaths(outside, 10)}`, data: { attempt: next, candidate_id: cand.id, base: ctx.run.baseRevision, paths: outside } });
   }
 
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).

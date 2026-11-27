@@ -11,7 +11,7 @@ import { getRun } from '../../../src/controller/run-store.ts';
 import { diagnosingStep } from '../../../src/controller/steps/diagnosing.ts';
 import { briefPath } from '../../../src/controller/steps/implementing.ts';
 import { PLANNER_FILE } from '../../../src/controller/steps/contracting.ts';
-import { listDecisions } from '../../../src/storage/decisions.ts';
+import { listDecisions, recordDecision } from '../../../src/storage/decisions.ts';
 import { planner } from '../../acceptance/helpers/scenarios.ts';
 import { addCandidate, cleanScope, giveRepository, initLedger, makeUnitLab, setContract, type UnitLab } from './coverage-helpers.ts';
 import type { AcceptanceCriterion } from '../../../src/contract/types.ts';
@@ -22,7 +22,7 @@ afterEach(() => lab?.cleanup());
 
 const CRITERION: AcceptanceCriterion = { id: 'AC-1', statement: 'mul(a, b) returns the product', proof: ['a test'], mandatory: true, check_ids: ['unit'] };
 
-async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: string; scope?: Partial<ScopeReport>; write?: Record<string, string> } = {}) {
+async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: string; scope?: Partial<ScopeReport>; write?: Record<string, string>; restored?: string[] } = {}) {
   lab = makeUnitLab({ path: ['PREFLIGHT', 'CONTRACTING', 'PLANNING', 'IMPLEMENTING', 'VERIFYING', 'DIAGNOSING'] });
   const repo = await giveRepository(lab, { 'apps/calc.mjs': 'export {};\n', 'docs/guide.md': 'guide\n' });
   setContract(lab, { baseline_revision: repo.base, acceptance_criteria: [{ ...CRITERION, ...o.criterion }] });
@@ -43,6 +43,8 @@ async function denied(o: { criterion?: Partial<AcceptanceCriterion>; planned?: s
     mkdirSync(dirname(join(repo.worktree, path)), { recursive: true });
     writeFileSync(join(repo.worktree, path), text);
   }
+  // A restore already recorded for attempt 2, as when DIAGNOSING went to INQUISITION after it and comes back.
+  if (o.restored) recordDecision(lab.db, lab.ctx().runDir, { id: `dec-${lab.runId}-scope-restore-2`, runId: lab.runId, kind: 'repair.scope-restore', summary: 'restored before attempt 2', data: { attempt: 2, candidate_id: cand.id, base: repo.base, paths: o.restored } }, lab.clock);
   await diagnosingStep(lab.ctx());
   return { ...repo, run: getRun(lab.db, lab.runId), guide: () => readFileSync(join(repo.worktree, 'docs/guide.md'), 'utf8'), added: () => existsSync(join(repo.worktree, 'docs/new.md')) };
 }
@@ -63,6 +65,12 @@ describe('a denied out-of-scope path a criterion needs', () => {
 });
 
 describe('a denied out-of-scope path nothing needs', () => {
+  it('coming back to DIAGNOSING after the restore was recorded with other paths (an amendment in between) does not conflict', async () => {
+    const r = await denied({ restored: ['docs/guide.md', 'docs/new.md', 'tests/helper.mjs'] });
+    expect(r.run.state).toBe('REPAIRING');
+    expect(listDecisions(lab.db, lab.runId, { kind: 'repair.scope-restore' })).toHaveLength(1);
+  });
+
   it('is kept when the scope now allows it (an amendment since the candidate was inspected), and the rest is restored', async () => {
     // Inspected under a contract scope of apps/** only; the contract now also allows tests/**, as an approved amendment would.
     const r = await denied({ scope: { out_of_scope_paths_changed: ['tests/helper.mjs', 'docs/new.md'] }, write: { 'tests/helper.mjs': 'helper\n' } });
