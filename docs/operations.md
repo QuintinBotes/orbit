@@ -1044,6 +1044,14 @@ total. Only a person answers it:
 Only an answer to the request the run is waiting on releases it: running an
 old approve line again changes nothing and says so.
 
+With remote answers on (`notifications.remote_answers`), a spend request is a
+question like any other: a collaborator with write, maintain or admin
+permission on the repository may approve or refuse it with
+`/orbit answer <question> approve` on the run's issue or pull request, and the
+answer is recorded with its author and comment (the owner's decision, #289).
+Anyone with less permission, and any bot, is refused. To keep spend to your
+own terminal, leave remote answers off.
+
 Any other answer is rejected, and `orbit resume --force` without an approval
 blocks again before a session starts. The request is also written to
 `${XDG_STATE_HOME:-~/.local/state}/stack/inbox/spend/<id>.json` (mode 0600, in a
