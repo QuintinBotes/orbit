@@ -394,15 +394,15 @@ export function dependencyAuditPolicy(config: Pick<OrbitConfig, 'dependencies'>)
 /** The one wall-clock bound of a fail-before probe when the config sets none (ADR 0014). */
 export const DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS = 900;
 
-/**
- * The fail-before policy (docs/decisions/0014-fail-before.md). A snapshot written before the key existed reads as `off`:
- * the run keeps the evidence rule it started with.
- */
 /** How many checks run at once (verification.check_parallelism, issue #266); a snapshot from before the key reads 1. */
 export function checkParallelism(config: Pick<OrbitConfig, 'verification'>): number {
   return config.verification.check_parallelism ?? 1;
 }
 
+/**
+ * The fail-before policy (docs/decisions/0014-fail-before.md). A snapshot written before the key existed reads as `off`:
+ * the run keeps the evidence rule it started with.
+ */
 export function failBeforePolicy(config: Pick<OrbitConfig, 'verification'>): { mode: FailBeforeMode; timeoutSeconds: number } {
   return { mode: config.verification.fail_before ?? 'off', timeoutSeconds: config.verification.fail_before_timeout_seconds ?? DEFAULT_FAIL_BEFORE_TIMEOUT_SECONDS };
 }

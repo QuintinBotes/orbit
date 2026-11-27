@@ -240,8 +240,12 @@ export async function runCheckSet(ctx: RunnerContext, subject: CheckSubject, def
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, defs.length) }, worker));
+  const workers = Math.min(limit, defs.length);
+  await Promise.all(Array.from({ length: workers }, worker));
   if (errors.length > 0) throw errors[0];
+  // Checks that ran at once all passed the launch-time tree check before any of them could write. One that rewrote a
+  // tracked file did so while the others ran, so none of the set's results is evidence for the candidate (#266 review).
+  if (workers > 1 && !detached(ctx) && !cancelRequested(ctx)) await assertSetUnmodified(ctx.checkoutDir, defs.map((d) => d.id));
   return results.filter((r): r is CheckResult => r !== null);
 }
 
@@ -809,6 +813,16 @@ function msbuildFixWhere(ctx: Pick<RunnerContext, 'snapshot'>, def: CheckDefinit
  * bound to a tree it never saw. Untracked and ignored output (builds,
  * node_modules, reports) is not part of the tree and is allowed.
  */
+/** After checks ran at once: the same rule as assertCheckoutUnmodified, for the whole set. */
+async function assertSetUnmodified(dir: string, ran: readonly string[]): Promise<void> {
+  const out = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none']);
+  const changed = out.split('\0').filter(Boolean).map((rec) => rec.slice(3));
+  if (changed.length > 0) {
+    const shown = changed.slice(0, 10).join(', ') + (changed.length > 10 ? `, and ${changed.length - 10} more` : '');
+    throw new OrbitError('STALE_EVIDENCE', `the checkout no longer holds the candidate tree after checks ${ran.join(', ')} ran at once (tracked files changed: ${shown}); none of their results is evidence for the candidate`, { checkout: dir, changed: changed.slice(0, 50), checkIds: [...ran] });
+  }
+}
+
 async function assertCheckoutUnmodified(dir: string, nextCheck: string): Promise<void> {
   const out = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none']);
   const changed = out.split('\0').filter(Boolean).map((rec) => rec.slice(3));

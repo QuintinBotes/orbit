@@ -40,7 +40,7 @@ describe('verification.check_parallelism', () => {
     expect(checkParallelism(old)).toBe(1);
   });
 
-  it('reaches the runner of the candidate checks and the probes', () => {
+  it('reaches the runner of the candidate checks', () => {
     const lab = makeUnitLab({ tweak: (c) => void (c.verification.check_parallelism = 3) });
     labs.push(lab);
     expect(checkRunnerFor(lab.ctx()).parallelism).toBe(3);
