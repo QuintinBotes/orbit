@@ -31,7 +31,7 @@ import { parseAuthStatus } from '../../delivery/github.ts';
 import { defaultTermsPath, loadPublicationGuard } from '../../guard/publication.ts';
 import { DELIVERY_MODES } from '../../policy/config.ts';
 import { sharedCatalogPath } from '../../routing/shared-catalog.ts';
-import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus } from '../../controller/steps/preflight.ts';
+import { DIRTY_STATUS_ARGS, dirtyStartRefusal, parseDirtyStatus, staleStart } from '../../controller/steps/preflight.ts';
 import { deliveryEnvironmentProblem, deliversThroughGithub } from '../../controller/delivery-env.ts';
 import { openDb, type OrbitDb } from '../../storage/db.ts';
 import { MIGRATIONS } from '../../storage/schema.ts';
@@ -202,6 +202,14 @@ async function checkGit(p: Probe): Promise<DoctorCheck[]> {
   if (base.exitCode !== 0) {
     problems.push({ missing: `base branch ${config.repository.base_branch}`, fix: `create it, or set repository.base_branch to an existing branch`, severity: 'warn' });
     details.push(`repository.base_branch "${config.repository.base_branch}" does not exist locally`);
+  }
+  // Issue #273: a run starts from what is checked out, so a checkout behind the base branch (locally or on its remote)
+  // builds on stale code. The same rule PREFLIGHT and admission apply.
+  const stale = await staleStart(repo, head.stdout.trim(), config.repository.base_branch, config.repository.remote);
+  if (stale !== null) {
+    const name = stale.data.base_ref.startsWith('refs/remotes/') ? `${config.repository.remote}/${config.repository.base_branch}` : config.repository.base_branch;
+    problems.push({ missing: `the ${stale.data.missing} newest commit(s) of ${name} in the checked-out commit`, fix: `check out ${config.repository.base_branch} (or run from a worktree of it) before starting a run; a run started here is refused unless repository.allow_stale_start`, severity: 'warn' });
+    details.push(`the checked-out commit lacks ${stale.data.missing} commit(s) of ${name}: a run started here would build on code ${config.repository.base_branch} has moved past`);
   }
   const needsRemote = config.actions.push_task_branch && DELIVERY_MODES.has(config.mode);
   if (needsRemote) {

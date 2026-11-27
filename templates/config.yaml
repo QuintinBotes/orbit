@@ -34,6 +34,11 @@ repository:
   branch_prefix: orbit/
   # Refuse to start when the working tree has uncommitted changes.
   allow_dirty_start: false
+  # A run starts from the checked-out commit and delivers into base_branch, so
+  # it refuses to start from a commit that lacks commits of base_branch (it
+  # would build and verify on stale code). Check out base_branch, or start
+  # from a worktree of it.
+  allow_stale_start: false
   remote: origin
 
 scope:

@@ -1,0 +1,2 @@
+section: Fixes
+- A run no longer starts silently from a commit behind `repository.base_branch`. Such a run built and verified on code the base branch had moved past, then delivered into it. PREFLIGHT now refuses it before any model spend, naming both commits and the fix (check out the base branch, or start from a worktree of it); `repository.allow_stale_start: true` starts it anyway and records the decision. `orbit doctor` warns about such a checkout (#273).

@@ -77,6 +77,11 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     }
     decide(ctx, { id: `dec-${ctx.run.id}-dirty-start`, kind: 'preflight.dirty-start', summary: `dirty start allowed by policy; ${dirty.length} uncommitted path(s) are not part of the run, which starts from ${head}`, data: { paths: dirty.slice(0, 200) } });
   }
+  const stale = await staleStart(repo, head, ctx.snapshot.config.repository.base_branch, ctx.snapshot.config.repository.remote);
+  if (stale !== null) {
+    if (!ctx.snapshot.config.repository.allow_stale_start) return finishRun(ctx, 'BLOCKED', `${stale.reason}; ${stale.fix}`, { outcome: { stale_start: stale.data } });
+    decide(ctx, { id: `dec-${ctx.run.id}-stale-start`, kind: 'preflight.stale-start', summary: `stale start allowed by policy; ${stale.reason}`, data: stale.data });
+  }
 
   // The baseline checkout lives with the run's other checkouts, outside the repository.
   const wtRoot = runWorktreeRoot(ctx);
@@ -409,6 +414,34 @@ export function parseDirtyStatus(out: string): DirtySplit {
     if ('RC'.includes(e[0]!) || 'RC'.includes(e[1]!)) i++;
   }
   return split;
+}
+
+/**
+ * Issue #273: whether the commit a run starts from lacks commits of the base branch it delivers into (behind it, or
+ * diverged from it). Such a run would build and verify on code the base branch has moved past. The base branch is read
+ * as the remote-tracking ref (what a pull request targets, as of the last fetch) and as the local branch, and the
+ * larger gap counts: a fresh clone has no local copy of a non-default base, and a local copy can lag its remote. Null
+ * when the start contains both tips, and when neither can be read (doctor reports a missing base branch).
+ */
+export async function staleStart(repo: string, head: string, base: string, remote: string): Promise<{ reason: string; fix: string; data: { head: string; base: string; base_tip: string; base_ref: string; missing: number } } | null> {
+  let worst: { tip: string; ref: string; missing: number } | null = null;
+  for (const ref of [`refs/remotes/${remote}/${base}`, `refs/heads/${base}`]) {
+    try {
+      const tip = (await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim();
+      if (!/^[0-9a-f]{40}$/.test(tip)) continue;
+      const missing = Number((await git(repo, ['rev-list', '--count', `${head}..${tip}`])).trim());
+      if (Number.isInteger(missing) && missing > 0 && (worst === null || missing > worst.missing)) worst = { tip, ref, missing };
+    } catch {
+      // This ref does not exist here; the other may.
+    }
+  }
+  if (worst === null) return null;
+  const name = worst.ref.startsWith('refs/remotes/') ? `${remote}/${base}` : base;
+  return {
+    reason: `the run starts from ${head.slice(0, 7)}, which lacks ${worst.missing} commit(s) of ${name} (${worst.tip.slice(0, 7)}): it would build and verify on code ${base} has moved past, then deliver into ${base}`,
+    fix: `check out ${base}, or start from a worktree of it, or set repository.allow_stale_start in .orbit/config.yaml and start a new run`,
+    data: { head, base, base_tip: worst.tip, base_ref: worst.ref, missing: worst.missing },
+  };
 }
 
 /**

@@ -118,6 +118,47 @@ describe('preflightStep', () => {
     expect(decisions('preflight.dirty-start')[0]?.summary).toContain('dirty start allowed by policy; 1 uncommitted path(s)');
   });
 
+  // Issue #273: a run started behind repository.base_branch builds and verifies on code the base branch has moved past.
+  const behindBy = (missing: string) => (_repo: string, args: readonly string[]) => {
+    if (args[0] === 'rev-parse') return Promise.resolve(`${'c'.repeat(40)}\n`);
+    if (args[0] === 'rev-list') return Promise.resolve(`${missing}\n`);
+    return Promise.resolve('');
+  };
+
+  it('refuses a start behind the base branch, naming both commits and the fix, unless the policy allows it (#273)', async () => {
+    setup((c) => void (c.repository.base_branch = 'next'));
+    hooks.git.mockImplementation(behindBy('8'));
+    await preflightStep(lab.ctx());
+    expect(state()).toBe('BLOCKED');
+    const reason = getRun(lab.db, lab.runId).outcomeReason ?? '';
+    expect(reason).toContain(`the run starts from ${'b'.repeat(7)}, which lacks 8 commit(s) of origin/next (${'c'.repeat(7)})`);
+    expect(reason).toMatch(/check out next, or start from a worktree of it, or set repository\.allow_stale_start in \.orbit\/config\.yaml and start a new run/);
+    expect(hooks.runBaseline).not.toHaveBeenCalled();
+    // It reads the remote-tracking base and the local one, and counts the base's commits missing from the start.
+    const calls = hooks.git.mock.calls.map((c) => (c[1] as string[]).join(' '));
+    expect(calls).toContain('rev-parse --verify --quiet refs/remotes/origin/next^{commit}');
+    expect(calls).toContain('rev-parse --verify --quiet refs/heads/next^{commit}');
+    expect(calls).toContain(`rev-list --count ${'b'.repeat(40)}..${'c'.repeat(40)}`);
+    lab.cleanup();
+    setup((c) => {
+      c.repository.base_branch = 'next';
+      c.repository.allow_stale_start = true;
+    });
+    hooks.git.mockImplementation(behindBy('8'));
+    expect(await preflightStep(lab.ctx())).toEqual({ progressed: true });
+    expect(decisions('preflight.stale-start')[0]?.summary).toContain('stale start allowed by policy');
+  });
+
+  it('starts as today from a commit that contains the base branch, or when the base branch cannot be read (#273)', async () => {
+    setup((c) => void (c.repository.base_branch = 'next'));
+    hooks.git.mockImplementation(behindBy('0'));
+    expect(await preflightStep(lab.ctx())).toEqual({ progressed: true });
+    lab.cleanup();
+    setup((c) => void (c.repository.base_branch = 'next'));
+    hooks.git.mockImplementation((_r: string, args: readonly string[]) => (args[0] === 'rev-parse' ? Promise.reject(new Error('unknown revision')) : Promise.resolve('')));
+    expect(await preflightStep(lab.ctx())).toEqual({ progressed: true });
+  });
+
   it('lists at most ten dirty paths in the refusal', async () => {
     setup();
     hooks.git.mockResolvedValue(Array.from({ length: 12 }, (_, i) => ` M f${i}.txt\0`).join(''));
