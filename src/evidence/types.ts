@@ -67,7 +67,7 @@ export interface ScopeReport {
   dependency_manifest_changed: string[];
   symlinks_escaping: string[];
   /** Signals that tests or oracles were weakened (removed assertions, .skip, raised timeouts, snapshot edits). */
-  weakening_signals: { path: string; signal: string; detail: string }[];
+  weakening_signals: { path: string; signal: string; detail: string; conditional_in_new_file?: true }[];
   visual_baseline_changes: string[];
   /** Only when an instruction file changed (INSTRUCTION_FILE_GLOBS, issue #235): the changed paths, sorted. */
   instruction_files_changed?: string[];

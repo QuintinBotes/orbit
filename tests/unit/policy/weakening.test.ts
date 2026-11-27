@@ -257,3 +257,29 @@ describe('loosening introduced where the framework default applied before', () =
     expect(signals({ diff: diff([], ['  // a comment about the timeout: 5000']) })).not.toContain('timeout-raised');
   });
 });
+
+describe('a conditional skip (issue #285)', () => {
+  const guard = "describe.skipIf(!READY)('acceptance: the spend file', () => {";
+  const detect = (status: WeakeningInput['status'], line: string, path = 'tests/acceptance/spend-file.test.ts') =>
+    detectWeakening([{ path, status, diff: diff([], [line]) } as WeakeningInput]);
+
+  it('is still test-skipped, marked as an environment guard only in a file the candidate adds', () => {
+    expect(detect('A', guard)).toEqual([{ path: 'tests/acceptance/spend-file.test.ts', signal: 'test-skipped', detail: guard, conditional_in_new_file: true }]);
+    expect(detect('M', guard)).toEqual([{ path: 'tests/acceptance/spend-file.test.ts', signal: 'test-skipped', detail: guard }]);
+    for (const line of ["it.runIf(process.platform === 'linux')('x', () => {})", "test.skipIf(!HAS_DEMO)('x', () => {})"]) {
+      expect(detect('A', line)[0], line).toMatchObject({ signal: 'test-skipped', conditional_in_new_file: true });
+    }
+    for (const line of ['@pytest.mark.skipif(sys.platform == "win32", reason="posix")', '@unittest.skipIf(NO_NET, "offline")', '@unittest.skipUnless(HAS_X, "x")']) {
+      expect(detect('A', line, 'tests/test_y.py')[0], line).toMatchObject({ signal: 'test-skipped', conditional_in_new_file: true });
+    }
+  });
+
+  it('an unconditional skip in a new file is never marked as a guard', () => {
+    for (const line of ["it.skip('works', () => {})", "describe.skip('suite', () => {})", "it.todo('later')"]) {
+      expect(detect('A', line)[0], line).toEqual({ path: 'tests/acceptance/spend-file.test.ts', signal: 'test-skipped', detail: line });
+    }
+    for (const line of ['@pytest.mark.skip(reason="flaky")', '@unittest.skip("x")']) {
+      expect(detect('A', line, 'tests/test_y.py')[0], line).toEqual({ path: 'tests/test_y.py', signal: 'test-skipped', detail: line });
+    }
+  });
+});

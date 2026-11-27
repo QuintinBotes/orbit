@@ -46,6 +46,12 @@ export interface WeakeningSignal {
   path: string;
   signal: WeakeningSignalId;
   detail: string;
+  /**
+   * A conditional skip (an environment guard such as `describe.skipIf(!READY)`) in a test file the candidate adds
+   * (issue #285): it weakens no existing oracle, and the evidence report drops it when the guarded tests ran on both
+   * trees in the fail-before probe.
+   */
+  conditional_in_new_file?: true;
 }
 
 type Lang = 'js' | 'py' | 'go' | 'other';
@@ -108,17 +114,23 @@ ASSERTION.other = [...ASSERTION.js, ...ASSERTION.py, ...ASSERTION.go];
 
 const COMMENT = /^\s*(\/\/|#|\*|\/\*|<!--)/;
 
+/** Skips that depend on a condition: an environment guard rather than a test switched off (issue #285). */
+const CONDITIONAL_SKIP: RegExp[] = [
+  /\b(describe|it|test|suite)\.(skipIf|runIf)\s*\(/,
+  /@pytest\.mark\.skipif\b/,
+  /@unittest\.(skipIf|skipUnless)\b/,
+];
+
 const SKIP: RegExp[] = [
   /\b(describe|it|test|context|suite|specify)\.skip\b/,
   /\b(xit|xdescribe|xtest|xcontext|xspecify|xsuite)\s*\(/,
   /\btest\.(fixme|fail)\b/,
   /\btest\.describe\.(skip|fixme)\b/,
   /\b(it|test|describe)\.todo\b/,
-  /\b(it|test|describe)\.(skipIf|runIf)\s*\(/,
   /\bthis\.skip\s*\(\s*\)/,
   /\bpending\s*\(\s*\)/,
-  /@pytest\.mark\.(skip|skipif|xfail)\b/,
-  /@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b/,
+  /@pytest\.mark\.(skip|xfail)\b(?!if)/,
+  /@unittest\.(skip|expectedFailure)\b(?!If|Unless)/,
   /\bpytest\.(skip|xfail|importorskip)\s*\(/,
   /\bself\.skipTest\s*\(/,
   /raise\s+(unittest\.)?SkipTest\b/,
@@ -199,8 +211,8 @@ export function detectWeakening(files: readonly WeakeningInput[], layout: TestLa
 export function detectWeakeningInFile(file: WeakeningInput, layout: TestLayout = NO_LAYOUT): WeakeningSignal[] {
   const { path, status } = file;
   const signals: WeakeningSignal[] = [];
-  const add = (signal: WeakeningSignalId, detail: string) => {
-    if (!signals.some((s) => s.signal === signal && s.detail === detail)) signals.push({ path, signal, detail });
+  const add = (signal: WeakeningSignalId, detail: string, extra: Partial<WeakeningSignal> = {}) => {
+    if (!signals.some((s) => s.signal === signal && s.detail === detail)) signals.push({ path, signal, detail, ...extra });
   };
   const base = path.split('/').pop() ?? path;
 
@@ -249,6 +261,7 @@ export function detectWeakeningInFile(file: WeakeningInput, layout: TestLayout =
 
     for (const line of addedCode) {
       if (SKIP.some((r) => r.test(line))) add('test-skipped', trimDetail(line));
+      else if (CONDITIONAL_SKIP.some((r) => r.test(line))) add('test-skipped', trimDetail(line), status === 'A' ? { conditional_in_new_file: true } : {});
       if (FOCUS.some((r) => r.test(line))) add('test-focused', `focused test hides the rest of the suite: ${trimDetail(line)}`);
       if (/\btest\.slow\s*\(/.test(line)) add('timeout-raised', 'test.slow() triples the timeout');
     }
