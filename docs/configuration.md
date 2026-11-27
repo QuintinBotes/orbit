@@ -1532,7 +1532,17 @@ verification:
   allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
   fail_before: required               # off | advisory | required
   fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
+  check_parallelism: 1                # 1 to 16: checks run at once
 ```
+
+`check_parallelism` is how many of the policy's checks run at once: the
+candidate's checks in verification, the fail-before probes and the baseline
+at PREFLIGHT. No check reads another check's output, so any of them may run
+together, which cuts a verification round to roughly its slowest check. They
+still share the machine and the checkout, so keep 1 when a suite is
+timing-sensitive under load or two checks write the same files. The
+dependency install always runs first, alone. `orbit doctor` says when it is
+above 1.
 
 `allow_flaky_pass` is described with the checks above. `fail_before` decides
 what Orbit does with the question a new test raises: does it fail without the

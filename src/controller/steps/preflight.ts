@@ -29,7 +29,7 @@ import { blockOnAuth, decide, finishRun, move, safePoint, type StepResult } from
 import { workerPluginsStep } from './worker-plugins.ts';
 import { messageOf } from '../workers.ts';
 import { skipPartner } from '../route-outcome.ts';
-import { partnerImplementers } from '../../policy/config.ts';
+import { checkParallelism, partnerImplementers } from '../../policy/config.ts';
 
 /** The provider that implements unless `routing.implementers` lets a partner take a bounded unit (issue #176); always the fallback. */
 export const IMPLEMENTER_PROVIDER = 'claude';
@@ -105,6 +105,7 @@ export async function preflightStep(ctx: RunContext): Promise<StepResult> {
     signal: ctx.signal,
     pollMs: ctx.timing.checkPollMs,
     killGraceMs: ctx.timing.killGraceMs,
+    parallelism: checkParallelism(ctx.snapshot.config),
     homeDir: homeOf(ctx.deps),
     checkoutDir: baselineDir,
     toolchainCacheRoot: toolchainCacheRootFor(ctx),

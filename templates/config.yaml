@@ -548,3 +548,8 @@ verification:
   # The one wall-clock bound of a whole probe; skipped when the run has less
   # wall time left.
   fail_before_timeout_seconds: 900
+  # How many checks run at once, in verification, its probes and the baseline
+  # (1 to 16). Checks read no other check's output, but they share the machine
+  # and the checkout: keep 1 if a suite is timing-sensitive or two checks write
+  # the same files.
+  check_parallelism: 1

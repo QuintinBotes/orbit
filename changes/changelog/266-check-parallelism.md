@@ -1,0 +1,2 @@
+section: Changes
+- `verification.check_parallelism` (1 to 16, default 1) runs that many of a policy's checks at once, in verification, its fail-before probes and the PREFLIGHT baseline. No check reads another's output, so a round of checks can take about as long as its slowest one; checks still share the machine and the checkout, so the default stays 1 and `orbit doctor` notes a higher value (#266).
