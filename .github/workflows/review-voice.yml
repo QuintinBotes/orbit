@@ -1,0 +1,45 @@
+name: Review Voice
+
+# A trial of Review Voice (https://github.com/QuintinBotes/review-voice): one
+# review per pull request event, posted to the pull request. It reads its
+# settings from .review-voice/config.yaml at the pull request's base commit,
+# so a pull request cannot change the bar it is reviewed against; that file
+# also has to allow posting (writes.github_posting_enabled) and, during the
+# trial, keeps reviews from approving (verdict.never_approve).
+#
+# It needs the repository secret ANTHROPIC_API_KEY: a key scoped to a
+# workspace in the Anthropic Console, ideally one with a spend limit. Every
+# review is paid for by that key. Without it the step skips. Feedback on a
+# finding is recorded with /review-voice:feedback in Claude Code.
+
+on:
+  pull_request:
+    branches: [next, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: review-voice-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Pull requests from forks get no secrets, so they are not reviewed here.
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The base commit must be in the clone: the review reads its config from there.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: QuintinBotes/review-voice@6fcd6d47b2e72c8b403a4ca789438f379ee0734d # review-voice--v1.29.2
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          post: true
