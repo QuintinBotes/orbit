@@ -140,6 +140,68 @@ export function changedLines(diff: string): Set<number> {
   return out;
 }
 
+/** A JS/TS test case opening: `it(`, `test(`, or a modified form (`it.each(...)(`, `test.skipIf(x)(`, `it.only(`). */
+const TEST_CASE = /^\s*(?:it|test)(?:\.[A-Za-z]+(?:\([^)]*\))?)*\s*\(/;
+
+/**
+ * A test file the candidate changed but did not add, cut to what the audit is about (issue #284): every test case
+ * (`it(...)`, `test(...)`) the candidate's changed lines do not touch becomes one marker line, and everything else
+ * (imports, helpers, hooks, describe lines) stays. Null when no test case is touched, when the file has none, or when
+ * a case's end cannot be found, so the caller keeps the whole file.
+ * shortcut: a case ends where its braces and parentheses balance, counted per character without reading strings,
+ * comments or regular expressions; an unbalanced count gives up (null) rather than cut the wrong lines.
+ */
+export function narrowTestFile(text: string, changed: ReadonlySet<number>): string | null {
+  const lines = text.split('\n');
+  const cases: { start: number; end: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!TEST_CASE.test(lines[i]!)) continue;
+    let depth = 0;
+    let opened = false;
+    let end = -1;
+    for (let j = i; j < lines.length && end < 0; j++) {
+      for (const ch of lines[j]!) {
+        if (ch === '(' || ch === '{' || ch === '[') (depth += 1), (opened = true);
+        else if (ch === ')' || ch === '}' || ch === ']') depth -= 1;
+      }
+      if (opened && depth <= 0) end = j;
+    }
+    if (end < 0 || depth < 0) return null;
+    cases.push({ start: i, end });
+    i = end;
+  }
+  const touched = (c: { start: number; end: number }): boolean => {
+    for (let n = c.start + 1; n <= c.end + 1; n++) if (changed.has(n)) return true;
+    return false;
+  };
+  if (cases.length === 0 || !cases.some(touched)) return null;
+  // Unchanged cases with only blank lines between them become one marker, so a long file shrinks to its changed cases.
+  const out: string[] = [];
+  let at = 0;
+  let skipped: { start: number; end: number; indent: string } | null = null;
+  const flush = (): void => {
+    if (skipped) out.push(`${skipped.indent}// [Orbit] test cases the candidate did not change, lines ${skipped.start + 1}-${skipped.end + 1}, left out of this audit`);
+    skipped = null;
+  };
+  for (const c of cases) {
+    const between = lines.slice(at, c.start);
+    if (touched(c)) {
+      flush();
+      out.push(...between, ...lines.slice(c.start, c.end + 1));
+    } else if (skipped && between.every((l) => l.trim() === '')) {
+      skipped.end = c.end;
+    } else {
+      flush();
+      out.push(...between);
+      skipped = { start: c.start, end: c.end, indent: lines[c.start]!.match(/^\s*/)![0] };
+    }
+    at = c.end + 1;
+  }
+  flush();
+  out.push(...lines.slice(at));
+  return out.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Judgement
 
