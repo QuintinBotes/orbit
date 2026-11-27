@@ -8,7 +8,7 @@ import { listCandidates, recordFailure } from '../../../src/evidence/store.ts';
 import { listWorkers, markWorkerRunning, planWorker, getWorker } from '../../../src/storage/workers.ts';
 import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { APPROVE_ONCE, DENY } from '../../../src/controller/authorization.ts';
-import { ATTEMPT_EVENT, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT, briefPath, currentAttempt, attemptCandidateId, implementingStep, routeSignals, runningUnits } from '../../../src/controller/steps/implementing.ts';
+import { ATTEMPT_DEFERRED_EVENT, ATTEMPT_EVENT, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT, briefPath, currentAttempt, attemptCandidateId, implementingStep, routeSignals, runningUnits } from '../../../src/controller/steps/implementing.ts';
 import { CANDIDATE_EVENT } from '../../../src/controller/context.ts';
 import { addCandidate, addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
@@ -160,6 +160,11 @@ describe('admission of an attempt', () => {
     expect(out.progressed).toBe(false);
     expect(out.waiting).toMatch(/^attempt 1 deferred: /);
     expect(currentAttempt(lab.ctx())).toBe(0);
+    // The wait is recorded once, naming what holds the slot, so the run does not look hung; a second tick adds nothing.
+    await run();
+    const rows = lab.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, ATTEMPT_DEFERRED_EVENT);
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.data_json)).toMatchObject({ attempt: 1, reason: expect.any(String), held_by: ['wrk-other (orb-other)'] });
   });
 
   it('blocks for more spend when charged cost has reached the cap before an attempt', async () => {

@@ -132,6 +132,7 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
     const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? 'not admitted';
     // Budget refusals cannot clear by waiting; capacity and worktree conflicts can.
     if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why }, costRefusal: /cost exceeds/.test(why) && capFundsOneSession(ctx, route.model, 'implementer') });
+    recordDeferral(ctx, n, why, running);
     return WAIT(`attempt ${n} deferred: ${why}`);
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`, { costRefusal: capFundsOneSession(ctx, route.model, 'implementer') });
@@ -154,6 +155,16 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
 }
 
 const READ_ONLY_ROLES = new Set(['planner', 'verifier', 'reviewer', 'inquisitor', 'curator', 'explorer']);
+
+export const ATTEMPT_DEFERRED_EVENT = 'attempt.deferred';
+
+/** Record a deferred attempt once per reason, naming what holds the slots, so a waiting run does not look hung. */
+function recordDeferral(ctx: RunContext, n: number, why: string, running: { runId: string; unit: WorkUnit }[]): void {
+  const last = ctx.db.get<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1', ctx.run.id, ATTEMPT_DEFERRED_EVENT);
+  const prev = last ? (JSON.parse(last.data_json) as { attempt?: number; reason?: string }) : null;
+  if (prev?.attempt === n && prev.reason === why) return;
+  appendEvent(ctx.db, ctx.run.id, ATTEMPT_DEFERRED_EVENT, ctx.ownerId, { attempt: n, reason: why, held_by: running.map((r) => `${r.unit.id} (${r.runId})`) }, ctx.clock.now());
+}
 
 /**
  * Every live worker of the repository as a running work unit, with the run it belongs to, plus the attempts
