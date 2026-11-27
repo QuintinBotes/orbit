@@ -83,7 +83,7 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     const cap = sessionSpendCap(ctx, route.model, 'inquisitor', phase);
     if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase, cost_refusal: capFundsOneSession(ctx, route.model, 'inquisitor', phase) });
     const d = ledger.admit({ role: 'inquisitor', phase, estimatedCostUsd: cap.capUsd });
-    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase, cost_refusal: d.reasons.some((r) => /^cost exceeds/.test(r)) });
+    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase, cost_refusal: d.reasons.some((r) => /^cost exceeds/.test(r)) && capFundsOneSession(ctx, route.model, 'inquisitor', phase) });
     if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
     return cap.capUsd;
   };

@@ -131,7 +131,7 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
   if (!plan.start.some((u) => u.id === unit.id) || (machine && !machine.start.has(unit.id))) {
     const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? 'not admitted';
     // Budget refusals cannot clear by waiting; capacity and worktree conflicts can.
-    if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why }, costRefusal: /cost exceeds/.test(why) });
+    if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why }, costRefusal: /cost exceeds/.test(why) && capFundsOneSession(ctx, route.model, 'implementer') });
     return WAIT(`attempt ${n} deferred: ${why}`);
   }
   if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`, { costRefusal: capFundsOneSession(ctx, route.model, 'implementer') });
