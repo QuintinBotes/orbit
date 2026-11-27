@@ -10,6 +10,7 @@ import { getRun, requestCancel } from '../../../src/controller/run-store.ts';
 import { APPROVE_ONCE, DENY } from '../../../src/controller/authorization.ts';
 import { ATTEMPT_DEFERRED_EVENT, ATTEMPT_EVENT, AUTHORIZATION_RETRY_EVENT, LOST_RESTART_EVENT, briefPath, currentAttempt, attemptCandidateId, implementingStep, routeSignals, runningUnits } from '../../../src/controller/steps/implementing.ts';
 import { CANDIDATE_EVENT } from '../../../src/controller/context.ts';
+import { buildTimeline } from '../../../src/observability/timeline.ts';
 import { addCandidate, addEvidence, giveRepository, initLedger, makeUnitLab, okResult, OWNER, scriptedAdapter, setContract, validateModels, type ScriptedAdapter, type UnitLab } from './coverage-helpers.ts';
 
 let lab: UnitLab;
@@ -160,11 +161,15 @@ describe('admission of an attempt', () => {
     expect(out.progressed).toBe(false);
     expect(out.waiting).toMatch(/^attempt 1 deferred: /);
     expect(currentAttempt(lab.ctx())).toBe(0);
-    // The wait is recorded once, naming what holds the slot, so the run does not look hung; a second tick adds nothing.
+    // The wait is recorded once, naming what holds the slot, so the run does not look hung; a second tick adds nothing,
+    // even when the live counts in the reason have moved (free memory moves the machine's limit).
+    const rows = () => lab.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, ATTEMPT_DEFERRED_EVENT);
+    expect(JSON.parse(rows()[0]!.data_json)).toMatchObject({ attempt: 1, reason: expect.stringMatching(/\d/), held_by: ['wrk-other (orb-other)'] });
+    lab.db.run("UPDATE events SET data_json = json_set(data_json, '$.reason', replace(replace(json_extract(data_json, '$.reason'), '1', '7'), '0', '9')) WHERE type = ?", ATTEMPT_DEFERRED_EVENT);
     await run();
-    const rows = lab.db.all<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ?', lab.runId, ATTEMPT_DEFERRED_EVENT);
-    expect(rows).toHaveLength(1);
-    expect(JSON.parse(rows[0]!.data_json)).toMatchObject({ attempt: 1, reason: expect.any(String), held_by: ['wrk-other (orb-other)'] });
+    expect(rows()).toHaveLength(1);
+    const line = buildTimeline(lab.db, getRun(lab.db, lab.runId)!).entries.find((e) => e.event === ATTEMPT_DEFERRED_EVENT);
+    expect(line).toMatchObject({ category: 'attempt', text: expect.stringMatching(/^attempt 1 deferred: .*; slots held by wrk-other \(orb-other\)$/) });
   });
 
   it('blocks for more spend when charged cost has reached the cap before an attempt', async () => {

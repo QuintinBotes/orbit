@@ -156,13 +156,15 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
 
 const READ_ONLY_ROLES = new Set(['planner', 'verifier', 'reviewer', 'inquisitor', 'curator', 'explorer']);
 
-export const ATTEMPT_DEFERRED_EVENT = 'attempt.deferred';
+export const ATTEMPT_DEFERRED_EVENT = 'implementation.deferred';
 
-/** Record a deferred attempt once per reason, naming what holds the slots, so a waiting run does not look hung. */
+/** Record a deferred attempt once per kind of reason, naming what holds the slots, so a waiting run does not look hung. */
 function recordDeferral(ctx: RunContext, n: number, why: string, running: { runId: string; unit: WorkUnit }[]): void {
+  // Numbers stripped: a machine reason carries live counts (free memory moves its limit), which must not record every tick.
+  const kind = (r: string) => r.replace(/\d+/g, '#');
   const last = ctx.db.get<{ data_json: string }>('SELECT data_json FROM events WHERE run_id = ? AND type = ? ORDER BY id DESC LIMIT 1', ctx.run.id, ATTEMPT_DEFERRED_EVENT);
   const prev = last ? (JSON.parse(last.data_json) as { attempt?: number; reason?: string }) : null;
-  if (prev?.attempt === n && prev.reason === why) return;
+  if (prev?.attempt === n && kind(prev.reason ?? '') === kind(why)) return;
   appendEvent(ctx.db, ctx.run.id, ATTEMPT_DEFERRED_EVENT, ctx.ownerId, { attempt: n, reason: why, held_by: running.map((r) => `${r.unit.id} (${r.runId})`) }, ctx.clock.now());
 }
 

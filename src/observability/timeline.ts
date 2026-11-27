@@ -385,6 +385,10 @@ function renderEvent(e: EventRow, data: Rec, l: Lookups): Rendered | null {
       const cap = num(data.spend_cap_usd);
       return { text: `attempt ${num(data.attempt) ?? '?'} started${str(data.route) ? ` (route ${str(data.route)}${cap !== null ? `, spend cap ${usd(cap)}` : ''})` : cap !== null ? ` (spend cap ${usd(cap)})` : ''}` };
     }
+    case 'implementation.deferred': {
+      const held = Array.isArray(data.held_by) ? data.held_by.filter((h): h is string => typeof h === 'string') : [];
+      return { text: `attempt ${num(data.attempt) ?? '?'} deferred: ${str(data.reason) ?? '?'}${held.length ? `; slots held by ${held.join(', ')}` : ''}` };
+    }
     case 'implementation.candidate':
       // The candidate.created line says it all unless the attempt ended on a tree that already existed, or on a rebase.
       if (data.reused === true) return { category: 'candidate', text: `attempt ${num(data.attempt) ?? '?'} ended on the tree of candidate ${num(data.seq) ?? '?'}, which already existed` };
