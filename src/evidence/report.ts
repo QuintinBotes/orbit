@@ -471,7 +471,11 @@ export function evaluateEvidence(input: BuildReportInput): Evaluation {
   }
 
   // Scope.
-  const s = input.scope;
+  // A conditional skip in a new test file whose guarded tests ran on both trees in the fail-before probe switched
+  // nothing off here (issue #285): it is dropped, so no gate, inquiry or reviewer reads it as weakening.
+  const ranBothTrees = (path: string): boolean =>
+    [...(fb?.criteria?.values() ?? [])].some((c) => (c.tests ?? []).some((t) => t.path === path && t.base !== 'not-established' && t.candidate !== 'not-established'));
+  const s = { ...input.scope, weakening_signals: input.scope.weakening_signals.filter((w) => !(w.conditional_in_new_file === true && ranBothTrees(w.path))) };
   const deps = snapshot.config.dependencies;
   if (!s.allowed_paths_pass) note(fail, 'scope: paths outside the allowed scope or in protected paths changed');
   for (const p of s.forbidden_paths_changed) note(fail, `scope: forbidden path changed: ${p}`);
