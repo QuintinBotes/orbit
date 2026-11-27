@@ -365,6 +365,8 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
   signal?.throwIfAborted();
   const workerId = opts.workerIdFor?.(attempt) ?? newId('wrk');
   const workerDir = join(opts.workerDir, workerId);
+  // Before the row: a directory that cannot be made must not leave a PLANNED row holding a slot (#296).
+  mkdirSync(workerDir, { recursive: true });
   // The intent is fenced by the lease, and admitted, in the same transaction that records it.
   const maxBudgetUsd = db.tx(() => {
     opts.fence?.();
@@ -372,7 +374,6 @@ async function runWorker(adapter: ProviderAdapter, ctx: InquisitionContext, opts
     planWorker(db, { id: workerId, runId: ctx.runId, role: 'inquisitor', purpose: workerPurpose(trigger), provider: opts.route.provider, model: opts.route.model, effort: opts.route.effort, workerDir, cwd: opts.cwd, attempt }, clock);
     return cap;
   });
-  mkdirSync(workerDir, { recursive: true });
 
   const spec: TaskSpec & { maxBudgetUsd?: number } = {
     runId: ctx.runId,

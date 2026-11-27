@@ -1,0 +1,2 @@
+section: Fixes
+- **A deferred attempt says why (#297).** An implementation attempt deferred for capacity now records one `implementation.deferred` event naming the reason and the workers holding the slots, shown by `orbit timeline` (for example "attempt 3 deferred: ...; slots held by ..."), instead of leaving the run looking hung. A reason whose live counts change is not recorded again on every tick.
