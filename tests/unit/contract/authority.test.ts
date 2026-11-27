@@ -57,6 +57,36 @@ describe('reconcileAuthority', () => {
     expect(reconcileAuthority('Never deploy to production from here.', config())).toEqual([]);
   });
 
+  // Issue #276: a run blocked because its goal cited "(QuintinBotes/claude-stack#51, merged PR #55)".
+  it('does not read a description of something already merged as a request to merge (#276)', () => {
+    for (const goal of [
+      'Match the contract exactly (QuintinBotes/claude-stack#51, merged PR #55).',
+      'The fix in merged pull request #12 changed this.',
+      'Since #200 was merged, the probe runs per criterion.',
+      'The branch has already been merged, so read the code on next.',
+      'It follows the merged commit abc1234.',
+    ]) {
+      expect(reconcileAuthority(goal, config()), goal).toEqual([]);
+    }
+  });
+
+  it('still flags a request to have the work merged (#276)', () => {
+    for (const goal of [
+      'Get this merged once CI is green.',
+      'Merge it when the checks pass.',
+      'Open the PR and have it merged.',
+      // Review of #277: requests that look like descriptions.
+      'Make sure the PR is merged once CI passes.',
+      'Ensure all three PRs are merged.',
+      'Get this merged promptly once green.',
+      'Get it merged prior to the 2.0 release.',
+      'Ensure it has been merged before deploy.',
+      'Have it merged\n- PR description lists the change',
+    ]) {
+      expect(reconcileAuthority(goal, config()).map((m) => m.subject), goal).toContain('actions.merge');
+    }
+  });
+
   it('notes a narrower mode as stricter, not exceeding', () => {
     const found = reconcileAuthority('Use supervised mode.', config());
     expect(found).toEqual([{ kind: 'stricter-than-policy', subject: 'mode:supervised', phrase: expect.any(String), detail: expect.stringContaining('less authority') }]);

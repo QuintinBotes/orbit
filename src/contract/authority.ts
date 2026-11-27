@@ -59,6 +59,20 @@ function isNegated(text: string, index: number): boolean {
   return NEGATION.test(clauseBefore(text, index));
 }
 
+/**
+ * "merged" that describes something already done (a merged PR #55, a merged commit, it was merged, already merged) is
+ * no request to merge (issue #276: a goal citing another repository's "merged PR #55" blocked its run). A request in
+ * the past participle ("get this merged", "have it merged") still counts.
+ */
+function describesMerge(text: string, index: number, word: string): boolean {
+  if (word.toLowerCase() !== 'merged') return false;
+  // A noun right after it, on the same line: "merged PR #55", "the merged commit" (not "merged promptly", "merged prior to").
+  if (/^[ \t]+(?:(?:PRs?|pull[- ]requests?|commits?)\b|#\d)/i.test(text.slice(index + word.length, index + word.length + 24))) return true;
+  // Only past tense before it: "was merged", "already (been) merged". "is merged" and "are merged" also state a wanted
+  // end ("make sure the PR is merged"), so they still count as a request.
+  return /\b(?:was|were|already(?:\s+been)?)\s+$/i.test(text.slice(Math.max(0, index - 24), index));
+}
+
 const MODE_WORDS = '(autonomous[- ]delivery|release|supervised|autonomous)';
 // "autonomous-delivery" is distinctive enough to stand alone; the other words also occur in ordinary goals, so they need a mode cue.
 const MODE_PHRASES: readonly RegExp[] = [
@@ -109,6 +123,7 @@ export function reconcileAuthority(goal: string, config: Pick<OrbitConfig, 'mode
   for (const p of ACTION_PATTERNS) {
     const seen = new Set<string>();
     for (const m of goal.matchAll(p.re)) {
+      if (p.action === 'merge' && describesMerge(goal, m.index!, m[0])) continue;
       const negated = isNegated(goal, m.index!);
       const allowed = config.actions[p.action] === true;
       const phrase = m[0].trim();
