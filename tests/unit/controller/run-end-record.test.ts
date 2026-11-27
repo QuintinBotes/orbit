@@ -139,7 +139,8 @@ describe('every way a run ends records why (FR-001, FR-002)', () => {
     initLedger(lab);
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'cost_usd'", lab.runId);
     await safePoint(lab.ctx());
-    expect(ended(lab.db, lab.runId)).toEqual({ state: 'EXHAUSTED', cls: 'budget', secondary: null });
+    // Issue #254: the cost cap waits BLOCKED for a person, and is still recorded as a budget stop.
+    expect(ended(lab.db, lab.runId)).toEqual({ state: 'BLOCKED', cls: 'budget', secondary: null });
   });
 
   it('a crash that used every recovery attempt is environment, with the budget as the second cause', () => {

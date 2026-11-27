@@ -81,9 +81,9 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     // against what it spent. Inside the engine's transaction: a refusal rolls this back, and the finally charges it.
     account();
     const cap = sessionSpendCap(ctx, route.model, 'inquisitor', phase);
-    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase });
+    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase, cost_refusal: true });
     const d = ledger.admit({ role: 'inquisitor', phase, estimatedCostUsd: cap.capUsd });
-    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase });
+    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase, cost_refusal: d.reasons.some((r) => /^cost exceeds/.test(r)) });
     if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
     return cap.capUsd;
   };

@@ -11,7 +11,8 @@ import { baseScenario, calls, canStripTypes, DIAGNOSIS, drive, git, implementMul
 const t = tracker();
 afterEach(() => t.cleanup());
 
-function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { candidate: boolean }): void {
+function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { candidate: boolean; state?: 'EXHAUSTED' | 'BLOCKED' }): void {
+  const state = opts.state ?? 'EXHAUSTED';
   const done = runState(l, runId);
   const runDir = join(l.repo, '.orbit', 'runs', runId);
   expect(listActiveWorkers(l.db(), runId)).toEqual([]);
@@ -22,9 +23,9 @@ function expectPreserved(l: ReturnType<typeof t.lab>, runId: string, opts: { can
   }
   // Every worker's transcript stays with the run.
   for (const w of listWorkers(l.db(), { runId })) expect(existsSync(join(w.workerDir, 'log.jsonl'))).toBe(true);
-  expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toMatch(/EXHAUSTED/);
+  expect(readFileSync(join(runDir, 'final.md'), 'utf8')).toContain(state);
   const report = JSON.parse(readFileSync(join(runDir, 'final.json'), 'utf8')) as { outcome: string };
-  expect(report.outcome).toBe('EXHAUSTED');
+  expect(report.outcome).toBe(state);
   expect(existsSync(join(runDir, 'policy.json'))).toBe(true);
 }
 
@@ -45,19 +46,19 @@ describe.skipIf(!canStripTypes)('fault: exhausted budgets', () => {
     expectPreserved(l, run.id, { candidate: true });
   }, 30_000);
 
-  it('a model cost cap reached by reported spend ends the run EXHAUSTED before any further worker starts', async () => {
+  it('a model cost cap reached by reported spend blocks the run for approval before any further worker starts', async () => {
     const l = t.lab({ tweak: (c) => void (c.scheduler.hard_limits.model_cost_usd = 12) });
     writeScenario(l, baseScenario({ implementer: [{ ...implementMul('+'), usage: { costUSD: 11.5 } }, implementMul('*')], verifier: [DIAGNOSIS] }));
     const run = startLabRun(l);
     await drive(l, run.id);
 
     const done = runState(l, run.id);
-    expect(done.state, done.outcomeReason ?? '').toBe('EXHAUSTED');
+    expect(done.state, done.outcomeReason ?? '').toBe('BLOCKED');
     expect(done.outcomeReason).toMatch(/cost/);
     // Nothing more was started once the cap was reached.
     expect(calls(l, 'implementer')).toHaveLength(1);
     expect(listWorkers(l.db(), { runId: run.id, role: 'reviewer' })).toEqual([]);
     // The spend was charged when the implementer finished, before its edits became a candidate; the edits stay in the worktree.
-    expectPreserved(l, run.id, { candidate: false });
+    expectPreserved(l, run.id, { candidate: false, state: 'BLOCKED' });
   }, 30_000);
 });

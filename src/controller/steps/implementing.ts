@@ -131,10 +131,10 @@ async function startAttempt(ctx: RunContext, n: number): Promise<StepResult | nu
   if (!plan.start.some((u) => u.id === unit.id) || (machine && !machine.start.has(unit.id))) {
     const why = plan.deferred.find((d) => d.id === unit.id)?.reason ?? machine?.deferred.get(unit.id) ?? 'not admitted';
     // Budget refusals cannot clear by waiting; capacity and worktree conflicts can.
-    if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why } });
+    if (/^not admitted by budget/.test(why)) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not admitted: the remaining budget cannot support an honest completion (${why})`, { data: { admission: why }, costRefusal: /cost exceeds/.test(why) });
     return WAIT(`attempt ${n} deferred: ${why}`);
   }
-  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`);
+  if (cap.capUsd !== null && cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `attempt ${n} not started: ${unfundedSessionReason(ctx, route.model, 'implementer')}`, { costRefusal: true });
 
   // A fresh attempt whose criteria map to disjoint files runs as parallel writers in their own worktrees (G14).
   const units = splitAttempt(ctx, assertContract(ctx), n === 1 && !existsSync(briefPath(ctx, n)));
@@ -435,7 +435,7 @@ async function restartLostImplementer(ctx: RunContext, lost: WorkerRecord, n: nu
   const cap = sessionSpendCap(ctx, model, 'implementer');
   ctx.db.tx(() => appendEvent(ctx.db, ctx.run.id, LOST_RESTART_EVENT, ctx.ownerId, { worker_id: lost.id, attempt: n, next_purpose: nextPurpose, cwd_preserved: lost.cwd, live_controller: true }, ctx.clock.now()));
   if (cap.capUsd !== null) {
-    if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, 'implementer')}`);
+    if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `lost implementer ${lost.id} not restarted: ${unfundedSessionReason(ctx, model, 'implementer')}`, { costRefusal: true });
     recordSpendCap(ctx, nextPurpose, cap.capUsd, cap.worstCaseUsd);
   }
   return null;

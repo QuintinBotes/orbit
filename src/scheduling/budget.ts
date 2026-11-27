@@ -35,10 +35,12 @@ import {
  *
  * Hard caps are copied from the frozen policy snapshot when the run starts
  * and never change; a restarted controller that presents different caps is
- * refused. The one addition is review_rounds, whose effective cap adds the
- * rounds_granted recorded on review.reviewer-failed decisions: the stored row
- * keeps the snapshot's value, and the grant has no row of its own to apply
- * twice. Allowances start from the difficulty class and grow by one
+ * refused. There are two additions: review_rounds, whose effective cap adds the
+ * rounds_granted recorded on review.reviewer-failed decisions, and cost_usd,
+ * whose effective cap adds what a person approved on budget.spend-approved
+ * decisions (issue #254). The stored row keeps the snapshot's value, and a
+ * grant has no row of its own to apply twice; the closing reserve is the
+ * policy's fraction of the effective cost cap. Allowances start from the difficulty class and grow by one
  * extension at a time, only with measurable progress, a new hypothesis,
  * authorized scope, room under the hard cap and the closing reserve intact.
  *
@@ -136,9 +138,13 @@ interface CounterRow {
   granted?: number;
 }
 
-/** What a cap message adds when the cap includes rounds granted for replaced reviewers. */
-export function grantNote(c: { granted?: number }): string {
-  return c.granted ? `, including ${c.granted} for replaced reviewers` : '';
+/** The decision a person's approval of more model spend becomes; its increment_usd is added to the run's cost cap. */
+export const SPEND_APPROVED_KIND = 'budget.spend-approved';
+
+/** What a cap message adds when the cap includes a grant: approved spend, or rounds for replaced reviewers. */
+export function grantNote(c: { counter?: string; granted?: number }): string {
+  if (!c.granted) return '';
+  return c.counter === 'cost_usd' ? `, including $${usd(c.granted)} of extra spend a person approved` : `, including ${c.granted} for replaced reviewers`;
 }
 
 export interface ConsumeOptions {
@@ -424,7 +430,7 @@ export class BudgetLedger {
 
   reserve(): ReserveState {
     const { policy } = this.bound();
-    return reserveFrom(policy, capsFrom(policy));
+    return reserveFrom(policy, { ...capsFrom(policy), cost_usd: this.state('cost_usd').hard_cap });
   }
 
   snapshot(): BudgetSnapshot {
@@ -768,6 +774,10 @@ export class BudgetLedger {
   }
 
   private withGrants(runId: string, row: CounterRow): CounterRow {
+    if (row.counter === 'cost_usd') {
+      const usdGranted = this.db.get<{ n: number | null }>("SELECT SUM(json_extract(data_json, '$.increment_usd')) AS n FROM decisions WHERE run_id = ? AND kind = ?", runId, SPEND_APPROVED_KIND)?.n ?? 0;
+      return usdGranted > 0 ? { ...row, allowance: roundUsd(row.allowance + usdGranted), hard_cap: roundUsd(row.hard_cap + usdGranted), granted: usdGranted } : row;
+    }
     if (row.counter !== 'review_rounds') return row;
     const granted = this.db.get<{ n: number | null }>("SELECT SUM(json_extract(data_json, '$.rounds_granted')) AS n FROM decisions WHERE run_id = ? AND kind = ?", runId, REVIEWER_FAILED_KIND)?.n ?? 0;
     return granted > 0 ? { ...row, allowance: row.allowance + granted, hard_cap: row.hard_cap + granted, granted } : row;

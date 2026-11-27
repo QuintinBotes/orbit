@@ -32,6 +32,7 @@ import { REVIEWER_FAILED_KIND, SAME_PROVIDER_APPROVED_KIND, type ReviewerFailure
 import { listLedger, listQuestions } from '../inquisition/store.ts';
 import { summarizeUsage, usageByRole } from '../routing/usage.ts';
 import { BudgetLedger, grantNote, spendBreakdown } from '../scheduling/budget.ts';
+import { spendHeld } from './spend-request.ts';
 import type { BudgetSnapshot } from '../scheduling/budget.ts';
 import type { SpendBreakdown } from '../scheduling/types.ts';
 import { DELIVERY_MODES, isIndependentReviewer, outputBudgets, providerFamily } from '../policy/config.ts';
@@ -582,7 +583,8 @@ function nextAction(run: RunRecord, refs: { branch: string | null; candidateRef:
       const why = run.outcomeReason ?? 'The run is blocked.';
       // A frozen-policy block already names the way forward (a new run), a run that holds a verified candidate how to
       // deliver or discard it (issue #169), and most others already name the resume command.
-      if (outcomeHas(run, 'frozen_policy') || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
+      // A spend request ends with its own command (issue #254): approving it releases the block, so no resume is advised.
+      if (outcomeHas(run, 'frozen_policy') || outcomeHas(run, 'spend_request') || heldVerifiedCandidate(run, { exhausted: true }) !== null) return why;
       // A reason recorded without a closing full stop still reads as its own sentence.
       const sentence = /[.!?]$/.test(why.trim()) ? why.trim() : `${why.trim()}.`;
       // Where a resume cannot clear the block, the reason either says a new run already (an environment block) or is told so (issue #33).
@@ -830,7 +832,10 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     summary.rechecked = { lessons: lessons.length, stale: lessons.length - eligible.length };
 
     const admitted = curationAdmitted(ctx);
+    // Issue #254: a run that waits on a spend request, or was refused one, starts no further model session.
+    const noMoreSpend = spendHeld(ctx.db, run.id) !== null;
     if (run.state === 'CANCELLED') summary.skipped = 'cancelled runs are not curated';
+    else if (noMoreSpend) summary.skipped = 'the run waits on, or was refused, more model spend, so no curator session starts';
     else if (refusedWithoutOutput(ctx.db, run)) summary.skipped = 'the run ended because a worker session was refused and produced nothing; the curator is a session in the same environment and would be refused the same way';
     else if (endedBeforeAnyWorker(ctx.db, run)) summary.skipped = 'the run ended before any worker session, so there is nothing of the repository to learn from; its gate decisions record the environment, not a lesson';
     else if (!admitted.ok) summary.skipped = admitted.why;
@@ -857,7 +862,7 @@ export async function learnAtTerminal(ctx: RunContext): Promise<void> {
     if (run.state !== 'CANCELLED') {
       // An overlay that no prompt carries (issue #173: lessons_in_prompts off) has no live runs to be judged by.
       const live = k.lessons_in_prompts === true ? checkLiveOverlays(ctx, store) : [];
-      const evaluated = await autoEvaluateOverlays(ctx, store);
+      const evaluated = noMoreSpend ? { skipped: 'no model session starts for a run a spend request holds' } : await autoEvaluateOverlays(ctx, store);
       summary.overlays = { live, evaluated };
     }
   } finally {

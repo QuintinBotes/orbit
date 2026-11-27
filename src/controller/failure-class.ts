@@ -138,7 +138,8 @@ export function classifyRunEnd(e: RunEndEvidence): RunEndClass {
   const data = e.data ?? {};
   // Issue #169: a run that ran out while it held a verified candidate ends BLOCKED so a person can deliver it. It stopped
   // for what would have ended it EXHAUSTED, so it is classified as that end (verified-candidate.ts).
-  const state = e.state === 'BLOCKED' && outcome.decided === 'EXHAUSTED' ? 'EXHAUSTED' : e.state;
+  // Issue #254: so is a run that waits BLOCKED for more spend (`outcome.spend_request`): it ran out of its cost cap.
+  const state = e.state === 'BLOCKED' && (outcome.decided === 'EXHAUSTED' || outcome.spend_request !== undefined) ? 'EXHAUSTED' : e.state;
   const ranOut = state === 'EXHAUSTED' || state === 'IMPOSSIBLE';
   const causes = markedCauses(outcome, data, ranOut && e.turnCapSessions > 0);
   if (causes.length === 0) {

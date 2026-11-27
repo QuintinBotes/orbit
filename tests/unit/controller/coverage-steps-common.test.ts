@@ -199,14 +199,14 @@ describe('safePoint', () => {
     expect(getRun(lab.db, lab.runId).state).toBe('CANCELLED');
   });
 
-  it('lets a healthy run through, and ends it EXHAUSTED when the wall-time or cost hard cap is reached', async () => {
+  it('lets a healthy run through, and blocks it for approval when the cost hard cap is reached', async () => {
     lab = makeUnitLab({ path: ['PREFLIGHT'] });
     initLedger(lab);
     expect(await safePoint(lab.ctx())).toBeNull();
     lab.db.run("UPDATE budget_counters SET used = hard_cap WHERE run_id = ? AND counter = 'cost_usd'", lab.runId);
     expect(await safePoint(lab.ctx())).toEqual({ progressed: true, done: true });
     const run = getRun(lab.db, lab.runId);
-    expect(run.state).toBe('EXHAUSTED');
+    expect(run.state).toBe('BLOCKED');
     expect(run.outcomeReason).toMatch(/^model cost hard cap reached \(/);
   });
 
@@ -226,7 +226,7 @@ describe('safePoint', () => {
     initLedger(lab);
     lab.db.run("UPDATE budget_counters SET used = hard_cap + 0.5 WHERE run_id = ? AND counter = 'cost_usd'", lab.runId);
     await safePoint(lab.ctx());
-    expect(getRun(lab.db, lab.runId).outcomeReason).toBe('model cost hard cap reached (30.50 of 30)');
+    expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^model cost hard cap reached \(30\.50 of 30\)\. Waiting for a person/);
   });
 });
 

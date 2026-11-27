@@ -265,7 +265,8 @@ export class ReplayEvalRunner implements EvalRunner {
     const { Controller } = await import('./loop.ts');
     const factory = this.o.deps ?? defaultControllerDeps;
     const deps = factory({ repoRoot: clone, db, clock: this.o.clock, config, orbitHome: this.o.orbitHome, ...(this.o.env ? { env: this.o.env } : {}) });
-    const controller = new Controller({ deps, mode: 'foreground', runId, handleSignals: false, ...(this.o.controller ?? {}) });
+    // A replay is internal: at its cost cap it ends, and it never asks the owner for more spend (issue #254).
+    const controller = new Controller({ deps: { ...deps, spendRequests: false }, mode: 'foreground', runId, handleSignals: false, ...(this.o.controller ?? {}) });
     const limitMs = this.o.caseTimeoutMs ?? config.scheduler.hard_limits.wall_minutes * 60_000 + 60_000;
     let timedOut = false;
     const timer = setTimeout(() => {

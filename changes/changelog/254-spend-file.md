@@ -1,0 +1,2 @@
+section: Changes
+- A run whose charged model cost reaches its cost cap now waits BLOCKED for a person instead of ending EXHAUSTED. It asks for one more increment of its original cap (`orbit decide <run> <question> approve` or `refuse`) and writes a spend request to `${XDG_STATE_HOME:-~/.local/state}/stack/inbox/spend/`. A cap too small for the first session, and every other counter, behave as before (#254).

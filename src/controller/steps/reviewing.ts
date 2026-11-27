@@ -407,7 +407,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
   for (const u of plan.start.filter((x) => admitted.has(x.id))) {
     const cap = caps.get(u.id);
     if (cap && cap.capUsd !== null) {
-      if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `the ${u.id} unit cannot start: no model budget left for review under the hard cap`);
+      if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `the ${u.id} unit cannot start: no model budget left for review under the hard cap`, { data: { phase: 'final' }, costRefusal: true });
       recordSpendCap(ctx, `${u.id}#1`, cap.capUsd, cap.worstCaseUsd);
     }
   }

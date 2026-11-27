@@ -1,9 +1,14 @@
 /** `orbit decide` records a person's answer to a persisted question; `orbit questions` lists them. */
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { OrbitError } from '../../core/errors.ts';
+import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { isTerminal } from '../../controller/states.ts';
-import { listRuns } from '../../controller/run-store.ts';
+import { getRun, listRuns, transition, type RunRecord } from '../../controller/run-store.ts';
+import { loadRunContext } from '../../controller/context.ts';
+import { resumeTarget } from '../../controller/resume.ts';
+import { holdForSpend } from '../../controller/steps/common.ts';
+import { applySpendAnswer, spendRequests, SPEND_APPROVE, SPEND_REFUSE, type SpendRequest } from '../../controller/spend-request.ts';
+import { cliLeaseDeps } from './control.ts';
 import { declinesLedger } from '../../controller/undecided-ledger.ts';
 import { stateDbPath } from '../../controller/start.ts';
 import { amendmentIdOfQuestion, answerQuestion, applyAmendmentAnswers, listQuestions, openQuestions, type AmendmentAnswerOutcome, type QuestionRecord } from '../../inquisition/index.ts';
@@ -12,7 +17,7 @@ import { redact } from '../../core/redact.ts';
 import type { BaselineApplyOutcome } from '../../inquisition/baseline-exception.ts';
 import type { OrbitDb } from '../../storage/db.ts';
 import type { Args, OptionSpec } from '../args.ts';
-import { continueCommand, findRunByPrefix, resolveRepo, withState, type CliContext } from '../context.ts';
+import { continueCommand, findRunByPrefix, resolveRepo, withCliLease, withState, type CliContext } from '../context.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { json, line, oneLine } from '../io.ts';
 
@@ -82,11 +87,13 @@ export async function decideCommand(args: Args, ctx: CliContext): Promise<number
   if (!answer) throw new UsageError('an answer is required (an option label such as "A", or free text)', usage);
   const repo = await resolveRepo(ctx, args.str('repo'));
   const by = (args.str('by') ?? ctx.user).trim();
-  return withState(repo, (db) => {
+  return withState(repo, async (db) => {
     const run = findRunByPrefix(db, runRef);
     if (isTerminal(run.state) && run.state !== 'BLOCKED') throw new OrbitError('TRANSITION_INVALID', `run ${run.id} is ${run.state}; its questions can no longer change anything`);
     const q = matchQuestion(db, run.id, qRef);
     const runDir = dirname(run.policyPath);
+    const spend = spendRequests(db, run.id).find((r) => r.question_id === q.id);
+    if (spend) return decideSpend(args, ctx, { db, repo, run, request: spend, answer, by });
     const result = answerQuestion(db, runDir, q.id, answer, by, ctx.clock);
     // The answer to a contract amendment's approval question is applied to the run's contract now, while the person
     // is answering; a failure here is retried by the controller at its next safe point.
@@ -115,6 +122,58 @@ export async function decideCommand(args: Args, ctx: CliContext): Promise<number
     else line(ctx.io, 'A controller picks the answer up at the run\'s next inquiry; nothing else is needed.');
     return EXIT.OK;
   });
+}
+
+/**
+ * A person's answer to a spend request (issue #254). Only "approve" and "refuse" are answers: free text grants nothing,
+ * so it is not recorded. A model, worker or subsystem is refused by answerQuestion, as for any question (and the CLI
+ * refuses `decide` in a worker process altogether). The answer also releases the block: an approved run goes back to the
+ * stage it stopped in, and a refused one is ended here, EXHAUSTED, with no session started.
+ */
+async function decideSpend(args: Args, ctx: CliContext, input: { db: OrbitDb; repo: string; run: RunRecord; request: SpendRequest; answer: string; by: string }): Promise<number> {
+  const { db, repo, run, request, by } = input;
+  const word = input.answer.toLowerCase();
+  if (word !== SPEND_APPROVE && word !== SPEND_REFUSE) throw new UsageError(`question ${request.question_id} asks for more model spend: answer "${SPEND_APPROVE}" or "${SPEND_REFUSE}"`, 'orbit decide <run-id> <question-id> approve|refuse');
+  const runDir = dirname(run.policyPath);
+  const result = answerQuestion(db, runDir, request.question_id, word, by, ctx.clock);
+  const approved = word === SPEND_APPROVE;
+  applySpendAnswer({ db, clock: ctx.clock, runDir }, run.id);
+
+  let ownedElsewhere = false;
+  const current = getRun(db, run.id);
+  if (current.state === 'BLOCKED' && !current.cancelRequested) {
+    try {
+      await withCliLease(ctx, db, run.id, async (ownerId) => {
+        // Loaded first: a run whose policy no longer verifies is left BLOCKED.
+        const rc = loadRunContext(cliLeaseDeps(ctx, repo, db, ownerId), run.id, new AbortController().signal);
+        const to = resumeTarget(db, current);
+        db.tx(() => {
+          transition(db, { runId: run.id, to, ownerId, reason: `${by} ${approved ? 'approved' : 'refused'} more model spend`, actor: `cli:${ctx.user}`, expectedFrom: 'BLOCKED' }, ctx.clock);
+          appendEvent(db, run.id, 'run.resumed', `cli:${ctx.user}`, { from: 'BLOCKED', to, forced: false, by: 'spend-answer' }, ctx.clock.now());
+        });
+        if (!approved) {
+          rc.refresh();
+          await holdForSpend(rc);
+        }
+      });
+    } catch (err) {
+      if (!isOrbitError(err, 'CONCURRENT_UPDATE')) throw err;
+      ownedElsewhere = true;
+    }
+  }
+
+  const after = getRun(db, run.id);
+  if (args.bool('json')) {
+    json(ctx.io, { run_id: run.id, question_id: request.question_id, answer: word, decision_id: result.decision.id, cap_usd: approved ? request.total_usd : request.cap_usd, run_state: after.state });
+    return EXIT.OK;
+  }
+  line(ctx.io, `recorded ${result.decision.id}: ${word} by ${by}`);
+  if (approved) line(ctx.io, `the cost cap of run ${run.id} is now $${request.total_usd.toFixed(2)} (was $${request.cap_usd.toFixed(2)}); the spend request file is removed`);
+  else line(ctx.io, `no more model spend for run ${run.id}; the spend request file is removed`);
+  if (ownedElsewhere) line(ctx.io, 'A controller holds the run and applies the answer at its next safe point.');
+  else if (approved) line(ctx.io, `run ${run.id} is released at ${after.state}. A running service continues it; otherwise: ${continueCommand(db, run.id, ctx.clock.now())}`);
+  else line(ctx.io, `run ${run.id} is ${after.state}: ${oneLine(after.outcomeReason ?? '', 600)}`);
+  return EXIT.OK;
 }
 
 export async function questionsCommand(args: Args, ctx: CliContext): Promise<number> {

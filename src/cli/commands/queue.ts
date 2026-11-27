@@ -20,6 +20,7 @@ import { orbitDir } from '../../controller/start.ts';
 import { listRuns, type RunRecord } from '../../controller/run-store.ts';
 import { isTerminal } from '../../controller/states.ts';
 import { heldVerifiedCandidate } from '../../controller/verified-candidate.ts';
+import { spendHeld } from '../../controller/spend-request.ts';
 import { DELIVERY_FILE, githubClientForConfig } from '../../controller/steps/delivering.ts';
 import { OrbitError, isOrbitError } from '../../core/errors.ts';
 import { atomicWriteJson, readJsonIfExists } from '../../core/fsx.ts';
@@ -566,8 +567,10 @@ async function workIssue(ctx: CliContext, q: Queue, record: QueueRecord, issue: 
       const outOfMoney = ended === 'cost_usd' || (ended === null && result.run.failureClass === 'budget');
       // Only a run that ran out holds its candidate for that reason; any other block offers its verified candidate too.
       const ranOut = heldVerifiedCandidate(result.run, { exhausted: true }) !== null;
-      if ((result.run.state === 'EXHAUSTED' || ranOut) && capped && outOfMoney) {
-        return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ''}` };
+      // A run waiting on a spend request (issue #254) ran out too: it is BLOCKED where it would have ended EXHAUSTED.
+      const waiting = result.run.state === 'BLOCKED' ? spendHeld(db, run.id) : null;
+      if ((result.run.state === 'EXHAUSTED' || ranOut || waiting !== null) && capped && outOfMoney) {
+        return { ...entry, outcome: 'budget', reason: `run ${run.id} of #${issue.number} ran out of the $${config.scheduler.hard_limits.model_cost_usd.toFixed(2)} left of the budget of $${o.budget}; the issue is not handed to a person${waiting ? `; the run waits for a person to approve more spend (orbit status ${run.id} gives the command), or orbit cancel ${run.id}` : ''}${held ? `; the run holds a verified candidate: orbit report ${run.id} gives the commands that deliver or discard it` : ''}` };
       }
       if (result.run.state === 'SUCCEEDED') {
         const d = deliveryOf(runDir);

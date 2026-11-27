@@ -47,6 +47,7 @@ import { notificationsPolicy } from '../policy/config.ts';
 import { notifyOpenQuestions, resolveNotifyDeps } from '../notify/notify.ts';
 import { pollRemoteAnswers } from '../notify/remote-answers.ts';
 import { resumeAnsweredRun } from './resume.ts';
+import { spendHeld } from './spend-request.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -458,6 +459,8 @@ export class Controller {
     const run = getRun(db, runId);
     if (run.state === 'CREATED' || isTerminal(run.state) || run.paused || run.cancelRequested) return false;
     if (clock.now() - run.createdAt < interval || !credentialCheckDue(db, runId, clock, interval)) return false;
+    // The probe is a real request: none is made for a run a spend request holds (issue #254).
+    if (spendHeld(db, runId)) return false;
     const rep = await checkRunCredentials({
       db,
       clock,

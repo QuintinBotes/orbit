@@ -162,12 +162,12 @@ describe('admission of an attempt', () => {
     expect(currentAttempt(lab.ctx())).toBe(0);
   });
 
-  it('ends EXHAUSTED when the budget cannot support an honest completion', async () => {
+  it('blocks for more spend when charged cost has reached the cap before an attempt', async () => {
     await setup();
     lab.db.run("UPDATE budget_counters SET used = hard_cap - 0.0001 WHERE counter = 'cost_usd'");
     const out = await run();
     expect(out).toMatchObject({ done: true });
-    expect(state()).toBe('EXHAUSTED');
+    expect(state()).toBe('BLOCKED');
     expect(getRun(lab.db, lab.runId).outcomeReason).toMatch(/^attempt 1 not admitted|^attempt 1 not started/);
   });
 });
