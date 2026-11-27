@@ -21,7 +21,7 @@ import { homeOf, type RunContext } from '../context.ts';
 import { assertLeaseHeld } from '../run-store.ts';
 import type { RunState } from '../states.ts';
 import type { BudgetPhase } from '../../scheduling/types.ts';
-import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason } from '../workers.ts';
+import { adapterFor, chargeRecordedUsage, collectIfFinished, recordSpendCap, routeFor, sessionSpendCap, systemPromptFor, unfundedSessionReason, capFundsOneSession } from '../workers.ts';
 import { listActiveWorkers, listWorkers } from '../../storage/workers.ts';
 import { listReviews } from '../../review/store.ts';
 import { grantNote } from '../../scheduling/budget.ts';
@@ -81,9 +81,9 @@ export async function inquisitionStep(ctx: RunContext): Promise<StepResult> {
     // against what it spent. Inside the engine's transaction: a refusal rolls this back, and the finally charges it.
     account();
     const cap = sessionSpendCap(ctx, route.model, 'inquisitor', phase);
-    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase });
+    if (cap.capUsd !== null && cap.capUsd <= 0) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not started: ${unfundedSessionReason(ctx, route.model, 'inquisitor', phase)}`, { role: 'inquisitor', phase, cost_refusal: capFundsOneSession(ctx, route.model, 'inquisitor', phase) });
     const d = ledger.admit({ role: 'inquisitor', phase, estimatedCostUsd: cap.capUsd });
-    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase });
+    if (!d.admitted) throw new OrbitError('BUDGET_EXHAUSTED', `inquisitor not admitted: ${d.reasons.join('; ')}`.slice(0, 2000), { role: 'inquisitor', phase, cost_refusal: d.reasons.some((r) => /^cost exceeds/.test(r)) && capFundsOneSession(ctx, route.model, 'inquisitor', phase) });
     if (cap.capUsd !== null) recordSpendCap(ctx, purpose, cap.capUsd, cap.worstCaseUsd);
     return cap.capUsd;
   };

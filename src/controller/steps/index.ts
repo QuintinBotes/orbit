@@ -12,7 +12,7 @@ import { lenientContext, loadRunContext, type ControllerDeps, type RunContext } 
 import { isTerminal, type RunState } from '../states.ts';
 import { getRun } from '../run-store.ts';
 import { finalizeRun } from '../report.ts';
-import { budgetPhaseOf, finishRun, outcomeForError, type StepResult } from './common.ts';
+import { budgetPhaseOf, finishRun, holdForSpend, outcomeForError, type StepResult } from './common.ts';
 import { settleUnsettledSessions } from '../workers.ts';
 import { awaitingCiStep } from './awaiting-ci.ts';
 import { contractingStep } from './contracting.ts';
@@ -59,6 +59,11 @@ export async function step(deps: ControllerDeps, runId: string, signal: AbortSig
   const fn = STEPS[ctx.run.state];
   if (!fn) throw new OrbitError('INTERNAL', `no step for state ${ctx.run.state}`);
   try {
+    // A run waiting on a spend request starts nothing, and an approval is applied before anything is charged against the cap.
+    if (!ctx.run.cancelRequested && !ctx.run.paused) {
+      const held = await holdForSpend(ctx);
+      if (held) return held;
+    }
     // A session some path ended without settling it (stopped by the watchdog, collected by reconciliation, a lost
     // attempt a restart replaced) is charged before this step funds anything new.
     settleUnsettledSessions(ctx, budgetPhaseOf(ctx.run.state, ctx.run.resumeState));

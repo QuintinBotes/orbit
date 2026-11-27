@@ -1038,9 +1038,7 @@ export function sessionSpendCap(ctx: RunContext, model: string | null, role: Wor
  * sessions and the closing reserve is.
  */
 export function unfundedSessionReason(ctx: RunContext, model: string | null, role: WorkerRole, phase: BudgetPhase = 'work'): string {
-  const entry = model ? ctx.deps.registry.get(model) : null;
-  const funded = entry ? fundedSessionCap(entry, 0, { outputTokens: sessionOutputTokens(ctx, entry, role) }) : null;
-  const worst = funded ? funded.minimumUsd : fallbackWorstCase(ctx, role);
+  const worst = minimumSessionUsd(ctx, model, role);
   if (!ctx.ledger) return `no model budget left, below one session's worst case $${dollars(worst)}`;
   const cost = ctx.ledger.state('cost_usd');
   const reserve = phase === 'final' ? 0 : ctx.ledger.reserve().cost_usd;
@@ -1051,6 +1049,23 @@ export function unfundedSessionReason(ctx: RunContext, model: string | null, rol
   const after = [`$${dollars(cost.used)} spent`, ...(committed > 0 ? [`$${dollars(committed)} committed to running sessions`] : []), ...(reserve > 0 ? [`the $${dollars(reserve)} closing reserve`] : [])];
   const list = after.length > 1 ? `${after.slice(0, -1).join(', ')} and ${after.at(-1)}` : after[0];
   return `no model budget left: $${dollars(left)} of the $${dollars(cost.hard_cap)} cap remains after ${list}, below one session's worst case $${dollars(worst)}`;
+}
+
+/** The least one session of `model` must be able to spend: the worst case of one request (or its stand-in). */
+function minimumSessionUsd(ctx: RunContext, model: string | null, role: WorkerRole): number {
+  const entry = model ? ctx.deps.registry.get(model) : null;
+  const funded = entry ? fundedSessionCap(entry, 0, { outputTokens: sessionOutputTokens(ctx, entry, role) }) : null;
+  return funded ? funded.minimumUsd : fallbackWorstCase(ctx, role);
+}
+
+/**
+ * Whether the run's cap itself, less the closing reserve, could fund one session of `model`: a session refused although
+ * it could was stopped by what was spent, and the run asks for more spend (#254); one the cap could never fund ends it.
+ */
+export function capFundsOneSession(ctx: RunContext, model: string | null, role: WorkerRole, phase: BudgetPhase = 'work'): boolean {
+  if (!ctx.ledger) return false;
+  const reserve = phase === 'final' ? 0 : ctx.ledger.reserve().cost_usd;
+  return ctx.ledger.state('cost_usd').hard_cap - reserve >= minimumSessionUsd(ctx, model, role);
 }
 
 /** Without pricing for the model, a quarter of the role's cost ceiling stands in for one request. */

@@ -57,7 +57,7 @@ import { budgetAdmission, DEFAULT_CONTEXT_DUPLICATION } from '../../scheduling/s
 import type { WorkUnit } from '../../scheduling/types.ts';
 import { listActiveWorkers, type WorkerRecord } from '../../storage/workers.ts';
 import { stopWorker } from '../../recovery/reconcile.ts';
-import { recordSpendCap, sessionSpendCap, stopAndSettle, workersFor } from '../workers.ts';
+import { recordSpendCap, sessionSpendCap, stopAndSettle, workersFor, capFundsOneSession } from '../workers.ts';
 import { runningUnits } from './implementing.ts';
 import { obtain } from './obtain.ts';
 import { checkEnvironment, IMPLEMENTER_PROVIDER, recordGate } from './preflight.ts';
@@ -407,7 +407,7 @@ async function parallelReview(ctx: RunContext, cand: CandidateRecord, sel: Extra
   for (const u of plan.start.filter((x) => admitted.has(x.id))) {
     const cap = caps.get(u.id);
     if (cap && cap.capUsd !== null) {
-      if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `the ${u.id} unit cannot start: no model budget left for review under the hard cap`);
+      if (cap.capUsd <= 0) return finishRun(ctx, 'EXHAUSTED', `the ${u.id} unit cannot start: no model budget left for review under the hard cap`, { data: { phase: 'final' }, costRefusal: capFundsOneSession(ctx, sel.model, 'reviewer', 'final') });
       recordSpendCap(ctx, `${u.id}#1`, cap.capUsd, cap.worstCaseUsd);
     }
   }

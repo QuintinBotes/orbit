@@ -90,6 +90,11 @@ export interface ControllerDeps {
    * brief; the brief is the failure records as they are. Never set by `orbit run` or the service.
    */
   withoutDiagnosis?: boolean;
+  /**
+   * False for an internal run (an evaluation replay): reaching its cost cap ends it, and it never asks the owner for
+   * more spend (issue #254). Default true.
+   */
+  spendRequests?: boolean;
 }
 
 export interface RunContext {

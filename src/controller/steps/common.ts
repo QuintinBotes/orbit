@@ -36,6 +36,7 @@ import { blockingQuestions } from '../gates.ts';
 import { listQuestions, withdrawQuestion } from '../../inquisition/store.ts';
 import { detectToolchains } from '../../isolation/toolchains.ts';
 import { applyAmendmentAnswers } from '../../inquisition/amendment-answers.ts';
+import { applySpendAnswer, atCostCap, removeSpendFiles, requestSpend, spendWaitingSentence } from '../spend-request.ts';
 
 export interface StepResult {
   /** The run changed state or recorded progress. */
@@ -109,8 +110,12 @@ export function decide(ctx: RunContext, input: { id?: string; kind: string; summ
  * that candidate (issue #169, verified-candidate.ts): the outcome names it beside `decided: 'EXHAUSTED'`, and the reason
  * says why the run stopped, what it holds, and how to deliver or discard it. A run that stops BLOCKED while it holds one
  * offers it too (`decided: 'BLOCKED'`), and the block keeps its own way forward.
+ *
+ * A run that would end EXHAUSTED because its charged cost reached its cost cap ends BLOCKED instead and asks a person for
+ * more spend (issue #254, spend-request.ts). Such an end is one that names cost_usd, or `costRefusal`: a session the
+ * cost cap refused. `spendRefused` is the end a person's refusal of that request causes, which asks nothing again.
  */
-export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass } = {}): Promise<StepResult> {
+export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDED' | 'BLOCKED' | 'EXHAUSTED' | 'IMPOSSIBLE' | 'CANCELLED'>, reason: string, opts: { data?: Record<string, unknown>; outcome?: Record<string, unknown>; frozenAdvice?: string; resumable?: boolean; cause?: FailureClass; costRefusal?: boolean; spendRefused?: boolean } = {}): Promise<StepResult> {
   let advice = '';
   const stopped = reason;
   if (to === 'BLOCKED') {
@@ -127,6 +132,19 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   const unstoppable = await stopActiveWorkers(ctx, `run ${to.toLowerCase()}: ${reason}`.slice(0, 300));
   if (unstoppable.length > 0) note(ctx, 'workers.stop-failed', { workers: unstoppable });
   ctx.refresh();
+  // After the workers are stopped and charged, so the request names what was really spent.
+  const costEnd = to === 'EXHAUSTED' && opts.spendRefused !== true && (opts.costRefusal === true || opts.data?.counter === 'cost_usd' || opts.data?.cost_refusal === true);
+  if (costEnd && !ctx.run.cancelRequested) {
+    const named = opts.data?.phase;
+    const phase: BudgetPhase = named === 'work' || named === 'final' ? named : budgetPhaseOf(ctx.run.state, ctx.run.resumeState);
+    if (atCostCap(ctx, phase, { refusal: opts.costRefusal === true || opts.data?.cost_refusal === true })) {
+      const request = requestSpend(ctx, phase);
+      advice = spendWaitingSentence(request);
+      reason = withSentence(reason, advice);
+      opts = { ...opts, data: { ...(opts.data ?? {}), counter: 'cost_usd', spend_question: request.question_id }, outcome: { ...(opts.outcome ?? {}), spend_request: request }, cause: 'budget' };
+      to = 'BLOCKED';
+    }
+  }
   // After the cancellation is read: a cancelled run is offered nothing, so it records the end the step decided. A run that
   // stops BLOCKED holding a verified candidate offers it too, beside the block's own way forward.
   // Only from a verified policy: a block on a tampered or unreadable snapshot reads nothing from it, the offered commands included.
@@ -146,6 +164,8 @@ export async function finishRun(ctx: RunContext, to: Extract<RunState, 'SUCCEEDE
   if (target === 'CANCELLED') closeQuestionsOfCancelledRun(ctx);
   const why = target === to ? reason : `cancelled by request (the step had decided ${to}: ${reason})`;
   const result = move(ctx, target, why, { patch: { outcomeReason: cappedReason(why, target === to ? advice : ''), outcomeJson: JSON.stringify(target === to ? outcome : { ...outcome, state: target, decided: to }) }, data: opts.data, ...(opts.cause ? { cause: opts.cause } : {}) });
+  // A run that ended no longer waits for spend: its inbox file goes.
+  if (target !== 'BLOCKED') removeSpendFiles(ctx.db, ctx.run.id);
   // SUCCEEDED and CANCELLED release their checkouts: the result lives in the branch and the candidate refs. EXHAUSTED and
   // IMPOSSIBLE keep theirs, on record, for the person who continues by hand; orbit gc removes them after retention.
   // BLOCKED keeps its too: a person resumes from it. Settled before the report is written: a release saves an unsaved
@@ -239,6 +259,8 @@ export async function safePoint(ctx: RunContext): Promise<StepResult | null> {
   if (run.cancelRequested) return finishRun(ctx, 'CANCELLED', 'cancelled by request');
   if (run.paused) return { progressed: false, done: true, waiting: 'paused' };
   applyAnsweredAmendments(ctx);
+  const held = await holdForSpend(ctx);
+  if (held) return held;
   if (ctx.ledger) {
     ctx.ledger.syncWall();
     for (const counter of ['wall_ms', 'cost_usd'] as const) {
@@ -249,6 +271,23 @@ export async function safePoint(ctx: RunContext): Promise<StepResult | null> {
     }
   }
   return null;
+}
+
+/**
+ * What a run's spend request (issue #254) means for it now. An approval is applied and the run goes on. A refusal ends
+ * it EXHAUSTED. Without either (a forced resume of the block, an answer that is neither), nothing was granted: it blocks
+ * and asks again before any session starts. Null when the run goes on.
+ */
+export async function holdForSpend(ctx: RunContext): Promise<StepResult | null> {
+  if (!ctx.policyVerified || !ctx.ledger) return null;
+  const spend = applySpendAnswer(ctx, ctx.run.id);
+  if (!spend || spend.status === 'approved') return null;
+  const r = spend.request;
+  const spent = `$${r.spent_usd.toFixed(2)} spent of the $${r.cap_usd.toFixed(2)} cap`;
+  if (spend.status === 'refused') {
+    return finishRun(ctx, 'EXHAUSTED', `model cost cap reached (${spent}) and ${spend.question!.answeredBy} refused more spend`, { data: { counter: 'cost_usd' }, spendRefused: true });
+  }
+  return finishRun(ctx, 'EXHAUSTED', `model cost cap reached (${spent}) and no more spend is approved`, { data: { counter: 'cost_usd', phase: r.phase } });
 }
 
 /**

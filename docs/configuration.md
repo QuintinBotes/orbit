@@ -497,9 +497,19 @@ under a spend cap of its own (`worker.spend-cap`). An inquiry that returns to
 REVIEWING belongs to that stage: like a reviewer, its inquisitor is admitted and
 charged in the closing phase, which may spend the reserve; any other inquiry
 leaves the reserve held. With no budget left for it, no inquisitor starts and
-the run ends `EXHAUSTED` saying why. Before PLANNING creates the budget there is
+the run stops saying why. Before PLANNING creates the budget there is
 nothing to admit against, and an inquisitor then runs without a spend cap, as
 the contracting planner does.
+
+A run that money stops does not end: once something is charged, a run whose
+charged cost reaches `model_cost_usd` (less the reserve outside the closing
+phase), or whose next session cannot be funded from what is left, waits
+`BLOCKED` for a person to approve more spend (docs/operations.md, "Spend
+requests"). Sessions are funded below that limit, so the second is the usual
+case. A cap too small to fund even one session, less the reserve, still ends
+the run `EXHAUSTED`, as does a run with nothing charged. An approval adds the run's original `model_cost_usd` to that run's
+cap only, and the reserve is the same fraction of the raised cap. No setting
+controls this, and the other limits end a run as before.
 
 Each Claude session also gets its own spend cap (`--max-budget-usd`). The CLI
 checks it after each request, so a session can overshoot it by one request, and

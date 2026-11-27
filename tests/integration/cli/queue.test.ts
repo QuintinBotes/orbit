@@ -398,13 +398,13 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     writeScenario(l, baseScenario({ planner: [planner('sub')], implementer: [{ ...implement('sub'), usage: { costUSD: 1.6 } }] }));
     const r = await cli(l, ['queue', 'run', '--base', 'next', '--budget-usd', '1.5', '--policy', l.configPath]);
     expect(r.code, `${r.out}\n${r.err}`).toBe(0);
-    expect(runs(l).map((x) => [x.issue, x.state])).toEqual([[1, 'EXHAUSTED']]);
+    expect(runs(l).map((x) => [x.issue, x.state])).toEqual([[1, 'BLOCKED']]);
     const snapshot = JSON.parse(readFileSync(runs(l)[0]!.policyPath, 'utf8')) as PolicySnapshot;
     expect(snapshot.config.scheduler.hard_limits.model_cost_usd).toBe(1.5);
     expect(l.config.scheduler.hard_limits.model_cost_usd).toBe(30);
     const rec = record(l);
     expect(rec.spent_usd).toBeGreaterThanOrEqual(1.5);
-    expect(rec.stop).toMatchObject({ kind: 'budget', reason: expect.stringMatching(/^run orb-\S+ of #1 ran out of the \$1\.50 left of the budget of \$1\.5; the issue is not handed to a person$/) });
+    expect(rec.stop).toMatchObject({ kind: 'budget', reason: expect.stringMatching(/^run orb-\S+ of #1 ran out of the \$1\.50 left of the budget of \$1\.5; the issue is not handed to a person; the run waits for a person to approve more spend \(orbit status orb-\S+ gives the command\), or orbit cancel orb-\S+$/) });
     expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
     expect(issues(l).writes).toEqual([]);
     expect(r.out).toMatch(/frontier \(2, in priority order\):\n  #1 Add sub\n  #2 Add div/);
@@ -446,7 +446,8 @@ describe.skipIf(!canStripTypes)('orbit queue run', () => {
     const r = await cli(l, ['queue', 'run', '--base', 'next', '--attempts', '1', '--budget-usd', '1.5', '--policy', l.configPath]);
     expect(r.code, `${r.out}\n${r.err}`).toBe(0);
     const all = runs(l);
-    expect(all.map((x) => [x.issue, x.state])).toEqual([[1, 'EXHAUSTED']]);
+    // Issue #254: at its cost cap the run waits BLOCKED for more spend; the record still says why it stopped.
+    expect(all.map((x) => [x.issue, x.state])).toEqual([[1, 'BLOCKED']]);
     expect([all[0]!.failureClass, all[0]!.failureSecondary]).toEqual(['turn-cap', 'budget']);
     const rec = record(l);
     expect(outcomes(rec)).toEqual([[1, 'budget', 1]]);
