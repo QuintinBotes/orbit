@@ -7,7 +7,7 @@
  * (a Docker daemon, `gh`, a node:sqlite that lacks FTS5) is replaced.
  */
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -754,7 +754,17 @@ describe('delivery', () => {
     x.actions.push_task_branch = true;
   };
   const OK = JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'acme-bot', tokenSource: 'GH_TOKEN', scopes: 'repo, workflow' }] } });
-  const ghEnv = (w: World, extra: Record<string, string | undefined> = {}) => ({ ...w.env, PATH: w.bin, ...extra });
+  // PATH holds the fixture's tools and git, nothing else: without git the repository does not resolve, no config loads,
+  // and delivery would be judged against nothing a run could use (#259). git sits alone in its own directory so the
+  // machine's gh stays out of reach.
+  const ghEnv = (w: World, extra: Record<string, string | undefined> = {}) => {
+    const gitBin = join(w.base, 'git-bin');
+    if (!existsSync(gitBin)) {
+      mkdirSync(gitBin);
+      symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), join(gitBin, 'git'));
+    }
+    return { ...w.env, PATH: `${w.bin}:${gitBin}`, ...extra };
+  };
   const asked: string[][] = [];
   beforeEach(() => (asked.length = 0));
   const answer = (stdout: string, exitCode = 0, stderr = '') => (argv: readonly string[]) => (argv[1] === 'auth' ? (asked.push([...argv]), { exitCode, signal: null, stdout, stderr }) : undefined);
@@ -769,6 +779,15 @@ describe('delivery', () => {
     expect(noActions.delivery?.summary).toBe('not required: mode autonomous-delivery does not deliver');
     const repairOnly = await doctor(w, { config: cfg((x) => { x.mode = 'autonomous-delivery'; x.actions.open_pull_request = false; x.actions.push_task_branch = false; x.actions.repair_ci = true; }), ctx: { env: ghEnv(w) } });
     expect(repairOnly.delivery?.status).toBe('fail');
+  });
+
+  it('is not judged without a config: the default policy delivers, but no run can start under it (#259)', async () => {
+    const w = world();
+    exe(w.bin, 'gh');
+    hooks.config = null;
+    const none = await doctor(w, { ctx: { env: ghEnv(w) } });
+    expect(none.config).toMatchObject({ status: 'fail', summary: 'no .orbit/config.yaml' });
+    expect(none.delivery).toBeUndefined();
   });
 
   it('fails when gh is missing or no scoped token is set for the controller', async () => {
