@@ -58,7 +58,9 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   // A repair that came back with the tree scope inspection denied: for paths outside the scope, which were restored
   // before it, or for size, only a person can change the scope, the limit or the goal.
   const stalled = stalledRepair(ctx, cand);
-  if (stalled && outside.length > 0) return blockOnScope(ctx, cand, outside, stalled);
+  if (stalled && outside.length > 0) return blockOnScope(ctx, cand, outside, stalled.attempt, `Attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied`, { ...stalled.decision, same_tree_as: stalled.sameTreeAs });
+  const rewrote = rewroteRestoredPaths(ctx, cand, outside);
+  if (rewrote !== null) return blockOnScope(ctx, cand, outside, rewrote, `Orbit restored these paths before attempt ${rewrote}, and the attempt wrote them again (with a different tree, so the run cannot end on a repeated tree)`, { reason: 'the out-of-scope paths restored before the attempt were written again' });
   if (stalled && cand.scope && !cand.scope.within_size_limits) return blockOnSize(ctx, cand, cand.scope, stalled);
 
   // 1. Repeated non-progress ends the loop; more attempts, tokens or lines would not change it.
@@ -94,10 +96,12 @@ export async function diagnosingStep(ctx: RunContext): Promise<StepResult> {
   }
 
   // The next attempt, and any inquiry before it, starts from a worktree without the out-of-scope changes. The candidate
-  // keeps them, and running this again changes nothing.
-  if (outside.length > 0) {
+  // keeps them, and running this again changes nothing. Coming back here after the Inquisition, the restore is done; an
+  // amendment there may have shrunk the set, and recording it again with other paths would conflict.
+  const restoreId = `dec-${ctx.run.id}-scope-restore-${next}`;
+  if (outside.length > 0 && !listDecisions(ctx.db, ctx.run.id, { kind: 'repair.scope-restore' }).some((d) => d.id === restoreId)) {
     await restoreToBase({ repoRoot: ctx.run.repoRoot, worktree: ctx.run.worktreePath!, base: ctx.run.baseRevision!, paths: outside });
-    decide(ctx, { id: `dec-${ctx.run.id}-scope-restore-${next}`, kind: 'repair.scope-restore', summary: `restored to the base revision in the implementer's worktree before attempt ${next}: ${listPaths(outside, 10)}`, data: { attempt: next, candidate_id: cand.id, base: ctx.run.baseRevision, paths: outside } });
+    decide(ctx, { id: restoreId, kind: 'repair.scope-restore', summary: `restored to the base revision in the implementer's worktree before attempt ${next}: ${listPaths(outside, 10)}`, data: { attempt: next, candidate_id: cand.id, base: ctx.run.baseRevision, paths: outside } });
   }
 
   // 2. Repeated equivalent failures go to the Inquisition before another repair (spec section 7 stop logic).
@@ -271,10 +275,13 @@ export function stalledRepair(ctx: RunContext, cand: CandidateRecord): StalledRe
  * The same tree denied for size twice (issue #157): its weight is usually a file the task needs, such as a committed
  * generated bundle, which another repair cannot shrink. The limit is the run's frozen policy, so a new run is how it changes.
  */
-/** Whether the run could start another implementation attempt (a resume after the size block would need one). */
+/**
+ * Whether a resume after a block could start another implementation attempt. Within the allowance only: past it, the
+ * resumed diagnosis asks for an extension, which a run that made no progress is denied, so it would end EXHAUSTED.
+ */
 function attemptsLeft(ctx: RunContext): boolean {
   const c = ctx.ledger?.state('implementation_attempts');
-  return c !== undefined && c.used < c.hard_cap;
+  return c !== undefined && c.used < Math.min(c.allowance, c.hard_cap);
 }
 
 function blockOnSize(ctx: RunContext, cand: CandidateRecord, scope: ScopeReport, stalled: StalledRepair): Promise<StepResult> {
@@ -311,12 +318,30 @@ function blockOnNeededPaths(ctx: RunContext, cand: CandidateRecord, outside: str
   return finishRun(ctx, 'BLOCKED', reason, { outcome: { scope: data } });
 }
 
-/** The same tree denied for paths outside the scope twice (issue #280): another repair would start where this one did. */
-function blockOnScope(ctx: RunContext, cand: CandidateRecord, outside: string[], stalled: StalledRepair): Promise<StepResult> {
+/**
+ * The attempt whose candidate is denied again for out-of-scope paths Orbit restored before it (issue #300): a repair that
+ * rebuilds a bundle after changing sources makes a new tree each time, so the same-tree rule never fires. Any restored
+ * path written again counts, since a content-hashed bundle names its other files differently on each build. A session
+ * that stopped early still counts: it wrote the path again. A person who resumed the run or asked for this repair since
+ * the attempt started decides another one is worth it.
+ */
+function rewroteRestoredPaths(ctx: RunContext, cand: CandidateRecord, outside: string[]): number | null {
+  const latest = currentAttempt(ctx);
+  if (outside.length === 0 || attemptCandidateId(ctx, latest) !== cand.id) return null;
+  const restore = listDecisions(ctx.db, ctx.run.id, { kind: 'repair.scope-restore' }).find((d) => (d.data as { attempt?: number }).attempt === latest);
+  const restored = (restore?.data as { paths?: unknown } | undefined)?.paths;
+  if (!Array.isArray(restored) || !outside.some((p) => restored.includes(p))) return null;
+  const started = ctx.db.get<{ id: number }>("SELECT id FROM events WHERE run_id = ? AND type = ? AND json_extract(data_json, '$.attempt') = ? ORDER BY id DESC LIMIT 1", ctx.run.id, ATTEMPT_EVENT, latest);
+  if (!started || ctx.db.get("SELECT 1 AS x FROM events WHERE run_id = ? AND type IN ('run.resumed', 'run.repair-requested') AND id > ?", ctx.run.id, started.id)) return null;
+  return latest;
+}
+
+/** A repair that came back denied for paths outside the scope (issues #280, #300): another one would start where it did. */
+function blockOnScope(ctx: RunContext, cand: CandidateRecord, outside: string[], attempt: number, why: string, data: Record<string, unknown>): Promise<StepResult> {
   const size = cand.scope && !cand.scope.within_size_limits ? ` It is also over the size limits (${cand.scope.changed_files} files, ${cand.scope.changed_lines} lines).` : '';
-  const reason = `candidate ${cand.seq} changes paths outside the authorized scope again: ${listPaths(outside, 10)}. Attempt ${stalled.attempt} ended on tree ${cand.treeHash.slice(0, 12)}, the tree attempt ${stalled.sameTreeAs} produced, which scope inspection denied, so no further attempt is dispatched on it.${size} If the task needs these paths, cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover them; ${attemptsLeft(ctx) ? `to try one more repair without them, resume with orbit resume ${ctx.run.id}.` : 'no implementation attempt is left for another repair in this run.'}`;
-  decide(ctx, { id: `dec-${ctx.run.id}-scope-block-${stalled.attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...stalled.decision, attempt: stalled.attempt, same_tree_as: stalled.sameTreeAs, tree_hash: cand.treeHash, out_of_scope_paths: outside } });
-  return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: stalled.decision, scope: { out_of_scope_paths: outside } } });
+  const reason = `candidate ${cand.seq} changes paths outside the authorized scope again: ${listPaths(outside, 10)}. ${why}, so no further attempt is dispatched on it.${size} If the task needs these paths, cancel this run (orbit cancel ${ctx.run.id}) and start a new run whose goal and scope cover them; ${attemptsLeft(ctx) ? `to try one more repair without them, resume with orbit resume ${ctx.run.id}.` : 'no implementation attempt is left for another repair in this run.'}`;
+  decide(ctx, { id: `dec-${ctx.run.id}-scope-block-${attempt}`, kind: 'repair.non-progress', summary: reason, data: { ...data, attempt, tree_hash: cand.treeHash, out_of_scope_paths: outside } });
+  return finishRun(ctx, 'BLOCKED', reason, { outcome: { non_progress: data, scope: { out_of_scope_paths: outside } } });
 }
 
 /** Distinct candidates that failed with this fingerprint. */
