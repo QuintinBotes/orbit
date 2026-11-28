@@ -46,8 +46,19 @@ repository:
   base_branch: main
   branch_prefix: orbit/        # task branches are orbit/<run-id>
   allow_dirty_start: false
+  allow_stale_start: false     # refuse to start from a commit behind base_branch
   remote: origin
 ```
+
+A run starts from the commit checked out when it starts and delivers into
+`base_branch`. When that commit lacks commits of `base_branch` (it is behind
+it, or diverged from it), PREFLIGHT refuses the run before any model spend,
+naming both commits: it would build and verify on code the base branch has
+moved past. Check out `base_branch`, or start from a worktree of it; set
+`allow_stale_start: true` to start anyway (the run then records a
+`preflight.stale-start` decision). A commit ahead of `base_branch` (a branch
+on top of it) starts as before. `orbit doctor` warns about a checkout behind
+`base_branch`.
 
 Orbit only pushes branches with the prefix, and the prefix may not match the
 base branch. `orbit queue run --base <branch>` sets `base_branch` for the runs
@@ -486,9 +497,19 @@ under a spend cap of its own (`worker.spend-cap`). An inquiry that returns to
 REVIEWING belongs to that stage: like a reviewer, its inquisitor is admitted and
 charged in the closing phase, which may spend the reserve; any other inquiry
 leaves the reserve held. With no budget left for it, no inquisitor starts and
-the run ends `EXHAUSTED` saying why. Before PLANNING creates the budget there is
+the run stops saying why. Before PLANNING creates the budget there is
 nothing to admit against, and an inquisitor then runs without a spend cap, as
 the contracting planner does.
+
+A run that money stops does not end: once something is charged, a run whose
+charged cost reaches `model_cost_usd` (less the reserve outside the closing
+phase), or whose next session cannot be funded from what is left, waits
+`BLOCKED` for a person to approve more spend (docs/operations.md, "Spend
+requests"). Sessions are funded below that limit, so the second is the usual
+case. A cap too small to fund even one session, less the reserve, still ends
+the run `EXHAUSTED`, as does a run with nothing charged. An approval adds the run's original `model_cost_usd` to that run's
+cap only, and the reserve is the same fraction of the raised cap. No setting
+controls this, and the other limits end a run as before.
 
 Each Claude session also gets its own spend cap (`--max-budget-usd`). The CLI
 checks it after each request, so a session can overshoot it by one request, and
@@ -1507,6 +1528,9 @@ knowledge:
   lessons_in_prompts: false   # lessons and overlays stay out of worker prompts until a full benchmark shows they help
   max_prompt_lessons: 3       # with lessons_in_prompts: at most this many validated lessons per prompt
   lesson_expiry_days: 28      # a lesson with no supporting run for this long is not eligible
+  # shared_memory:           # off when absent; see docs/learning.md, The shared memory store
+  #   enabled: true
+  #   command: [memory]
 
 guard:
   terms_file: null            # null means ~/.config/publish-guard/terms.txt
@@ -1529,7 +1553,19 @@ verification:
   allow_flaky_pass: false             # a pass that needed a rerun cannot make the verdict PASS
   fail_before: required               # off | advisory | required
   fail_before_timeout_seconds: 900    # 30 to 86400: the one bound of a whole probe
+  check_parallelism: 1                # 1 to 16: checks run at once
 ```
+
+`check_parallelism` is how many of the policy's checks run at once: the
+candidate's checks in verification and the baseline at PREFLIGHT (the
+fail-before probes still run one check at a time). No check reads another
+check's output, so any of them may run together, which cuts a verification
+round to roughly its slowest check. They still share the machine and the
+checkout, so keep 1 when a suite is timing-sensitive under load. A check
+that rewrites a tracked file while others run voids the evidence of the whole
+set (STALE_EVIDENCE), as it would stop the next check when they run one at a
+time. The dependency install always runs first, alone. `orbit doctor` says
+when it is above 1.
 
 `allow_flaky_pass` is described with the checks above. `fail_before` decides
 what Orbit does with the question a new test raises: does it fail without the
@@ -1581,6 +1617,18 @@ the goal against quoted lines of the candidate, and checks the pull request body
 and the changed documents against the candidate; an open result goes to repair,
 and nothing is delivered before it closes. Under `advisory` and `off` neither the
 per-criterion probe nor the proof gate runs.
+
+In every mode, `off` included, a criterion mapped to a test that is not a file
+in the candidate's commit is never supported (issue #261). Its `fail_before`
+entry is not established with the cause `missing`, the report leaves it
+unverified and names each such file ("AC-1's test tests/acceptance/x.test.ts is
+not in the candidate"), and no person is asked to accept it: a repair that adds
+the file is the way on. Under `required`, the other mapped tests of such a
+criterion are still run alone as any mapped test is: only when a check can run
+one alone, the candidate is otherwise acceptable and it changes no dependency
+manifest or lockfile outside test-owned paths. A UI criterion's mapped tests are
+never run alone. A person-checked criterion has no test, so this does not apply
+to it.
 
 Only a person sets it, in this file or for one run with `orbit run
 --fail-before <mode>`, which can raise the policy's mode (`off` < `advisory` <
