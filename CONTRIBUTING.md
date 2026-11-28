@@ -127,8 +127,11 @@ A release is a tag. Pushing a tag named `v*` runs
    fresh `## Unreleased` above. That section is the text of the release notes.
 3. Rebuild the bundle (`npm run build`), which also refreshes the plugin copies
    of the changelog and traceability. Run
-   `node plugin/dist/orbit.mjs bench --tier lab` and commit the scorecard it writes,
-   `docs/scorecards/orbit-X.Y.Z-lab.json`, so every version keeps its own. Then merge.
+   `node plugin/dist/orbit.mjs bench --tier lab`, which writes the scorecard
+   `docs/scorecards/orbit-X.Y.Z-lab.json`, so every version keeps its own. Then
+   run `npm run build` again: the build copies `docs/` into `plugin/docs`, and
+   without the second build `npm run check:dist` fails on the scorecard's stale
+   plugin copy. Commit both copies, then merge.
 4. Tag the merge commit on `main` and push the tag:
 
    ```bash
