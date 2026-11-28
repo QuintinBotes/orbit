@@ -92,6 +92,20 @@ describe('remote answers: the permission boundary (ADR 0008)', () => {
     });
   }
 
+  // Owner decision on #289 (option a): a spend request is a question like any other, so a write collaborator may approve it.
+  it('a spend request is approved remotely by a write collaborator and refused for a read one, like any question (#289)', async () => {
+    for (const [role, accepted] of [['write', true], ['read', false]] as const) {
+      const env = blockedRun();
+      const q = addQuestion(env, { id: 'q-spend-0123456789', options: ['approve', 'refuse'] });
+      const sys = fakeSystem();
+      sys.threads.setPermission('acme-dev', role);
+      sys.threads.addComment(7, 'acme-dev', `/orbit answer ${q.id} approve`);
+      const report = await poll(env, sys);
+      expect(report.accepted.map((a) => a.questionId), role).toEqual(accepted ? [q.id] : []);
+      expect(getQuestion(env.db, q.id), role).toMatchObject(accepted ? { status: 'answered', answer: 'approve', answeredBy: 'github:acme-dev' } : { status: 'open' });
+    }
+  });
+
   it('text that claims a permission counts for nothing: only the API answer decides', async () => {
     const env = blockedRun();
     const q = addQuestion(env);
