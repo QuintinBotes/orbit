@@ -311,7 +311,10 @@ test of its own failed. The probe's logs are under
 revision with the new tests (exit 1, 2 attempts): AC-1". Under `required`, a
 question about accepting a criterion without fail-before is answered with
 `orbit decide <run-id> <question-id> accept` (or `decline`), bound to the tree
-it names, and `orbit resume` judges the candidate again. Only under `required`
+it names, and `orbit resume` judges the candidate again. No such question is
+asked about a criterion whose mapped test is not a file in the candidate: in
+every mode its report line is unverified, with the cause `missing` and each
+absent file named, and a repair that adds the file is the way on. Only under `required`
 does the reviewer see the probe: the review packet shows the lines of each
 probe log that report a failure (the log is check-wide), says that a compile,
 collection or import failure of a new symbol counts and is not a finding, and
@@ -982,6 +985,35 @@ once (`repair.non-progress`), not after more diagnoses and attempts on the same
 tree, unless its session stopped before it finished (max turns, a timeout) or
 a person resumed the run or asked for the repair with `orbit repair` since.
 
+A candidate scope inspection denies for paths outside the authorized scope
+(not a policy violation, whatever else the denial lists) is not left for the
+implementer to revert. Before the next attempt, Orbit restores each of those
+paths to the base revision in the implementer's worktree with git, removing a
+file the base does not have; in-scope edits stay, the candidate itself keeps
+the change, and the repair brief and a `repair.scope-restore` decision name the
+paths. The run ends `BLOCKED` instead, naming the paths:
+
+- when a criterion needs one of them (a test the contract maps to it; not a
+  `keep` criterion's test the base already has, and not a path only the
+  planner's output names, which is restored like any other). Nothing is
+  restored and no repair attempt is spent (`repair.scope-needed`). The run's
+  scope does not change, so cancel it and start a new run that covers the path;
+- when a repair ends on the denied tree again, judged as before, also when the
+  candidate is over the size limits too;
+- when a repair writes again any of the paths Orbit restored before it, even
+  on a new tree (a rebuilt bundle differs each time, and a content-hashed one
+  names its files differently).
+
+In both cases, while the run's attempt allowance has room, `orbit resume
+<run-id>` restores the paths and tries once more; the block says whether it
+does.
+
+The paths come from the candidate's scope inspection, read against the scope as
+it is now: a path an approved contract amendment has since allowed is kept.
+
+A protected-path denial is a policy violation: it blocks as before, and
+nothing is restored until a person resumes the run.
+
 PREFLIGHT asks the baseline-exception question for every pre-existing failure
 and every missing target. When the goal is to make that check pass (the
 contract's criteria name the check as their proof), the failure is expected to
@@ -999,6 +1031,40 @@ Its reason names the check, the cause and the log (the application's
 baseline exception to approve, because the check never ran: fix the
 environment (`orbit doctor` checks the isolation provider and its limits) or the
 check definition, then start a new run.
+
+## Spend requests
+
+A run that money stops (its charged cost reaches the cap, or its next session
+cannot be funded from what is left, once something is charged) waits `BLOCKED`
+on a question that names
+what it spent, the cap, the amount it asks for (its original cap) and the new
+total. Only a person answers it:
+
+- `orbit decide <run> <question> approve` raises that run's cap, removes the
+  spend file and releases the block; a service, or `orbit resume <run>
+  --foreground`, carries it on.
+- `orbit decide <run> <question> refuse` ends the run `EXHAUSTED` (or offers a
+  verified candidate it holds) and removes the file.
+- `orbit cancel <run>` removes the file too.
+
+Only an answer to the request the run is waiting on releases it: running an
+old approve line again changes nothing and says so.
+
+With remote answers on (`notifications.remote_answers`), a spend request is a
+question like any other: a collaborator with write, maintain or admin
+permission on the repository may approve or refuse it with
+`/orbit answer <question> approve` on the run's issue or pull request, and the
+answer is recorded with its author and comment (the owner's decision, #289).
+Anyone with less permission, and any bot, is refused. To keep spend to your
+own terminal, leave remote answers off.
+
+Any other answer is rejected, and `orbit resume --force` without an approval
+blocks again before a session starts. The request is also written to
+`${XDG_STATE_HOME:-~/.local/state}/stack/inbox/spend/<id>.json` (mode 0600, in a
+folder of mode 0700) as `{title, usd, tradeoff, recommendation, command, at}`,
+where `usd` is the new total. The controller takes `XDG_STATE_HOME` from its own
+environment, so a service uses the one it was started with. Evaluation replays
+never ask: they end at their cap.
 
 ## Notifications and remote answers
 

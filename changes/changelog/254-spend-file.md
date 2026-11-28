@@ -1,2 +1,0 @@
-section: Changes
-- A run that money stops (its charged cost reaches its cost cap, or its next session cannot be funded from what is left) now waits BLOCKED for a person instead of ending EXHAUSTED. It asks for one more increment of its original cap (`orbit decide <run> <question> approve` or `refuse`) and writes a spend request to `${XDG_STATE_HOME:-~/.local/state}/stack/inbox/spend/`. A run with nothing charged, a cap too small to fund one session, and every other counter behave as before (#254).

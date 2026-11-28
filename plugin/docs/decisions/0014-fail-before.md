@@ -1,6 +1,6 @@
 # 0014. Fail-before evidence: reported always, required on request (issue #65)
 
-Status: accepted (2026-10-12); amended 2026-10-13 (0.3.1, see the addendum) and 2026-11-20 (issue #200, second addendum)
+Status: accepted (2026-10-12); amended 2026-10-13 (0.3.1, see the addendum), 2026-11-20 (issue #200, second addendum) and 2026-11-27 (issue #261, third addendum)
 
 ## Context
 
@@ -305,4 +305,17 @@ Limits, each a decision a person may revisit:
 - `orbit init` does not yet propose a `tests_command`: a repository without one gets each criterion's fail-before as
   not established, which a person may accept per tree.
 - A defect no criterion describes (#191's cubic-time regexes) is outside what this can prove.
+
+## Addendum (2026-11-27, issue #261): a mapped test the candidate does not have
+
+A run asked a person to accept a criterion without fail-before when its mapped tests had never been written: the plan's
+path was judged like a written test that no check can run alone. The two now differ. A mapped path is present only when
+it is a file in the candidate's commit; a deleted file or a directory is not. In every mode, `off` included, a criterion
+with an absent mapped test, UI criteria included, is not established with the cause `missing`: the report leaves it
+unverified (or worse, as its checks say), names each absent file, and records no acceptance. No person may accept it and
+none is asked; the run goes on as for any unproven criterion, so a mandatory one keeps it from PASS. Under `required`
+the present tests of such a criterion are still probed and listed as any mapped test is: only when a check can run one
+alone, the candidate is otherwise acceptable and it changes no dependency manifest or lockfile outside test-owned paths.
+A UI criterion's mapped tests are never run alone. A test that is present but cannot run alone keeps its reason and its
+question.
 
