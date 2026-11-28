@@ -1,2 +1,0 @@
-section: Fixes
-- CI and the release workflow run on `ubuntu-24.04` instead of `ubuntu-latest`. `ubuntu-latest` now points at Ubuntu 26.04, whose stock AppArmor profile `bwrap-userns-restrict` stops srt's sandbox (`apply-seccomp: write /proc/self/setgroups (nested userns is capability-restricted ...)`), so the release gate failed on the v0.4.0 tag and four integration test files fail on any `ubuntu-latest` job. The `sandbox (ubuntu-26.04, stock AppArmor)` job is unchanged and keeps covering 26.04, with doctor's fix applied.
